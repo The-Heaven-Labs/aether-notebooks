@@ -154,7 +154,11 @@ export function Sidebar() {
         {drawerOpen && (
           <div style={styles.overlay} onClick={() => setDrawerOpen(false)} />
         )}
-        <nav style={{ ...styles.sidebar, ...styles.drawer, transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
+        <nav
+          inert={!drawerOpen}
+          aria-hidden={!drawerOpen}
+          style={{ ...styles.sidebar, ...styles.drawer, transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)' }}
+        >
           <div style={styles.drawerHeader}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--nav-text)' }}>Menu</span>
             <button style={styles.drawerCloseBtn} onClick={() => setDrawerOpen(false)} aria-label="Close sidebar">

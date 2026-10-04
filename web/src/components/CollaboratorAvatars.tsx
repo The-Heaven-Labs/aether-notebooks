@@ -20,7 +20,6 @@ interface CollaboratorAvatarsProps {
 }
 
 const MAX_VISIBLE = 4
-const AGENT_COLOR = '#8b5cf6'
 
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/)
@@ -129,6 +128,7 @@ export function CollaboratorAvatars({
               }
             }}
             title={c.name}
+            aria-pressed={following?.email === c.email}
             style={{
               width: 28,
               height: 28,
@@ -164,6 +164,21 @@ export function CollaboratorAvatars({
               }}
             />
           )}
+          {following?.email === c.email && (
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: 'var(--accent)',
+                border: '1px solid var(--bg-card)',
+              }}
+            />
+          )}
         </div>
       ))}
 
@@ -173,12 +188,13 @@ export function CollaboratorAvatars({
             type="button"
             onClick={onFollowAgent}
             title="AI Agent"
+            aria-pressed={followedByMe}
             style={{
               width: 28,
               height: 28,
               borderRadius: '50%',
-              background: AGENT_COLOR,
-              color: '#fff',
+              background: 'var(--button-primary-bg)',
+              color: 'var(--button-primary-text)',
               border: followedByMe ? '2px solid var(--accent)' : '2px solid transparent',
               fontSize: 11,
               fontWeight: 600,
@@ -193,6 +209,21 @@ export function CollaboratorAvatars({
           >
             AI
           </button>
+          {followedByMe && (
+            <div
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                top: 0,
+                right: 0,
+                width: 6,
+                height: 6,
+                borderRadius: '50%',
+                background: 'var(--accent)',
+                border: '1px solid var(--bg-card)',
+              }}
+            />
+          )}
         </div>
       )}
 
@@ -229,8 +260,8 @@ export function CollaboratorAvatars({
                 marginTop: 4,
                 background: 'var(--bg-card)',
                 border: '1px solid var(--border)',
-                borderRadius: 6,
-                boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+                borderRadius: 8,
+                boxShadow: 'var(--shadow-md)',
                 zIndex: 100,
                 minWidth: 160,
                 padding: '4px 0',

@@ -244,7 +244,7 @@ const styles: Record<string, React.CSSProperties> = {
   panel: { width: 380, height: '100%', borderLeft: '1px solid var(--border)', background: 'var(--bg-primary)', display: 'flex', flexDirection: 'column', flexShrink: 0 },
   saveBar: { display: 'flex', gap: 6, padding: '8px 14px', borderBottom: '1px solid var(--border-light)', background: 'var(--bg-secondary)' },
   saveInput: { flex: 1, fontSize: 12, padding: '5px 8px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-primary)', color: 'var(--text-primary)', outline: 'none' },
-  saveBtn: { fontSize: 11, padding: '5px 10px', background: 'var(--accent)', border: 'none', borderRadius: 4, cursor: 'pointer', color: '#fff', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' },
+  saveBtn: { fontSize: 11, padding: '5px 10px', background: 'var(--button-primary-bg)', border: 'none', borderRadius: 4, cursor: 'pointer', color: 'var(--button-primary-text)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4, whiteSpace: 'nowrap' },
   body: { overflowY: 'auto', flex: 1 },
   empty: { padding: 16, fontSize: 13, color: 'var(--text-muted)', textAlign: 'center' },
   groupLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', padding: '10px 14px 4px', textTransform: 'uppercase' as const, letterSpacing: '0.5px' },
@@ -258,5 +258,5 @@ const styles: Record<string, React.CSSProperties> = {
   changeCount: { fontSize: 10, color: 'var(--text-muted)', background: 'var(--bg-secondary)', borderRadius: 3, padding: '1px 5px' },
   changes: { marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3, paddingLeft: 4 },
   changeRow: { display: 'flex', alignItems: 'flex-start', gap: 4 },
-  restoreBtn: { fontSize: 11, padding: '4px 10px', background: 'var(--accent)', border: 'none', borderRadius: 4, cursor: 'pointer', color: '#fff', fontWeight: 500, marginTop: 8, display: 'inline-flex', alignItems: 'center' },
+  restoreBtn: { fontSize: 11, padding: '4px 10px', background: 'var(--button-primary-bg)', border: 'none', borderRadius: 4, cursor: 'pointer', color: 'var(--button-primary-text)', fontWeight: 500, marginTop: 8, display: 'inline-flex', alignItems: 'center' },
 }

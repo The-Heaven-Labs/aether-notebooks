@@ -865,7 +865,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
             >
               <thead ref={theadRef}>
                 <tr>
-                  <th style={{ ...styles.th, ...styles.rowNumTh, width: ROW_NUM_WIDTH, cursor: 'default' }}>
+                  <th scope="col" style={{ ...styles.th, ...styles.rowNumTh, width: ROW_NUM_WIDTH, cursor: 'default' }}>
                     <span style={styles.colName}>#</span>
                   </th>
                   {rs.columns.map((col, colIndex) => {
@@ -873,6 +873,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                     return (
                       <th
                         key={col.name}
+                        scope="col"
                         style={{ ...styles.th, width: columnWidths[colIndex] ?? COL_WIDTH, cursor: 'pointer', userSelect: 'none' }}
                         onClick={() => handleColumnClick(col.name)}
                         title={`Sort by ${col.name}`}
@@ -972,7 +973,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
               <div style={styles.detailBody}>
                 {detail.isArray ? (
                   <table style={styles.arrayTable}>
-                    <thead><tr><th style={styles.arrayTableHeader}>Index</th><th style={styles.arrayTableHeader}>Value</th></tr></thead>
+                    <thead><tr><th scope="col" style={styles.arrayTableHeader}>Index</th><th scope="col" style={styles.arrayTableHeader}>Value</th></tr></thead>
                     <tbody>
                       {detail.arrayItems.map((item, idx) => (
                         <tr key={idx}>

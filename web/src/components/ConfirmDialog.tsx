@@ -1,5 +1,5 @@
 import type React from 'react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useId, useRef } from 'react'
 
 export interface ConfirmDialogProps {
   open: boolean
@@ -30,6 +30,7 @@ export function ConfirmDialog({
 }: ConfirmDialogProps) {
   const cancelRef = useRef<HTMLButtonElement>(null)
   const confirmRef = useRef<HTMLButtonElement>(null)
+  const titleId = useId()
 
   useEffect(() => {
     if (open) {
@@ -92,9 +93,9 @@ export function ConfirmDialog({
 
   return (
     <div style={styles.overlay} onClick={onCancel}>
-      <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-labelledby={titleId} style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
-          <span style={styles.title}>{title}</span>
+          <span id={titleId} style={styles.title}>{title}</span>
         </div>
         {(message || children) && (
           <div style={styles.body}>
@@ -184,8 +185,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     border: 'none',
     borderRadius: 4,
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     cursor: 'pointer',
   },
   confirmBtnDestructive: {

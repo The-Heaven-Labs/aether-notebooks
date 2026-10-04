@@ -1,8 +1,8 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
-import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock, Trash2, Globe } from 'lucide-react'
-import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
-import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove } from '@dnd-kit/sortable'
+import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock, Trash2, Globe, Pencil } from 'lucide-react'
+import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable'
 import { CSS } from '@dnd-kit/utilities'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -43,6 +43,13 @@ interface NotebookWithCells extends Notebook {
   can_share?: boolean
 }
 
+/** Scrolls to an element, honoring the user's reduced-motion preference. */
+function scrollToCellElement(el: HTMLElement, block: ScrollLogicalPosition = 'center') {
+  const reduceMotion = typeof window !== 'undefined'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  el.scrollIntoView({ behavior: reduceMotion ? 'auto' : 'smooth', block })
+}
+
 function fmtTime(date: Date): string {
   const now = Date.now()
   const diffMs = now - date.getTime()
@@ -67,18 +74,10 @@ function readNotebookPin(storageKey: string): boolean {
 }
 
 function AddCellBar({ onAddCode, onAddText }: { onAddCode: () => void; onAddText: () => void }) {
-  const [hovered, setHovered] = useState(false)
   return (
-    <div
-      style={{
-        ...addBarStyles.bar,
-        ...(hovered ? addBarStyles.barHover : {}),
-      }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
+    <div className="aether-add-cell-bar" style={addBarStyles.bar}>
       <div style={addBarStyles.line} />
-      <div style={{ ...addBarStyles.buttons, opacity: hovered ? 1 : 0 }}>
+      <div className="aether-add-cell-actions" style={addBarStyles.buttons}>
         <button style={addBarStyles.btn} onClick={onAddCode}>+ Code</button>
         <button style={addBarStyles.btn} onClick={onAddText}>+ Text</button>
       </div>
@@ -92,14 +91,7 @@ const addBarStyles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 8,
-    height: 20,
-    margin: '2px 0',
-    transition: 'all 0.15s ease',
     cursor: 'pointer',
-  },
-  barHover: {
-    height: 28,
-    margin: '4px 0',
   },
   line: {
     flex: 1,
@@ -138,8 +130,10 @@ function SortableCellWrapper({ children, id }: { children: React.ReactNode; id: 
     position: 'relative',
   }
   return (
-    <div ref={setNodeRef} style={style} {...attributes}>
-      <div
+    <div ref={setNodeRef} style={style}>
+      <button
+        type="button"
+        {...attributes}
         {...listeners}
         style={{
           position: 'absolute',
@@ -150,11 +144,14 @@ function SortableCellWrapper({ children, id }: { children: React.ReactNode; id: 
           opacity: 0.4,
           display: 'flex',
           zIndex: 5,
+          background: 'none',
+          border: 'none',
+          padding: 0,
         }}
         title="Drag to reorder"
       >
         <GripVertical size={16} />
-      </div>
+      </button>
       {children}
     </div>
   )
@@ -238,6 +235,8 @@ export function NotebookPage() {
   const [following, setFollowing] = useState<{ email: string; name: string } | null>(null)
   const [viewOpen, setViewOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
+  const viewBtnRef = useRef<HTMLButtonElement>(null)
+  const shareBtnRef = useRef<HTMLButtonElement>(null)
   const cancelCell = useCallback(async (cellId: string) => {
     try {
       await api.post(`/api/v1/notebooks/${id}/cells/${cellId}/cancel`, {})
@@ -288,7 +287,10 @@ export function NotebookPage() {
     setViewerSessionId(null)
   }, [])
   // Drag-and-drop sensors
-  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }))
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
+  )
 
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     const { active, over } = event
@@ -309,7 +311,7 @@ export function NotebookPage() {
       const el = document.getElementById('cell-' + cellId)
       if (el) {
         clearInterval(interval)
-        el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        scrollToCellElement(el)
         el.classList.add('cell-flash')
         setTimeout(() => el.classList.remove('cell-flash'), 1500)
       } else if (++attempts >= maxAttempts) {
@@ -456,7 +458,7 @@ export function NotebookPage() {
         const el = document.getElementById('cell-' + cellId)
         if (el) {
           clearInterval(timer)
-          el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+          scrollToCellElement(el)
           el.classList.add('cell-flash')
           setTimeout(() => el.classList.remove('cell-flash'), 1500)
         }
@@ -481,7 +483,7 @@ export function NotebookPage() {
           } else if (state.focus.cellId) {
             const el = document.getElementById('cell-' + state.focus.cellId)
             if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              scrollToCellElement(el)
             }
           }
           break
@@ -511,7 +513,7 @@ export function NotebookPage() {
           } else if (state.focus.cellId) {
             const el = document.getElementById('cell-' + state.focus.cellId)
             if (el) {
-              el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+              scrollToCellElement(el)
             }
           }
           break
@@ -545,6 +547,20 @@ export function NotebookPage() {
     return () => window.removeEventListener('keydown', handler)
   }, [following])
 
+  // Escape closes the topmost drawer.
+  useEffect(() => {
+    if (!historyCell && !showHistory && !showChats && !viewerSessionId) return
+    const handler = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (viewerSessionId) closeSessionViewer()
+      else if (showChats) setShowChats(false)
+      else if (showHistory) setShowHistory(false)
+      else setHistoryCell(null)
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [historyCell, showHistory, showChats, viewerSessionId, closeSessionViewer])
+
   const cellsContainerRef = useRef<HTMLDivElement>(null)
 
   // Throttled scroll tracking + persist to sessionStorage
@@ -576,10 +592,16 @@ export function NotebookPage() {
     if (!saved) return
     const scrollTop = parseInt(saved, 10)
     if (isNaN(scrollTop)) return
-    // Smooth animated scroll to saved position, then re-apply to handle lazy loading
+    // Smooth animated scroll to saved position, then re-apply to handle lazy loading.
+    // Reduced-motion users jump straight there.
+    const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches
     const start = el.scrollTop
     const duration = 700
     setTimeout(() => {
+      if (reduceMotion) {
+        el.scrollTop = scrollTop
+        return
+      }
       const startTime = performance.now()
       const animate = (now: number) => {
         const t = Math.min((now - startTime) / duration, 1)
@@ -707,7 +729,7 @@ export function NotebookPage() {
       })
       setTimeout(() => {
         const el = document.getElementById('cell-' + cell.id)
-        if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+        if (el) scrollToCellElement(el)
       }, 100)
       if (autoFocusCellRef.current) {
         autoFocusCellRef.current = false
@@ -1135,48 +1157,56 @@ export function NotebookPage() {
   const toggleCollapseAll = useCallback(async () => {
     const newCollapsed = !allCollapsed
     setAllCollapsed(newCollapsed)
-    for (const cell of localCells) {
-      await api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
-        source_visible: !newCollapsed,
-        cell_collapsed: newCollapsed,
-      })
-    }
+    // Apply optimistically, then persist in parallel — one round trip per cell
+    // instead of a serial chain.
     setLocalCells(prev => prev.map(c => ({
       ...c,
       source_visible: !newCollapsed,
       cell_collapsed: newCollapsed,
     })))
+    await Promise.all(localCells.map(cell =>
+      api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
+        source_visible: !newCollapsed,
+        cell_collapsed: newCollapsed,
+      })
+    ))
   }, [allCollapsed, localCells, id])
 
   const toggleAllCode = useCallback(async () => {
     const newHidden = !allCodeHidden
     setAllCodeHidden(newHidden)
-    for (const cell of localCells) {
-      if (cell.type === 'code') {
-        await api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
-          source_visible: !newHidden,
-        })
-      }
-    }
     setLocalCells(prev => prev.map(c =>
       c.type === 'code' ? { ...c, source_visible: !newHidden } : c
     ))
+    await Promise.all(localCells
+      .filter(cell => cell.type === 'code')
+      .map(cell => api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
+        source_visible: !newHidden,
+      })))
   }, [allCodeHidden, localCells, id])
 
   const toggleAllOutputs = useCallback(async () => {
     const newHidden = !allOutputsHidden
     setAllOutputsHidden(newHidden)
-    for (const cell of localCells) {
-      if (cell.type === 'code') {
-        await api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
-          outputs_hidden: newHidden,
-        })
-      }
-    }
     setLocalCells(prev => prev.map(c =>
       c.type === 'code' ? { ...c, outputs_hidden: newHidden } : c
     ))
+    await Promise.all(localCells
+      .filter(cell => cell.type === 'code')
+      .map(cell => api.put(`/api/v1/notebooks/${id}/cells/${cell.id}`, {
+        outputs_hidden: newHidden,
+      })))
   }, [allOutputsHidden, localCells, id])
+
+  const mergedParamValues = useMemo(() => {
+    const merged: Record<string, string> = { ...paramValues }
+    if (notebook?.parameters) {
+      for (const p of notebook.parameters) {
+        if (!(p.name in merged)) merged[p.name] = p.default
+      }
+    }
+    return merged
+  }, [paramValues, notebook?.parameters])
 
   useNotebookKeyboardShortcuts(
     {
@@ -1190,7 +1220,7 @@ export function NotebookPage() {
           setFocusedCellId(nextId)
           saveAndRun(cellId).then(() => requestAnimationFrame(() => {
             const el = document.getElementById('cell-' + nextId)
-            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            if (el) scrollToCellElement(el, 'start')
           }))
         } else {
           saveAndRun(cellId)
@@ -1229,7 +1259,7 @@ export function NotebookPage() {
           setFocusedCellId(nextId)
           requestAnimationFrame(() => {
             const el = document.getElementById('cell-' + nextId)
-            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+            if (el) scrollToCellElement(el, 'nearest')
           })
         }
       },
@@ -1241,7 +1271,7 @@ export function NotebookPage() {
           setFocusedCellId(prevId)
           requestAnimationFrame(() => {
             const el = document.getElementById('cell-' + prevId)
-            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+            if (el) scrollToCellElement(el, 'nearest')
           })
         }
       },
@@ -1325,7 +1355,7 @@ export function NotebookPage() {
             <ChevronLeft size={14} style={{ flexShrink: 0 }} />
             <span>Files</span>
           </Link>
-          <div className="nbh-meta">
+          <div className="nbh-meta" role="status" aria-live="polite">
             <span>Last updated {fmtTime(new Date(notebook.updated_at))}</span>
             {anyCellSaving && (
               <span className="nbh-saving"><Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} />Saving…</span>
@@ -1360,12 +1390,15 @@ export function NotebookPage() {
               autoFocus
             />
           ) : (
-            <h1
-              className="nbh-title"
-              onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
-              title="Click to rename"
-            >
-              {notebook.title}
+            <h1 className="nbh-title">
+              <button
+                type="button"
+                className="nbh-title-btn"
+                onClick={() => { setTitleDraft(notebook.title); setEditingTitle(true) }}
+                title="Rename notebook"
+              >
+                {notebook.title}
+              </button>
             </h1>
           )}
           {editingDesc ? (
@@ -1385,18 +1418,28 @@ export function NotebookPage() {
               autoFocus
             />
           ) : (
-            <div
-              className="nbh-desc"
-              onClick={() => { setDescDraft(notebook.description ?? ''); setEditingDesc(true) }}
-              title="Click to edit description"
-            >
-              {notebook.description ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
-                  {notebook.description}
-                </ReactMarkdown>
-              ) : (
-                <span className="nbh-desc-placeholder">Add a description for this notebook…</span>
-              )}
+            <div className="nbh-desc-row">
+              <div
+                className="nbh-desc"
+                onClick={() => { setDescDraft(notebook.description ?? ''); setEditingDesc(true) }}
+                title="Click to edit description"
+              >
+                {notebook.description ? (
+                  <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]}>
+                    {notebook.description}
+                  </ReactMarkdown>
+                ) : (
+                  <span className="nbh-desc-placeholder">Add a description for this notebook…</span>
+                )}
+              </div>
+              <button
+                type="button"
+                className="nbh-desc-edit"
+                aria-label="Edit description"
+                onClick={() => { setDescDraft(notebook.description ?? ''); setEditingDesc(true) }}
+              >
+                <Pencil size={12} />
+              </button>
             </div>
           )}
         </div>
@@ -1448,9 +1491,21 @@ export function NotebookPage() {
         </div>
         <div className="nbt-right">
           {/* View dropdown */}
-          <div style={{ position: 'relative' }}>
+          <div
+            style={{ position: 'relative' }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && viewOpen) {
+                e.stopPropagation()
+                setViewOpen(false)
+                viewBtnRef.current?.focus()
+              }
+            }}
+          >
             <button
+              ref={viewBtnRef}
               type="button"
+              aria-haspopup="true"
+              aria-expanded={viewOpen}
               style={{ ...styles.schemaBtn, ...(viewOpen ? styles.schemaBtnActive : {}) }}
               onClick={() => { setViewOpen(v => !v); setShareOpen(false) }}
             >
@@ -1515,9 +1570,21 @@ export function NotebookPage() {
             )}
           </div>
           {/* Share dropdown */}
-          <div style={{ position: 'relative' }}>
+          <div
+            style={{ position: 'relative' }}
+            onKeyDown={(e) => {
+              if (e.key === 'Escape' && shareOpen) {
+                e.stopPropagation()
+                setShareOpen(false)
+                shareBtnRef.current?.focus()
+              }
+            }}
+          >
             <button
+              ref={shareBtnRef}
               type="button"
+              aria-haspopup="true"
+              aria-expanded={shareOpen}
               style={{ ...styles.schemaBtn, ...(shareOpen ? styles.schemaBtnActive : {}) }}
               onClick={() => { setShareOpen(v => !v); setViewOpen(false) }}
             >
@@ -1699,15 +1766,7 @@ export function NotebookPage() {
                              canShare={notebook?.can_share !== false}
                              focused={cell.id === focusedCellId}
                             index={i}
-                            paramValues={(() => {
-                              const merged = { ...paramValues }
-                              if (notebook?.parameters) {
-                                for (const p of notebook.parameters) {
-                                  if (!(p.name in merged)) merged[p.name] = p.default
-                                }
-                              }
-                              return merged
-                            })()}
+                            paramValues={mergedParamValues}
                           />
                           {!readOnly && (
                             <AddCellBar
@@ -1787,7 +1846,7 @@ export function NotebookPage() {
       {historyCell && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setHistoryCell(null)} />
-          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 300, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+          <div role="dialog" aria-modal="true" aria-label="Cell version history" style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 300, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
             <HistoryPanel
               versions={historyVersions}
               currentSource={localCells.find((c) => c.id === historyCell)?.source ?? ''}
@@ -1801,7 +1860,7 @@ export function NotebookPage() {
       {showHistory && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setShowHistory(false)} />
-          <div style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
+          <div role="dialog" aria-modal="true" aria-label="Notebook history" style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 380, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
             <NotebookHistoryPanel
               snapshots={historySnapshots}
               onCreateSnapshot={createSnapshot}
@@ -1816,7 +1875,7 @@ export function NotebookPage() {
       {showChats && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setShowChats(false)} />
-          <div style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 380, overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200, background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)' }}>
+          <div role="dialog" aria-modal="true" aria-label="Notebook chats" style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 380, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200, background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)' }}>
             <NotebookChats
               notebookId={id!}
               onOpenSession={openSessionViewer}
@@ -1833,7 +1892,7 @@ export function NotebookPage() {
       {viewerSessionId && (
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 201 }} onClick={closeSessionViewer} />
-          <div style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 420, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 202, background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)' }}>
+          <div role="dialog" aria-modal="true" aria-label="Agent session" style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 420, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 202, background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)' }}>
             <SessionViewer sessionId={viewerSessionId} session={viewerSession} onClose={closeSessionViewer} />
           </div>
         </>
@@ -1944,8 +2003,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   runAllBtn: {
     padding: '6px 16px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 13,
@@ -1973,8 +2032,8 @@ const styles: Record<string, React.CSSProperties> = {
     marginTop: 4,
     background: 'var(--bg-card)',
     border: '1px solid var(--border)',
-    borderRadius: 6,
-    boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+    borderRadius: 8,
+    boxShadow: 'var(--shadow-md)',
     zIndex: 100,
     minWidth: 180,
     padding: '4px 0',

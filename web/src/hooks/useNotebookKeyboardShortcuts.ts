@@ -43,8 +43,15 @@ export function useNotebookKeyboardShortcuts(
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName
-      if (isEditingRef.current || tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
+      const target = e.target as HTMLElement
+      const tag = target.tagName
+      // Never hijack keys aimed at interactive controls: Enter must activate
+      // buttons, arrows must move inside selects, etc.
+      if (
+        isEditingRef.current ||
+        tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || tag === 'BUTTON' || tag === 'A' ||
+        target.isContentEditable
+      ) return
 
       const actions = actionsRef.current
       const inDetailPanel = isAnyDetailActive()
