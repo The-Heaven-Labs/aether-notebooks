@@ -58,7 +58,7 @@ export function PublicNotebookPage() {
           return (
             <div key={cell.position} style={{
               ...s.cell,
-              borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
+              borderLeft: `1px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
             }}>
               {cell.type === 'text' ? (
                 <div style={s.mdContainer}>

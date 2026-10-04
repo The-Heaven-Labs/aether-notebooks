@@ -69,7 +69,6 @@ function HeatmapChartComponent({ data, config }: ChartProps) {
 
     return {
       tooltip: {
-        position: 'top' as const,
         ...getTooltipStyle(),
       },
       title: config.title ? {

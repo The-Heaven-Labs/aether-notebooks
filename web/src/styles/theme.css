@@ -350,9 +350,9 @@ input[type="color"] {
 }
 
 @keyframes cellFlashPulse {
-  0% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.4); border-left-color: var(--accent); }
-  50% { box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.3); border-left-color: var(--accent); }
-  100% { box-shadow: 0 0 0 0 rgba(59, 130, 246, 0); border-left-color: transparent; }
+  0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 40%, transparent); }
+  50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 30%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
 }
 
 @keyframes spin {
@@ -362,7 +362,6 @@ input[type="color"] {
 
 .cell-flash {
   animation: cellFlashPulse 1.5s ease-out;
-  border-left: 3px solid var(--accent);
 }
 
 /* ── Syntax highlighting for markdown code blocks ── */
@@ -404,3 +403,633 @@ input[type="color"] {
 
 .hljs-deletion { background: rgba(255, 0, 0, 0.15); }
 .hljs-addition { background: rgba(0, 255, 0, 0.15); }
+
+/* ── Connector row actions (ConnectorsPage) ─────────────────────────────── */
+/* Reserve room for two actions side by side: 2×26px + 3px gap + 20px cell
+   padding. Without this the column shrinks to a single 26px item and the
+   pairs collapse into one tall column on common laptop widths. */
+.connector-actions-header,
+.connector-actions-cell {
+  min-width: 75px;
+  /* Shrink-to-fit: don't soak up table width the content columns can use. */
+  width: 1%;
+}
+
+.connector-actions-cell {
+  padding: 8px 10px;
+  text-align: right;
+  vertical-align: middle;
+}
+
+.connector-actions-grid {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.connector-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.connector-action:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  color: var(--text-primary);
+}
+
+.connector-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.connector-action--accent {
+  color: var(--accent);
+}
+
+.connector-action--danger:hover:not(:disabled) {
+  background: var(--error-light);
+  border-color: var(--error-border);
+  color: var(--error-full);
+}
+
+/* Invisible full-width flex item that forces the next button onto a new row.
+   Together with the column min-width above, this keeps row actions in
+   right-aligned pairs. */
+.connector-actions-break {
+  flex-basis: 100%;
+  height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.connector-action-spin {
+  animation: spin 1s linear infinite;
+}
+
+/* Touch devices get a larger target; pointer-precise desktops keep the
+   compact pairs. */
+@media (pointer: coarse) {
+  .connector-action {
+    width: 36px;
+    height: 36px;
+  }
+
+  .connector-actions-grid {
+    gap: 4px;
+  }
+
+  .connector-actions-header,
+  .connector-actions-cell {
+    /* 2×36px + 4px gap + 20px cell padding. */
+    min-width: 96px;
+  }
+}
+
+/* ── Connector type chip (ConnectorsPage) ───────────────────────────────── */
+/* Per-type identity colors drawn from the chart series palette: postgres
+   sky, clickhouse amber, opensearch cyan, databricks rose. The plate mixes
+   the hue toward white so the near-black ink clears contrast in both themes. */
+.conn-type-chip {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  border-radius: var(--radius-xs);
+  background: color-mix(in srgb, var(--chip-color) 84%, #fff);
+  border: 1px solid color-mix(in srgb, var(--chip-color) 60%, #16130e);
+  color: #16130e;
+}
+
+.conn-type-chip--postgres { --chip-color: #0ea5e9; }
+.conn-type-chip--clickhouse { --chip-color: #f59e0b; }
+.conn-type-chip--opensearch { --chip-color: #06b6d4; }
+.conn-type-chip--databricks { --chip-color: #f43f5e; }
+
+/* ── Notebook header (NotebookPage) ─────────────────────────────────────── */
+/* One-line provenance cluster on the right; the title block owns the space
+   below. Baked from live variant 4 (compact density, 30px title). */
+.nbh {
+  display: flex;
+  flex-direction: column;
+  padding: 10px 40px 0;
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+}
+
+.nbh-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  width: 100%;
+  gap: 16px;
+}
+
+.nbh-back {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  flex-shrink: 0;
+}
+
+.nbh-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  min-width: 0;
+}
+
+.nbh-owner-inline {
+  font-size: 12px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nbh-title-section {
+  margin-top: 8px;
+  padding-bottom: 14px;
+}
+
+.nbh-title {
+  font-size: 30px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0 0 2px;
+  cursor: pointer;
+  line-height: 1.15;
+  letter-spacing: -0.2px;
+}
+
+.nbh-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  cursor: pointer;
+  line-height: 1.5;
+  min-height: 22px;
+}
+
+.nbh-desc-placeholder {
+  color: var(--text-muted);
+  opacity: 0.6;
+  font-style: italic;
+}
+
+.nbh-saving,
+.nbh-saved {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.nbh-saved {
+  color: var(--success);
+}
+
+.nbh-save-error {
+  color: var(--error-full);
+}
+
+/* ── Notebook toolbar (NotebookPage) ────────────────────────────────────── */
+/* The execution cluster (Run All, History) sits with the connector it runs
+   against; document actions stay right. Baked from live variant 2
+   (density 0.85, presence context). */
+.nbt {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 40px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  row-gap: 7px;
+}
+
+.nbt-left {
+  display: flex;
+  align-items: center;
+  gap: 8.5px;
+  flex: 1;
+  min-width: 0;
+}
+
+.nbt-run {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.nbt-presence {
+  display: flex;
+  align-items: center;
+}
+
+.nbt-right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Notebook title / description edit affordances (NotebookPage) */
+.nbh-title-btn {
+  all: unset;
+  cursor: pointer;
+}
+
+.nbh-title-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.nbh-desc-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+}
+
+.nbh-desc-row .nbh-desc {
+  flex: 1;
+  min-width: 0;
+}
+
+.nbh-desc-edit {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-top: 1px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.nbh-desc-row:hover .nbh-desc-edit,
+.nbh-desc-edit:focus-visible {
+  opacity: 1;
+}
+
+.nbh-desc-edit:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+/* Cell action toolbars: hidden until hover/focus, always available on touch */
+.aether-cell-actions {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.aether-cell:hover .aether-cell-actions,
+.aether-cell:focus-within .aether-cell-actions {
+  opacity: 1;
+}
+
+.aether-add-cell-bar {
+  height: 20px;
+  margin: 2px 0;
+}
+
+.aether-add-cell-bar:hover,
+.aether-add-cell-bar:focus-within {
+  height: 28px;
+  margin: 4px 0;
+}
+
+.aether-add-cell-actions {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.aether-add-cell-bar:hover .aether-add-cell-actions,
+.aether-add-cell-bar:focus-within .aether-add-cell-actions {
+  opacity: 1;
+}
+
+/* Touch devices have no hover: actions are always visible and targets grow */
+@media (pointer: coarse) {
+  .aether-cell-actions,
+  .aether-add-cell-actions,
+  .nbh-desc-edit {
+    opacity: 1;
+  }
+
+  .aether-cell-actions button,
+  .nbt button {
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .aether-add-cell-actions button {
+    min-height: 32px;
+  }
+
+  .nbt-presence button {
+    min-width: 36px;
+    min-height: 36px;
+  }
+}
+
+/* ── Notebook toolbar: narrow screens ───────────────────────────────────── */
+@media (max-width: 767px) {
+  .nbt {
+    padding: 7px 16px;
+  }
+
+  .nbt-left,
+  .nbt-right {
+    flex-wrap: wrap;
+    row-gap: 7px;
+  }
+
+  .nbt-left {
+    flex-basis: 100%;
+  }
+
+  .nbt-right {
+    flex-basis: 100%;
+    justify-content: flex-end;
+  }
+
+  /* Cell meta bars wrap instead of clipping their controls. */
+  .aether-cell-meta,
+  .aether-cell-meta-left {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  .aether-cell-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 2px;
+  }
+}
+
+/* ── Dashboard grid: react-grid-layout base styles ─────────────────────── */
+/* react-grid-layout v2 ships no stylesheet. Without position: relative the
+   items' offsetParent is <body>, so drag coordinates are computed page-
+   relative while item transforms are container-relative - the dragged widget
+   drifts by the grid's page offset and the placeholder disagrees with it. */
+.react-grid-layout {
+  position: relative;
+  transition: height 200ms ease;
+}
+
+.react-grid-item {
+  transition: all 200ms ease;
+  transition-property: left, top, transform;
+}
+
+.react-grid-item.cssTransforms {
+  transition-property: transform;
+}
+
+.react-grid-item.resizing {
+  transition: none;
+  z-index: 3;
+}
+
+/* ── Dashboard editor: resize handles ───────────────────────────────────── */
+/* react-grid-layout v2 renders .react-resizable-handle elements but ships no
+   stylesheet, so they were 0×0 and impossible to grab. Draw a hairline
+   corner bracket matching the system. */
+.react-grid-item > .react-resizable-handle {
+  position: absolute;
+  width: 20px;
+  height: 20px;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  cursor: se-resize;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.react-grid-item > .react-resizable-handle::after {
+  content: '';
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 8px;
+  height: 8px;
+  border-right: 2px solid var(--text-muted);
+  border-bottom: 2px solid var(--text-muted);
+  border-radius: 0 0 2px 0;
+}
+
+.react-grid-item:hover > .react-resizable-handle,
+.react-grid-item > .react-resizable-handle:active {
+  opacity: 1;
+}
+
+/* Touch: grow the grab area (no hover to reveal it). */
+@media (pointer: coarse) {
+  .react-grid-item > .react-resizable-handle {
+    width: 32px;
+    height: 32px;
+    opacity: 1;
+  }
+
+  .react-grid-item > .react-resizable-handle::after {
+    right: 6px;
+    bottom: 6px;
+    width: 12px;
+    height: 12px;
+  }
+}
+
+/* ── Dashboard chrome (DashboardPage) ───────────────────────────────────── */
+.dash-header {
+  padding: 0 12px;
+}
+
+.dash-cols {
+  display: flex;
+}
+
+@media (max-width: 767px) {
+  .dash-header {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    row-gap: 8px;
+  }
+
+  .dash-header-left {
+    min-width: 0;
+  }
+
+  .dash-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dash-header-right {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  /* The column selector is an editing control; it leaves the view header on
+     narrow screens (the editor keeps its own responsive variant). */
+  .dash-cols {
+    display: none;
+  }
+}
+
+/* ── Dashboard editor widget chrome (DashboardEditorPage) ───────────────── */
+/* Dashboard-editor widget chrome: a slim header row carries the widget kind
+   and its edit/remove controls, so the widget's own meta text (rows/columns,
+   execution time) never sits under them. */
+.dash-widget-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 28.5px;
+  padding: 0 8px 0 10px;
+  border-bottom: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.dash-widget-head-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  position: relative;
+  z-index: 2;
+}
+
+.dash-widget-drag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 28.5px;
+  cursor: grab;
+  z-index: 1;
+  border-radius: 4px 4px 0 0;
+}
+
+.dash-widget-data {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.dash-widget-kind {
+  display: flex;
+  align-items: center;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.dash-widget-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 2px 6px;
+  line-height: 1;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.dash-widget-ctl:hover {
+  color: var(--text-primary);
+}
+
+.dash-widget-ctl:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Data-first editor card: hovering lights the accent ring that marks the
+   card as the editable unit (the SQL lives behind the pencil). */
+/* Hover ring via outline, not an inset box-shadow: shadows paint under the
+   card's children, so the widget's meta bar (rows/play) cut the ring where
+   it met the card edge. Outlines paint above descendants. */
+.dash-widget-card {
+  outline: 1px solid transparent;
+  outline-offset: -1px;
+  transition: outline-color 0.15s ease;
+}
+
+.dash-widget-card:hover {
+  outline-color: var(--accent);
+}
+
+.dash-widget-card:hover .dash-widget-ctl,
+.dash-widget-card:hover .dash-widget-kind {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ── Floating panel entrance (notebook history) ─────────────────────────── */
+@keyframes floating-panel-in {
+  from { opacity: 0; transform: translateX(10px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes scrim-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.floating-panel-enter {
+  animation: floating-panel-in 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scrim-enter {
+  animation: scrim-in 0.15s ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connector-action-spin,
+  .cell-flash,
+  .floating-panel-enter,
+  .scrim-enter {
+    animation: none;
+  }
+}

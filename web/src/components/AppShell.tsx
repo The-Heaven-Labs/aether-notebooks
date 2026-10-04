@@ -286,6 +286,8 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column',
     pointerEvents: 'auto',
     transformOrigin: 'bottom right',
+    // Intentional: agent panel float/dock/minimize morph. The panel's
+    // geometry genuinely changes; FLIP would need measured layout.
     transition: 'top 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), right 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), height 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), border-radius 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), box-shadow 0.7s cubic-bezier(0.05, 0.7, 0.1, 1)',
   },
   docked: {
@@ -299,6 +301,8 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
     display: 'flex', flexDirection: 'column',
     pointerEvents: 'auto',
     transformOrigin: 'bottom right',
+    // Intentional: agent panel float/dock/minimize morph. The panel's
+    // geometry genuinely changes; FLIP would need measured layout.
     transition: 'top 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), right 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), height 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), border-radius 0.7s cubic-bezier(0.05, 0.7, 0.1, 1), box-shadow 0.7s cubic-bezier(0.05, 0.7, 0.1, 1)',
   },
   vResizeHandle: {
@@ -333,7 +337,7 @@ const fabStyles: Record<string, React.CSSProperties> = {
     position: 'fixed', bottom: 24, right: 24, zIndex: 1400,
     width: 44, height: 44, borderRadius: '50%',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
-    background: 'var(--accent)', color: '#fff',
+    background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)',
     border: 'none', cursor: 'pointer',
     boxShadow: '0 4px 16px rgba(0,0,0,0.25)',
     transition: 'transform 0.15s, box-shadow 0.15s',
@@ -350,7 +354,7 @@ const motdStyles: Record<string, React.CSSProperties> = {
   banner: {
     background: 'var(--warning-light)',
     borderBottom: '1px solid var(--warning-border)',
-    borderLeft: '3px solid var(--accent)',
+    borderLeft: '1px solid var(--accent)',
     padding: '10px 16px',
     display: 'flex',
     alignItems: 'center',

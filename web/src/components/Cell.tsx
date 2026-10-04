@@ -465,7 +465,6 @@ export const Cell = memo(function Cell({
   index,
   paramValues,
 }: Props) {
-  const [hovered, setHovered] = useState(false)
   const [connectorOpen, setConnectorOpen] = useState(false)
   const [copiedId, setCopiedId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState(false)
@@ -502,7 +501,7 @@ export const Cell = memo(function Cell({
         id={'cell-' + cell.id}
         style={{
           ...styles.collapsed,
-          borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
+          borderLeft: `1px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
         }}>
         <button
           style={styles.expandTrigger}
@@ -530,23 +529,25 @@ export const Cell = memo(function Cell({
       )}
       <div
         id={'cell-' + cell.id}
+        className="aether-cell"
         style={{
           ...styles.cell,
-          borderLeft: `3px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
+          borderLeft: `1px solid ${isCode ? 'var(--accent)' : 'var(--success)'}`,
           ...(focused ? {
-            boxShadow: `0 0 0 1px ${isCode ? 'var(--accent)' : 'var(--success)'}, 0 2px 8px ${isCode ? 'rgba(99,102,241,0.15)' : 'rgba(34,197,94,0.15)'}`,
+            boxShadow: `0 0 0 1px ${isCode ? 'var(--accent)' : 'var(--success)'}, 0 2px 8px ${isCode ? 'color-mix(in srgb, var(--accent) 15%, transparent)' : 'color-mix(in srgb, var(--success) 15%, transparent)'}`,
           } : {}),
         }}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
       onClick={() => { onFocus?.(cell.id); updateCellFocus(notebookId, cell.id) }}
     >
       {/* ── Meta bar ── */}
-      <div style={{
-        ...styles.metaBar,
-        background: isCode ? 'var(--bg-cell-code)' : 'var(--bg-cell-text)',
-      }}>
-        <div style={styles.metaLeft}>
+      <div
+        className="aether-cell-meta"
+        style={{
+          ...styles.metaBar,
+          background: isCode ? 'var(--bg-cell-code)' : 'var(--bg-cell-text)',
+        }}
+      >
+        <div className="aether-cell-meta-left" style={styles.metaLeft}>
           {index !== undefined && <span style={styles.cellNumber}>{index + 1}</span>}
           <span style={styles.cellTypeTag}>{isCode ? 'SQL' : 'MD'}</span>
 
@@ -650,7 +651,18 @@ export const Cell = memo(function Cell({
           ) : cell.title ? (
             <div
               style={styles.titleRendered}
+              role="button"
+              tabIndex={0}
+              aria-label="Edit cell title"
               onClick={(e) => { e.stopPropagation(); setTitleDraft(cell.title ?? ''); setEditingTitle(true) }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  e.stopPropagation()
+                  setTitleDraft(cell.title ?? '')
+                  setEditingTitle(true)
+                }
+              }}
               title="Click to edit title (supports markdown)"
             >
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{cell.title}</ReactMarkdown>
@@ -668,7 +680,7 @@ export const Cell = memo(function Cell({
         </div>
 
         {/* Hover toolbar */}
-        <div style={{ ...styles.actions, opacity: hovered ? 1 : 0 }} role="toolbar" aria-label="Cell actions">
+        <div className="aether-cell-actions" style={styles.actions} role="toolbar" aria-label="Cell actions">
           {isCode && (() => {
             const hasConnector = !!(cell.connector_id || connectors.length > 0)
             return (
@@ -856,7 +868,7 @@ export const Cell = memo(function Cell({
       {/* ── Footer ── */}
       {(saveState || runAt || metrics || routing) && (
         <div style={styles.footer}>
-          <span style={saveState?.error ? styles.footerError : styles.footerMuted}>
+          <span role="status" aria-live="polite" style={saveState?.error ? styles.footerError : styles.footerMuted}>
             {saveState?.saving
               ? 'Saving…'
               : saveState?.error
@@ -930,10 +942,10 @@ const styles: Record<string, React.CSSProperties> = {
     marginRight: 6,
   },
   cellTypeTag: {
-    fontSize: 9,
+    fontSize: 10,
     fontFamily: 'var(--font-mono)',
     fontWeight: 700,
-    letterSpacing: '0.1em',
+    letterSpacing: '0.08em',
     color: 'var(--text-muted)',
     textTransform: 'uppercase' as const,
     flexShrink: 0,
@@ -1026,7 +1038,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 1,
     transition: 'opacity 0.12s',
-    flexShrink: 0,
+    // Shrinkable so the toolbar can wrap on narrow screens instead of
+    // overflowing the meta bar.
+    flexShrink: 1,
+    minWidth: 0,
   },
   actionBtn: {
     display: 'inline-flex',

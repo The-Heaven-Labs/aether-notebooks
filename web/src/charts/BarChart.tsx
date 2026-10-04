@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries, buildLegend, legendColumnReserve } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, useAxisColumns, useGroupBySeries, detectAxisColumns, buildMarkLineSeries, buildLegend, legendColumnReserve, narrowChartMedia } from './common'
 import { AxisConfigPanel } from './AxisConfigPanel'
 
 function BarChartComponent({ data, config }: ChartProps) {
@@ -59,6 +59,7 @@ function BarChartComponent({ data, config }: ChartProps) {
       tooltip: { trigger: isHorizontal ? 'axis' as const : 'axis' as const, axisPointer: isHorizontal ? { type: 'shadow' as const } : undefined, ...getTooltipStyle() },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
       legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames, reserveTopRight: true }),
+      media: narrowChartMedia(config.showLegend),
       grid,
       dataZoom: config.dataZoom ? [
         { type: 'inside' as const, start: 0, end: 100, ...(isHorizontal ? { yAxisIndex: 0 } : {}) },

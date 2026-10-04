@@ -1,6 +1,6 @@
 import { useState, useMemo } from 'react'
 import type React from 'react'
-import { Settings2 } from 'lucide-react'
+import { BarChart3, Settings2 } from 'lucide-react'
 import type { ResultSet } from '../types'
 import type { ChartConfig } from './types'
 import { ChartConfigModal } from './ChartConfigModal'
@@ -73,7 +73,7 @@ export function ChartView({ output, rs, onConfigChange, chartConfigOverridden, o
     return (
       <div style={styles.wrap}>
         <div style={styles.emptyGuidance}>
-          <div style={styles.emptyIcon}>📊</div>
+          <div style={styles.emptyIcon}><BarChart3 size={24} /></div>
           <p style={styles.emptyTitle}>Not enough data to chart</p>
           <p style={styles.emptyText}>
             This chart needs at least {mod.requirements.minColumns} column(s).
@@ -142,7 +142,17 @@ export { CHART_COLORS, EChartsContainer } from './common'
 const styles: Record<string, React.CSSProperties> = {
   wrap: { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 0 },
   emptyGuidance: { padding: 24, textAlign: 'center' as const, color: 'var(--text-muted)' },
-  emptyIcon: { fontSize: 32, marginBottom: 8 },
+  // Icon tile matching the product's empty-state pattern (56px, amethyst
+  // wash, hairline border, 4px radius) instead of an emoji.
+  emptyIcon: {
+    width: 56, height: 56,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    background: 'var(--accent-light)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    color: 'var(--text-muted)',
+    marginBottom: 12,
+  },
   emptyTitle: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', margin: '0 0 4px' },
   emptyText: { fontSize: 12, margin: 0 },
   configBtn: {

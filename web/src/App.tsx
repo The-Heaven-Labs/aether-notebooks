@@ -1,38 +1,42 @@
-import { useEffect } from 'react'
+import { lazy, Suspense, useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { useAuth, useAuthProvider, AuthContext } from './hooks/useAuth'
-import { LoginPage } from './pages/LoginPage'
-import { OAuthConsentPage } from './pages/OAuthConsentPage'
-import { HomePage } from './pages/HomePage'
-import { ChatPage } from './pages/ChatPage'
-import { NotebookPage } from './pages/NotebookPage'
-import { ConnectorsPage } from './pages/ConnectorsPage'
-import { WarehouseSettingsPage } from './pages/WarehouseSettingsPage'
-import { DashboardsPage } from './pages/DashboardsPage'
-import { DashboardEditorPage } from './pages/DashboardEditorPage'
-import { DashboardPage } from './pages/DashboardPage'
-import { AuditPage } from './pages/AuditPage'
-import { MembersPage } from './pages/MembersPage'
-import { AdminPage } from './pages/AdminPage'
-import { PublicDashboardPage } from './pages/PublicDashboardPage'
-import { PublicNotebookPage } from './pages/PublicNotebookPage'
-import { EmbedPage } from './pages/EmbedPage'
-import { PresentationPage } from './pages/PresentationPage'
-import { OrgOnboardingPage } from './pages/OrgOnboardingPage'
-import { ProfilePage } from './pages/ProfilePage'
-import { GroupsPage } from './pages/GroupsPage'
-import { OrgSettingsPage } from './pages/OrgSettingsPage'
-import { AgentsPage } from './pages/AgentsPage'
-import { StatsPage } from './pages/StatsPage'
-import { AboutPage } from './pages/AboutPage'
-import { ModelsPage } from './pages/ModelsPage'
-import { SkillsPage } from './pages/SkillsPage'
-import { ToolsPage } from './pages/ToolsPage'
-import { TrashPage } from './pages/TrashPage'
-import { MCPPage } from './pages/MCPPage'
-import { JoinPage } from './pages/JoinPage'
+import { LoadingPage } from './components/LoadingPage'
 import './styles/theme.css'
+
+// Route-level code splitting: each page loads on first visit instead of
+// shipping the entire app (including ECharts) in one 3MB bundle.
+const LoginPage = lazy(() => import('./pages/LoginPage').then(m => ({ default: m.LoginPage })))
+const OAuthConsentPage = lazy(() => import('./pages/OAuthConsentPage').then(m => ({ default: m.OAuthConsentPage })))
+const HomePage = lazy(() => import('./pages/HomePage').then(m => ({ default: m.HomePage })))
+const ChatPage = lazy(() => import('./pages/ChatPage').then(m => ({ default: m.ChatPage })))
+const NotebookPage = lazy(() => import('./pages/NotebookPage').then(m => ({ default: m.NotebookPage })))
+const ConnectorsPage = lazy(() => import('./pages/ConnectorsPage').then(m => ({ default: m.ConnectorsPage })))
+const WarehouseSettingsPage = lazy(() => import('./pages/WarehouseSettingsPage').then(m => ({ default: m.WarehouseSettingsPage })))
+const DashboardsPage = lazy(() => import('./pages/DashboardsPage').then(m => ({ default: m.DashboardsPage })))
+const DashboardEditorPage = lazy(() => import('./pages/DashboardEditorPage').then(m => ({ default: m.DashboardEditorPage })))
+const DashboardPage = lazy(() => import('./pages/DashboardPage').then(m => ({ default: m.DashboardPage })))
+const AuditPage = lazy(() => import('./pages/AuditPage').then(m => ({ default: m.AuditPage })))
+const MembersPage = lazy(() => import('./pages/MembersPage').then(m => ({ default: m.MembersPage })))
+const AdminPage = lazy(() => import('./pages/AdminPage').then(m => ({ default: m.AdminPage })))
+const PublicDashboardPage = lazy(() => import('./pages/PublicDashboardPage').then(m => ({ default: m.PublicDashboardPage })))
+const PublicNotebookPage = lazy(() => import('./pages/PublicNotebookPage').then(m => ({ default: m.PublicNotebookPage })))
+const EmbedPage = lazy(() => import('./pages/EmbedPage').then(m => ({ default: m.EmbedPage })))
+const PresentationPage = lazy(() => import('./pages/PresentationPage').then(m => ({ default: m.PresentationPage })))
+const OrgOnboardingPage = lazy(() => import('./pages/OrgOnboardingPage').then(m => ({ default: m.OrgOnboardingPage })))
+const ProfilePage = lazy(() => import('./pages/ProfilePage').then(m => ({ default: m.ProfilePage })))
+const GroupsPage = lazy(() => import('./pages/GroupsPage').then(m => ({ default: m.GroupsPage })))
+const OrgSettingsPage = lazy(() => import('./pages/OrgSettingsPage').then(m => ({ default: m.OrgSettingsPage })))
+const AgentsPage = lazy(() => import('./pages/AgentsPage').then(m => ({ default: m.AgentsPage })))
+const StatsPage = lazy(() => import('./pages/StatsPage').then(m => ({ default: m.StatsPage })))
+const AboutPage = lazy(() => import('./pages/AboutPage').then(m => ({ default: m.AboutPage })))
+const ModelsPage = lazy(() => import('./pages/ModelsPage').then(m => ({ default: m.ModelsPage })))
+const SkillsPage = lazy(() => import('./pages/SkillsPage').then(m => ({ default: m.SkillsPage })))
+const ToolsPage = lazy(() => import('./pages/ToolsPage').then(m => ({ default: m.ToolsPage })))
+const TrashPage = lazy(() => import('./pages/TrashPage').then(m => ({ default: m.TrashPage })))
+const MCPPage = lazy(() => import('./pages/MCPPage').then(m => ({ default: m.MCPPage })))
+const JoinPage = lazy(() => import('./pages/JoinPage').then(m => ({ default: m.JoinPage })))
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -52,6 +56,7 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
 
 function AppRoutes() {
   return (
+    <Suspense fallback={<LoadingPage />}>
     <Routes>
       <Route path="/login" element={<LoginPage />} />
       <Route path="/oauth/authorize" element={<OAuthConsentPage />} />
@@ -155,6 +160,7 @@ function AppRoutes() {
       <Route path="/notebooks/:id/present" element={<PresentationPage />} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </Suspense>
   )
 }
 

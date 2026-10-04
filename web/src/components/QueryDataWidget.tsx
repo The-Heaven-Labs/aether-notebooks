@@ -8,6 +8,7 @@ import { useWidgetQuery } from '../hooks/useWidgetQuery'
 import { OutputRenderer } from './OutputRenderer'
 import { ServiceChoiceDialog } from './RoutingPreference'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
+import { formatExecutedAt } from '../utils/formatDateTime'
 import type { Widget } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
@@ -191,7 +192,8 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshN
       </button>
       {fetchedAt && (
         <span style={styles.footerText}>
-          Executed {fetchedAt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+          {/* Same date + time format as the cell widgets' "Executed at". */}
+          Executed at {formatExecutedAt(fetchedAt)}
           {data?.cached && <span> · cached</span>}
           {data?.metrics?.query_time_ms != null && <span> · {data.metrics.query_time_ms}ms</span>}
         </span>

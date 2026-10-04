@@ -487,14 +487,55 @@ export function useChartColors() {
   return colors
 }
 
-export function getTooltipStyle() {
-  const c = getChartColors()
+// Canvas text can't use CSS variables, so the design system's stacks are
+// duplicated here. Titles/labels speak DM Sans; data (axis values, tooltips,
+// measurements) speaks JetBrains Mono — the Two Scripts Rule.
+export const CHART_FONT_SANS = 'DM Sans, -apple-system, BlinkMacSystemFont, sans-serif'
+export const CHART_FONT_MONO = 'JetBrains Mono, Fira Code, ui-monospace, monospace'
+
+export function getTooltipStyle(colors?: ReturnType<typeof getChartColors>) {
+  const c = colors ?? getChartColors()
   return {
     backgroundColor: c.bgCard,
     borderColor: c.border,
     borderRadius: 4,
-    textStyle: { fontSize: 12, color: c.text },
-    extraCssText: `box-shadow: 0 2px 16px ${c.shadow};`,
+    textStyle: { fontSize: 12, color: c.text, fontFamily: CHART_FONT_MONO },
+    // Dashboard widgets clip to their card (overflow: hidden), which cut the
+    // top off tooltips near the plot's upper edge. Appending to <body> lets
+    // the tooltip float free of any container; the z-index keeps it above
+    // panels and drawers; max-height bounds pathological tooltips.
+    appendToBody: true,
+    // Tall tooltips are scrollable, so they must be reachable: let the mouse
+    // enter them (pointer-events) and keep them alive while the pointer
+    // travels from the chart to the tooltip.
+    enterable: true,
+    hideDelay: 800,
+    // Keep the whole tooltip inside the viewport. Tall tooltips pin to the
+    // top-right corner — a cursor-following box can never be caught with the
+    // mouse; small ones still follow the cursor.
+    position: (
+      point: number[],
+      _params: unknown,
+      _dom: unknown,
+      _rect: unknown,
+      size: { contentSize: number[]; viewSize: number[] },
+    ) => {
+      const [mx, my] = point
+      const [cw, ch] = size.contentSize
+      const [vw, vh] = size.viewSize
+      if (ch > 240) {
+        const px = Math.max(8, vw - cw - 16)
+        const py = Math.max(8, Math.min(60, vh - ch - 8))
+        return [px, py]
+      }
+      let x = mx + 12
+      let y = my - ch - 12
+      if (y < 8) y = my + 16
+      x = Math.max(8, Math.min(x, vw - cw - 8))
+      y = Math.max(8, Math.min(y, vh - ch - 8))
+      return [x, y]
+    },
+    extraCssText: `box-shadow: 0 2px 16px ${c.shadow}; z-index: 3000; max-height: 60vh; overflow: auto;`,
   }
 }
 
@@ -503,7 +544,7 @@ export function getAxisStyle(showGrid?: boolean) {
   return {
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { fontSize: 11, color: c.textMuted },
+    axisLabel: { fontSize: 11, color: c.textMuted, fontFamily: CHART_FONT_MONO },
     splitLine: { show: showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } },
   }
 }
@@ -514,6 +555,30 @@ export function getAxisStyle(showGrid?: boolean) {
 // sane for both short and pathological names.
 export const LEGEND_COLUMN_MIN = 160
 export const LEGEND_COLUMN_MAX = 280
+
+// Below this container width the right-hand legend column leaves almost no
+// plot (a 4-row widget can be ~175px wide). Charts collapse the legend to a
+// single scrollable row under the plot instead — see narrowChartMedia.
+export const NARROW_CHART_WIDTH = 340
+
+// ECharts `media` override for narrow containers. Modules add it to their
+// option so the chart itself adapts by its own width, not the viewport's.
+// Returns undefined when the legend is disabled (an override must not switch
+// a hidden legend back on).
+export function narrowChartMedia(showLegend: boolean | undefined): NonNullable<echarts.EChartsCoreOption['media']> | undefined {
+  if (showLegend === false) return undefined
+  return [{
+    query: { maxWidth: NARROW_CHART_WIDTH },
+    option: {
+      legend: {
+        orient: 'horizontal' as const,
+        right: 'auto', top: 'auto', left: 'center', bottom: 0,
+        width: 'auto', height: 'auto',
+      },
+      grid: { right: 12, bottom: 30 },
+    },
+  }]
+}
 
 // Fallback average glyph width at fontSize 11 (≈6.2px/char) used when a real
 // canvas is unavailable (jsdom/SSR) or yields no measurement.
@@ -537,7 +602,7 @@ function getMeasureContext(): CanvasRenderingContext2D | null {
 function measureTextWidth(text: string, fontSize: number): number {
   const ctx = getMeasureContext()
   if (ctx) {
-    ctx.font = `${fontSize}px sans-serif`
+    ctx.font = `${fontSize}px "DM Sans", sans-serif`
     const width = ctx.measureText(text).width
     if (width > 0) return width
   }
@@ -590,7 +655,7 @@ export function buildLegend(
     align: 'auto',
     itemWidth: 14,
     itemHeight: 10,
-    textStyle: { fontSize: 11, color: colors.textMuted },
+    textStyle: { fontSize: 11, color: colors.textMuted, fontFamily: CHART_FONT_SANS },
     // Keep the box inside the reserved column: truncate to the measured
     // budget; the legend tooltip exposes the full name on hover.
     formatter: (name: string) => {
@@ -761,8 +826,11 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height,
       })
       onChartReady?.(chartRef.current)
     }
-    // Merge transparent background for theme compatibility
+    // Merge transparent background for theme compatibility and default the
+    // chart's text to the product's humanist sans (data text overrides to
+    // mono in the shared axis/tooltip helpers).
     const themedOption = {
+      textStyle: { fontFamily: CHART_FONT_SANS },
       ...option,
       backgroundColor: 'transparent',
     }
@@ -818,6 +886,35 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height,
     ro.observe(containerRef.current)
     return () => ro.disconnect()
   }, [option])
+
+  // Charts mounted while hidden (display:none) initialize at 0×0 and the
+  // ResizeObserver above never sees the reveal. Redraw when the wrapper
+  // becomes visible again (live preview variant switching, tabs, panels).
+  const optionRef = useRef(option)
+  optionRef.current = option
+  useEffect(() => {
+    const el = wrapperRef.current
+    // jsdom (tests) and very old browsers lack IntersectionObserver.
+    if (!el || typeof IntersectionObserver === 'undefined') return
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return
+      const chart = chartRef.current
+      const container = containerRef.current
+      if (!chart || !container || container.clientHeight === 0) return
+      try {
+        const currentOpt = chart.getOption() as any
+        if (!currentOpt?.series?.length) {
+          chart.setOption({ ...optionRef.current, backgroundColor: 'transparent' }, { notMerge: true })
+        } else {
+          chart.resize()
+        }
+      } catch {
+        // ignore — ECharts may throw during transition; next reveal recovers
+      }
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
 
   useEffect(() => {
     return () => {

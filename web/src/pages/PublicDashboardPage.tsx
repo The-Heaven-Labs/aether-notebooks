@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useCallback } from 'react'
+import { useRef, useState, useCallback } from 'react'
 import { useParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
@@ -9,6 +9,7 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { QueryDataWidget } from '../components/QueryDataWidget'
+import { formatExecutedAt } from '../utils/formatDateTime'
 import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
@@ -32,23 +33,24 @@ export function PublicDashboardPage() {
   const [containerWidth, setContainerWidth] = useState(800)
   const [gap] = useState(MARGIN)
 
+  // Observe the grid as soon as it mounts (a mount-time effect would run
+  // while the loading skeleton is up and never attach), so window resizes
+  // reflow the layout without a reload.
+  const gridObserverRef = useRef<ResizeObserver | null>(null)
   const measureRef = useCallback((el: HTMLDivElement | null) => {
     gridRef.current = el
+    gridObserverRef.current?.disconnect()
+    gridObserverRef.current = null
     if (el) {
       setContainerWidth(el.clientWidth)
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setContainerWidth(entry.contentRect.width)
+        }
+      })
+      ro.observe(el)
+      gridObserverRef.current = ro
     }
-  }, [])
-
-  useEffect(() => {
-    const el = gridRef.current
-    if (!el) return
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerWidth(entry.contentRect.width)
-      }
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
   }, [])
 
   if (isLoading) return <div style={{ padding: 40 }}><Skeleton count={5} height={40} /></div>
@@ -68,8 +70,10 @@ export function PublicDashboardPage() {
   )
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
+  // Widgets are never shorter than 6 rows here either: below that the chart
+  // area collapses under the widget chrome (~40px plots).
   const totalHeight = visibleWidgets.reduce((max, w) => {
-    return Math.max(max, (w.layout?.row ?? 0) + (w.layout?.height ?? 4))
+    return Math.max(max, (w.layout?.row ?? 0) + Math.max(w.layout?.height ?? 4, 6))
   }, 0) * (ROW_HEIGHT + gap)
 
   const content = (
@@ -99,7 +103,8 @@ export function PublicDashboardPage() {
               const left = l.col * (colWidth + gap)
               const top = l.row * (ROW_HEIGHT + gap)
               const width = l.width * colWidth + (l.width - 1) * gap
-              const height = l.height * ROW_HEIGHT + (l.height - 1) * gap
+              const widgetRows = Math.max(l.height, 6)
+              const height = widgetRows * ROW_HEIGHT + (widgetRows - 1) * gap
               const wrapperStyle: React.CSSProperties = {
                 position: 'absolute',
                 left, top, width, height,
@@ -142,7 +147,7 @@ export function PublicDashboardPage() {
                       chartConfig={chartConfig}
                       footerExtra={cellData.updated_at ? (
                         <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
-                          Executed at {new Date(cellData.updated_at).toLocaleDateString([], { year: 'numeric', month: '2-digit', day: '2-digit' })} {new Date(cellData.updated_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                          Executed at {formatExecutedAt(cellData.updated_at)}
                         </span>
                       ) : undefined}
                     />

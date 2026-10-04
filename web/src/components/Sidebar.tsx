@@ -154,7 +154,11 @@ export function Sidebar() {
         {drawerOpen && (
           <div style={styles.overlay} onClick={() => setDrawerOpen(false)} />
         )}
-        <nav style={{ ...styles.sidebar, ...styles.drawer, transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)' }}>
+        <nav
+          inert={!drawerOpen}
+          aria-hidden={!drawerOpen}
+          style={{ ...styles.sidebar, ...styles.drawer, transform: drawerOpen ? 'translateX(0)' : 'translateX(-100%)' }}
+        >
           <div style={styles.drawerHeader}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--nav-text)' }}>Menu</span>
             <button style={styles.drawerCloseBtn} onClick={() => setDrawerOpen(false)} aria-label="Close sidebar">
@@ -182,6 +186,8 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--nav-bg)',
     borderRight: '1px solid var(--nav-border)',
     flexShrink: 0,
+    // Intentional layout animation: the rail collapse reflows the workspace
+    // by design (documented in DESIGN.md). Not transform-friendly.
     transition: 'width 0.2s ease',
     overflow: 'hidden',
   },

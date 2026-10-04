@@ -36,6 +36,8 @@ export function TwoPanelLayout({ leftPanel, rightPanel, leftWidth = 240 }: TwoPa
       <div style={{
         width: isMobile ? 0 : (collapsed ? 0 : leftWidth),
         overflow: 'hidden',
+        // Intentional layout animation: the panel collapse reflows the
+        // content area by design. Not transform-friendly.
         transition: 'width 0.2s ease',
         flexShrink: 0,
         borderRight: isMobile ? 'none' : (collapsed ? 'none' : '1px solid var(--border)'),

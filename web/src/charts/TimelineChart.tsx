@@ -1,6 +1,6 @@
 import { useMemo, useCallback } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect, buildLegend, legendColumnReserve } from './common'
+import { EChartsContainer, CHART_COLORS, getTooltipStyle, getAxisStyle, useChartColors, useRowsAsObjects, isTimeType, ChartTypeSelect, buildLegend, legendColumnReserve, narrowChartMedia } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function detectTimeColumns(columns: { name: string; type?: string }[]): string[] {
@@ -56,6 +56,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
           tooltip: { ...getTooltipStyle(), trigger: 'axis' as const },
           title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
           legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames: groups, reserveTopRight: true }) : undefined,
+          media: narrowChartMedia(legendShown),
           grid: { top: config.title ? 46 : 12, right: legendColumnReserve(legendShown, groups), bottom: 16, left: 16, containLabel: true },
           xAxis: { type: 'time' as const, ...getAxisStyle() },
           yAxis: { type: 'category' as const, data: groups, inverse: true, ...getAxisStyle(), splitLine: { show: config.showGrid !== false } },
@@ -179,6 +180,7 @@ function TimelineChartComponent({ data, config }: ChartProps) {
         },
         title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
         legend: legendShown ? buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames: groups, reserveTopRight: true }) : undefined,
+        media: narrowChartMedia(legendShown),
         grid: gridConfig,
         xAxis: { type: 'time' as const, ...getAxisStyle() },
         ...yAxisConfig,

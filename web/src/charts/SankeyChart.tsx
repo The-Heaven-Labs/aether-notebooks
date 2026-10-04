@@ -112,7 +112,8 @@ function SankeyChartComponent({ data, config }: ChartProps) {
     }],
   }), [nodes, links, colors, config.title, config.nodeWidth, config.nodeGap, config.nodeAlign])
 
-  return <EChartsContainer option={option} showReset />
+  // No Reset: a sankey cannot zoom or pan, so restore has nothing to undo.
+  return <EChartsContainer option={option} />
 }
 
 function SankeyConfigPanel({ config, columns, onChange, data }: ConfigPanelProps) {

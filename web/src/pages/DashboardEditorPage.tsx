@@ -9,6 +9,7 @@ import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { OutputRenderer } from '../components/OutputRenderer'
+import { QueryDataWidget } from '../components/QueryDataWidget'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
@@ -19,7 +20,6 @@ import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
 import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
-import { ReadOnlyCode } from '../components/ReadOnlyCode'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -37,9 +37,11 @@ const toGridItem = (w: Widget): LayoutItem => ({
   x: w.layout.col,
   y: w.layout.row,
   w: w.layout.width,
-  h: w.layout.height,
+  // Clamp the rendered height too: minH only constrains resizing, so a
+  // 4-row widget would still render ~40px of chart under the widget chrome.
+  h: Math.max(w.layout.height, 6),
   minW: 2,
-  minH: 4,
+  minH: 6,
   maxH: 24,
 })
 
@@ -51,15 +53,6 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
 
 function isQueryWidget(w: Widget): boolean {
   return !!w.connector_id && !!w.query
-}
-
-function QueryWidgetPreview({ widget }: { widget: Widget }) {
-  return (
-    <div style={widgetContentStyles.queryPreview}>
-      <span style={widgetContentStyles.queryLabel}>Query widget</span>
-      <ReadOnlyCode source={widget.query ?? ''} language="sql" />
-    </div>
-  )
 }
 
 function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
@@ -104,8 +97,6 @@ const widgetContentStyles: Record<string, React.CSSProperties> = {
   loading: { padding: '16px', fontSize: 13, color: 'var(--text-muted)' },
   empty: { padding: '16px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
   markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
-  queryPreview: { padding: 12, display: 'flex', flexDirection: 'column', gap: 8, height: '100%', overflow: 'auto' },
-  queryLabel: { fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' },
 }
 
 export function DashboardEditorPage() {
@@ -152,21 +143,22 @@ const markSaved = useCallback(() => {
   const isMobileLayout = containerWidth < 600
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
 
+  // Observe the grid as soon as it mounts (a mount-time effect would run
+  // while the loading skeleton is up and never attach), so window resizes
+  // reflow the layout without a reload.
+  const gridObserverRef = useRef<ResizeObserver | null>(null)
   const gridRef = useCallback((el: HTMLDivElement | null) => {
     gridContainerRef.current = el
+    gridObserverRef.current?.disconnect()
+    gridObserverRef.current = null
     if (el) {
       setContainerWidth(el.clientWidth)
+      const obs = new ResizeObserver(([entry]) => {
+        setContainerWidth(entry.contentRect.width)
+      })
+      obs.observe(el)
+      gridObserverRef.current = obs
     }
-  }, [])
-
-  useEffect(() => {
-    const el = gridContainerRef.current
-    if (!el) return
-    const obs = new ResizeObserver(([entry]) => {
-      setContainerWidth(entry.contentRect.width)
-    })
-    obs.observe(el)
-    return () => obs.disconnect()
   }, [])
 
   useLayoutEffect(() => {
@@ -380,8 +372,8 @@ const markSaved = useCallback(() => {
                     border: '1px solid var(--border)',
                     borderRadius: 4,
                     cursor: 'pointer',
-                    background: gridCols === c ? 'var(--accent)' : 'var(--bg-input)',
-                    color: gridCols === c ? '#fff' : 'var(--text-secondary)',
+                    background: gridCols === c ? 'var(--button-primary-bg)' : 'var(--bg-input)',
+                    color: gridCols === c ? 'var(--button-primary-text)' : 'var(--text-secondary)',
                   }}
                   onClick={async () => {
                     markSaving()
@@ -580,19 +572,26 @@ const markSaved = useCallback(() => {
           <div ref={gridRef} style={styles.mobileGrid}>
             {dashboard.widgets?.map((widget: Widget) => (
               <div key={widget.id} style={styles.mobileWidgetCard}>
-                <button
-                  type="button"
-                  style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                  title="Remove widget"
-                  onClick={() => setDeleteWidgetTarget(widget.id)}
-                >
-                  <X size={12} />
-                </button>
-                {isQueryWidget(widget) ? (
-                  <QueryWidgetPreview widget={widget} />
-                ) : (
-                  <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
-                )}
+                <div className="dash-widget-head">
+                  <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
+                  <div className="dash-widget-head-actions">
+                    <button
+                      type="button"
+                      className="dash-widget-ctl"
+                      title="Remove widget"
+                      onClick={() => setDeleteWidgetTarget(widget.id)}
+                    >
+                      <X size={12} />
+                    </button>
+                  </div>
+                </div>
+                <div className="dash-widget-data">
+                  {isQueryWidget(widget) ? (
+                    <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
+                  ) : (
+                    <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                  )}
+                </div>
               </div>
             ))}
           </div>
@@ -602,7 +601,10 @@ const markSaved = useCallback(() => {
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
               gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
-              dragConfig={{ enabled: true, handle: '.widget-drag-handle' }}
+              // Whole-card drag: any non-interactive part of the widget moves
+              // it. Buttons/links/fields and the chart canvas (tooltips,
+              // dataZoom) are excluded.
+              dragConfig={{ enabled: true, cancel: 'button, a, input, select, textarea, canvas, .react-resizable-handle' }}
               resizeConfig={{ enabled: true }}
               onResizeStop={onResizeStop}
               onDragStop={onDragStop}
@@ -610,40 +612,36 @@ const markSaved = useCallback(() => {
             >
               {dashboard.widgets?.map((widget: Widget) => (
                 <div key={widget.id} style={{ position: 'relative' }}>
-                  <div
-                    className="widget-drag-handle"
-                    style={{
-                      position: 'absolute',
-                      top: 0, left: 0, right: 0,
-                      height: 28,
-                      cursor: 'grab',
-                      zIndex: 1,
-                      borderRadius: '4px 4px 0 0',
-                    }}
-                    title="Drag to move"
-                  />
-                  <div style={styles.widgetCard}>
-                    <button
-                      type="button"
-                      style={{ ...styles.editWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      title="Edit widget"
-                      onClick={() => setEditingWidget(widget)}
-                    >
-                      <Pencil size={11} />
-                    </button>
-                    <button
-                      type="button"
-                      style={{ ...styles.deleteWidgetBtn, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-                      title="Remove widget"
-                      onClick={() => setDeleteWidgetTarget(widget.id)}
-                    >
-                      <X size={12} />
-                    </button>
-                    {isQueryWidget(widget) ? (
-                      <QueryWidgetPreview widget={widget} />
-                    ) : (
-                      <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
-                    )}
+                  <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
+                  <div className="dash-widget-card" style={styles.widgetCard}>
+                    <div className="dash-widget-head">
+                      <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
+                      <div className="dash-widget-head-actions">
+                        <button
+                          type="button"
+                          className="dash-widget-ctl"
+                          title="Edit widget"
+                          onClick={() => setEditingWidget(widget)}
+                        >
+                          <Pencil size={11} />
+                        </button>
+                        <button
+                          type="button"
+                          className="dash-widget-ctl"
+                          title="Remove widget"
+                          onClick={() => setDeleteWidgetTarget(widget.id)}
+                        >
+                          <X size={12} />
+                        </button>
+                      </div>
+                    </div>
+                    <div className="dash-widget-data">
+                      {isQueryWidget(widget) ? (
+                        <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
+                      ) : (
+                        <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                      )}
+                    </div>
                   </div>
                 </div>
               ))}
@@ -898,35 +896,5 @@ const styles: Record<string, React.CSSProperties> = {
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
-  },
-  deleteWidgetBtn: {
-    position: 'absolute',
-    top: 8,
-    right: 8,
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 12,
-    cursor: 'pointer',
-    color: 'var(--text-muted)',
-    padding: '2px 6px',
-    lineHeight: 1,
-    zIndex: 2,
-    opacity: 0.7,
-  },
-  editWidgetBtn: {
-    position: 'absolute',
-    top: 8,
-    right: 36,
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 12,
-    cursor: 'pointer',
-    color: 'var(--text-muted)',
-    padding: '2px 6px',
-    lineHeight: 1,
-    zIndex: 2,
-    opacity: 0.7,
   },
 }

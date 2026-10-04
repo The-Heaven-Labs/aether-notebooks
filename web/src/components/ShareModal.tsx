@@ -48,6 +48,15 @@ export function ShareModal({ resourceType, resourceId, canShare = true, onClose,
   const [confirmShare, setConfirmShare] = useState(false)
   const initialCellRef = useRef<HTMLDivElement>(null)
 
+  // Escape closes the modal (the nested confirm dialog handles its own Escape).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !confirmShare) onClose()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose, confirmShare])
+
   const publicUrl = token
     ? resourceType === 'dashboard'
       ? `${window.location.origin}/public/dashboards/${token}`
@@ -196,7 +205,7 @@ export function ShareModal({ resourceType, resourceId, canShare = true, onClose,
           100% { background: var(--bg-secondary); }
         }
       `}</style>
-      <div style={s.modal} onClick={e => e.stopPropagation()}>
+      <div role="dialog" aria-modal="true" aria-label={`Share ${resourceType}`} style={s.modal} onClick={e => e.stopPropagation()}>
         <div style={s.header}>
           <span style={s.title}>Share {resourceType}</span>
           <button style={s.closeBtn} onClick={onClose}>×</button>
@@ -307,10 +316,10 @@ const s: Record<string, React.CSSProperties> = {
   title: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' },
   closeBtn: { background: 'none', border: 'none', cursor: 'pointer', fontSize: 20, color: 'var(--text-muted)', lineHeight: 1, padding: '0 4px' },
   body: { padding: '18px', overflow: 'auto' },
-  btn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  btn: { padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   urlRow: { display: 'flex', gap: 8 },
   urlInput: { flex: 1, padding: '7px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 12, color: 'var(--text-primary)', background: 'var(--bg-input)', fontFamily: 'var(--font-mono)' },
-  copyBtn: { padding: '5px 12px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' },
+  copyBtn: { padding: '5px 12px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 12, cursor: 'pointer', whiteSpace: 'nowrap' },
   tabs: { display: 'flex', gap: 0, marginBottom: 14, borderBottom: '1px solid var(--border)' },
   tab: { padding: '6px 16px', background: 'none', border: 'none', borderBottom: '2px solid transparent', fontSize: 13, color: 'var(--text-muted)', cursor: 'pointer' },
   tabActive: { color: 'var(--accent)', borderBottomColor: 'var(--accent)', fontWeight: 600 },

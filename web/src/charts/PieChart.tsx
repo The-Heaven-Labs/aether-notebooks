@@ -36,7 +36,7 @@ export function buildPieGeometry(
 export function buildPieSeriesLabelConfig(
   config: Pick<ChartConfig, 'showLabels' | 'labelPosition' | 'minShowLabelAngle'>,
   outsideColor: string,
-  opts?: { hasTitle?: boolean },
+  opts?: { hasTitle?: boolean; dense?: boolean },
 ): {
   label: Record<string, unknown>
   labelLine: Record<string, unknown>
@@ -51,7 +51,9 @@ export function buildPieSeriesLabelConfig(
       ? { hideOverlap: false, y: titleBand }
       : { hideOverlap: false }
   }
-  if (config.showLabels === false) {
+  // Dense pies (many slices) crowd labels around the ring no matter how they
+  // are repositioned; drop them and let the tooltip + legend carry the names.
+  if (config.showLabels === false || opts?.dense) {
     return {
       label: { show: false },
       labelLine: { show: false },
@@ -88,32 +90,58 @@ function PieChartComponent({ data, config }: ChartProps) {
   const nameKey = config.labelColumn || xAxis
   const { showLabels, labelPosition, minShowLabelAngle } = config
 
+  // Deterministic slice order. SQL without ORDER BY (ClickHouse especially)
+  // may return rows in a different order on every run, which shuffled the
+  // palette and legend between runs. Sort by value (then name) so the same
+  // data always paints the same way; largest slice first.
+  const sliceData = useMemo(() => {
+    const rows = chartData.map(d => ({
+      name: String(d[nameKey] ?? ''),
+      value: Number(d[valueKey]) || 0,
+    }))
+    rows.sort((a, b) => b.value - a.value || a.name.localeCompare(b.name))
+    return rows
+  }, [chartData, nameKey, valueKey])
+
   const option = useMemo(() => {
-    const sliceNames = chartData.map(d => String(d[nameKey] ?? ''))
+    const sliceNames = sliceData.map(d => d.name)
     const geometry = buildPieGeometry(config)
     return {
-      tooltip: { trigger: 'item' as const, ...getTooltipStyle(), formatter: '{b}: {c} ({d}%)' },
+      tooltip: {
+        trigger: 'item' as const,
+        ...getTooltipStyle(),
+        // Skip the share percentage when the value already reads as one
+        // (percentage data would otherwise print "68.4 (68.4%)").
+        formatter: (params: { name?: string; value?: unknown; percent?: number }) => {
+          const value = Number(params.value)
+          const pct = Number(params.percent ?? 0)
+          const suffix = config.suffix ? ` ${config.suffix}` : ''
+          const showPct = !(isFinite(value) && Math.abs(pct - value) < 0.5)
+          return `${params.name ?? ''}: ${params.value}${suffix}${showPct ? ` (${pct}%)` : ''}`
+        },
+      },
       title: config.title ? { text: config.title, left: 'center', top: 8, textStyle: { fontSize: 14, color: colors.text } } : undefined,
       legend: buildLegend({ title: config.title, showLegend: config.showLegend }, colors, { seriesNames: sliceNames, reserveTopRight: true }),
       series: [{
         type: 'pie' as const,
         radius: geometry.radius,
         center: geometry.center,
-        data: chartData.map((d, i) => ({
-          name: d[nameKey],
-          value: d[valueKey],
-          itemStyle: { color: config.seriesColors?.[String(d[nameKey])] ?? CHART_COLORS[i % CHART_COLORS.length] },
+        data: sliceData.map((d, i) => ({
+          name: d.name,
+          value: d.value,
+          itemStyle: { color: config.seriesColors?.[d.name] ?? CHART_COLORS[i % CHART_COLORS.length] },
         })),
-        ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text, { hasTitle: !!config.title }),
+        ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text, { hasTitle: !!config.title, dense: sliceData.length > 12 }),
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
         roseType: config.roseType || false,
         startAngle: config.startAngle ?? 90,
         padAngle: config.padAngle ?? 0,
       }],
     }
-  }, [chartData, nameKey, valueKey, config.chartType, config.title, config.seriesColors, config.showLegend, showLabels, labelPosition, minShowLabelAngle, config.roseType, config.startAngle, config.padAngle, colors])
+  }, [sliceData, config.chartType, config.title, config.seriesColors, config.showLegend, showLabels, labelPosition, minShowLabelAngle, config.roseType, config.startAngle, config.padAngle, colors])
 
-  return <EChartsContainer option={option} showReset />
+  // No Reset: a pie cannot zoom or pan, so restore has nothing to undo.
+  return <EChartsContainer option={option} />
 }
 
 function PieConfigPanel({ config, columns, onChange, data }: ConfigPanelProps) {
