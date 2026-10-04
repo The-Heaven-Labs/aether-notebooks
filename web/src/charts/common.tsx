@@ -505,9 +505,14 @@ export function getTooltipStyle() {
     // the tooltip float free of any container; the z-index keeps it above
     // panels and drawers; max-height bounds pathological tooltips.
     appendToBody: true,
-    // Keep the whole tooltip inside the viewport: prefer above-right of the
-    // cursor, flip below when there is no room, then clamp both axes. Without
-    // this ECharts can place tall tooltips at negative coordinates.
+    // Tall tooltips are scrollable, so they must be reachable: let the mouse
+    // enter them (pointer-events) and keep them alive while the pointer
+    // travels from the chart to the tooltip.
+    enterable: true,
+    hideDelay: 800,
+    // Keep the whole tooltip inside the viewport. Tall tooltips pin to the
+    // top-right corner — a cursor-following box can never be caught with the
+    // mouse; small ones still follow the cursor.
     position: (
       point: number[],
       _params: unknown,
@@ -518,6 +523,11 @@ export function getTooltipStyle() {
       const [mx, my] = point
       const [cw, ch] = size.contentSize
       const [vw, vh] = size.viewSize
+      if (ch > 240) {
+        const px = Math.max(8, vw - cw - 16)
+        const py = Math.max(8, Math.min(60, vh - ch - 8))
+        return [px, py]
+      }
       let x = mx + 12
       let y = my - ch - 12
       if (y < 8) y = my + 16
