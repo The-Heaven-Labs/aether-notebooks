@@ -596,7 +596,7 @@ const markSaved = useCallback(() => {
             ))}
           </div>
         ) : (
-          <div style={{ minHeight: 240 }}>
+          <div ref={gridRef} style={{ minHeight: 240 }}>
             <GridLayout
               layout={dashboard.widgets?.map(toGridItem) ?? []}
               width={containerWidth}
