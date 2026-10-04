@@ -17,9 +17,9 @@ import (
 const (
 	// databricksConnectTimeout bounds connector creation and the initial ping.
 	// Databricks SQL warehouses auto-stop and a cold start can take tens of
-	// seconds, so this is intentionally longer than the Postgres/ClickHouse
-	// 10s budgets (which have no comparable cold start).
-	databricksConnectTimeout = 60 * time.Second
+	// seconds; 50s covers typical cold starts while staying under the server's
+	// 60s write timeout so a timed-out connect still returns a clean error.
+	databricksConnectTimeout = 50 * time.Second
 	defaultDatabricksPort    = 443
 )
 

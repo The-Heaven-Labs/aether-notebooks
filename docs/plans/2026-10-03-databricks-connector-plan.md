@@ -958,7 +958,10 @@ import (
 
 const (
 	// databricksConnectTimeout bounds connector creation and the initial ping.
-	databricksConnectTimeout = 10 * time.Second
+	// Databricks SQL warehouses auto-stop and a cold start can take tens of
+	// seconds; 50s covers typical cold starts while staying under the server's
+	// 60s write timeout so a timed-out connect still returns a clean error.
+	databricksConnectTimeout = 50 * time.Second
 	defaultDatabricksPort    = 443
 )
 
@@ -2121,3 +2124,25 @@ gh pr create --title "feat: Databricks connector (SQL warehouses)" --body "Imple
 - Live credentials are env-only and tests skip without them.
 - No migration is needed (`V053` dropped the type CHECK).
 - Existing connector types are regression-covered in Tasks 2–4.
+
+## Post-implementation deltas
+
+Recorded after execution and review; the design doc remains canonical.
+
+- Task 7 live tests were hardened during review: table cleanup registered before
+  CREATE/INSERT, exact decimal-string and `[1,2,3]` array assertions, pinned
+  driver-reported column types, `ORDER BY id` in the large-result query, and
+  partial-env fail-fast.
+- Task 8 also updated the row Edit initializer (the plan only named the deep-link
+  effect) and added `stored_auth_type` gating: a blank secret is accepted on edit
+  only when the auth type is unchanged, so switching PAT↔M2M requires the new
+  secret.
+- Task 9 uses CodeMirror `StandardSQL` for databricks: it tokenizes `/` and `~`
+  correctly, but does not style backtick-quoted identifiers (accepted cosmetic
+  limitation; MySQL would trade that the other way).
+- Connector handler tests set `AETHER_RATE_LIMIT_REGISTER=500` per test, matching
+  the package convention, to avoid 429 flakes.
+- The Databricks connect budget is 50 s (server write timeout is 60 s).
+- Live validation: PAT against a real workspace (connection, type round-trip,
+  command path, schema/databases). OAuth M2M and the opt-in 150k-row test were
+  not exercised (no credentials provided).
