@@ -96,3 +96,13 @@ FROM cloudtrail_events
 GROUP BY hour
 ORDER BY hour;
 ```
+
+## Postgres (agent usage stats)
+
+The Agent Usage page (`/agents/stats`) reads hourly rollups from `agent_stats_hourly`. The dev seed fills the Heaven Labs org with eight demo agents and seven days of hourly usage, so the page renders charts with enough legend entries to exercise layout:
+
+```bash
+task dev:seed-stats
+```
+
+The seed (`dev/seed-agent-stats.sql`) is idempotent — demo agents are matched by name and hourly buckets are upserted, so it is safe to re-run after a database reset or whenever the chart needs fresh data. In production the table is populated by the rollup worker from real agent messages (`POST /api/v1/agents/stats/rollup` rolls up on demand).

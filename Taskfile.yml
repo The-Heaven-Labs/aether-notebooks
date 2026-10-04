@@ -136,6 +136,11 @@ tasks:
     cmds:
       - npm run storybook
 
+  dev:seed-stats:
+    desc: Seed demo agent usage stats so the Agent Usage page renders charts
+    cmds:
+      - docker compose -f docker-compose.dev.yml exec -T aether-postgres psql -U aether -d aether -v ON_ERROR_STOP=1 < dev/seed-agent-stats.sql
+
   # ── Testing ──────────────────────────────────────────────────────────────────
 
   test:

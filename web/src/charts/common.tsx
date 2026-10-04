@@ -819,6 +819,34 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height,
     return () => ro.disconnect()
   }, [option])
 
+  // Charts mounted while hidden (display:none) initialize at 0×0 and the
+  // ResizeObserver above never sees the reveal. Redraw when the wrapper
+  // becomes visible again (live preview variant switching, tabs, panels).
+  const optionRef = useRef(option)
+  optionRef.current = option
+  useEffect(() => {
+    const el = wrapperRef.current
+    if (!el) return
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return
+      const chart = chartRef.current
+      const container = containerRef.current
+      if (!chart || !container || container.clientHeight === 0) return
+      try {
+        const currentOpt = chart.getOption() as any
+        if (!currentOpt?.series?.length) {
+          chart.setOption({ ...optionRef.current, backgroundColor: 'transparent' }, { notMerge: true })
+        } else {
+          chart.resize()
+        }
+      } catch {
+        // ignore — ECharts may throw during transition; next reveal recovers
+      }
+    })
+    io.observe(el)
+    return () => io.disconnect()
+  }, [])
+
   useEffect(() => {
     return () => {
       chartRef.current?.dispose()
