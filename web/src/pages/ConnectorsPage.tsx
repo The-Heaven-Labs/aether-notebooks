@@ -112,9 +112,10 @@ function connectorFormMissingField(f: ConnectorForm, forUpdate: boolean): string
   if (f.type === 'postgres' && !f.database) return 'Database is required'
   if (f.type === 'databricks') {
     if (!f.http_path) return 'HTTP Path is required'
-    if (f.auth_type === 'pat') return forUpdate || f.token !== '' ? undefined : 'Token is required'
+    const sameStoredAuth = forUpdate && f.stored_auth_type === f.auth_type
+    if (f.auth_type === 'pat') return f.token !== '' || sameStoredAuth ? undefined : 'Token is required'
     if (!f.client_id) return 'Client ID is required'
-    return forUpdate || f.client_secret !== '' ? undefined : 'Client Secret is required'
+    return f.client_secret !== '' || sameStoredAuth ? undefined : 'Client Secret is required'
   }
   return undefined
 }

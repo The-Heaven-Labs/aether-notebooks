@@ -84,6 +84,25 @@ func TestMaskedConnectorConfig(t *testing.T) {
 	}
 }
 
+func TestMaskedConnectorConfigDatabricksSecrets(t *testing.T) {
+	s := &Server{masterKey: []byte("0123456789abcdef0123456789abcdef")}
+	enc, err := crypto.Encrypt([]byte(`{"host":"h","http_path":"/p","token":"t","client_secret":"s"}`), s.masterKey)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	out := s.maskedConnectorConfig(models.ConnectorDatabricks, enc)
+	var cfg map[string]any
+	if err := json.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg["token"] != "***" || cfg["client_secret"] != "***" {
+		t.Fatalf("expected both secrets masked, got %v", cfg)
+	}
+	if cfg["host"] != "h" || cfg["http_path"] != "/p" {
+		t.Fatalf("expected non-secret fields preserved, got %v", cfg)
+	}
+}
+
 func TestSecretFieldSetFallsBackForUnknownDriver(t *testing.T) {
 	keys := secretFieldSet(models.ConnectorType("nonexistent"))
 	for _, k := range []string{"password", "token", "client_secret"} {

@@ -58,6 +58,8 @@ func TestSecretFieldsDeclared(t *testing.T) {
 		{"postgres", &PostgresDriver{}, "password"},
 		{"clickhouse", &ClickHouseDriver{}, "password"},
 		{"opensearch", &OpenSearchDriver{}, "password"},
+		{"databricks token", &DatabricksDriver{}, "token"},
+		{"databricks client_secret", &DatabricksDriver{}, "client_secret"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

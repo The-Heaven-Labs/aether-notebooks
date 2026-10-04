@@ -109,8 +109,8 @@ Aether stores only the client ID/secret (AES-encrypted like a password).
 `internal/executor/databricks.go`:
 
 - **Construction:** validate conditional auth; normalize host; `sql.OpenDB`; bound `PingContext`
-  at 10 s (mirrors `postgresConnectTimeout`). Failure closes the handle. The session timezone
-  is pinned to UTC so DATE/TIMESTAMP parsing is deterministic across warehouses.
+  at 60 s (warehouses auto-stop; cold starts can take tens of seconds). Failure closes the handle.
+  The session timezone is pinned to UTC so DATE/TIMESTAMP parsing is deterministic across warehouses.
 - **Execute:** identical shape to the other executors:
   1. `ResolveParams` (`{{param}}` substitution).
   2. Prepend `/* aether_user:<email> */` when `CtxUserEmail` is set (as Postgres/ClickHouse do).
