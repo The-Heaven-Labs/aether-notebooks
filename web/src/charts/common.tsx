@@ -487,13 +487,19 @@ export function useChartColors() {
   return colors
 }
 
+// Canvas text can't use CSS variables, so the design system's stacks are
+// duplicated here. Titles/labels speak DM Sans; data (axis values, tooltips,
+// measurements) speaks JetBrains Mono — the Two Scripts Rule.
+export const CHART_FONT_SANS = 'DM Sans, -apple-system, BlinkMacSystemFont, sans-serif'
+export const CHART_FONT_MONO = 'JetBrains Mono, Fira Code, ui-monospace, monospace'
+
 export function getTooltipStyle() {
   const c = getChartColors()
   return {
     backgroundColor: c.bgCard,
     borderColor: c.border,
     borderRadius: 4,
-    textStyle: { fontSize: 12, color: c.text },
+    textStyle: { fontSize: 12, color: c.text, fontFamily: CHART_FONT_MONO },
     extraCssText: `box-shadow: 0 2px 16px ${c.shadow};`,
   }
 }
@@ -503,7 +509,7 @@ export function getAxisStyle(showGrid?: boolean) {
   return {
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { fontSize: 11, color: c.textMuted },
+    axisLabel: { fontSize: 11, color: c.textMuted, fontFamily: CHART_FONT_MONO },
     splitLine: { show: showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } },
   }
 }
@@ -514,6 +520,30 @@ export function getAxisStyle(showGrid?: boolean) {
 // sane for both short and pathological names.
 export const LEGEND_COLUMN_MIN = 160
 export const LEGEND_COLUMN_MAX = 280
+
+// Below this container width the right-hand legend column leaves almost no
+// plot (a 4-row widget can be ~175px wide). Charts collapse the legend to a
+// single scrollable row under the plot instead — see narrowChartMedia.
+export const NARROW_CHART_WIDTH = 340
+
+// ECharts `media` override for narrow containers. Modules add it to their
+// option so the chart itself adapts by its own width, not the viewport's.
+// Returns undefined when the legend is disabled (an override must not switch
+// a hidden legend back on).
+export function narrowChartMedia(showLegend: boolean | undefined): Record<string, unknown>[] | undefined {
+  if (showLegend === false) return undefined
+  return [{
+    query: { maxWidth: NARROW_CHART_WIDTH },
+    option: {
+      legend: {
+        orient: 'horizontal' as const,
+        right: 'auto', top: 'auto', left: 'center', bottom: 0,
+        width: 'auto', height: 'auto',
+      },
+      grid: { right: 12, bottom: 30 },
+    },
+  }]
+}
 
 // Fallback average glyph width at fontSize 11 (≈6.2px/char) used when a real
 // canvas is unavailable (jsdom/SSR) or yields no measurement.
@@ -537,7 +567,7 @@ function getMeasureContext(): CanvasRenderingContext2D | null {
 function measureTextWidth(text: string, fontSize: number): number {
   const ctx = getMeasureContext()
   if (ctx) {
-    ctx.font = `${fontSize}px sans-serif`
+    ctx.font = `${fontSize}px "DM Sans", sans-serif`
     const width = ctx.measureText(text).width
     if (width > 0) return width
   }
@@ -590,7 +620,7 @@ export function buildLegend(
     align: 'auto',
     itemWidth: 14,
     itemHeight: 10,
-    textStyle: { fontSize: 11, color: colors.textMuted },
+    textStyle: { fontSize: 11, color: colors.textMuted, fontFamily: CHART_FONT_SANS },
     // Keep the box inside the reserved column: truncate to the measured
     // budget; the legend tooltip exposes the full name on hover.
     formatter: (name: string) => {
@@ -761,8 +791,11 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height,
       })
       onChartReady?.(chartRef.current)
     }
-    // Merge transparent background for theme compatibility
+    // Merge transparent background for theme compatibility and default the
+    // chart's text to the product's humanist sans (data text overrides to
+    // mono in the shared axis/tooltip helpers).
     const themedOption = {
+      textStyle: { fontFamily: CHART_FONT_SANS },
       ...option,
       backgroundColor: 'transparent',
     }

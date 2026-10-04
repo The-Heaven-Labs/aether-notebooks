@@ -32,8 +32,8 @@ body {
   position: absolute;
   top: -40px;
   left: 0;
-  background: var(--accent);
-  color: #fff;
+  background: var(--button-primary-bg);
+  color: var(--button-primary-text);
   padding: 8px 16px;
   z-index: 9999;
   font-size: 13px;

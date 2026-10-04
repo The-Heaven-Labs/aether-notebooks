@@ -32,23 +32,24 @@ export function PublicDashboardPage() {
   const [containerWidth, setContainerWidth] = useState(800)
   const [gap] = useState(MARGIN)
 
+  // Observe the grid as soon as it mounts (a mount-time effect would run
+  // while the loading skeleton is up and never attach), so window resizes
+  // reflow the layout without a reload.
+  const gridObserverRef = useRef<ResizeObserver | null>(null)
   const measureRef = useCallback((el: HTMLDivElement | null) => {
     gridRef.current = el
+    gridObserverRef.current?.disconnect()
+    gridObserverRef.current = null
     if (el) {
       setContainerWidth(el.clientWidth)
+      const ro = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          setContainerWidth(entry.contentRect.width)
+        }
+      })
+      ro.observe(el)
+      gridObserverRef.current = ro
     }
-  }, [])
-
-  useEffect(() => {
-    const el = gridRef.current
-    if (!el) return
-    const ro = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setContainerWidth(entry.contentRect.width)
-      }
-    })
-    ro.observe(el)
-    return () => ro.disconnect()
   }, [])
 
   if (isLoading) return <div style={{ padding: 40 }}><Skeleton count={5} height={40} /></div>

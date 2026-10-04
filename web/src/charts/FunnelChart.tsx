@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 import type { ChartModule, ChartProps, ConfigPanelProps } from './types'
-import { EChartsContainer, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, ChartTypeSelect, CHART_COLORS, buildLegend, estimateLegendColumnWidth } from './common'
+import { EChartsContainer, getTooltipStyle, getContrastTextColor, useChartColors, useRowsAsObjects, ChartTypeSelect, CHART_COLORS, buildLegend, estimateLegendColumnWidth, CHART_FONT_MONO } from './common'
 import { ConfigHint } from './ConfigHint'
 
 function FunnelChartComponent({ data, config }: ChartProps) {
@@ -48,9 +48,12 @@ function FunnelChartComponent({ data, config }: ChartProps) {
         gap: 2,
         sort: config.funnelSort ?? 'descending',
         label: {
-          show: config.showLabels !== false,
+          // Dense funnels stack labels inside narrow bands until they are
+          // unreadable; drop them past 10 stages and rely on the tooltip.
+          show: config.showLabels !== false && funnelData.length <= 10,
           position: 'inside' as const,
           fontSize: 11,
+          fontFamily: CHART_FONT_MONO,
           formatter: '{b}: {c}' + (config.suffix ? ` ${config.suffix}` : ''),
         },
         labelLine: { show: false },

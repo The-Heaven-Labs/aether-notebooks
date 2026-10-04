@@ -36,7 +36,7 @@ export function buildPieGeometry(
 export function buildPieSeriesLabelConfig(
   config: Pick<ChartConfig, 'showLabels' | 'labelPosition' | 'minShowLabelAngle'>,
   outsideColor: string,
-  opts?: { hasTitle?: boolean },
+  opts?: { hasTitle?: boolean; dense?: boolean },
 ): {
   label: Record<string, unknown>
   labelLine: Record<string, unknown>
@@ -51,7 +51,9 @@ export function buildPieSeriesLabelConfig(
       ? { hideOverlap: false, y: titleBand }
       : { hideOverlap: false }
   }
-  if (config.showLabels === false) {
+  // Dense pies (many slices) crowd labels around the ring no matter how they
+  // are repositioned; drop them and let the tooltip + legend carry the names.
+  if (config.showLabels === false || opts?.dense) {
     return {
       label: { show: false },
       labelLine: { show: false },
@@ -104,7 +106,7 @@ function PieChartComponent({ data, config }: ChartProps) {
           value: d[valueKey],
           itemStyle: { color: config.seriesColors?.[String(d[nameKey])] ?? CHART_COLORS[i % CHART_COLORS.length] },
         })),
-        ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text, { hasTitle: !!config.title }),
+        ...buildPieSeriesLabelConfig({ showLabels, labelPosition, minShowLabelAngle }, colors.text, { hasTitle: !!config.title, dense: chartData.length > 12 }),
         emphasis: { itemStyle: { shadowBlur: 10, shadowColor: 'rgba(0,0,0,0.2)' } },
         roseType: config.roseType || false,
         startAngle: config.startAngle ?? 90,

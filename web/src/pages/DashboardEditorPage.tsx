@@ -152,21 +152,22 @@ const markSaved = useCallback(() => {
   const isMobileLayout = containerWidth < 600
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
 
+  // Observe the grid as soon as it mounts (a mount-time effect would run
+  // while the loading skeleton is up and never attach), so window resizes
+  // reflow the layout without a reload.
+  const gridObserverRef = useRef<ResizeObserver | null>(null)
   const gridRef = useCallback((el: HTMLDivElement | null) => {
     gridContainerRef.current = el
+    gridObserverRef.current?.disconnect()
+    gridObserverRef.current = null
     if (el) {
       setContainerWidth(el.clientWidth)
+      const obs = new ResizeObserver(([entry]) => {
+        setContainerWidth(entry.contentRect.width)
+      })
+      obs.observe(el)
+      gridObserverRef.current = obs
     }
-  }, [])
-
-  useEffect(() => {
-    const el = gridContainerRef.current
-    if (!el) return
-    const obs = new ResizeObserver(([entry]) => {
-      setContainerWidth(entry.contentRect.width)
-    })
-    obs.observe(el)
-    return () => obs.disconnect()
   }, [])
 
   useLayoutEffect(() => {
@@ -380,8 +381,8 @@ const markSaved = useCallback(() => {
                     border: '1px solid var(--border)',
                     borderRadius: 4,
                     cursor: 'pointer',
-                    background: gridCols === c ? 'var(--accent)' : 'var(--bg-input)',
-                    color: gridCols === c ? '#fff' : 'var(--text-secondary)',
+                    background: gridCols === c ? 'var(--button-primary-bg)' : 'var(--bg-input)',
+                    color: gridCols === c ? 'var(--button-primary-text)' : 'var(--text-secondary)',
                   }}
                   onClick={async () => {
                     markSaving()

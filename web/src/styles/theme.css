@@ -793,6 +793,44 @@ input[type="color"] {
   }
 }
 
+/* ── Dashboard chrome (DashboardPage) ───────────────────────────────────── */
+.dash-header {
+  padding: 0 12px;
+}
+
+.dash-cols {
+  display: flex;
+}
+
+@media (max-width: 767px) {
+  .dash-header {
+    flex-wrap: wrap;
+    padding: 8px 12px;
+    row-gap: 8px;
+  }
+
+  .dash-header-left {
+    min-width: 0;
+  }
+
+  .dash-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .dash-header-right {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  /* The column selector is an editing control; it leaves the view header on
+     narrow screens (the editor keeps its own responsive variant). */
+  .dash-cols {
+    display: none;
+  }
+}
+
 /* ── Floating panel entrance (notebook history) ─────────────────────────── */
 @keyframes floating-panel-in {
   from { opacity: 0; transform: translateX(10px); }

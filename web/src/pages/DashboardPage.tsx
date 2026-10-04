@@ -216,21 +216,22 @@ function DashboardContent({ id }: { id: string }) {
   const [showShare, setShowShare] = useState(false)
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
 
+  // Observe the grid as soon as it mounts (a mount-time effect would run
+  // while the loading skeleton is up and never attach), so window resizes
+  // reflow the layout without a reload.
+  const gridObserverRef = useRef<ResizeObserver | null>(null)
   const gridRef = useCallback((el: HTMLDivElement | null) => {
     gridContainerRef.current = el
+    gridObserverRef.current?.disconnect()
+    gridObserverRef.current = null
     if (el) {
       setContainerWidth(el.clientWidth)
+      const obs = new ResizeObserver(([entry]) => {
+        setContainerWidth(entry.contentRect.width)
+      })
+      obs.observe(el)
+      gridObserverRef.current = obs
     }
-  }, [])
-
-  useEffect(() => {
-    const el = gridContainerRef.current
-    if (!el) return
-    const obs = new ResizeObserver(([entry]) => {
-      setContainerWidth(entry.contentRect.width)
-    })
-    obs.observe(el)
-    return () => obs.disconnect()
   }, [])
 
   useLayoutEffect(() => {
@@ -333,21 +334,21 @@ function DashboardContent({ id }: { id: string }) {
     <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables}>
     <AppShell noPadding>
       {/* Sub-header */}
-      <header style={styles.subHeader}>
-        <div style={styles.headerLeft}>
+      <header className="dash-header" style={styles.subHeader}>
+        <div className="dash-header-left" style={styles.headerLeft}>
           <Link to="/dashboards" style={styles.backLink}>
             <ArrowLeft size={14} style={{ flexShrink: 0 }} />
             <span>Dashboards</span>
           </Link>
           <span style={styles.breadcrumbSep}>/</span>
-          <span style={styles.dashboardTitle}>{dashboard.title}</span>
+          <span className="dash-title" style={styles.dashboardTitle}>{dashboard.title}</span>
         </div>
         {/* Run all + auto-refresh */}
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <div className="dash-header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <button
             style={{
               padding: '5px 12px', fontSize: 12, fontWeight: 600,
-              background: 'var(--accent)', color: '#fff',
+              background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)',
               border: 'none', borderRadius: 4, cursor: 'pointer',
               opacity: isRefreshing ? 0.6 : 1,
             }}
@@ -387,7 +388,7 @@ function DashboardContent({ id }: { id: string }) {
           )}
 
           {/* Column count selector */}
-          <div style={{ display: 'flex', gap: 2, background: 'var(--border-light)', padding: 2, borderRadius: 4 }}>
+          <div className="dash-cols" style={{ gap: 2, background: 'var(--border-light)', padding: 2, borderRadius: 4 }}>
             {[6, 8, 12, 16, 24].map(cols => (
               <button
                 key={cols}
@@ -550,11 +551,10 @@ const styles: Record<string, React.CSSProperties> = {
   subHeader: {
     background: 'var(--nav-bg)',
     borderBottom: '1px solid var(--nav-border)',
-    height: 44,
+    minHeight: 44,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '0 12px',
     flexShrink: 0,
     position: 'sticky',
     top: 0,
