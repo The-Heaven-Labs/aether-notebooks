@@ -1,13 +1,25 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { Fragment, useState, useEffect, useRef, useCallback, useId, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import {
+  X,
+  Users,
+  UsersRound,
+  UserPlus,
+  Search,
+  Check,
+  Copy,
+  ShieldCheck,
+} from 'lucide-react'
 import { api } from '../api/client'
 import { groupLabel } from '../utils/groupLabel'
 import { chatLinkUrl } from '../utils/chatLink'
+import { ConfirmModal } from './ConfirmModal'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'mcp_server' | 'tool' | 'agent_session'
+type SubjectType = 'user' | 'group' | 'org_role'
 
 const ACTION_LABELS: Record<ResourceType, string[]> = {
   folder:      ['view', 'create', 'edit', 'manage', 'delete'],
@@ -23,7 +35,21 @@ const ACTION_LABELS: Record<ResourceType, string[]> = {
   agent_session: ['view'],
 }
 
-// Actions the API enforces for a resource type that have no checkbox in the
+// Instrument-label badge per resource type (internal type keys stay internal).
+const RESOURCE_LABELS: Record<ResourceType, string> = {
+  folder:       'Folder',
+  notebook:     'Notebook',
+  connector:    'Connector',
+  dashboard:    'Dashboard',
+  agent:        'Agent',
+  model_config: 'Model',
+  skill:        'Skill',
+  mcp_server:   'MCP Server',
+  tool:         'Tool',
+  agent_session:'Chat',
+}
+
+// Actions the API enforces for a resource type that have no chip in the
 // panel. The save path keeps them on existing entries so an invisible
 // permission is never silently revoked: notebook "create" gates adding and
 // duplicating cells (handleCreateCell) and is seeded on notebook creation.
@@ -94,7 +120,7 @@ const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
 
 interface AclEntry {
   id: string
-  subject_type: 'user' | 'group' | 'org_role'
+  subject_type: SubjectType
   subject_id: string
   actions: string[]
 }
@@ -110,6 +136,7 @@ interface Group {
   id: string
   name: string
   display_name?: string | null
+  source?: string | null
 }
 
 /** Owner-only notebook-viewer inheritance control for agent sessions. The
@@ -144,7 +171,7 @@ export interface PermissionsPanelProps {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 /** Narrows an entry's actions to those valid for the resource type, using the
- * checkbox matrix as the source of truth plus any unrendered backend-enforced
+ * chip set as the source of truth plus any unrendered backend-enforced
  * actions. Saves must never PUT actions the resource's write path rejects
  * (e.g. the owner's full-access actions on a read-only agent_session). */
 function constrainActions(resourceType: ResourceType, entryActions: string[]): string[] {
@@ -164,218 +191,165 @@ function initials(name: string): string {
     .join('')
 }
 
-function Avatar({ name, type }: { name: string; type: 'user' | 'group' | 'org_role' }) {
+function subjectKey(subjectType: SubjectType, subjectId: string): string {
+  return `${subjectType}:${subjectId}`
+}
+
+function Avatar({ name, type, size = 30 }: { name: string; type: SubjectType; size?: number }) {
   return (
-    <div style={styles.avatar}>
-      {type === 'group' ? '#' : type === 'org_role' ? '★' : initials(name)}
+    <span
+      aria-hidden="true"
+      className={`access-avatar${type === 'user' ? ' is-user' : ''}`}
+      style={{ width: size, height: size, fontSize: size <= 24 ? 10 : 11 }}
+    >
+      {type === 'user' ? initials(name) : type === 'group' ? <Users size={13} /> : <UsersRound size={13} />}
+    </span>
+  )
+}
+
+// ─── Capability chips ────────────────────────────────────────────────────────
+
+interface ActionChipsProps {
+  actions: string[]
+  selected: string[]
+  descriptions: Record<string, string>
+  disabled?: boolean
+  onChange: (action: string) => void
+}
+
+/** One chip per grantable action. Selected chips are filled; `delete` carries
+ * the destructive treatment so the riskiest action never blends in. */
+function ActionChips({ actions, selected, descriptions, disabled = false, onChange }: ActionChipsProps) {
+  return (
+    <div className="access-chips">
+      {actions.map((action) => {
+        const on = selected.includes(action)
+        return (
+          <button
+            key={action}
+            type="button"
+            className={`access-chip${action === 'delete' ? ' is-destructive' : ''}`}
+            aria-pressed={on}
+            disabled={disabled}
+            title={descriptions[action] ?? action}
+            onClick={() => onChange(action)}
+          >
+            {action}
+          </button>
+        )
+      })}
     </div>
   )
 }
 
-// ─── Searchable Subject Selector ─────────────────────────────────────────────
+// ─── Subject picker (inline, no floating popover) ────────────────────────────
 
-interface SubjectSearchProps {
-  members: Array<{ user_id: string; email: string; name?: string }>
-  groups: Array<{ id: string; name: string; display_name?: string | null }>
-  resourceOwnerId?: string
-  value: string
-  onChange: (key: string) => void
+interface PickerOption {
+  key: string
+  kind: SubjectType
+  name: string
+  secondary?: string
+  section: 'People' | 'Groups' | 'Organization'
 }
 
-function SubjectSearch({ members, groups, resourceOwnerId, value, onChange }: SubjectSearchProps) {
-  const [open, setOpen] = useState(false)
+interface SubjectPickerProps {
+  options: PickerOption[]
+  onPick: (option: PickerOption) => void
+  onCancel: () => void
+}
+
+function SubjectPicker({ options, onPick, onCancel }: SubjectPickerProps) {
   const [query, setQuery] = useState('')
   const [focusedIdx, setFocusedIdx] = useState(-1)
-  const containerRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
-  const listRef = useRef<HTMLUListElement>(null)
-
-  const availableMembers = members.filter(m => m.user_id !== resourceOwnerId)
-  const selectedGroup = value?.startsWith('group:')
-    ? groups.find(g => 'group:' + g.id === value)
-    : undefined
-  const displayLabel = value === 'org_role:everyone'
-    ? 'Everyone (all members)'
-    : value?.startsWith('user:')
-      ? availableMembers.find(m => 'user:' + m.user_id === value)?.name
-        || availableMembers.find(m => 'user:' + m.user_id === value)?.email
-        || 'Selected'
-      : value?.startsWith('group:')
-        ? (selectedGroup ? groupLabel(selectedGroup) : 'Selected')
-        : 'Select user, group, or Everyone…'
-
-  const q = query.toLowerCase().trim()
-  const filtered: Array<{ key: string; label: string; group: string }> = [
-    { key: 'org_role:everyone', label: 'Everyone (all members)', group: '' },
-    ...availableMembers
-      .filter(m => !q || (m.name?.toLowerCase() || '').includes(q) || m.email.toLowerCase().includes(q))
-      .map(m => ({ key: 'user:' + m.user_id, label: m.name || m.email, group: 'Users' })),
-    ...groups
-      .filter(g => !q || groupLabel(g).toLowerCase().includes(q) || g.name.toLowerCase().includes(q))
-      .map(g => ({ key: 'group:' + g.id, label: groupLabel(g), group: 'Groups' })),
-  ]
-
-  const selectOption = useCallback((key: string) => {
-    onChange(key)
-    setOpen(false)
-    setQuery('')
-    setFocusedIdx(-1)
-  }, [onChange])
 
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
-        setOpen(false)
-        setQuery('')
-        setFocusedIdx(-1)
-      }
-    }
-    document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
+    inputRef.current?.focus()
   }, [])
 
-  useEffect(() => {
-    if (open) inputRef.current?.focus()
-  }, [open])
-
-  useEffect(() => {
-    if (focusedIdx >= 0 && listRef.current) {
-      const el = listRef.current.children[focusedIdx] as HTMLElement
-      el?.scrollIntoView?.({ block: 'nearest' })
-    }
-  }, [focusedIdx])
+  const q = query.trim().toLowerCase()
+  const filtered = q
+    ? options.filter((o) =>
+        o.name.toLowerCase().includes(q) ||
+        (o.secondary ?? '').toLowerCase().includes(q))
+    : options
 
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setFocusedIdx(i => Math.min(i + 1, filtered.length - 1))
+      setFocusedIdx((i) => Math.min(i + 1, filtered.length - 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      setFocusedIdx(i => Math.max(i - 1, -1))
-    } else if (e.key === 'Enter' && focusedIdx >= 0) {
+      setFocusedIdx((i) => Math.max(i - 1, -1))
+    } else if (e.key === 'Enter' && focusedIdx >= 0 && filtered[focusedIdx]) {
       e.preventDefault()
-      selectOption(filtered[focusedIdx].key)
+      onPick(filtered[focusedIdx])
     } else if (e.key === 'Escape') {
-      setOpen(false)
-      setQuery('')
-      setFocusedIdx(-1)
+      // Close the picker first; the dialog's window-level Escape handler
+      // skips events already handled locally (defaultPrevented).
+      e.preventDefault()
+      e.stopPropagation()
+      onCancel()
     }
   }
 
   return (
-    <div ref={containerRef} style={{ position: 'relative', flex: 1 }}>
-      <button
-        type="button"
-        style={{
-          width: '100%',
-          textAlign: 'left',
-          padding: '7px 10px',
-          fontSize: 12,
-          background: 'var(--bg-input)',
-          color: value ? 'var(--text-primary)' : 'var(--text-muted)',
-          border: '1px solid var(--border)',
-          borderRadius: 4,
-          cursor: 'pointer',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          gap: 8,
-        }}
-        onClick={() => { setOpen(v => !v); setFocusedIdx(-1) }}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-      >
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{displayLabel}</span>
-        <span style={{ flexShrink: 0, fontSize: 10, color: 'var(--text-muted)', transform: open ? 'rotate(180deg)' : undefined }}>▾</span>
-      </button>
-      {open && (
-        <div style={{
-          position: 'absolute',
-          top: '100%',
-          left: 0,
-          right: 0,
-          zIndex: 100,
-          background: 'var(--bg-elevated)',
-          border: '1px solid var(--border)',
-          borderRadius: 4,
-          boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-          marginTop: 2,
-        }}>
-          <div style={{ padding: '6px 8px', borderBottom: '1px solid var(--border)' }}>
-            <input
-              ref={inputRef}
-              style={{
-                width: '100%',
-                padding: '5px 8px',
-                fontSize: 12,
-                background: 'var(--bg-input)',
-                color: 'var(--text-primary)',
-                border: '1px solid var(--border)',
-                borderRadius: 3,
-                outline: 'none',
-                boxSizing: 'border-box',
-              }}
-              type="text"
-              value={query}
-              onChange={(e) => { setQuery(e.target.value); setFocusedIdx(-1) }}
-              onKeyDown={handleKeyDown}
-              placeholder="Search…"
-              autoComplete="off"
-            />
-          </div>
-          <ul ref={listRef} style={{
-            listStyle: 'none',
-            margin: 0,
-            padding: '4px 0',
-            maxHeight: 240,
-            overflowY: 'auto',
-          }} role="listbox">
-            {filtered.length === 0 && (
-              <li style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-muted)' }}>No matches found</li>
-            )}
-            {filtered.map((item, idx) => {
-              const isEveryone = item.key === 'org_role:everyone'
-              const isSelected = item.key === value
-              const isFocused = idx === focusedIdx
-              const showGroupHeader = idx === 0 && !q
-                ? false
-                : idx > 0 && filtered[idx - 1].group !== item.group
-              return (
-                <div key={item.key}>
-                  {!q && showGroupHeader && item.group && (
-                    <li style={{
-                      padding: '3px 12px',
-                      fontSize: 10,
-                      fontWeight: 700,
-                      color: 'var(--text-muted)',
-                      textTransform: 'uppercase' as const,
-                      letterSpacing: 0.5,
-                      listStyle: 'none',
-                    }}>{item.group}</li>
-                  )}
-                  <li
-                    role="option"
-                    aria-selected={isSelected}
-                    style={{
-                      padding: '6px 12px',
-                      fontSize: 12,
-                      cursor: 'pointer',
-                      background: isFocused ? 'var(--accent-light)' : 'transparent',
-                      color: isSelected ? 'var(--accent)' : isEveryone ? 'var(--text-primary)' : 'var(--text-primary)',
-                      fontWeight: isEveryone ? 600 : 400,
-                      listStyle: 'none',
-                    }}
-                    onMouseEnter={() => setFocusedIdx(idx)}
-                    onMouseDown={(e) => { e.preventDefault(); selectOption(item.key) }}
-                  >
-                    {item.label}
-                  </li>
-                </div>
-              )
-            })}
-          </ul>
-        </div>
-      )}
+    <div className="access-picker">
+      <div className="access-picker-search">
+        <Search size={14} aria-hidden="true" className="access-picker-search-icon" />
+        <input
+          ref={inputRef}
+          type="text"
+          role="combobox"
+          aria-expanded="true"
+          aria-controls="access-picker-listbox"
+          aria-activedescendant={focusedIdx >= 0 ? `access-picker-option-${focusedIdx}` : undefined}
+          aria-label="Search people and groups"
+          autoComplete="off"
+          placeholder="Search people and groups…"
+          value={query}
+          onChange={(e) => { setQuery(e.target.value); setFocusedIdx(-1) }}
+          onKeyDown={handleKeyDown}
+        />
+        <button
+          type="button"
+          className="access-icon-btn"
+          onClick={onCancel}
+          title="Cancel"
+          aria-label="Cancel adding access"
+        >
+          <X size={14} />
+        </button>
+      </div>
+      <ul id="access-picker-listbox" role="listbox" aria-label="People and groups" className="access-picker-list">
+        {filtered.length === 0 && (
+          <li className="access-picker-empty">
+            {q ? <>No matches for “{query}”.</> : 'No people or groups left to add.'}
+          </li>
+        )}
+        {filtered.map((option, idx) => {
+          const showSection = idx === 0 || filtered[idx - 1].section !== option.section
+          return (
+            <Fragment key={option.key}>
+              {showSection && (
+                <li className="access-label access-picker-section" role="presentation">{option.section}</li>
+              )}
+              <li
+                id={`access-picker-option-${idx}`}
+                role="option"
+                aria-selected={idx === focusedIdx}
+                className={`access-picker-option${idx === focusedIdx ? ' is-focused' : ''}`}
+                onMouseEnter={() => setFocusedIdx(idx)}
+                onMouseDown={(e) => { e.preventDefault(); onPick(option) }}
+              >
+                <Avatar name={option.name} type={option.kind} size={26} />
+                <span className="access-picker-option-name">{option.name}</span>
+                {option.secondary && <span className="access-picker-option-meta">{option.secondary}</span>}
+              </li>
+            </Fragment>
+          )
+        })}
+      </ul>
     </div>
   )
 }
@@ -395,31 +369,42 @@ export function PermissionsPanel({
 }: PermissionsPanelProps) {
   const qc = useQueryClient()
   const actions = ACTION_LABELS[resourceType]
+  const titleId = useId()
+  const dialogRef = useRef<HTMLDivElement>(null)
 
   // Draft state for unsaved ACL changes
   const [draft, setDraft] = useState<AclEntry[] | null>(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
+  const [confirmDiscard, setConfirmDiscard] = useState(false)
+
+  // Add-access composer
+  type ComposerPhase = 'idle' | 'picking' | 'compose'
+  const [composerPhase, setComposerPhase] = useState<ComposerPhase>('idle')
+  const [newSubject, setNewSubject] = useState<PickerOption | null>(null)
+  const [newActions, setNewActions] = useState<string[]>([])
 
   // Transient "Copied" state for the session chat link.
   const [linkCopied, setLinkCopied] = useState(false)
   const chatLinkInputRef = useRef<HTMLInputElement | null>(null)
   const linkCopiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Reset draft when resource changes
-  useEffect(() => {
-    setDraft(null)
-    setLinkCopied(false)
-  }, [resourceId])
-
-  // Local draft for new entry
-  const [newSubjectKey, setNewSubjectKey] = useState<string>('') // "{type}:{id}"
-  const [newActions, setNewActions] = useState<string[]>([])
-  const [saveError, setSaveError] = useState<string | null>(null)
-  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set())
+  // Session notebook link / inheritance passthrough state
   const [inheritSaving, setInheritSaving] = useState(false)
   const [inheritError, setInheritError] = useState<string | null>(null)
   const [notebookValue, setNotebookValue] = useState<string>(sessionNotebookLink?.notebookId ?? '')
   const [notebookSaving, setNotebookSaving] = useState(false)
   const [notebookError, setNotebookError] = useState<string | null>(null)
+
+  // Reset local state when the resource changes
+  useEffect(() => {
+    setDraft(null)
+    setLinkCopied(false)
+    setSaveError(null)
+    setConfirmDiscard(false)
+    setComposerPhase('idle')
+    setNewSubject(null)
+    setNewActions([])
+  }, [resourceId])
 
   // Clear a pending "Copied" reset timer on unmount.
   useEffect(() => () => {
@@ -430,15 +415,6 @@ export function PermissionsPanel({
   useEffect(() => {
     setNotebookValue(sessionNotebookLink?.notebookId ?? '')
   }, [resourceId, sessionNotebookLink?.notebookId])
-
-  function setExpanded(idx: number, expanded: boolean) {
-    setExpandedRows(prev => {
-      const next = new Set(prev)
-      if (expanded) next.add(idx)
-      else next.delete(idx)
-      return next
-    })
-  }
 
   // ── Queries ──
 
@@ -465,9 +441,9 @@ export function PermissionsPanel({
     enabled: !!parentFolderId,
   })
 
-  const { data: parentFolder } = useQuery<{ id: string; name: string }>({
+  const { data: parentFolder } = useQuery<{ folder?: { id: string; name: string } }>({
     queryKey: ['folder', parentFolderId],
-    queryFn: () => api.get<{ id: string; name: string }>(`/api/v1/folders/${parentFolderId}`),
+    queryFn: () => api.get<{ folder?: { id: string; name: string } }>(`/api/v1/folders/${parentFolderId}`),
     enabled: !!parentFolderId,
   })
 
@@ -485,12 +461,57 @@ export function PermissionsPanel({
     onSuccess: () => {
       setSaveError(null)
       setDraft(null)
+      setComposerPhase('idle')
+      setNewSubject(null)
+      setNewActions([])
       qc.invalidateQueries({ queryKey: aclKey })
     },
     onError: (err: unknown) => {
       setSaveError(err instanceof Error ? err.message : 'Failed to save permissions')
     },
   })
+
+  // ── Derived ──
+
+  const allEntries = [
+    ...(aclData ?? []).map((e: AclEntry) => ({ ...e, inherited: false })),
+    ...(parentAcl ?? []).map((e: AclEntry) => ({ ...e, inherited: true })),
+  ]
+
+  const directEntries = allEntries.filter((e) => !e.inherited)
+  const inheritedEntries = allEntries.filter((e) => e.inherited)
+  const visibleEntries = draft !== null ? draft : directEntries
+  const inheritedCount = inheritedEntries.length
+
+  const visibleKeys = new Set(visibleEntries.map((e) => subjectKey(e.subject_type, e.subject_id)))
+  const allPickerOptions: PickerOption[] = [
+    ...members
+      .filter((m) => m.user_id !== resourceOwnerId)
+      .map((m) => ({
+        key: subjectKey('user', m.user_id),
+        kind: 'user' as const,
+        name: m.name || m.email,
+        secondary: m.name ? m.email : undefined,
+        section: 'People' as const,
+      })),
+    ...groups
+      .filter((g) => g.source !== 'system')
+      .map((g) => ({
+        key: subjectKey('group', g.id),
+        kind: 'group' as const,
+        name: groupLabel(g),
+        secondary: 'Group',
+        section: 'Groups' as const,
+      })),
+    {
+      key: subjectKey('org_role', 'everyone'),
+      kind: 'org_role' as const,
+      name: 'Everyone',
+      secondary: 'All organization members',
+      section: 'Organization' as const,
+    },
+  ]
+  const pickerOptions = allPickerOptions.filter((o) => !visibleKeys.has(o.key))
 
   // ── Helpers ──
 
@@ -499,11 +520,20 @@ export function PermissionsPanel({
       const m = members.find((m) => m.user_id === entry.subject_id)
       return m ? (m.name || m.email) : entry.subject_id
     } else if (entry.subject_type === 'org_role') {
-      return entry.subject_id === 'everyone' ? 'Everyone (all members)' : entry.subject_id
+      return entry.subject_id === 'everyone' ? 'Everyone' : entry.subject_id
     } else {
       const g = groups.find((g) => g.id === entry.subject_id)
       return g ? groupLabel(g) : entry.subject_id
     }
+  }
+
+  function subjectSecondary(entry: AclEntry): string {
+    if (entry.subject_type === 'user') {
+      const m = members.find((m) => m.user_id === entry.subject_id)
+      return m ? m.email : 'User'
+    }
+    if (entry.subject_type === 'group') return 'Group'
+    return 'All organization members'
   }
 
   function handleToggleAction(entryIndex: number, action: string) {
@@ -516,11 +546,6 @@ export function PermissionsPanel({
       return { ...e, actions }
     })
     setDraft(updated)
-    setExpandedRows(prev => {
-      const next = new Set(prev)
-      next.add(entryIndex)
-      return next
-    })
   }
 
   function handleRemoveEntry(entryIndex: number) {
@@ -528,22 +553,38 @@ export function PermissionsPanel({
     setDraft(current.filter((_, i) => i !== entryIndex))
   }
 
+  function handlePickSubject(option: PickerOption) {
+    setNewSubject(option)
+    setNewActions(['view'])
+    setComposerPhase('compose')
+  }
+
   function handleAddEntry() {
-    if (!newSubjectKey || newActions.length === 0 || aclLoading) return
-    const [subjectType, subjectId] = newSubjectKey.split(':') as ['user' | 'group' | 'org_role', string]
+    if (!newSubject || newActions.length === 0 || aclLoading) return
     const current = draft ?? aclData ?? []
     const updated: AclEntry[] = [
       ...current,
-      { id: '', subject_type: subjectType, subject_id: subjectId, actions: newActions },
+      { id: '', subject_type: newSubject.kind, subject_id: newSubject.key.split(':')[1], actions: newActions },
     ]
     setDraft(updated)
-    setNewSubjectKey('')
+    setNewSubject(null)
     setNewActions([])
+    setComposerPhase('idle')
   }
 
   function toggleNewAction(action: string) {
     setNewActions((prev) =>
       prev.includes(action) ? prev.filter((a) => a !== action) : [...prev, action]
+    )
+  }
+
+  function handleSave() {
+    if (draft === null) return
+    saveAcl.mutate(
+      draft.map(({ id: _id, ...rest }) => ({
+        ...rest,
+        actions: constrainActions(resourceType, rest.actions),
+      }))
     )
   }
 
@@ -590,326 +631,378 @@ export function PermissionsPanel({
     }
   }
 
-  // ── Derived ──
+  // ── Close handling ──
 
-  const allEntries = [
-    ...(aclData ?? []).map((e: AclEntry) => ({ ...e, inherited: false })),
-    ...(parentAcl ?? []).map((e: AclEntry) => ({ ...e, inherited: true })),
-  ]
+  const requestClose = useCallback(() => {
+    if (draft !== null) setConfirmDiscard(true)
+    else onClose()
+  }, [draft, onClose])
 
-  const directEntries = allEntries.filter((e) => !e.inherited)
-  const inheritedEntries = allEntries.filter((e) => e.inherited)
-  const inheritedCount = inheritedEntries.length
+  // Keep the latest close handler without re-running the mount effect (which
+  // would steal focus on every draft change).
+  const requestCloseRef = useRef(requestClose)
+  useEffect(() => {
+    requestCloseRef.current = requestClose
+  }, [requestClose])
 
-  const visibleEntries = draft !== null ? draft : directEntries
-
-  const typeBadgeColors: Record<string, string> = {
-    folder: '#e8f0fe',
-    notebook: '#fce8ff',
-    connector: '#e8fff0',
-    dashboard: '#fff8e8',
-    agent: '#f0e8ff',
-    model_config: '#e8fff0',
-    skill: '#ffe8f0',
-    mcp_server: '#fff0e8',
-    agent_session: '#e8f4ff',
-  }
+  useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null
+    dialogRef.current?.focus()
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !e.defaultPrevented) {
+        e.preventDefault()
+        requestCloseRef.current()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => {
+      window.removeEventListener('keydown', handler)
+      previouslyFocused?.focus?.()
+    }
+  }, [])
 
   // ── Render ──
 
   // Portal to the body: callers embed the panel inside positioned ancestors
   // (e.g. the session viewer's fixed wrapper), and those ancestors' stacking
-  // contexts would otherwise cap the drawer below the top bar, making its
-  // close button unclickable.
+  // contexts would otherwise cap the dialog below the top bar.
   return createPortal(
     <>
-      {/* Backdrop */}
-      <div style={styles.backdrop} onClick={onClose} />
-
-      {/* Drawer */}
-      <div style={styles.drawer} role="dialog" aria-labelledby="permissions-title">
-        {/* Header */}
-        <div style={styles.header}>
-          <div style={styles.headerLeft}>
-            <h2 id="permissions-title" style={styles.headerTitle}>
-              {resourceName} <span style={styles.headerTitleSuffix}>permissions</span>
-            </h2>
-            <span style={{ ...styles.typeBadge, background: typeBadgeColors[resourceType] }} data-type={resourceType} className="permissions-panel-type-badge">
-              {resourceType}
-            </span>
-          </div>
-          <button style={styles.closeBtn} onClick={onClose} title="Close" aria-label="Close permissions dialog">×</button>
-        </div>
-
-        {/* Inheritance note */}
-        <div style={styles.inheritNote}>
-          {parentFolderId
-            ? inheritedCount > 0
-              ? `Inheriting ${inheritedCount} permission${inheritedCount === 1 ? '' : 's'} from parent folder`
-              : 'Inheriting 0 permissions from parent folder'
-            : 'No inherited permissions'}
-        </div>
-
-        {!canEdit && (
-          <div style={styles.readOnlyNote}>
-            You do not have permission to edit these permissions.
-          </div>
-        )}
-
-        {/* Body */}
-        <div style={styles.body}>
-          {resourceType === 'agent_session' && (
-            <div style={styles.notebookInherit}>
-              <span style={styles.notebookInheritText}>
-                <span style={styles.notebookInheritTitle}>Chat link</span>
-                <span style={styles.notebookInheritHint}>
-                  Anyone with access can open this chat directly.
-                </span>
-              </span>
-              <div style={styles.chatLinkRow}>
-                <input
-                  aria-label="Chat link"
-                  readOnly
-                  ref={chatLinkInputRef}
-                  value={chatLinkUrl(resourceId)}
-                  onFocus={(e) => e.currentTarget.select()}
-                  style={styles.chatLinkInput}
-                />
-                <button
-                  type="button"
-                  aria-label="Copy chat link"
-                  onClick={() => { void handleCopyChatLink() }}
-                  style={styles.chatLinkCopy}
-                >
-                  {linkCopied ? 'Copied' : 'Copy'}
-                </button>
-              </div>
-            </div>
-          )}
-
-          {sessionNotebookLink && canEdit && (
-            <div style={styles.notebookInherit}>
-              <span style={styles.notebookInheritText}>
-                <span style={styles.notebookInheritTitle}>Notebook</span>
-                <span style={styles.notebookInheritHint}>
-                  Linked sessions appear in the notebook's Chats drawer.
-                </span>
-              </span>
-              <select
-                aria-label="Notebook"
-                style={styles.notebookSelect}
-                value={notebookValue}
-                disabled={notebookSaving}
-                onChange={(e) => { void handleNotebookChange(e.target.value) }}
+      <div
+        className="access-overlay-enter"
+        style={styles.overlay}
+        onClick={requestClose}
+      >
+        <div
+          ref={dialogRef}
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby={titleId}
+          tabIndex={-1}
+          className="access-dialog-enter"
+          style={styles.dialog}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Header */}
+          <div style={styles.header}>
+            <div style={styles.headerTop}>
+              <h2 id={titleId} style={styles.title}>Permissions</h2>
+              <button
+                type="button"
+                className="access-icon-btn"
+                style={styles.closeBtn}
+                onClick={requestClose}
+                title="Close"
+                aria-label="Close permissions dialog"
               >
-                <option value="">No notebook</option>
-                {linkableNotebooks.map((nb) => (
-                  <option key={nb.id} value={nb.id}>{nb.title}</option>
-                ))}
-              </select>
-              {notebookError && <div style={styles.errorText}>{notebookError}</div>}
+                <X size={16} />
+              </button>
             </div>
-          )}
-
-          {sessionNotebookInheritance && (sessionNotebookLink ? notebookValue !== '' : sessionNotebookInheritance.hasNotebook) && canEdit && (
-            <div style={styles.notebookInherit}>
-              <label style={styles.notebookInheritLabel}>
-                <input
-                  type="checkbox"
-                  checked={sessionNotebookInheritance.enabled}
-                  disabled={inheritSaving}
-                  onChange={(e) => { void handleToggleInheritance(e.target.checked) }}
-                  style={{ marginRight: 6, flexShrink: 0 }}
-                />
-                <span style={styles.notebookInheritText}>
-                  <span style={styles.notebookInheritTitle}>Anyone who can view this notebook</span>
-                  <span style={styles.notebookInheritHint}>
-                    {inheritSaving
-                      ? 'Saving…'
-                      : sessionNotebookInheritance.enabled
-                        ? 'Notebook viewers can read this session live, view only.'
-                        : 'Only people explicitly shared below can read this session.'}
-                  </span>
-                </span>
-              </label>
-              {inheritError && <div style={styles.errorText}>{inheritError}</div>}
+            <div style={styles.headerMeta}>
+              <span style={styles.resourceName} title={resourceName}>{resourceName}</span>
+              <span className="access-badge">{RESOURCE_LABELS[resourceType]}</span>
             </div>
-          )}
+          </div>
 
-          {saveError && <div style={styles.errorText}>{saveError}</div>}
+          {/* Body */}
+          <div style={styles.body}>
+            {resourceType === 'agent_session' && (
+              <section style={styles.shareCard}>
+                <div className="access-label">Session sharing</div>
 
-          {aclLoading ? (
-            <div style={styles.loading}>Loading…</div>
-          ) : (
-            <>
-              {/* Inherited permissions */}
-              {inheritedEntries.length > 0 && (
-                <div style={styles.inheritedSection}>
-                  <div style={styles.inheritedHeader}>
-                    <span style={styles.inheritedTitle}>
-                      Inherited from {parentFolder?.name ?? 'parent folder'}
+                <div style={styles.shareField}>
+                  <div style={styles.shareFieldHead}>
+                    <span style={styles.fieldTitle}>Chat link</span>
+                    <span style={styles.fieldHint}>Anyone with access can open this chat directly.</span>
+                  </div>
+                  <div style={styles.chatLinkRow}>
+                    <input
+                      aria-label="Chat link"
+                      readOnly
+                      ref={chatLinkInputRef}
+                      value={chatLinkUrl(resourceId)}
+                      onFocus={(e) => e.currentTarget.select()}
+                      style={styles.chatLinkInput}
+                    />
+                    <button
+                      type="button"
+                      aria-label="Copy chat link"
+                      className="access-btn-secondary"
+                      onClick={() => { void handleCopyChatLink() }}
+                    >
+                      {linkCopied ? <><Check size={12} /> Copied</> : <><Copy size={12} /> Copy</>}
+                    </button>
+                  </div>
+                </div>
+
+                {sessionNotebookLink && canEdit && (
+                  <div style={styles.shareField}>
+                    <div style={styles.shareFieldHead}>
+                      <span style={styles.fieldTitle}>Notebook</span>
+                      <span style={styles.fieldHint}>Linked sessions appear in the notebook's Chats drawer.</span>
+                    </div>
+                    <select
+                      aria-label="Notebook"
+                      style={styles.notebookSelect}
+                      value={notebookValue}
+                      disabled={notebookSaving}
+                      onChange={(e) => { void handleNotebookChange(e.target.value) }}
+                    >
+                      <option value="">No notebook</option>
+                      {linkableNotebooks.map((nb) => (
+                        <option key={nb.id} value={nb.id}>{nb.title}</option>
+                      ))}
+                    </select>
+                    {notebookError && <div style={styles.errorText}>{notebookError}</div>}
+                  </div>
+                )}
+
+                {sessionNotebookInheritance && (sessionNotebookLink ? notebookValue !== '' : sessionNotebookInheritance.hasNotebook) && canEdit && (
+                  <label style={styles.switchRow}>
+                    <span style={styles.shareFieldHead}>
+                      <span style={styles.fieldTitle}>Anyone who can view this notebook</span>
+                      <span style={styles.fieldHint}>
+                        {inheritSaving
+                          ? 'Saving…'
+                          : sessionNotebookInheritance.enabled
+                            ? 'Notebook viewers can read this session live, view only.'
+                            : 'Only people explicitly shared below can read this session.'}
+                      </span>
                     </span>
-                    <span style={styles.readOnlyBadge}>read only</span>
+                    <input
+                      type="checkbox"
+                      className="access-switch"
+                      checked={sessionNotebookInheritance.enabled}
+                      disabled={inheritSaving}
+                      onChange={(e) => { void handleToggleInheritance(e.target.checked) }}
+                    />
+                  </label>
+                )}
+                {inheritError && <div style={styles.errorText}>{inheritError}</div>}
+              </section>
+            )}
+
+            {!canEdit && (
+              <div style={styles.readOnlyNote}>
+                You don't have permission to change access to this resource.
+              </div>
+            )}
+
+            {aclLoading ? (
+              <div style={styles.skeleton} aria-hidden="true">
+                {[0, 1].map((i) => (
+                  <div key={i} className="access-skel" style={styles.skeletonRow}>
+                    <span style={styles.skeletonAvatar} />
+                    <span style={{ ...styles.skeletonBar, width: 110 }} />
+                    <span style={{ ...styles.skeletonBar, width: 190, marginLeft: 'auto' }} />
                   </div>
-                  {inheritedEntries.map((entry, idx) => (
-                    <div key={`inherited-${entry.id || idx}`} style={{ ...styles.entryRow, opacity: 0.6 }}>
-                      <Avatar name={subjectName(entry)} type={entry.subject_type} />
-                      <div style={styles.entryInfo}>
-                        <span style={styles.entryName}>{subjectName(entry)}</span>
-                        <span style={styles.entryType}>{entry.subject_type}</span>
-                      </div>
-                      <div style={styles.checkboxGroup}>
-                        {actions.map((action) => (
-                          <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType]?.[action] ?? ''}>
-                            <input
-                              type="checkbox"
-                              checked={entry.actions.includes(action)}
-                              disabled
-                              style={{ marginRight: 3 }}
-                            />
-                            <span style={styles.actionLabel}>{action.charAt(0).toUpperCase() + action.slice(1)}</span>
-                          </label>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Direct permissions */}
-              {directEntries.length === 0 && !aclLoading && inheritedEntries.length === 0 && (
-                <div style={styles.emptyText}>No permissions set. Add one below.</div>
-              )}
-
-              {directEntries.length === 0 && inheritedEntries.length > 0 && (
-                <div style={styles.emptyText}>No direct permissions. Only inherited permissions above.</div>
-              )}
-
-              {visibleEntries.map((entry, idx) => (
-                <div
-                  key={entry.id || `direct-${idx}`}
-                  tabIndex={0}
-                  style={{ ...styles.entryRow, cursor: 'pointer' }}
-                  onClick={() => setExpanded(idx, !expandedRows.has(idx))}
-                  onBlur={(e) => {
-                    if (!e.currentTarget.contains(e.relatedTarget as Node)) setExpanded(idx, false)
-                  }}
-                >
-                  <div style={styles.entryRowHeader}>
-                    <Avatar name={subjectName(entry)} type={entry.subject_type} />
-                    <div style={styles.entryInfo}>
-                      <span style={styles.entryName}>{subjectName(entry)}</span>
-                      <span style={styles.entryType}>{entry.subject_type}</span>
-                    </div>
-                  </div>
-                  {expandedRows.has(idx) && (
-                    <div style={styles.expandedRow}>
+                ))}
+              </div>
+            ) : (
+              <>
+                {/* Add access composer */}
+                {canEdit && (
+                  <div style={styles.composer} role="group" aria-label="Add access">
+                    {composerPhase === 'idle' && (
                       <button
-                        style={{ ...styles.removeBtn, opacity: canEdit ? 1 : 0.4 }}
-                        title="Remove"
-                        disabled={!canEdit}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          if (canEdit) handleRemoveEntry(idx)
-                        }}
+                        type="button"
+                        className="access-composer-trigger"
+                        onClick={() => setComposerPhase('picking')}
                       >
-                        ×
+                        <UserPlus size={14} className="access-composer-plus" aria-hidden="true" />
+                        Add people or groups…
                       </button>
+                    )}
 
-                      <div style={styles.checkboxGroup}>
-                        {actions.map((action) => (
-                          <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType]?.[action] ?? ''}>
-                            <input
-                              type="checkbox"
-                              checked={entry.actions.includes(action)}
-                              onChange={(e) => {
-                                e.stopPropagation()
-                                if (canEdit) handleToggleAction(idx, action)
-                              }}
-                              disabled={!canEdit}
-                              style={{ marginRight: 3 }}
-                            />
-                            <span style={styles.actionLabel}>{action.charAt(0).toUpperCase() + action.slice(1)}</span>
-                          </label>
-                        ))}
+                    {composerPhase === 'picking' && (
+                      <SubjectPicker
+                        options={pickerOptions}
+                        onPick={handlePickSubject}
+                        onCancel={() => setComposerPhase('idle')}
+                      />
+                    )}
+
+                    {composerPhase === 'compose' && newSubject && (
+                      <div style={styles.composeRow}>
+                        <div style={styles.composeSubject}>
+                          <Avatar name={newSubject.name} type={newSubject.kind} size={24} />
+                          <span style={styles.composeSubjectName} title={newSubject.name}>{newSubject.name}</span>
+                          <button
+                            type="button"
+                            className="access-icon-btn"
+                            title="Change person or group"
+                            aria-label="Change selected person or group"
+                            onClick={() => { setComposerPhase('picking'); setNewSubject(null); setNewActions([]) }}
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                        <ActionChips
+                          actions={actions}
+                          selected={newActions}
+                          descriptions={ACTION_DESCRIPTIONS[resourceType] ?? {}}
+                          onChange={toggleNewAction}
+                        />
+                        <button
+                          type="button"
+                          className="access-btn-primary"
+                          style={styles.addBtn}
+                          disabled={newActions.length === 0 || saveAcl.isPending}
+                          onClick={handleAddEntry}
+                        >
+                          Add
+                        </button>
                       </div>
-                    </div>
-                  )}
-                </div>
-              ))}
+                    )}
+                  </div>
+                )}
 
-              {/* Save / Discard */}
-              {draft !== null && canEdit && (
-                <div style={styles.draftActions}>
-                  <button
-                    style={{
-                      ...styles.saveBtn,
-                      opacity: saveAcl.isPending ? 0.6 : 1,
-                    }}
-                    disabled={saveAcl.isPending || aclLoading}
-                    onClick={() =>
-                      saveAcl.mutate(
-                        draft.map(({ id: _id, ...rest }) => ({
-                          ...rest,
-                          actions: constrainActions(resourceType, rest.actions),
-                        }))
+                {/* Direct access */}
+                <section style={styles.section}>
+                  <div style={styles.sectionHead}>
+                    <span className="access-label">Direct access</span>
+                    {visibleEntries.length > 0 && (
+                      <span style={styles.sectionCount}>
+                        {visibleEntries.length} {visibleEntries.length === 1 ? 'entry' : 'entries'}
+                      </span>
+                    )}
+                  </div>
+
+                  {visibleEntries.length === 0 ? (
+                    inheritedCount > 0 ? (
+                      <div style={styles.sectionNote}>
+                        No direct access — everyone below inherits from the folder.
+                      </div>
+                    ) : (
+                      <div style={styles.empty}>
+                        <span style={styles.emptyIcon}><ShieldCheck size={20} /></span>
+                        <span style={styles.emptyTitle}>No direct access yet</span>
+                        <span style={styles.emptyHint}>
+                          {canEdit
+                            ? 'Only you and organization admins can access this. Add people or groups to share it.'
+                            : 'Only the owner and organization admins can access this.'}
+                        </span>
+                      </div>
+                    )
+                  ) : (
+                    visibleEntries.map((entry, idx) => {
+                      const name = subjectName(entry)
+                      return (
+                        <div key={entry.id || `direct-${idx}`} className="access-row" style={styles.entryRow}>
+                          <Avatar name={name} type={entry.subject_type} />
+                          <div style={styles.entryIdentity}>
+                            <span style={styles.entryName} title={name}>{name}</span>
+                            <span style={styles.entryMeta}>{subjectSecondary(entry)}</span>
+                          </div>
+                          <ActionChips
+                            actions={actions}
+                            selected={entry.actions}
+                            descriptions={ACTION_DESCRIPTIONS[resourceType] ?? {}}
+                            disabled={!canEdit}
+                            onChange={(action) => handleToggleAction(idx, action)}
+                          />
+                          {canEdit && (
+                            <button
+                              type="button"
+                              className="access-icon-btn access-remove"
+                              style={styles.removeBtn}
+                              title="Remove"
+                              aria-label={`Remove access for ${name}`}
+                              onClick={() => handleRemoveEntry(idx)}
+                            >
+                              <X size={14} />
+                            </button>
+                          )}
+                        </div>
                       )
-                    }
-                  >
-                    {saveAcl.isPending ? 'Saving…' : 'Save'}
-                  </button>
+                    })
+                  )}
+                </section>
+
+                {/* Inherited access */}
+                {parentFolderId && (
+                  <section style={styles.section}>
+                    <div style={styles.sectionHead}>
+                      <span className="access-label">Inherited from {parentFolder?.folder?.name ?? 'parent folder'}</span>
+                      <span style={styles.readOnlyBadge}>read only</span>
+                    </div>
+                    {inheritedCount === 0 ? (
+                      <div style={styles.sectionNote}>Nothing is inherited from this folder yet.</div>
+                    ) : (
+                      inheritedEntries.map((entry, idx) => {
+                        const name = subjectName(entry)
+                        return (
+                          <div key={`inherited-${entry.id || idx}`} className="access-row access-row-inherited" style={styles.entryRow}>
+                            <Avatar name={name} type={entry.subject_type} />
+                            <div style={styles.entryIdentity}>
+                              <span style={styles.entryName} title={name}>{name}</span>
+                              <span style={styles.entryMeta}>{subjectSecondary(entry)}</span>
+                            </div>
+                            <ActionChips
+                              actions={actions}
+                              selected={entry.actions}
+                              descriptions={ACTION_DESCRIPTIONS[resourceType] ?? {}}
+                              disabled
+                              onChange={() => {}}
+                            />
+                          </div>
+                        )
+                      })
+                    )}
+                  </section>
+                )}
+              </>
+            )}
+          </div>
+
+          {/* Draft footer */}
+          {draft !== null && canEdit && (
+            <div style={styles.footer}>
+              {saveError && <div style={styles.footerError}>{saveError}</div>}
+              <div style={styles.footerRow}>
+                <span style={styles.dirty}>
+                  <span style={styles.dirtyDot} aria-hidden="true" />
+                  Unsaved changes
+                </span>
+                <div style={styles.footerActions}>
                   <button
+                    type="button"
+                    className="access-btn-secondary"
                     style={styles.discardBtn}
                     disabled={saveAcl.isPending}
                     onClick={() => setDraft(null)}
                   >
                     Discard
                   </button>
+                  <button
+                    type="button"
+                    className="access-btn-primary"
+                    style={styles.saveBtn}
+                    disabled={saveAcl.isPending || aclLoading}
+                    onClick={handleSave}
+                  >
+                    {saveAcl.isPending ? 'Saving…' : 'Save'}
+                  </button>
                 </div>
-              )}
-
-              {/* Divider */}
-              <div style={styles.divider} />
-
-              {/* Add entry row */}
-              <div style={styles.addRow}>
-                <SubjectSearch
-                  members={members}
-                  groups={groups}
-                  resourceOwnerId={resourceOwnerId}
-                  value={newSubjectKey}
-                  onChange={setNewSubjectKey}
-                />
-
-                <div style={styles.checkboxGroup}>
-                  {actions.map((action) => (
-                    <label key={action} style={styles.checkLabel} title={ACTION_DESCRIPTIONS[resourceType]?.[action] ?? ''}>
-                      <input
-                        type="checkbox"
-                        checked={newActions.includes(action)}
-                        onChange={() => toggleNewAction(action)}
-                        style={{ marginRight: 3 }}
-                      />
-                      <span style={styles.actionLabel}>{action}</span>
-                    </label>
-                  ))}
-                </div>
-
-                <button
-                  style={{
-                    ...styles.addBtn,
-                    opacity: !canEdit || !newSubjectKey || newActions.length === 0 || saveAcl.isPending ? 0.5 : 1,
-                  }}
-                  disabled={!canEdit || !newSubjectKey || newActions.length === 0 || saveAcl.isPending}
-                  onClick={handleAddEntry}
-                >
-                  Add
-                </button>
               </div>
-            </>
+            </div>
           )}
         </div>
       </div>
+
+      {confirmDiscard && (
+        <ConfirmModal
+          title="Discard changes?"
+          message="You have unsaved permission changes. Closing now will lose them."
+          confirmLabel="Discard changes"
+          cancelLabel="Keep editing"
+          destructive
+          onConfirm={() => { setConfirmDiscard(false); onClose() }}
+          onCancel={() => setConfirmDiscard(false)}
+        />
+      )}
+
+      <style>{css}</style>
     </>,
     document.body,
   )
@@ -917,116 +1010,402 @@ export function PermissionsPanel({
 
 // ─── Styles ──────────────────────────────────────────────────────────────────
 
-const styles: Record<string, React.CSSProperties> = {
-  // The drawer covers the top bar (z-index 1550/1600), so it must sit above it:
-  // otherwise the top bar intercepts clicks on the drawer's own close button.
-  backdrop: {
+const css = `
+.access-overlay-enter { animation: access-fade-in 0.15s ease-out; }
+.access-dialog-enter { animation: access-rise-in 0.18s cubic-bezier(0.16, 1, 0.3, 1); }
+@keyframes access-fade-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes access-rise-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes access-skel-pulse { 0%, 100% { opacity: 0.5; } 50% { opacity: 1; } }
+.access-skel { animation: access-skel-pulse 1.2s ease-in-out infinite; }
+
+.access-label {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.access-badge {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 2px 6px;
+  flex-shrink: 0;
+}
+
+.access-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  flex-shrink: 0;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+.access-avatar.is-user {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+  color: var(--accent);
+}
+
+.access-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }
+
+.access-chip {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1.4;
+  padding: 3px 8px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
+}
+.access-chip:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--text-primary) 30%, transparent);
+}
+.access-chip[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  border-color: var(--accent);
+  color: var(--text-primary);
+}
+.access-chip.is-destructive[aria-pressed="true"] {
+  background: var(--error-light);
+  border-color: var(--error-border);
+  color: var(--error-text);
+}
+.access-chip:disabled { cursor: default; opacity: 0.6; }
+.access-chip[aria-pressed="true"]:disabled { opacity: 0.85; }
+
+.access-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  padding: 4px;
+  flex-shrink: 0;
+  transition: color 0.15s ease, background-color 0.15s ease;
+}
+.access-icon-btn:hover { color: var(--text-primary); background: color-mix(in srgb, var(--text-primary) 6%, transparent); }
+.access-icon-btn.access-remove:hover { color: var(--error-full); background: var(--error-light); }
+
+.access-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--button-primary-bg);
+  color: var(--button-primary-text);
+  border: none;
+  border-radius: 6px;
+  padding: 7px 16px;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+.access-btn-primary:hover:not(:disabled) { opacity: 0.9; }
+.access-btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.access-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: transparent;
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-family: var(--font-sans);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.access-btn-secondary:hover:not(:disabled) { background: color-mix(in srgb, var(--text-primary) 5%, transparent); color: var(--text-primary); }
+.access-btn-secondary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.access-composer-trigger {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
+}
+.access-composer-trigger:hover {
+  border-color: var(--accent);
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+}
+.access-composer-plus { color: var(--text-muted); }
+.access-composer-trigger:hover .access-composer-plus { color: var(--accent); }
+
+.access-picker {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-card);
+  overflow: hidden;
+}
+.access-picker-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-light);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+.access-picker-search-icon { color: var(--text-muted); flex-shrink: 0; }
+.access-picker-search input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+.access-picker-search input::placeholder { color: var(--text-muted); }
+.access-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 4px 0;
+  max-height: 216px;
+  overflow-y: auto;
+}
+.access-picker-section { padding: 6px 12px 3px; }
+.access-picker-option {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.access-picker-option.is-focused { background: var(--bg-secondary); }
+.access-picker-option-name {
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.access-picker-option-meta {
+  font-size: 11px;
+  color: var(--text-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-left: auto;
+}
+.access-picker-empty { padding: 10px 12px; font-size: 12px; color: var(--text-muted); }
+
+.access-switch {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 32px;
+  height: 18px;
+  border-radius: 9px;
+  background: var(--border);
+  position: relative;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin: 0;
+  transition: background-color 0.15s ease;
+}
+.access-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 0.15s ease;
+}
+.access-switch:checked { background: var(--accent); }
+.access-switch:checked::after { transform: translateX(14px); }
+.access-switch:disabled { opacity: 0.5; cursor: default; }
+
+@media (prefers-reduced-motion: reduce) {
+  .access-overlay-enter,
+  .access-dialog-enter,
+  .access-skel { animation: none; }
+  .access-chip, .access-switch, .access-switch::after { transition: none; }
+}
+`
+
+const styles: Record<string, CSSProperties> = {
+  overlay: {
     position: 'fixed',
     inset: 0,
-    background: 'rgba(0,0,0,0.3)',
-    zIndex: 1700,
+    background: 'var(--bg-overlay)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    zIndex: 2000,
   },
-  drawer: {
-    position: 'fixed',
-    right: 0,
-    top: 0,
-    height: '100vh',
-    width: 480,
+  dialog: {
+    width: 640,
+    maxWidth: '100%',
+    maxHeight: '80vh',
     background: 'var(--bg-card)',
-    boxShadow: '-4px 0 24px rgba(0,0,0,0.12)',
-    zIndex: 1701,
+    border: '1px solid var(--border)',
+    borderRadius: 8,
+    boxShadow: 'var(--shadow-lg)',
     display: 'flex',
     flexDirection: 'column',
     overflow: 'hidden',
+    outline: 'none',
   },
   header: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '16px 20px',
+    padding: '16px 24px 14px',
     borderBottom: '1px solid var(--border)',
     flexShrink: 0,
   },
-  headerLeft: {
+  headerTop: {
     display: 'flex',
     alignItems: 'center',
-    gap: 10,
-    minWidth: 0,
+    justifyContent: 'space-between',
+    gap: 12,
   },
-  headerTitle: {
+  title: {
     fontSize: 15,
     fontWeight: 700,
     color: 'var(--text-primary)',
     margin: 0,
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  headerTitleSuffix: {
-    fontWeight: 400,
-    color: 'var(--text-secondary)',
-  },
-  resourceName: {
-    fontSize: 15,
-    fontWeight: 700,
-    color: 'var(--text-primary)',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    whiteSpace: 'nowrap',
-  },
-  typeBadge: {
-    fontSize: 10,
-    fontWeight: 700,
-    borderRadius: 4,
-    padding: '2px 7px',
-    letterSpacing: '0.05em',
-    textTransform: 'uppercase' as const,
-    flexShrink: 0,
   },
   closeBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: 22,
-    color: 'var(--text-muted)',
-    lineHeight: 1,
-    padding: '0 4px',
-    flexShrink: 0,
+    margin: '-4px -6px -4px 0',
   },
-  inheritNote: {
-    fontSize: 12,
+  headerMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    marginTop: 4,
+    minWidth: 0,
+  },
+  resourceName: {
+    fontSize: 13,
+    color: 'var(--text-secondary)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    minWidth: 0,
+  },
+  body: {
+    flex: '1 1 auto',
+    minHeight: 0,
+    overflowX: 'hidden',
+    overflowY: 'auto',
+    padding: '16px 24px 20px',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  shareCard: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 12,
+    padding: '12px 14px',
+    borderRadius: 6,
+    border: '1px solid var(--border)',
+    background: 'color-mix(in srgb, var(--text-primary) 3%, transparent)',
+    marginBottom: 18,
+  },
+  shareField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 6,
+  },
+  shareFieldHead: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 1,
+    minWidth: 0,
+  },
+  fieldTitle: {
+    fontSize: 13,
+    fontWeight: 600,
+    color: 'var(--text-primary)',
+  },
+  fieldHint: {
+    fontSize: 11,
     color: 'var(--text-muted)',
-    padding: '8px 20px',
-    borderBottom: '1px solid var(--border)',
-    background: 'var(--bg-secondary)',
-    flexShrink: 0,
+  },
+  chatLinkRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+  },
+  chatLinkInput: {
+    flex: 1,
+    minWidth: 0,
+    padding: '6px 8px',
+    background: 'var(--bg-input)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    color: 'var(--text-secondary)',
+    fontFamily: 'var(--font-mono)',
+    fontSize: 12,
+  },
+  notebookSelect: {
+    width: '100%',
+    padding: '6px 8px',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    fontSize: 13,
+    fontFamily: 'var(--font-sans)',
+  },
+  switchRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 12,
+    cursor: 'pointer',
   },
   readOnlyNote: {
     fontSize: 12,
     color: 'var(--text-muted)',
-    padding: '8px 20px',
-    background: 'var(--bg-secondary)',
-    borderBottom: '1px solid var(--border)',
-    fontStyle: 'italic',
-  },
-  body: {
-    flex: 1,
-    overflowX: 'hidden',
-    overflowY: 'auto',
-    padding: '16px 20px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  loading: {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    padding: '8px 0',
-  },
-  emptyText: {
-    fontSize: 13,
-    color: 'var(--text-muted)',
-    padding: '8px 0',
+    padding: '8px 12px',
+    background: 'color-mix(in srgb, var(--text-primary) 4%, transparent)',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    marginBottom: 16,
   },
   errorText: {
     fontSize: 12,
@@ -1036,44 +1415,98 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     padding: '8px 12px',
   },
-  entryRow: {
+  skeleton: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 14,
     padding: '10px 0',
-    borderBottom: '1px solid var(--border)',
-    outline: 'none',
   },
-  entryRowHeader: {
+  skeletonRow: {
     display: 'flex',
     alignItems: 'center',
     gap: 10,
   },
-  expandedRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    marginTop: 8,
-    paddingLeft: 42,
-  },
-  avatar: {
-    width: 32,
-    height: 32,
+  skeletonAvatar: {
+    width: 30,
+    height: 30,
     borderRadius: '50%',
-    background: 'var(--accent, #5c6bc0)',
-    color: '#fff',
+    background: 'color-mix(in srgb, var(--text-primary) 10%, transparent)',
+    flexShrink: 0,
+  },
+  skeletonBar: {
+    height: 10,
+    borderRadius: 4,
+    background: 'color-mix(in srgb, var(--text-primary) 10%, transparent)',
+  },
+  composer: {
+    marginBottom: 18,
+  },
+  composeRow: {
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: 11,
-    fontWeight: 700,
-    flexShrink: 0,
-    letterSpacing: '0.02em',
+    gap: 10,
+    flexWrap: 'wrap',
+    padding: '8px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 6,
+    background: 'color-mix(in srgb, var(--text-primary) 3%, transparent)',
   },
-entryInfo: {
+  composeSubject: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '2px 4px 2px 2px',
+    background: 'var(--bg-card)',
+    border: '1px solid var(--border)',
+    borderRadius: 20,
+    flexShrink: 0,
+    maxWidth: 220,
+  },
+  composeSubjectName: {
+    fontSize: 13,
+    color: 'var(--text-primary)',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  addBtn: {
+    marginLeft: 'auto',
+  },
+  section: {
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  sectionHead: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    margin: '4px 0 4px',
+  },
+  sectionCount: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 10,
+    color: 'var(--text-muted)',
+  },
+  sectionNote: {
+    fontSize: 12,
+    color: 'var(--text-muted)',
+    padding: '6px 0',
+  },
+  entryRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 10,
+    flexWrap: 'wrap',
+    padding: '10px 0',
+    borderBottom: '1px solid var(--border-light)',
+  },
+  entryIdentity: {
     display: 'flex',
     flexDirection: 'column',
     gap: 1,
-    minWidth: 120,
-    maxWidth: 160,
-    flexShrink: 0,
+    minWidth: 0,
+    flex: '0 1 200px',
   },
   entryName: {
     fontSize: 13,
@@ -1082,198 +1515,99 @@ entryInfo: {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
-    maxWidth: 150,
   },
-  entryType: {
-    fontSize: 10,
-    fontWeight: 600,
-    color: 'var(--text-secondary)',
-    textTransform: 'capitalize' as const,
-  },
-  checkboxGroup: {
-    display: 'flex',
-    flexWrap: 'wrap' as const,
-    gap: 4,
-    flex: 1,
-    maxWidth: '100%',
+  entryMeta: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
     overflow: 'hidden',
-  },
-  checkLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    cursor: 'pointer',
-    fontSize: 11,
-    color: 'var(--text-primary)',
-    whiteSpace: 'nowrap' as const,
-  },
-  actionLabel: {
-    fontSize: 11,
-    color: 'var(--text-primary)',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
   },
   removeBtn: {
-    background: 'none',
-    border: 'none',
-    cursor: 'pointer',
-    fontSize: 18,
-    color: 'var(--text-muted)',
-    lineHeight: 1,
-    padding: '0 4px',
-    flexShrink: 0,
+    marginLeft: 'auto',
   },
-  draftActions: {
-    display: 'flex',
-    gap: 8,
-    alignItems: 'center',
-    padding: '8px 0',
-  },
-  saveBtn: {
-    padding: '6px 16px',
-    background: 'var(--accent)',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 4,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    transition: 'opacity 0.15s',
-  },
-  discardBtn: {
-    padding: '6px 14px',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    background: 'none',
-    fontSize: 13,
-    cursor: 'pointer',
-    color: 'var(--text-secondary)',
-  },
-  divider: {
-    borderTop: '1px solid var(--border)',
-    margin: '8px 0',
-  },
-  addRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    flexWrap: 'wrap' as const,
-    paddingTop: 4,
-  },
-  select: {
-    padding: '6px 10px',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 13,
-    color: 'var(--text-primary)',
-    background: 'var(--bg-input)',
-    outline: 'none',
-    minWidth: 160,
-    maxWidth: 200,
-  },
-  addBtn: {
-    padding: '6px 16px',
-    background: 'var(--accent)',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 4,
-    fontSize: 13,
-    fontWeight: 600,
-    cursor: 'pointer',
-    flexShrink: 0,
-    transition: 'opacity 0.15s',
-  },
-  notebookInherit: {
+  empty: {
     display: 'flex',
     flexDirection: 'column',
-    gap: 6,
-    padding: '10px 12px',
-    borderRadius: 6,
-    border: '1px solid var(--border)',
-    background: 'var(--bg-secondary)',
-    marginBottom: 8,
+    alignItems: 'center',
+    textAlign: 'center',
+    gap: 4,
+    padding: '22px 16px 14px',
   },
-  chatLinkRow: {
+  emptyIcon: {
     display: 'flex',
     alignItems: 'center',
-    gap: 6,
-    marginTop: 6,
-  },
-  chatLinkInput: {
-    flex: 1,
-    minWidth: 0,
-    padding: '6px 8px',
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
+    justifyContent: 'center',
+    width: 40,
+    height: 40,
     borderRadius: 4,
-    color: 'var(--text-secondary)',
-    fontSize: 12,
+    border: '1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
+    background: 'color-mix(in srgb, var(--accent) 12%, transparent)',
+    color: 'var(--accent)',
+    marginBottom: 6,
   },
-  chatLinkCopy: {
-    flexShrink: 0,
-    padding: '6px 10px',
-    background: 'var(--accent)',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 4,
-    cursor: 'pointer',
-    fontSize: 12,
-    fontWeight: 500,
-  },
-  notebookSelect: {
-    width: '100%',
-    fontSize: 12,
-    padding: '4px 6px',
-    background: 'var(--bg-input)',
+  emptyTitle: {
+    fontSize: 14,
+    fontWeight: 700,
     color: 'var(--text-primary)',
-    border: '1px solid var(--border)',
+  },
+  emptyHint: {
+    fontSize: 12,
+    color: 'var(--text-muted)',
+    maxWidth: 360,
+  },
+  readOnlyBadge: {
+    fontFamily: 'var(--font-mono)',
+    fontSize: 9,
+    fontWeight: 700,
+    letterSpacing: '0.06em',
+    textTransform: 'uppercase',
+    padding: '2px 5px',
     borderRadius: 3,
-    boxSizing: 'border-box' as const,
-  },
-  notebookInheritLabel: {
-    display: 'flex',
-    alignItems: 'flex-start',
-    cursor: 'pointer',
-  },
-  notebookInheritText: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 2,
-  },
-  notebookInheritTitle: {
-    fontSize: 13,
-    fontWeight: 600,
-    color: 'var(--text-primary)',
-  },
-  notebookInheritHint: {
-    fontSize: 11,
+    background: 'color-mix(in srgb, var(--text-primary) 6%, transparent)',
+    border: '1px solid var(--border)',
     color: 'var(--text-muted)',
   },
-  inheritedSection: {
-    marginBottom: 8,
-    borderRadius: 6,
-    border: '1px solid var(--border)',
-    overflow: 'hidden',
+  footer: {
+    flexShrink: 0,
+    borderTop: '1px solid var(--border)',
+    padding: '12px 24px',
   },
-  inheritedHeader: {
+  footerError: {
+    fontSize: 12,
+    color: 'var(--error-text)',
+    marginBottom: 8,
+  },
+  footerRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '8px 12px',
-    background: 'var(--bg-secondary)',
-    borderBottom: '1px solid var(--border)',
+    gap: 12,
   },
-  inheritedTitle: {
+  dirty: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 7,
     fontSize: 12,
-    fontWeight: 600,
     color: 'var(--text-secondary)',
   },
-  readOnlyBadge: {
-    fontSize: 10,
-    fontWeight: 600,
-    padding: '2px 6px',
-    borderRadius: 3,
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
-    color: 'var(--text-muted)',
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.04em',
+  dirtyDot: {
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: 'var(--warning)',
+    flexShrink: 0,
+  },
+  footerActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
+  discardBtn: {
+    padding: '7px 14px',
+    fontSize: 13,
+  },
+  saveBtn: {
+    padding: '7px 18px',
   },
 }
