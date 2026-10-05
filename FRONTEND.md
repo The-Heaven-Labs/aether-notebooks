@@ -481,7 +481,7 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 - Calls appropriate `PUT` endpoint with `parent_id` or `folder_id` (null = move to root)
 
 **Permissions**:
-- Clicking "Permissions" in the `⋯` menu opens `PermissionsPanel` slide-over
+- Clicking "Permissions" in the `⋯` menu opens the `PermissionsPanel` dialog
 - `permissionsTarget` state `{ type, id, name }` controls which panel is open
 
 **Component**: `web/src/pages/HomePage.tsx`
@@ -621,44 +621,50 @@ See also: `DashboardEditorPage.tsx` for the dedicated editor.
 
 ### PermissionsPanel
 
-**Purpose**: Slide-over drawer for managing per-resource ACL entries
+**Purpose**: Centered dialog for managing per-resource ACL entries
 
-**Trigger**: "Permissions" option in the `⋯` context menu on any file-browser item
+**Trigger**: "Permissions" option in the `⋯` context menu on any file-browser item, a notebook's Share menu, a session's Share button
 
 **Visual**:
-- Fixed-position right drawer, width 480px, height 100vh, z-index 1501
-- Semi-transparent backdrop (rgba(0,0,0,0.3)), z-index 1500, clicking closes panel
-- **Header**: Resource name (bold) + resource-type badge (color-coded) + × close button
-- **Inheritance note**: "Inheriting N permissions from parent folder" or "No inherited permissions"
-- **ACL entries list**: Avatar circle (initials / `#` for groups) + name + per-action checkboxes + × remove
-- **Draft mode**: Checkboxes and removes update local draft; Save/Discard buttons appear when there are unsaved changes
-- **Add entry row**: Searchable combobox (`SubjectSearch`) with Users/Groups optgroups + action checkboxes + Add button
+- Centered modal dialog (max width 640px, max height 80vh), z-index 2000; body scrolls, header and draft footer stay fixed
+- Semi-transparent backdrop (`--bg-overlay`), clicking it or pressing Escape requests close
+- **Header**: "Permissions" title + resource name + resource-type instrument badge
+- **Session sharing card** (`agent_session` only): chat link with Copy, notebook picker, notebook-viewer inheritance switch
+- **Add composer**: dashed "Add people or groups…" trigger expands an inline searchable picker (People / Groups / Organization sections, avatars and emails). Picking a subject reveals the capability chips and the Add button; `view` is preselected as the least-privilege default
+- **Capability chips**: one chip per grantable action, always visible on each row; selected chips are amethyst-filled, `delete` uses the destructive wash. Chips toggle a local draft
+- **Direct access**: subject rows (avatar + name + email/type + chips + remove); inherited entries sit in a separate read-only section labeled with the parent folder name
+- **Draft footer**: amber "Unsaved changes" + Discard + Save, shown only while a draft exists; closing with a draft asks for confirmation
+- **Empty state**: instrument icon tile + "No direct access yet" + sharing hint
 
 **Actions per resource type**:
 - `folder`: view, create, edit, manage, delete
 - `notebook`: view, run, edit, share, delete
 - `connector`: view, use, edit, share, delete
-- `dashboard`: view, view_with_data, edit, share, delete
-- `agent`: view, use, edit, delete
-- `model_config`: view, use, edit, delete
-- `skill`: view, use, edit, delete
+- `dashboard`: view, edit, share, delete, view_with_data
+- `agent`: view, edit, delete
+- `model_config`: view, edit, delete
+- `skill`: view, edit, delete
+- `mcp_server`: view, edit, delete
 - `tool`: view, use, edit, delete
-- `mcp_server`: view, use, edit, delete
+- `agent_session`: view (read-only shares)
 
 **API calls**:
 - `GET /api/v1/acl/:resource_type/:resource_id` — load entries
 - `PUT /api/v1/acl/:resource_type/:resource_id` — replace full ACL (requires `manage`/`share` permission)
-- `GET /api/v1/members`, `GET /api/v1/groups` — populate subject dropdown
+- `GET /api/v1/members`, `GET /api/v1/groups` — populate the subject picker
+- `GET /api/v1/folders/:id` — resolve the parent folder name for inherited entries
 
 **Props**:
 ```tsx
 interface PermissionsPanelProps {
-  resourceType: 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'tool' | 'mcp_server'
+  resourceType: 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'mcp_server' | 'tool' | 'agent_session'
   resourceId: string
   resourceName: string
   parentFolderId?: string
   resourceOwnerId?: string
   canEdit?: boolean
+  sessionNotebookInheritance?: SessionNotebookInheritance
+  sessionNotebookLink?: SessionNotebookLink
   onClose: () => void
 }
 ```
