@@ -309,4 +309,41 @@ describe('ConnectorsPage', () => {
     fireEvent.change(screen.getByLabelText(/^Token/), { target: { value: 'dapi-new' } })
     expect(screen.getByText('Save')).not.toBeDisabled()
   })
+
+  test('edit opens a dialog named for the connector, focuses the name field, and restores focus on close', async () => {
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('Staging DB')
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    const editButton = screen.getAllByLabelText('Edit connector')[1]
+    editButton.focus()
+    fireEvent.click(editButton)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleName('Edit "Staging DB"')
+    expect(screen.getByLabelText('Name')).toHaveFocus()
+    // Editing form only exists inside the dialog, so a click far down the table
+    // can never render it out of view.
+    expect(screen.queryByText('Edit Connector')).toBeNull()
+
+    fireEvent.click(screen.getByText('Cancel'))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(editButton).toHaveFocus()
+  })
+
+  test('new connector opens a dialog and Escape returns focus to the trigger', async () => {
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('Prod DB')
+    const newButton = screen.getByText('+ New Connector')
+    newButton.focus()
+    fireEvent.click(newButton)
+
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleName('New Connector')
+    expect(screen.getByLabelText('Name')).toHaveFocus()
+
+    fireEvent.keyDown(window, { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(newButton).toHaveFocus()
+  })
 })
