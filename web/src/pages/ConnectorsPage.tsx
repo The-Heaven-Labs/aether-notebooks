@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -6,7 +6,6 @@ import type { Connector } from '../types'
 import { AppShell } from '../components/AppShell'
 import { Check, X, Loader2, Star, Database, Pencil, ShieldCheck, Link2, Unlink, Trash2, Zap } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
-import { FormCard } from '../components/FormCard'
 import { StatusBadge } from '../components/StatusBadge'
 import { SectionHeader } from '../components/SectionHeader'
 import { PermissionsPanel } from '../components/PermissionsPanel'
@@ -120,6 +119,36 @@ function connectorFormMissingField(f: ConnectorForm, forUpdate: boolean): string
   return undefined
 }
 
+/** Maps a stored connector onto the edit form. Secrets stay blank: the server
+ * keeps the stored value when the form submits an empty secret. */
+function formFromConnector(c: Connector): ConnectorForm {
+  return {
+    name: c.name,
+    type: c.type as ConnectorType,
+    host: c.config?.host ?? '',
+    port: String(c.config?.port ?? 5432),
+    database: c.config?.database ?? '',
+    user: c.config?.user ?? '',
+    password: '',
+    ssl_mode: c.config?.ssl_mode ?? 'disable',
+    use_tls: c.config?.use_tls ?? false,
+    http_path: c.config?.http_path ?? '',
+    auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
+    stored_auth_type: c.type === 'databricks'
+      ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
+      : '',
+    token: '',
+    client_id: c.config?.client_id ?? '',
+    client_secret: '',
+    catalog: c.config?.catalog ?? '',
+    schema: c.config?.schema ?? '',
+    is_default: c.is_default ?? false,
+    timeout_seconds: String(c.timeout_seconds ?? 0),
+    table_allowlist: (c.table_allowlist ?? []).join('\n'),
+    table_denylist: (c.table_denylist ?? []).join('\n'),
+  }
+}
+
 function DatabricksFields({ form, setForm, isEdit }: {
   form: ConnectorForm
   setForm: React.Dispatch<React.SetStateAction<ConnectorForm>>
@@ -186,6 +215,27 @@ export function ConnectorsPage() {
   const [linkWarehouseId, setLinkWarehouseId] = useState('')
   const [linkError, setLinkError] = useState<string | null>(null)
   const [unlinkTarget, setUnlinkTarget] = useState<Connector | null>(null)
+  const createNameRef = useRef<HTMLInputElement>(null)
+  const editNameRef = useRef<HTMLInputElement>(null)
+
+  const openEdit = (c: Connector) => {
+    setEditing(c.id)
+    setEditForm(formFromConnector(c))
+    setEditError(null)
+  }
+
+  const closeCreate = () => {
+    setCreating(false)
+    setForm(defaultForm())
+    setFormTest(null)
+    setCreateError(null)
+  }
+
+  const closeEdit = () => {
+    setEditing(null)
+    setEditForm(defaultForm())
+    setEditError(null)
+  }
 
   const { data: connectors = [], isLoading } = useQuery({
     queryKey: ['connectors'],
@@ -227,31 +277,7 @@ export function ConnectorsPage() {
       const c = connectors.find(x => x.id === editId)
       if (c) {
         setEditing(c.id)
-        setEditForm({
-          name: c.name,
-          type: c.type as ConnectorType,
-          host: c.config?.host ?? '',
-          port: String(c.config?.port ?? 5432),
-          database: c.config?.database ?? '',
-          user: c.config?.user ?? '',
-          password: '',
-          ssl_mode: c.config?.ssl_mode ?? 'disable',
-          use_tls: c.config?.use_tls ?? false,
-          http_path: c.config?.http_path ?? '',
-          auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
-          stored_auth_type: c.type === 'databricks'
-            ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
-            : '',
-          token: '',
-          client_id: c.config?.client_id ?? '',
-          client_secret: '',
-          catalog: c.config?.catalog ?? '',
-          schema: c.config?.schema ?? '',
-          is_default: c.is_default ?? false,
-          timeout_seconds: String(c.timeout_seconds ?? 0),
-          table_allowlist: (c.table_allowlist ?? []).join('\n'),
-          table_denylist: (c.table_denylist ?? []).join('\n'),
-        })
+        setEditForm(formFromConnector(c))
         setSearchParams({})
       }
     }
@@ -281,9 +307,7 @@ export function ConnectorsPage() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
-      setEditing(null)
-      setEditForm(defaultForm())
-      setEditError(null)
+      closeEdit()
     },
     onError: (e: Error) => setEditError(e.message),
   })
@@ -299,10 +323,7 @@ export function ConnectorsPage() {
     onSuccess: (connector) => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
       if (formTest) setTestResults((prev) => ({ ...prev, [connector.id]: formTest }))
-      setCreating(false)
-      setForm(defaultForm())
-      setFormTest(null)
-      setCreateError(null)
+      closeCreate()
     },
     onError: (err: Error) => setCreateError(err.message),
   })
@@ -350,24 +371,22 @@ export function ConnectorsPage() {
   const setField = (field: keyof ConnectorForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm((f) => ({ ...f, [field]: e.target.value }))
 
+  const editingConnector = connectors.find((c) => c.id === editing)
+
   return (
     <AppShell>
       <div style={styles.body}>
-        {!creating && (
-          <>
-          <SectionHeader title="Connectors" subtitle={connectors.length > 0 ? `${connectors.length} connector${connectors.length !== 1 ? 's' : ''}` : ''}>
-            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Connector</button>
-          </SectionHeader>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
-            Connect to your databases (PostgreSQL, ClickHouse, OpenSearch, Databricks) to query data from notebooks.
-          </p>
-          </>
-        )}
+        <SectionHeader title="Connectors" subtitle={connectors.length > 0 ? `${connectors.length} connector${connectors.length !== 1 ? 's' : ''}` : ''}>
+          <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Connector</button>
+        </SectionHeader>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
+          Connect to your databases (PostgreSQL, ClickHouse, OpenSearch, Databricks) to query data from notebooks.
+        </p>
         {creating && (
-          <FormCard title="New Connector">
-            <div style={styles.formGrid}>
+          <Modal title="New Connector" onClose={closeCreate} initialFocusRef={createNameRef}>
+            <div style={styles.modalFormGrid}>
               <label style={styles.label}>Name
-                <input style={styles.input} value={form.name} onChange={setField('name')} placeholder="My Postgres" />
+                <input ref={createNameRef} style={styles.input} value={form.name} onChange={setField('name')} placeholder="My Postgres" />
               </label>
               <label style={styles.label}>Type
                 <select style={styles.input} value={form.type} onChange={(e) => setForm((f) => ({
@@ -428,44 +447,46 @@ export function ConnectorsPage() {
                 Set as default connector for new notebooks
               </label>
             </div>
-            <div style={styles.formActions}>
-              <button
-                type="button"
-                style={styles.testBtn}
-                onClick={testFormConnection}
-                disabled={!connectorConfigComplete(form, false) || formTesting}
-                title={connectorFormMissingField(form, false)}
-              >
-                {formTesting ? 'Testing…' : 'Test Connection'}
-              </button>
-              {formTest && (
-                <StatusBadge
-                  status={formTest.ok ? 'success' : 'error'}
-                  label={formTest.ok ? 'Connected' : (formTest.error ?? 'Failed')}
-                  icon={formTest.ok ? <Check size={12} /> : <X size={12} />}
-                />
-              )}
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(defaultForm()); setFormTest(null) }}>Cancel</button>
-              <button
-                type="button"
-                style={styles.saveBtn}
-                onClick={() => createConnector.mutate()}
-                disabled={!canSubmitConnector(form, false) || createConnector.isPending}
-                title={!form.name ? 'Name is required' : connectorFormMissingField(form, false)}
-              >
-                {createConnector.isPending ? 'Creating…' : 'Create'}
-              </button>
+            <div style={styles.modalFooter}>
+              {createError && <p style={styles.modalError}>{createError}</p>}
+              <div style={styles.formActions}>
+                <button
+                  type="button"
+                  style={styles.testBtn}
+                  onClick={testFormConnection}
+                  disabled={!connectorConfigComplete(form, false) || formTesting}
+                  title={connectorFormMissingField(form, false)}
+                >
+                  {formTesting ? 'Testing…' : 'Test Connection'}
+                </button>
+                {formTest && (
+                  <StatusBadge
+                    status={formTest.ok ? 'success' : 'error'}
+                    label={formTest.ok ? 'Connected' : (formTest.error ?? 'Failed')}
+                    icon={formTest.ok ? <Check size={12} /> : <X size={12} />}
+                  />
+                )}
+                <span style={{ flex: 1 }} />
+                <button type="button" style={styles.cancelBtn} onClick={closeCreate}>Cancel</button>
+                <button
+                  type="button"
+                  style={styles.saveBtn}
+                  onClick={() => createConnector.mutate()}
+                  disabled={!canSubmitConnector(form, false) || createConnector.isPending}
+                  title={!form.name ? 'Name is required' : connectorFormMissingField(form, false)}
+                >
+                  {createConnector.isPending ? 'Creating…' : 'Create'}
+                </button>
+              </div>
             </div>
-            {createError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{createError}</p>}
-          </FormCard>
+          </Modal>
         )}
 
         {editing && (
-          <FormCard title="Edit Connector">
-            <div style={styles.formGrid}>
+          <Modal title={`Edit "${editingConnector?.name ?? 'connector'}"`} onClose={closeEdit} initialFocusRef={editNameRef}>
+            <div style={styles.modalFormGrid}>
               <label style={styles.label}>Name
-                <input style={styles.input} value={editForm.name} onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))} />
+                <input ref={editNameRef} style={styles.input} value={editForm.name} onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))} />
               </label>
               <label style={styles.label}>Type
                 <select style={styles.input} value={editForm.type} onChange={(e) => setEditForm((f) => ({
@@ -544,21 +565,23 @@ export function ConnectorsPage() {
                 Set as default connector for new notebooks
               </label>
             </div>
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setEditing(null); setEditForm(defaultForm()); setEditError(null) }}>Cancel</button>
-              <button
-                type="button"
-                style={styles.saveBtn}
-                onClick={() => updateConnector.mutate(editing!)}
-                disabled={!canSubmitConnector(editForm, true) || updateConnector.isPending}
-                title={!editForm.name ? 'Name is required' : connectorFormMissingField(editForm, true)}
-              >
-                {updateConnector.isPending ? 'Saving…' : 'Save'}
-              </button>
+            <div style={styles.modalFooter}>
+              {editError && <p style={styles.modalError}>{editError}</p>}
+              <div style={styles.formActions}>
+                <span style={{ flex: 1 }} />
+                <button type="button" style={styles.cancelBtn} onClick={closeEdit}>Cancel</button>
+                <button
+                  type="button"
+                  style={styles.saveBtn}
+                  onClick={() => updateConnector.mutate(editing!)}
+                  disabled={!canSubmitConnector(editForm, true) || updateConnector.isPending}
+                  title={!editForm.name ? 'Name is required' : connectorFormMissingField(editForm, true)}
+                >
+                  {updateConnector.isPending ? 'Saving…' : 'Save'}
+                </button>
+              </div>
             </div>
-            {editError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{editError}</p>}
-          </FormCard>
+          </Modal>
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
@@ -674,34 +697,7 @@ export function ConnectorsPage() {
                       <button type="button" className="connector-action" title="Test connection" aria-label="Test connection" onClick={() => testConnector(c.id)} disabled={testingIds[c.id]}>
                         {testingIds[c.id] ? <Loader2 size={13} className="connector-action-spin" /> : <Zap size={13} />}
                       </button>
-                      <button type="button" className="connector-action connector-action--accent" title="Edit connector" aria-label="Edit connector" onClick={() => {
-                        setEditing(c.id)
-                        setEditForm({
-                          name: c.name,
-                          type: c.type as ConnectorType,
-                          host: c.config?.host ?? '',
-                          port: String(c.config?.port ?? 5432),
-                          database: c.config?.database ?? '',
-                          user: c.config?.user ?? '',
-                          password: '',
-                          ssl_mode: c.config?.ssl_mode ?? 'disable',
-                          use_tls: c.config?.use_tls ?? false,
-                          http_path: c.config?.http_path ?? '',
-                          auth_type: c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat',
-                          stored_auth_type: c.type === 'databricks'
-                            ? (c.config?.auth_type === 'oauth_m2m' ? 'oauth_m2m' : 'pat')
-                            : '',
-                          token: '',
-                          client_id: c.config?.client_id ?? '',
-                          client_secret: '',
-                          catalog: c.config?.catalog ?? '',
-                          schema: c.config?.schema ?? '',
-                          is_default: c.is_default ?? false,
-                          timeout_seconds: String(c.timeout_seconds ?? 0),
-                          table_allowlist: (c.table_allowlist ?? []).join('\n'),
-                          table_denylist: (c.table_denylist ?? []).join('\n'),
-                        })
-                      }}>
+                      <button type="button" className="connector-action connector-action--accent" title="Edit connector" aria-label="Edit connector" onClick={() => openEdit(c)}>
                         <Pencil size={13} />
                       </button>
                       <span className="connector-actions-break" aria-hidden="true" />
@@ -837,7 +833,18 @@ export function ConnectorsPage() {
 const styles: Record<string, React.CSSProperties> = {
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   body: { maxWidth: 1100, margin: '0 auto', padding: 'clamp(16px, 4vw, 32px)', width: '100%' },
-  formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 },
+  modalFormGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, padding: '16px 20px 20px', width: 'min(760px, 92vw)' },
+  modalFooter: {
+    position: 'sticky',
+    bottom: 0,
+    zIndex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 8,
+    padding: '12px 20px',
+    borderTop: '1px solid var(--border-light)',
+    background: 'var(--bg-card)',
+  },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
   formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end' },

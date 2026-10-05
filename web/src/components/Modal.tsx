@@ -7,9 +7,11 @@ interface Props {
   onClose: () => void
   children: React.ReactNode
   minWidth?: number
+  /** Control focused when the dialog opens; defaults to the dialog itself. */
+  initialFocusRef?: React.RefObject<HTMLElement | null>
 }
 
-export function Modal({ title, onClose, children, minWidth }: Props) {
+export function Modal({ title, onClose, children, minWidth, initialFocusRef }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const titleId = useId()
 
@@ -22,7 +24,9 @@ export function Modal({ title, onClose, children, minWidth }: Props) {
 
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null
-    dialogRef.current?.focus()
+    // Prefer the form's first field when the caller names one; otherwise give
+    // the dialog itself the focus so keyboard users start inside it.
+    ;(initialFocusRef?.current ?? dialogRef.current)?.focus()
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); onCloseRef.current() }
     }
@@ -31,7 +35,7 @@ export function Modal({ title, onClose, children, minWidth }: Props) {
       window.removeEventListener('keydown', handler)
       previouslyFocused?.focus?.()
     }
-  }, [])
+  }, [initialFocusRef])
 
   return (
     <div style={styles.overlay} onClick={onClose}>
@@ -41,7 +45,7 @@ export function Modal({ title, onClose, children, minWidth }: Props) {
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        style={{ ...styles.modal, minWidth: minWidth ?? 400 }}
+        style={{ ...styles.modal, minWidth }}
         onClick={(e) => e.stopPropagation()}
       >
         <div style={styles.header}>
@@ -57,7 +61,7 @@ export function Modal({ title, onClose, children, minWidth }: Props) {
 const styles: Record<string, React.CSSProperties> = {
   overlay: { position: 'fixed', inset: 0, background: 'var(--bg-overlay)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 },
   modal: { background: 'var(--bg-card)', borderRadius: 4, border: '1px solid var(--border)', boxShadow: 'var(--shadow-md)', maxHeight: '80vh', overflow: 'auto', outline: 'none' },
-  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '16px 20px', borderBottom: '1px solid var(--border)' },
-  title: { fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' },
+  header: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, padding: '16px 20px', borderBottom: '1px solid var(--border)', position: 'sticky', top: 0, background: 'var(--bg-card)', zIndex: 1 },
+  title: { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' },
   close: { background: 'transparent', border: 'none', fontSize: 14, cursor: 'pointer', color: 'var(--text-secondary)' },
 }
