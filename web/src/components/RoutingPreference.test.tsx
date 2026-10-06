@@ -180,6 +180,23 @@ describe('ServiceChoiceDialog', () => {
     expect(onSelect).toHaveBeenCalledWith('c-2')
   })
 
+  test('renders through a portal so a transformed ancestor cannot trap it', () => {
+    const { container } = renderWithProviders(
+      <div style={{ transform: 'translateY(4px)' }}>
+        <ServiceChoiceDialog
+          open
+          services={SERVICES}
+          onSelect={vi.fn()}
+          onCancel={vi.fn()}
+        />
+      </div>,
+    )
+
+    const dialog = screen.getByRole('dialog')
+    expect(container.contains(dialog)).toBe(false)
+    expect(document.body.contains(dialog)).toBe(true)
+  })
+
   test('shows the save error and disables choices while saving', () => {
     renderWithProviders(
       <ServiceChoiceDialog

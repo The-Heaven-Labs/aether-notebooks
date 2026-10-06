@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useEffect, useId, useRef } from 'react'
+import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 
 interface Props {
@@ -37,7 +38,10 @@ export function Modal({ title, onClose, children, minWidth, initialFocusRef }: P
     }
   }, [initialFocusRef])
 
-  return (
+  // Portal to <body>: a transformed ancestor (e.g. a react-grid-layout
+  // dashboard widget) would otherwise become the containing block for the
+  // fixed overlay and trap the dialog inside the widget card.
+  return createPortal(
     <div style={styles.overlay} onClick={onClose}>
       <div
         ref={dialogRef}
@@ -54,7 +58,8 @@ export function Modal({ title, onClose, children, minWidth, initialFocusRef }: P
         </div>
         <div>{children}</div>
       </div>
-    </div>
+    </div>,
+    document.body,
   )
 }
 
