@@ -29,11 +29,13 @@ type RollupHourlyStatsResult struct {
 //
 // Sources: agent_messages (input/output/direct tokens, model calls, duration,
 // sessions) joined through agent_sessions, plus subagent_tasks (subagent
-// tokens, attributed to the triggering user). Cost uses the agent's CURRENT
-// model-config prices at rollup time — per-message price snapshots are out of
-// scope. Prices are dollars per 1M tokens (the unit the model-config UI and
-// the session token panel use), so token counts are divided by 1e6.
-// agent_stats_daily is left untouched for history.
+// input/output tokens, attributed to the triggering user). Subagent usage is
+// priced with the same input/output rates as direct calls, so est_cost_usd
+// covers both. Cost uses the agent's CURRENT model-config prices at rollup
+// time — per-message price snapshots are out of scope. Prices are dollars per
+// 1M tokens (the unit the model-config UI and the session token panel use),
+// so token counts are divided by 1e6. agent_stats_daily is left untouched for
+// history.
 func (sa *StatsAggregator) RollupHourlyStats(ctx context.Context, since time.Time) (*RollupHourlyStatsResult, error) {
 	tag, err := sa.pool.Exec(ctx, `
 		WITH msg AS (
@@ -56,7 +58,8 @@ func (sa *StatsAggregator) RollupHourlyStats(ctx context.Context, since time.Tim
 			SELECT date_trunc('hour', COALESCE(st.completed_at, st.created_at)) AS bucket,
 				s.agent_id AS agent_id,
 				s.user_id AS user_id,
-				COALESCE(SUM(st.tokens_input), 0) + COALESCE(SUM(st.tokens_output), 0) AS tsub
+				COALESCE(SUM(st.tokens_input), 0) AS tsub_in,
+				COALESCE(SUM(st.tokens_output), 0) AS tsub_out
 			FROM subagent_tasks st
 			JOIN agent_sessions s ON s.id = st.parent_session_id
 			WHERE COALESCE(st.completed_at, st.created_at) >= $1
@@ -71,14 +74,18 @@ func (sa *StatsAggregator) RollupHourlyStats(ctx context.Context, since time.Tim
 		)
 		INSERT INTO agent_stats_hourly
 			(bucket_start, agent_id, user_id, sessions_count, messages_count,
-			 tokens_input, tokens_output, tokens_direct, tokens_subagent,
+			 tokens_input, tokens_output, tokens_direct,
+			 tokens_subagent, tokens_subagent_input, tokens_subagent_output,
 			 model_calls, total_duration_ms, est_cost_usd)
 		SELECT
 			b.bucket, b.agent_id, b.user_id,
 			COALESCE(m.sessions, 0), COALESCE(m.messages, 0),
 			COALESCE(m.tin, 0), COALESCE(m.tout, 0), COALESCE(m.tdirect, 0),
-			COALESCE(s.tsub, 0), COALESCE(m.calls, 0), COALESCE(m.dur, 0),
-			(COALESCE(m.tin, 0) * p.pin + COALESCE(m.tout, 0) * p.pout) / 1000000.0
+			COALESCE(s.tsub_in, 0) + COALESCE(s.tsub_out, 0),
+			COALESCE(s.tsub_in, 0), COALESCE(s.tsub_out, 0),
+			COALESCE(m.calls, 0), COALESCE(m.dur, 0),
+			(COALESCE(m.tin, 0) * p.pin + COALESCE(m.tout, 0) * p.pout
+			 + COALESCE(s.tsub_in, 0) * p.pin + COALESCE(s.tsub_out, 0) * p.pout) / 1000000.0
 		FROM (
 			SELECT bucket, agent_id, user_id FROM msg
 			UNION
@@ -94,6 +101,8 @@ func (sa *StatsAggregator) RollupHourlyStats(ctx context.Context, since time.Tim
 			tokens_output = EXCLUDED.tokens_output,
 			tokens_direct = EXCLUDED.tokens_direct,
 			tokens_subagent = EXCLUDED.tokens_subagent,
+			tokens_subagent_input = EXCLUDED.tokens_subagent_input,
+			tokens_subagent_output = EXCLUDED.tokens_subagent_output,
 			model_calls = EXCLUDED.model_calls,
 			total_duration_ms = EXCLUDED.total_duration_ms,
 			est_cost_usd = EXCLUDED.est_cost_usd

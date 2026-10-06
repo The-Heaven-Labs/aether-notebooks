@@ -51,7 +51,8 @@ BEGIN
   INSERT INTO agent_stats_hourly (
     bucket_start, agent_id, user_id,
     sessions_count, messages_count,
-    tokens_input, tokens_output, tokens_direct, tokens_subagent,
+    tokens_input, tokens_output, tokens_direct,
+    tokens_subagent, tokens_subagent_input, tokens_subagent_output,
     model_calls, total_duration_ms, est_cost_usd
   )
   SELECT
@@ -63,11 +64,15 @@ BEGIN
     600 + ((g.h * 131 + a.agent_rank * 977 + (g.h / 24) * 53) % 5200),
     400 + ((g.h * 173 + a.agent_rank * 733 + (g.h / 24) * 91) % 3800),
     (g.h * 59 + a.agent_rank * 311) % 900,
-    (g.h * 29 + a.agent_rank * 199) % 400,
+    s.tsub,
+    s.tsub * 2 / 3,
+    s.tsub - s.tsub * 2 / 3,
     1 + ((g.h + a.agent_rank) % 3),
     45000 + ((g.h * 913 + a.agent_rank * 3571 + (g.h / 24) * 113) % 240000),
     ((600 + ((g.h * 131 + a.agent_rank * 977 + (g.h / 24) * 53) % 5200)) * 3.0
-     + (400 + ((g.h * 173 + a.agent_rank * 733 + (g.h / 24) * 91) % 3800)) * 15.0) / 1000000.0
+     + (400 + ((g.h * 173 + a.agent_rank * 733 + (g.h / 24) * 91) % 3800)) * 15.0
+     + (s.tsub * 2 / 3) * 3.0
+     + (s.tsub - s.tsub * 2 / 3) * 15.0) / 1000000.0
   FROM generate_series(0, 167) AS g(h)
   CROSS JOIN LATERAL (
     SELECT id, row_number() OVER (ORDER BY created_at, id) - 1 AS agent_rank
@@ -79,6 +84,9 @@ BEGIN
     ORDER BY user_id
     OFFSET ((g.h + a.agent_rank) % v_members) LIMIT 1
   ) AS m
+  CROSS JOIN LATERAL (
+    SELECT (g.h * 29 + a.agent_rank * 199) % 400 AS tsub
+  ) AS s
   ON CONFLICT (bucket_start, agent_id, user_id) DO UPDATE SET
     sessions_count = EXCLUDED.sessions_count,
     messages_count = EXCLUDED.messages_count,
@@ -86,6 +94,8 @@ BEGIN
     tokens_output = EXCLUDED.tokens_output,
     tokens_direct = EXCLUDED.tokens_direct,
     tokens_subagent = EXCLUDED.tokens_subagent,
+    tokens_subagent_input = EXCLUDED.tokens_subagent_input,
+    tokens_subagent_output = EXCLUDED.tokens_subagent_output,
     model_calls = EXCLUDED.model_calls,
     total_duration_ms = EXCLUDED.total_duration_ms,
     est_cost_usd = EXCLUDED.est_cost_usd;

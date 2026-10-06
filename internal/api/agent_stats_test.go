@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -36,6 +37,17 @@ func seedStatsMessages(t *testing.T, srv *api.Server, sessionID string, now time
 	`, uuid.New().String(), sessionID, at)
 	if err != nil {
 		t.Fatalf("seed subagent task: %v", err)
+	}
+	// Non-zero prices so the rollup's cost (including subagent usage) is
+	// assertable: 140 direct in + 30 sub in at $1/M, 60 direct out + 20 sub
+	// out at $2/M = 0.00033.
+	_, err = srv.DB().Pool.Exec(context.Background(), `
+		UPDATE model_configs SET price_per_input_token = 1.0, price_per_output_token = 2.0
+		WHERE id = (SELECT model_config_id FROM agents
+		            WHERE id = (SELECT agent_id FROM agent_sessions WHERE id = $1))
+	`, sessionID)
+	if err != nil {
+		t.Fatalf("seed model prices: %v", err)
 	}
 }
 
@@ -163,7 +175,7 @@ func TestAgentStatsQueryParams(t *testing.T) {
 		r := rows[0]
 		for _, k := range []string{"bucket_start", "agent_id", "agent_name", "user_id", "user_name", "user_email",
 			"sessions_count", "messages_count", "tokens_input", "tokens_output", "tokens_direct",
-			"tokens_subagent", "model_calls", "total_duration_ms", "est_cost_usd"} {
+			"tokens_subagent", "tokens_subagent_input", "tokens_subagent_output", "model_calls", "total_duration_ms", "est_cost_usd"} {
 			if _, ok := r[k]; !ok {
 				t.Fatalf("missing field %s in %v", k, r)
 			}
@@ -173,6 +185,14 @@ func TestAgentStatsQueryParams(t *testing.T) {
 		}
 		if r["messages_count"] != float64(2) || r["tokens_subagent"] != float64(50) {
 			t.Fatalf("bad aggregates: %v", r)
+		}
+		if r["tokens_subagent_input"] != float64(30) || r["tokens_subagent_output"] != float64(20) {
+			t.Fatalf("bad subagent split: %v", r)
+		}
+		// 140 direct-in + 30 sub-in at $1/M plus 60 direct-out + 20 sub-out
+		// at $2/M = 0.00033; subagent usage must be priced too.
+		if cost, _ := r["est_cost_usd"].(float64); math.Abs(cost-0.00033) > 1e-9 {
+			t.Fatalf("expected cost 0.00033 including subagent usage, got %v", r["est_cost_usd"])
 		}
 	})
 
