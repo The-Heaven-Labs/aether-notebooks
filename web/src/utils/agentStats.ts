@@ -11,6 +11,8 @@ export interface StatRow {
   tokens_output: number
   tokens_direct: number
   tokens_subagent: number
+  tokens_subagent_input: number
+  tokens_subagent_output: number
   model_calls: number
   total_duration_ms: number
   est_cost_usd: number
@@ -22,6 +24,7 @@ export interface Kpis {
   modelCalls: number
   tokensIn: number
   tokensOut: number
+  subagent: number
   cost: number
 }
 
@@ -33,9 +36,10 @@ export function computeKpis(rows: StatRow[]): Kpis {
       modelCalls: acc.modelCalls + (r.model_calls || 0),
       tokensIn: acc.tokensIn + (r.tokens_input || 0),
       tokensOut: acc.tokensOut + (r.tokens_output || 0),
+      subagent: acc.subagent + (r.tokens_subagent || 0),
       cost: acc.cost + (r.est_cost_usd || 0),
     }),
-    { sessions: 0, messages: 0, modelCalls: 0, tokensIn: 0, tokensOut: 0, cost: 0 },
+    { sessions: 0, messages: 0, modelCalls: 0, tokensIn: 0, tokensOut: 0, subagent: 0, cost: 0 },
   )
 }
 
@@ -154,20 +158,26 @@ export function buildAgentTable(rows: StatRow[]): AgentAgg[] {
 
 function bucketLabel(iso: string, granularity: 'hour' | 'day'): string {
   const d = new Date(iso)
+  // Buckets are truncated in UTC by the rollup; format them in UTC too so the
+  // label cannot drift a day for viewers west of UTC.
   if (granularity === 'hour') {
-    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    return d.toLocaleString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
   }
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  return d.toLocaleDateString(undefined, { timeZone: 'UTC', month: 'short', day: 'numeric' })
 }
 
 // buildTokenChartOption stacks tokens-out per bucket (top 8 agents + "other"),
-// toggles to a cost view, and overlays tokens-in as a line in single-agent mode.
+// toggles to a cost view, and in single-agent tokens mode splits direct vs
+// subagent usage into stacked bar segments and in/out lines. All-agents bars
+// show each agent's total output (subagent included); cost always includes
+// subagent usage. Bucket labels are rendered in UTC to match the rollup.
 export function buildTokenChartOption(
   rows: StatRow[],
   opts: { mode: 'tokens' | 'cost'; granularity: 'hour' | 'day'; singleAgent: boolean },
 ): Record<string, unknown> {
   const buckets = [...new Set(rows.map((r) => r.bucket_start))].sort()
-  const valueOf = (r: StatRow) => (opts.mode === 'cost' ? r.est_cost_usd || 0 : r.tokens_output || 0)
+  const totalOut = (r: StatRow) => (r.tokens_output || 0) + (r.tokens_subagent_output || 0)
+  const valueOf = (r: StatRow) => (opts.mode === 'cost' ? r.est_cost_usd || 0 : totalOut(r))
   const totals = new Map<string, number>()
   for (const r of rows) totals.set(r.agent_id, (totals.get(r.agent_id) || 0) + valueOf(r))
   const ranked = [...totals.entries()].sort((a, b) => b[1] - a[1])
@@ -177,32 +187,55 @@ export function buildTokenChartOption(
     if (!names.has(r.agent_id)) names.set(r.agent_id, r.agent_name || r.agent_id)
   }
 
-  const sumFor = (bucket: string, pred: (r: StatRow) => boolean) =>
-    rows.filter((r) => r.bucket_start === bucket && pred(r)).reduce((a, r) => a + valueOf(r), 0)
+  const sum = (bucket: string, pick: (r: StatRow) => number, pred: (r: StatRow) => boolean = () => true) =>
+    rows.filter((r) => r.bucket_start === bucket && pred(r)).reduce((a, r) => a + pick(r), 0)
 
   const series: Record<string, unknown>[] = []
-  for (const [id] of ranked.slice(0, 8)) {
-    series.push({
-      name: names.get(id) || id,
-      type: 'bar',
-      stack: 'total',
-      data: buckets.map((b) => sumFor(b, (r) => r.agent_id === id)),
-    })
-  }
-  if (ranked.length > 8) {
-    series.push({
-      name: 'other',
-      type: 'bar',
-      stack: 'total',
-      data: buckets.map((b) => sumFor(b, (r) => !top.has(r.agent_id))),
-    })
-  }
   if (opts.singleAgent && opts.mode === 'tokens') {
+    // Explicit direct/subagent split so every legend entry explains itself.
+    series.push({
+      name: 'tokens out',
+      type: 'bar',
+      stack: 'total',
+      data: buckets.map((b) => sum(b, (r) => r.tokens_output || 0)),
+    })
+    const subOut = buckets.map((b) => sum(b, (r) => r.tokens_subagent_output || 0))
+    if (subOut.some((v) => v > 0)) {
+      series.push({ name: 'subagent out', type: 'bar', stack: 'total', data: subOut })
+    }
     series.push({
       name: 'tokens in',
       type: 'line',
-      data: buckets.map((b) => rows.filter((r) => r.bucket_start === b).reduce((a, r) => a + (r.tokens_input || 0), 0)),
+      data: buckets.map((b) => sum(b, (r) => r.tokens_input || 0)),
     })
+    const subIn = buckets.map((b) => sum(b, (r) => r.tokens_subagent_input || 0))
+    if (subIn.some((v) => v > 0)) {
+      series.push({ name: 'subagent in', type: 'line', lineStyle: { type: 'dashed' }, data: subIn })
+    }
+  } else if (opts.singleAgent) {
+    series.push({
+      name: 'cost',
+      type: 'bar',
+      stack: 'total',
+      data: buckets.map((b) => sum(b, (r) => r.est_cost_usd || 0)),
+    })
+  } else {
+    for (const [id] of ranked.slice(0, 8)) {
+      series.push({
+        name: names.get(id) || id,
+        type: 'bar',
+        stack: 'total',
+        data: buckets.map((b) => sum(b, valueOf, (r) => r.agent_id === id)),
+      })
+    }
+    if (ranked.length > 8) {
+      series.push({
+        name: 'other',
+        type: 'bar',
+        stack: 'total',
+        data: buckets.map((b) => sum(b, valueOf, (r) => !top.has(r.agent_id))),
+      })
+    }
   }
 
   return {
