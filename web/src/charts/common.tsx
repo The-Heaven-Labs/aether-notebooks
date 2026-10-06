@@ -495,6 +495,16 @@ export const CHART_FONT_MONO = 'JetBrains Mono, Fira Code, ui-monospace, monospa
 
 export function getTooltipStyle(colors?: ReturnType<typeof getChartColors>) {
   const c = colors ?? getChartColors()
+  // Respect reduced motion: instant show/hide, no fade.
+  const reduceMotion = typeof window !== 'undefined'
+    && typeof window.matchMedia === 'function'
+    && window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  // Which side a pinned (tall) tooltip currently sits on, and when the
+  // position callback last ran. The side is picked opposite the pointer and
+  // kept for the whole hover so the pointer can travel onto the tooltip; a
+  // gap in calls means the previous hover ended, so the side is re-picked.
+  let pinnedLeft: boolean | null = null
+  let lastPositionAt = 0
   return {
     backgroundColor: c.bgCard,
     borderColor: c.border,
@@ -506,36 +516,64 @@ export function getTooltipStyle(colors?: ReturnType<typeof getChartColors>) {
     // panels and drawers; max-height bounds pathological tooltips.
     appendToBody: true,
     // Tall tooltips are scrollable, so they must be reachable: let the mouse
-    // enter them (pointer-events) and keep them alive while the pointer
-    // travels from the chart to the tooltip.
+    // enter them (pointer-events). The delay is only the grace period for
+    // crossing from the chart onto the tooltip; keep it short so the tooltip
+    // clears quickly when the pointer leaves the chart.
     enterable: true,
-    hideDelay: 800,
-    // Keep the whole tooltip inside the viewport. Tall tooltips pin to the
-    // top-right corner — a cursor-following box can never be caught with the
-    // mouse; small ones still follow the cursor.
+    hideDelay: reduceMotion ? 0 : 150,
+    // Non-zero keeps ECharts hiding through the fade (instead of display:none);
+    // the fade's actual timing is declared in extraCssText below.
+    transitionDuration: reduceMotion ? 0 : 0.3,
+    // Keep the tooltip out of the pointer's way so it can never block the
+    // chart being explored: short tooltips pass pointer events through and
+    // flip to the pointer's left near the right edge; tall ones pin opposite
+    // the pointer.
     position: (
       point: number[],
       _params: unknown,
-      _dom: unknown,
+      dom: unknown,
       _rect: unknown,
       size: { contentSize: number[]; viewSize: number[] },
     ) => {
       const [mx, my] = point
       const [cw, ch] = size.contentSize
       const [vw, vh] = size.viewSize
+      // Short tooltips are read-only: let the pointer pass through so it can
+      // never freeze the chart. Tall ones stay enterable to reach their
+      // scroll area (ECharts re-applies pointer-events on every show, so this
+      // override is re-asserted after each one).
+      const el = dom as HTMLElement | null
+      if (el) el.style.pointerEvents = ch > 240 ? 'auto' : 'none'
       if (ch > 240) {
-        const px = Math.max(8, vw - cw - 16)
+        // Tall tooltips pin to a stable corner so the mouse can catch them
+        // for scrolling. Start on the side opposite the pointer — the area
+        // being explored stays clear — and hold that side while the pointer
+        // is on the chart so approaching the tooltip does not make it flee.
+        const now = Date.now()
+        if (pinnedLeft === null || now - lastPositionAt > 800) pinnedLeft = mx > vw / 2
+        lastPositionAt = now
+        const px = pinnedLeft ? 8 : Math.max(8, vw - cw - 16)
         const py = Math.max(8, Math.min(60, vh - ch - 8))
         return [px, py]
       }
+      // Follow the pointer. Prefer the pointer's right; flip left when the
+      // box would run past the right edge, so the chart's final points stay
+      // visible and hoverable. Clamp on-canvas: the pass-through above means
+      // covering the pointer can no longer freeze the chart.
       let x = mx + 12
+      if (x + cw > vw - 8) x = mx - cw - 12
+      x = Math.max(8, Math.min(x, vw - cw - 8))
       let y = my - ch - 12
       if (y < 8) y = my + 16
-      x = Math.max(8, Math.min(x, vw - cw - 8))
       y = Math.max(8, Math.min(y, vh - ch - 8))
       return [x, y]
     },
-    extraCssText: `box-shadow: 0 2px 16px ${c.shadow}; z-index: 3000; max-height: 60vh; overflow: auto;`,
+    // ECharts derives the fade from transitionDuration/2 and ties it to the
+    // follow animation. extraCssText is appended last, so declaring the
+    // transition here decouples the two: appear/disappear ease over 0.4s
+    // while the cursor follow stays immediate. The animation covers the very
+    // first show, where ECharts deliberately skips its transition.
+    extraCssText: `box-shadow: 0 2px 16px ${c.shadow}; z-index: 3000; max-height: 60vh; overflow: auto;${reduceMotion ? '' : ' transition: opacity 0.4s cubic-bezier(0.23, 1, 0.32, 1), visibility 0.4s cubic-bezier(0.23, 1, 0.32, 1); animation: aether-tooltip-in 0.4s cubic-bezier(0.23, 1, 0.32, 1);'}`,
   }
 }
 

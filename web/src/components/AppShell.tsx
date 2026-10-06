@@ -171,7 +171,7 @@ export function AppShell({ children, noPadding }: Props) {
 
   return (
     <AgentPanelLayoutContext.Provider value={layoutVersion}>
-    <div style={styles.root}>
+    <div className="app-shell" style={styles.root}>
       <a href="#main-content" className="skip-link">Skip to content</a>
       <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
       <div style={{
@@ -345,7 +345,9 @@ const fabStyles: Record<string, React.CSSProperties> = {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  root: { display: 'flex', flexDirection: 'column', height: '100vh', maxHeight: '100vh', overflow: 'hidden', background: 'var(--bg-primary)' },
+  // Height (100vh with a 100dvh upgrade) lives on .app-shell in theme.css so
+  // dynamic-viewport browsers don't scroll a 100vh-tall shell out of view.
+  root: { display: 'flex', flexDirection: 'column', overflow: 'hidden', background: 'var(--bg-primary)' },
   body: { display: 'flex', flex: 1, overflow: 'hidden', minHeight: 0 },
   main: { flex: 1, overflow: 'auto', padding: '32px', minHeight: 0 },
 }

@@ -42,3 +42,24 @@ test('omits reset button when no callback is provided', () => {
   renderModal()
   expect(screen.queryByRole('button', { name: 'Reset to notebook' })).toBeNull()
 })
+
+test('renders through a portal so a transformed ancestor cannot trap it', () => {
+  // react-grid-layout items carry a CSS transform, which makes them the
+  // containing block for fixed-position descendants. If the modal rendered
+  // inline it would be confined to the widget card instead of the viewport.
+  const { container } = render(
+    <div style={{ transform: 'translateY(4px)' }}>
+      <ChartConfigModal
+        config={{ chartType: 'bar', xAxis: 'month', yAxis: ['revenue'] }}
+        columns={['month', 'revenue']}
+        data={data}
+        groupValues={[]}
+        onSave={vi.fn()}
+        onClose={vi.fn()}
+      />
+    </div>,
+  )
+  const dialog = screen.getByRole('dialog', { name: 'Chart Configuration' })
+  expect(container.contains(dialog)).toBe(false)
+  expect(document.body.contains(dialog)).toBe(true)
+})

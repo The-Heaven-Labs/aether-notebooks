@@ -242,6 +242,27 @@ a:hover {
   background: rgba(255, 255, 255, 0.05);
 }
 
+/* ── App shell height ───────────────────────────────────────────────────── */
+/* 100dvh tracks the visible viewport in browsers with dynamic toolbars
+   (mobile Safari, etc.). A plain 100vh shell can be taller than the visible
+   area there, letting the document scroll the sidebar rail out of view and
+   leave a bare gap below it. 100vh stays as the fallback for older engines. */
+.app-shell {
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+}
+
+/* ── Chart tooltip entrance ─────────────────────────────────────────────── */
+/* ECharts skips its transition on a tooltip's very first show (to avoid
+   animating from the initial coordinate), so this animation supplies the
+   fade-in for that case; later shows fade through the tooltip's transition. */
+@keyframes aether-tooltip-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
 /* Skeleton loading animation */
 @keyframes skeleton-pulse {
   0%, 100% {

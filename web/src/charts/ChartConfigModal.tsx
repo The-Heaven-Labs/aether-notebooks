@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import type React from 'react'
+import { createPortal } from 'react-dom'
 import { X, Save } from 'lucide-react'
 import type { ChartConfig } from './types'
 import { CHART_MODULES } from './registry'
@@ -96,7 +97,7 @@ export function ChartConfigModal({ config, columns, data, groupValues, onSave, o
     return () => document.removeEventListener('keydown', onKeyDown)
   }, [handleCancel])
 
-  return (
+  return createPortal(
     <>
       {showConfirm && (
         <ConfirmModal
@@ -110,7 +111,13 @@ export function ChartConfigModal({ config, columns, data, groupValues, onSave, o
         />
       )}
       <div style={styles.overlay} onClick={handleCancel}>
-        <div style={styles.modal} onClick={e => e.stopPropagation()}>
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Chart Configuration"
+          style={styles.modal}
+          onClick={e => e.stopPropagation()}
+        >
           <div style={styles.header}>
             <span style={styles.headerTitle}>Chart Configuration</span>
             <div style={styles.headerActions}>
@@ -153,7 +160,8 @@ export function ChartConfigModal({ config, columns, data, groupValues, onSave, o
           </div>
         </div>
       </div>
-    </>
+    </>,
+    document.body,
   )
 }
 

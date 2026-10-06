@@ -186,6 +186,10 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--nav-bg)',
     borderRight: '1px solid var(--nav-border)',
     flexShrink: 0,
+    // Always fill the shell body's height; the item list is the only part
+    // that shrinks, so the rail never ends above the viewport bottom.
+    alignSelf: 'stretch',
+    minHeight: 0,
     // Intentional layout animation: the rail collapse reflows the workspace
     // by design (documented in DESIGN.md). Not transform-friendly.
     transition: 'width 0.2s ease',
@@ -227,6 +231,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   items: {
     flex: 1,
+    // Scroll the menu when the viewport is shorter than the items, instead of
+    // clipping the bottom entries and the collapse toggle.
+    minHeight: 0,
+    overflowY: 'auto',
+    overscrollBehavior: 'contain',
     display: 'flex',
     flexDirection: 'column',
     padding: '8px 0',
@@ -268,6 +277,8 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     color: 'var(--text-secondary)',
     borderTop: '1px solid var(--nav-border)',
+    // Pinned to the bottom of the rail even when the item list scrolls.
+    flexShrink: 0,
   },
   sectionDivider: {
     height: 1,
