@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Link } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -7,7 +7,9 @@ import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { Skeleton } from '../components/Skeleton'
 import { SectionHeader } from '../components/SectionHeader'
-import { LayoutGrid, List, LayoutDashboard, X } from 'lucide-react'
+import { FormModal } from '../components/FormModal'
+import { RowAction } from '../components/RowActions'
+import { LayoutGrid, List, LayoutDashboard, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 
 const fmtDate = (d: string) => {
@@ -25,6 +27,7 @@ export function DashboardsPage() {
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
+  const titleRef = useRef<HTMLInputElement>(null)
   const [layout, setLayout] = useState<'grid' | 'list'>(() =>
     (localStorage.getItem('aether_dashboards_layout') as 'grid' | 'list') ?? 'list'
   )
@@ -73,26 +76,29 @@ export function DashboardsPage() {
         </p>
 
         {creating && (
-          <form
-            style={styles.createForm}
-            onSubmit={(e) => { e.preventDefault(); if (newTitle.trim()) createDashboard.mutate() }}
+          <FormModal
+            title="New Dashboard"
+            onClose={() => { setCreating(false); setNewTitle(''); setCreateError(null) }}
+            initialFocusRef={titleRef}
+            width="min(420px, 92vw)"
+            error={createError}
+            submitLabel="Create"
+            pendingLabel="Creating…"
+            pending={createDashboard.isPending}
+            submitDisabled={!newTitle.trim()}
+            onSubmit={() => createDashboard.mutate()}
           >
-            <input
-              style={styles.createInput}
-              placeholder="Dashboard title"
-              value={newTitle}
-              onChange={(e) => setNewTitle(e.target.value)}
-              autoFocus
-            />
-            <button type="submit" style={styles.createBtn} disabled={!newTitle.trim() || createDashboard.isPending} title={!newTitle.trim() ? 'Title is required' : undefined}>
-              Create
-            </button>
-            <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setNewTitle('') }}>
-              Cancel
-            </button>
-          </form>
+            <label style={styles.label}>Title
+              <input
+                ref={titleRef}
+                style={styles.createInput}
+                placeholder="Dashboard title"
+                value={newTitle}
+                onChange={(e) => setNewTitle(e.target.value)}
+              />
+            </label>
+          </FormModal>
         )}
-        {createError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{createError}</p>}
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
         {isLoading ? (
@@ -116,7 +122,9 @@ export function DashboardsPage() {
                       <div style={styles.cardMeta}>Updated {fmtDate(d.updated_at)}</div>
                       {d.public_token && <div style={styles.publicBadge}>Public</div>}
                     </Link>
-                    <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget(d)} title="Delete dashboard"><X size={13} /></button>
+                    <span style={styles.cardDelete}>
+                      <RowAction label="Delete dashboard" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget(d)} />
+                    </span>
                   </div>
                 )
                 : <DashboardRow key={d.id} dashboard={d} onRequestDelete={() => setDeleteTarget(d)} />
@@ -148,7 +156,7 @@ function DashboardRow({ dashboard, onRequestDelete }: { dashboard: Dashboard; on
         </div>
         <span style={rowStyles.date}>{fmtDate(dashboard.updated_at)}</span>
       </Link>
-      <button type="button" style={rowStyles.del} onClick={(e) => { e.preventDefault(); onRequestDelete() }}>Delete</button>
+      <RowAction label="Delete dashboard" icon={<Trash2 size={13} />} danger onClick={onRequestDelete} />
     </div>
   )
 }
@@ -161,7 +169,6 @@ const rowStyles: Record<string, React.CSSProperties> = {
   title: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   badge: { fontSize: 10, fontWeight: 700, color: 'var(--text-secondary)', background: 'var(--accent-light)', padding: '2px 6px', borderRadius: 3, flexShrink: 0 },
   date: { fontSize: 12, color: 'var(--text-secondary)', flexShrink: 0 },
-  del: { padding: '3px 8px', border: 'none', background: 'transparent', color: 'var(--error)', fontSize: 12, cursor: 'pointer', flexShrink: 0 },
 }
 
 const styles: Record<string, React.CSSProperties> = {
@@ -169,10 +176,8 @@ const styles: Record<string, React.CSSProperties> = {
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   body: { maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
-  createForm: { display: 'flex', gap: 8, marginBottom: 24, alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, padding: '12px 16px' },
-  createInput: { flex: 1, maxWidth: 360, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 14, fontFamily: 'var(--font-sans)', background: 'var(--bg-input)', color: 'var(--text-primary)' },
-  createBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  cancelBtn: { padding: '7px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
+  label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
+  createInput: { padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 14, fontFamily: 'var(--font-sans)', background: 'var(--bg-input)', color: 'var(--text-primary)' },
   grid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 },
   card: {
     background: 'var(--bg-card)',
@@ -187,16 +192,9 @@ const styles: Record<string, React.CSSProperties> = {
   cardTitle: { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 },
   cardMeta: { fontSize: 12, color: 'var(--text-secondary)' },
   publicBadge: { marginTop: 8, display: 'inline-block', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)', background: 'var(--accent-light)', padding: '2px 7px', borderRadius: 3 },
-  deleteBtn: {
+  cardDelete: {
     position: 'absolute',
     top: 10,
     right: 10,
-    background: 'transparent',
-    border: 'none',
-    fontSize: 13,
-    cursor: 'pointer',
-    color: 'var(--text-secondary)',
-    padding: '3px 6px',
-    borderRadius: 4,
   },
 }

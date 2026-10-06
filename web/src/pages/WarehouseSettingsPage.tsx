@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Boxes, ChevronRight } from 'lucide-react'
+import { Boxes, ChevronRight, Pencil, Trash2 } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { api, ApiError } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
-import { FormCard } from '../components/FormCard'
+import { FormModal } from '../components/FormModal'
 import { NewTablesInbox } from '../components/NewTablesInbox'
+import { RowAction } from '../components/RowActions'
 import { SectionHeader } from '../components/SectionHeader'
 import { StatusBadge } from '../components/StatusBadge'
 import { WarehouseHiddenTables } from '../components/WarehouseHiddenTables'
@@ -36,12 +37,17 @@ export function WarehouseSettingsPage() {
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState({ name: '', provisioner_connector_id: '' })
   const [createError, setCreateError] = useState<string | null>(null)
+  const [renameTarget, setRenameTarget] = useState<Warehouse | null>(null)
+  const [renameName, setRenameName] = useState('')
+  const [renameError, setRenameError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<Warehouse | null>(null)
   const [forceTarget, setForceTarget] = useState<{ warehouse: Warehouse; message: string } | null>(null)
   const [unlinkTarget, setUnlinkTarget] = useState<{ warehouse: Warehouse; connector: WarehouseConnector } | null>(null)
   const [allowProvisionerSettled, setAllowProvisionerSettled] = useState(0)
+  const createNameRef = useRef<HTMLInputElement>(null)
+  const renameNameRef = useRef<HTMLInputElement>(null)
 
   const {
     data: warehouses = [],
@@ -75,6 +81,18 @@ export function WarehouseSettingsPage() {
     qc.invalidateQueries({ queryKey: ['warehouse'] })
   }
 
+  const closeCreate = () => {
+    setCreating(false)
+    setForm({ name: '', provisioner_connector_id: '' })
+    setCreateError(null)
+  }
+
+  const closeRename = () => {
+    setRenameTarget(null)
+    setRenameName('')
+    setRenameError(null)
+  }
+
   const createMutation = useMutation({
     mutationFn: () =>
       createWarehouse({
@@ -83,9 +101,7 @@ export function WarehouseSettingsPage() {
       }),
     onSuccess: (warehouse) => {
       invalidateWarehouses()
-      setCreating(false)
-      setForm({ name: '', provisioner_connector_id: '' })
-      setCreateError(null)
+      closeCreate()
       setExpandedId(warehouse.id)
     },
     onError: (err: Error) => setCreateError(err.message),
@@ -96,8 +112,9 @@ export function WarehouseSettingsPage() {
     onSuccess: () => {
       invalidateWarehouses()
       setError(null)
+      closeRename()
     },
-    onError: (err: Error) => setError(err.message),
+    onError: (err: Error) => setRenameError(err.message),
   })
 
   const allowProvisionerMutation = useMutation({
@@ -200,63 +217,46 @@ export function WarehouseSettingsPage() {
         </p>
 
         {creating && (
-          <FormCard title="New Warehouse">
-            <div style={styles.formGrid}>
-              <label style={styles.label}>
-                Name
-                <input
-                  style={styles.input}
-                  value={form.name}
-                  onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-                  placeholder="Analytics Warehouse"
-                />
-              </label>
-              <label style={styles.label}>
-                Provisioner connector
-                <select
-                  style={styles.input}
-                  value={form.provisioner_connector_id}
-                  onChange={(e) => setForm((f) => ({ ...f, provisioner_connector_id: e.target.value }))}
-                >
-                  <option value="">— None (choose later) —</option>
-                  {clickhouseConnectors
-                    .filter((c) => !c.warehouse_id)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                </select>
-              </label>
-            </div>
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button
-                type="button"
-                style={styles.cancelBtn}
-                onClick={() => {
-                  setCreating(false)
-                  setForm({ name: '', provisioner_connector_id: '' })
-                  setCreateError(null)
-                }}
+          <FormModal
+            title="New Warehouse"
+            onClose={closeCreate}
+            initialFocusRef={createNameRef}
+            width="min(560px, 92vw)"
+            error={createError}
+            submitLabel="Create"
+            pendingLabel="Creating…"
+            pending={createMutation.isPending}
+            submitDisabled={!form.name.trim()}
+            onSubmit={() => createMutation.mutate()}
+          >
+            <label style={styles.label}>
+              Name
+              <input
+                ref={createNameRef}
+                style={styles.input}
+                value={form.name}
+                onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+                placeholder="Analytics Warehouse"
+              />
+            </label>
+            <label style={styles.label}>
+              Provisioner connector
+              <select
+                style={styles.input}
+                value={form.provisioner_connector_id}
+                onChange={(e) => setForm((f) => ({ ...f, provisioner_connector_id: e.target.value }))}
               >
-                Cancel
-              </button>
-              <button
-                type="button"
-                style={{
-                  ...styles.saveBtn,
-                  opacity: !form.name.trim() || createMutation.isPending ? 0.5 : 1,
-                  cursor: !form.name.trim() || createMutation.isPending ? 'not-allowed' : 'pointer',
-                }}
-                disabled={!form.name.trim() || createMutation.isPending}
-                onClick={() => createMutation.mutate()}
-              >
-                {createMutation.isPending ? 'Creating…' : 'Create'}
-              </button>
-            </div>
-            {createError && <p style={styles.inlineError}>{createError}</p>}
-          </FormCard>
+                <option value="">— None (choose later) —</option>
+                {clickhouseConnectors
+                  .filter((c) => !c.warehouse_id)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          </FormModal>
         )}
 
         {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
@@ -286,7 +286,7 @@ export function WarehouseSettingsPage() {
                 clickhouseConnectors={clickhouseConnectors}
                 expanded={expandedId === warehouse.id}
                 onToggle={() => setExpandedId(expandedId === warehouse.id ? null : warehouse.id)}
-                onRename={(name) => renameMutation.mutate({ id: warehouse.id, name })}
+                onRequestRename={() => { setRenameTarget(warehouse); setRenameName(warehouse.name); setRenameError(null) }}
                 onDelete={() => setDeleteTarget(warehouse)}
                 onSetProvisioner={(connectorId) =>
                   provisionerMutation.mutate({ id: warehouse.id, connectorId })
@@ -353,6 +353,31 @@ export function WarehouseSettingsPage() {
         }}
         onCancel={() => setUnlinkTarget(null)}
       />
+
+      {renameTarget && (
+        <FormModal
+          title={`Rename "${renameTarget.name}"`}
+          onClose={closeRename}
+          initialFocusRef={renameNameRef}
+          width="min(420px, 92vw)"
+          error={renameError}
+          submitLabel="Save"
+          pendingLabel="Saving…"
+          pending={renameMutation.isPending}
+          submitDisabled={!renameName.trim() || renameName.trim() === renameTarget.name}
+          onSubmit={() => renameMutation.mutate({ id: renameTarget.id, name: renameName.trim() })}
+        >
+          <label style={styles.label}>
+            Name
+            <input
+              ref={renameNameRef}
+              style={styles.input}
+              value={renameName}
+              onChange={(e) => setRenameName(e.target.value)}
+            />
+          </label>
+        </FormModal>
+      )}
     </AppShell>
   )
 }
@@ -362,7 +387,7 @@ interface WarehouseCardProps {
   clickhouseConnectors: Connector[]
   expanded: boolean
   onToggle: () => void
-  onRename: (name: string) => void
+  onRequestRename: () => void
   onDelete: () => void
   onSetProvisioner: (connectorId: string | null) => void
   onSetAllowProvisionerExecution: (allow: boolean) => void
@@ -377,7 +402,7 @@ function WarehouseCard({
   clickhouseConnectors,
   expanded,
   onToggle,
-  onRename,
+  onRequestRename,
   onDelete,
   onSetProvisioner,
   onSetAllowProvisionerExecution,
@@ -386,10 +411,7 @@ function WarehouseCard({
   onAddConnector,
   onRemoveConnector,
 }: WarehouseCardProps) {
-  const [renaming, setRenaming] = useState(false)
-  const [renameValue, setRenameValue] = useState(warehouse.name)
   const [addConnectorId, setAddConnectorId] = useState('')
-  const renameSubmitted = useRef(false)
   const tablePermissionsEnabled = useWarehouseTablePermissions()
 
   const { data: detail, isLoading } = useQuery({
@@ -422,25 +444,12 @@ function WarehouseCard({
   const hiddenPatterns = detail?.hidden_table_patterns ?? warehouse.hidden_table_patterns ?? []
   const unlinked = clickhouseConnectors.filter((c) => !c.warehouse_id)
 
-  const submitRename = () => {
-    if (renameSubmitted.current) return
-    renameSubmitted.current = true
-    const trimmed = renameValue.trim()
-    if (!trimmed || trimmed === warehouse.name) {
-      setRenaming(false)
-      setRenameValue(warehouse.name)
-      return
-    }
-    onRename(trimmed)
-    setRenaming(false)
-  }
-
   return (
     <div style={styles.card}>
       <div style={styles.cardHeader}>
         <button
           type="button"
-          style={{ ...styles.expandBtn, flex: renaming ? '0 0 auto' : 1 }}
+          style={{ ...styles.expandBtn, flex: 1 }}
           onClick={onToggle}
           aria-expanded={expanded}
           title={expanded ? 'Collapse' : 'Expand'}
@@ -449,25 +458,8 @@ function WarehouseCard({
             size={14}
             style={{ ...styles.chevron, transform: expanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
           />
-          {!renaming && <span style={styles.warehouseName}>{warehouse.name}</span>}
+          <span style={styles.warehouseName}>{warehouse.name}</span>
         </button>
-        {renaming && (
-          <input
-            autoFocus
-            aria-label="Warehouse name"
-            style={{ ...styles.renameInput, flex: 1 }}
-            value={renameValue}
-            onChange={(e) => setRenameValue(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') submitRename()
-              if (e.key === 'Escape') {
-                setRenaming(false)
-                setRenameValue(warehouse.name)
-              }
-            }}
-            onBlur={submitRename}
-          />
-        )}
         <span style={styles.syncWrap}>
           <SyncBadge status={warehouse.sync_status} title={syncStatusTitle(warehouse)} />
           {validationWarnings > 0 && (
@@ -480,20 +472,8 @@ function WarehouseCard({
           )}
         </span>
         <div style={styles.actions}>
-          <button
-            type="button"
-            style={styles.actionBtn}
-            onClick={() => {
-              renameSubmitted.current = false
-              setRenaming(true)
-              setRenameValue(warehouse.name)
-            }}
-          >
-            Rename
-          </button>
-          <button type="button" style={styles.deleteBtn} onClick={onDelete}>
-            Delete
-          </button>
+          <RowAction label="Rename warehouse" icon={<Pencil size={13} />} accent onClick={onRequestRename} />
+          <RowAction label="Delete warehouse" icon={<Trash2 size={13} />} danger onClick={onDelete} />
         </div>
       </div>
 
@@ -661,10 +641,7 @@ const styles: Record<string, React.CSSProperties> = {
   expandBtn: { display: 'flex', alignItems: 'center', gap: 8, background: 'transparent', border: 'none', cursor: 'pointer', padding: 0, flex: 1, textAlign: 'left' as const, minWidth: 0 },
   chevron: { color: 'var(--text-secondary)', transition: 'transform 0.15s ease', flexShrink: 0 },
   warehouseName: { fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' },
-  renameInput: { fontSize: 14, fontWeight: 600, padding: '2px 6px', border: '1px solid var(--accent)', borderRadius: 3, outline: 'none', background: 'var(--bg-input)', color: 'var(--text-primary)', minWidth: 200 },
   actions: { display: 'flex', gap: 6, flexShrink: 0 },
-  actionBtn: { padding: '4px 10px', fontSize: 12, fontWeight: 500, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--text-secondary)' },
-  deleteBtn: { padding: '4px 10px', fontSize: 12, fontWeight: 500, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--error)' },
   cardBody: { borderTop: '1px solid var(--border)', padding: '14px 16px', background: 'var(--bg-secondary)', display: 'flex', flexDirection: 'column', gap: 14 },
   syncError: { fontSize: 12, fontFamily: 'var(--font-mono)', color: 'var(--error-full)', background: 'var(--error-light)', border: '1px solid var(--error-border)', borderRadius: 4, padding: '6px 10px', whiteSpace: 'pre-wrap' },
   field: { display: 'flex', flexDirection: 'column', gap: 4 },
@@ -682,9 +659,4 @@ const styles: Record<string, React.CSSProperties> = {
   addBtn: { padding: '6px 14px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 12, fontWeight: 600 },
   emptyLine: { fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
   loading: { fontSize: 13, color: 'var(--text-muted)', padding: '4px 0' },
-  formGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, marginBottom: 16 },
-  formActions: { display: 'flex', gap: 8 },
-  cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600 },
-  inlineError: { color: 'var(--error)', fontSize: 12, marginTop: 10, marginBottom: 0 },
 }

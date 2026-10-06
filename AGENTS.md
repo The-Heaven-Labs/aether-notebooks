@@ -323,6 +323,7 @@ OIDC providers are loaded dynamically from the database. SSO routes are disabled
 - Markdown cells persist on blur via `PUT /cells/:id`
 - Real-time collaboration: `HocuspocusProvider` in `Cell` connects to relay on `:3001`
 - Yjs document key convention: `cell:{cellID}` for each cell's text content
+- **Resource catalog pages follow one pattern** (Connectors is the reference): create/edit opens the shared `FormModal` (`web/src/components/FormModal.tsx`) instead of an inline `FormCard`; row actions are icon buttons from `web/src/components/RowActions.tsx` (Test + Edit above Permissions + Delete, danger hover on delete); delete goes through `ConfirmDialog`; permissions through `PermissionsPanel`. Keep Models, Tools, Skills, MCP Servers, Agents, Warehouses, and Dashboards aligned with it.
 
 **Real-browser validation is mandatory for every UI change.** After the dev stack is up, validate the changed flows with agent-browser (`agent-browser open`, `snapshot -i`, interact, `screenshot`, `errors`) — component tests alone are not sufficient.
 

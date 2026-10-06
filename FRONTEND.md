@@ -446,6 +446,34 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 
 ## Page Components
 
+### Resource catalog pages (shared pattern)
+
+Connectors, Models, Tools, Skills, MCP Servers, Agents, Warehouses, and Dashboards manage a
+resource list with the same interaction pattern, extracted from ConnectorsPage:
+
+- **Create / Edit in a modal** — "+ New X" and the Edit row action open a centered `FormModal`
+  (`web/src/components/FormModal.tsx`): a two-column field grid (`repeat(auto-fit, minmax(220px,
+  1fr))`, `min(760px, 92vw)` wide by default) over a sticky footer with Cancel and the primary
+  submit button. Errors render inline above the footer, `initialFocusRef` focuses the first field,
+  and Escape / backdrop click close the dialog and return focus to the trigger. Forms never render
+  inline in the page body.
+- **Icon row actions** — the Actions column is right-aligned and uses `RowActions`
+  (`web/src/components/RowActions.tsx`): 26×26px bordered icon buttons (36px on touch) with
+  `row-action--accent` for Edit and `row-action--danger` for Delete (red only on hover).
+  `RowActionsBreak` forces the next action onto a second line so actions stay in right-aligned
+  pairs — Test + Edit on the first line, Permissions + Delete on the second. The header cell carries
+  `row-actions-header` with an sr-only "Actions" label, and the column shrink-wraps to its buttons.
+- **Test feedback** — resources with a test endpoint (connectors, models, tools, MCP servers) show a
+  Status column with a `StatusBadge`: "Testing…" (neutral), "Connected" (check), "Failed" (X, with
+  the full message in the tooltip), or an italic muted "Unknown — click Test". The Test row action
+  spins while its request runs.
+- **Delete** — the danger Delete row action opens the shared `ConfirmDialog`; only its confirm
+  button is destructive-styled.
+- **Permissions** — the Permissions row action opens the `PermissionsPanel` overlay.
+
+Agent create/edit uses the same modal principle with its own two-pane dialog (`AgentsPage.css`): a
+summary rail on the left, configuration fields on the right, and a full-screen takeover below 768px.
+
 ### HomePage (File Browser)
 
 **Purpose**: Filesystem browser — navigate folders and all resource types (notebooks, connectors, dashboards)
@@ -523,8 +551,10 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 
 **Visual**:
 - Similar to HomePage layout
-- Grid/list toggle (same pattern)
-- Dashboard cards show title, edit date, widget count (?)
+- Grid/list toggle (same pattern, persisted in localStorage)
+- "+ New Dashboard" opens a `FormModal` with a Title field
+- Each list row / grid card has a danger icon Delete action (shared `RowActions`) that opens a `ConfirmDialog`
+- Dashboard cards show title, edit date, optional Public badge
 
 **Component**: `web/src/pages/DashboardsPage.tsx`
 
@@ -548,8 +578,10 @@ See also: `DashboardEditorPage.tsx` for the dedicated editor.
 
 **Visual**:
 - List of connectors, each showing: Name, Type (Postgres/ClickHouse/OpenSearch/Databricks), database name, status
-- "New Connector" button
-- Edit/Delete actions per connector
+- "New Connector" button opens the shared create `FormModal` (with a Test Connection control in the modal footer); the Edit row action opens the same shell
+- Per-row Status column: "Testing…", "Connected", "Failed" (message in tooltip), or "Unknown — click Test"
+- Access-mode badge per connector ("Managed — table grants enforced/off" or "Shared credential — not table-scoped")
+- **Reference implementation** of the shared resource catalog pattern above: `FormModal` create/edit, `RowActions` icon actions (Test, Edit, Permissions, Link/Unlink, Set default, Delete), `ConfirmDialog` delete, `PermissionsPanel`
 
 **Form**:
 - Name input
@@ -862,6 +894,23 @@ card: {
   fontSize: 12,
   cursor: 'pointer',
   color: 'var(--text-secondary)',
+}
+```
+
+**Row Action** (resource tables — `RowActions` component):
+```javascript
+{
+  width: 26,          // 36 on touch devices
+  height: 26,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: '1px solid var(--border)',
+  borderRadius: 4,
+  background: 'none',
+  color: 'var(--text-secondary)',
+  // hover: color-mix(in srgb, var(--text-primary) 6%, transparent)
+  // --accent for Edit; --error-full on --error-light hover for Delete
 }
 ```
 

@@ -2,13 +2,15 @@ import { useState, useEffect } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
-import { FormCard } from '../components/FormCard'
+import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { EmptyState } from '../components/EmptyState'
-import { Bot } from 'lucide-react'
+import { Bot, Pencil, ShieldCheck, Trash2 } from 'lucide-react'
 import { api, toolsApi } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import type { Agent, ModelConfig, Skill, MCPServerOrg, Tool } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
+import { RowAction, RowActionsCell, RowActionsHeader } from '../components/RowActions'
+import './AgentsPage.css'
 
 interface AgentForm {
   name: string
@@ -159,6 +161,21 @@ export function AgentsPage() {
     tool_ids: f.tool_ids.includes(id) ? f.tool_ids.filter(t => t !== id) : [...f.tool_ids, id],
   }))
 
+  const closeAgentModal = () => {
+    setCreating(false)
+    setEditingId(null)
+    setForm(emptyForm())
+    setFormError(null)
+  }
+
+  const agentFormValid = !!form.name && !!form.model_config_id && !!form.subagent_model_config_id
+  const agentModalOpen = creating || editingId !== null
+  const agentSubmitPending = createMutation.isPending || updateMutation.isPending
+  const submitAgent = () => {
+    if (editingId) updateMutation.mutate(editingId)
+    else createMutation.mutate()
+  }
+
   return (
     <AppShell>
       <div style={styles.body}>
@@ -172,40 +189,77 @@ export function AgentsPage() {
           Configure AI agents that can query databases, run notebooks, and use tools.
         </p>
 
-        {creating && (
-          <FormCard title="New Agent">
-            <AgentFormFields
-              form={form} setForm={setForm}
-              modelConfigs={modelConfigs} skills={skills} tools={tools} mcpServers={mcpServers}
-              toggleSkill={toggleSkill} toggleTool={toggleTool} toggleMCPServer={toggleMCPServer}
-            />
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.model_config_id || !form.subagent_model_config_id || createMutation.isPending} title={!form.name ? 'Name is required' : !form.model_config_id ? 'Model config is required' : !form.subagent_model_config_id ? 'Subagent model config is required' : undefined}>
-                {createMutation.isPending ? 'Creating...' : 'Create'}
-              </button>
+        {agentModalOpen && (
+          <div className="agent-modal-scrim" onClick={closeAgentModal}>
+            <div
+              className="agent-modal-panel"
+              role="dialog"
+              aria-modal="true"
+              aria-label={editingId ? 'Edit Agent' : 'New Agent'}
+              tabIndex={-1}
+              onClick={e => e.stopPropagation()}
+              onKeyDown={e => { if (e.key === 'Escape') closeAgentModal() }}
+            >
+              <aside className="agent-modal-rail">
+                <div className="agent-modal-identity">
+                  <div className="agent-modal-glyph"><Bot size={18} /></div>
+                  <div>
+                    <span className="agent-modal-title">{editingId ? 'Edit Agent' : 'New Agent'}</span>
+                    <span className="agent-modal-tag">{editingId ? 'Editing' : 'Draft'}</span>
+                  </div>
+                </div>
+                <div className="agent-modal-summary">
+                  <div className="agent-modal-row">
+                    <span className="agent-modal-k">Model</span>
+                    <span className={form.model_config_id ? 'agent-modal-v' : 'agent-modal-v is-empty'}>{modelConfigs.find(m => m.id === form.model_config_id)?.name ?? 'Not set'}</span>
+                  </div>
+                  <div className="agent-modal-row">
+                    <span className="agent-modal-k">Subagent</span>
+                    <span className={form.subagent_model_config_id ? 'agent-modal-v' : 'agent-modal-v is-empty'}>{modelConfigs.find(m => m.id === form.subagent_model_config_id)?.name ?? 'Not set'}</span>
+                  </div>
+                  <div className="agent-modal-row">
+                    <span className="agent-modal-k">Max turns</span>
+                    <span className="agent-modal-v">{form.max_turns}</span>
+                  </div>
+                  <div className="agent-modal-row">
+                    <span className="agent-modal-k">Skills</span>
+                    <span className="agent-modal-v">{form.skill_ids.length}</span>
+                  </div>
+                  <div className="agent-modal-row">
+                    <span className="agent-modal-k">Tools</span>
+                    <span className="agent-modal-v">{form.tool_ids.length}</span>
+                  </div>
+                  <div className="agent-modal-row">
+                    <span className="agent-modal-k">MCP servers</span>
+                    <span className="agent-modal-v">{form.mcp_server_ids.length}</span>
+                  </div>
+                </div>
+                <div className="agent-modal-foot">
+                  {formError && <p className="agent-modal-error">{formError}</p>}
+                  <button type="button" className="agent-btn-primary agent-modal-block" onClick={submitAgent} disabled={!agentFormValid || agentSubmitPending} title={!form.name ? 'Name is required' : !form.model_config_id ? 'Model config is required' : !form.subagent_model_config_id ? 'Subagent model config is required' : undefined}>
+                    {agentSubmitPending ? (editingId ? 'Saving...' : 'Creating...') : (editingId ? 'Save' : 'Create')}
+                  </button>
+                  <button type="button" className="agent-btn-ghost agent-modal-block" onClick={closeAgentModal}>Cancel</button>
+                </div>
+              </aside>
+              <div className="agent-modal-main">
+                <div className="agent-modal-main-head">
+                  <span className="agent-modal-mobile-title">{editingId ? 'Edit Agent' : 'New Agent'}</span>
+                  <span className="agent-modal-main-label">Configuration</span>
+                  <button type="button" className="agent-modal-close" onClick={closeAgentModal} aria-label="Close modal">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+                  </button>
+                </div>
+                <div className="agent-modal-body">
+                  <AgentFormFields
+                    form={form} setForm={setForm}
+                    modelConfigs={modelConfigs} skills={skills} tools={tools} mcpServers={mcpServers}
+                    toggleSkill={toggleSkill} toggleTool={toggleTool} toggleMCPServer={toggleMCPServer}
+                  />
+                </div>
+              </div>
             </div>
-            {formError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{formError}</p>}
-          </FormCard>
-        )}
-
-        {editingId && (
-          <FormCard title="Edit Agent">
-            <AgentFormFields
-              form={form} setForm={setForm}
-              modelConfigs={modelConfigs} skills={skills} tools={tools} mcpServers={mcpServers}
-              toggleSkill={toggleSkill} toggleTool={toggleTool} toggleMCPServer={toggleMCPServer}
-            />
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || !form.model_config_id || !form.subagent_model_config_id || updateMutation.isPending} title={!form.name ? 'Name is required' : !form.model_config_id ? 'Model config is required' : !form.subagent_model_config_id ? 'Subagent model config is required' : undefined}>
-                {updateMutation.isPending ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-            {formError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{formError}</p>}
-          </FormCard>
+          </div>
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
@@ -218,7 +272,10 @@ export function AgentsPage() {
             action={{ label: '+ New Agent', onClick: () => setCreating(true) }}
           />
         ) : (
-          <StyledTable headers={['Name', 'Model Config', 'Skills', 'Tools', 'MCP Servers', '']}>
+          <StyledTable
+            headers={['Name', 'Model Config', 'Skills', 'Tools', 'MCP Servers', <RowActionsHeader />]}
+            headerClassNames={[undefined, undefined, undefined, undefined, undefined, 'row-actions-header']}
+          >
             {agents.map((a) => {
               const mc = modelConfigs.find(m => m.id === a.model_config_id)
               return (
@@ -249,13 +306,11 @@ export function AgentsPage() {
                       ? a.mcp_servers.map(m => m.name).join(', ')
                       : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                   </td>
-                  <td style={styles.tdActions}>
-                    <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: a.id, name: a.name })}>Permissions</button>
-                    <button type="button" style={styles.editBtn} onClick={() => startEdit(a)}>Edit</button>
-                    <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget({ id: a.id, name: a.name })}>
-                      Delete
-                    </button>
-                  </td>
+                  <RowActionsCell>
+                    <RowAction label="Permissions" icon={<ShieldCheck size={13} />} onClick={() => setPermissionsTarget({ id: a.id, name: a.name })} />
+                    <RowAction label="Edit agent" icon={<Pencil size={13} />} accent onClick={() => startEdit(a)} />
+                    <RowAction label="Delete agent" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget({ id: a.id, name: a.name })} />
+                  </RowActionsCell>
                 </tr>
               )
             })}
@@ -540,14 +595,7 @@ const styles: Record<string, React.CSSProperties> = {
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
-  formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 },
-  cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  permissionsBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
-  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
-  tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--accent-light)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: 3 },
   searchInput: { width: '100%', padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 12, background: 'var(--bg-input)', color: 'var(--text-primary)', outline: 'none', marginBottom: 6 },
   selectorGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 4, maxHeight: 200, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 4, padding: 8, background: 'var(--bg-input)' },
@@ -556,31 +604,4 @@ const styles: Record<string, React.CSSProperties> = {
   chipsRow: { display: 'flex', flexWrap: 'wrap', gap: 4, marginTop: 8 },
   chip: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', background: 'var(--accent-light)', border: '1px solid var(--accent)', borderRadius: 12, fontSize: 11, color: 'var(--text-primary)' },
   chipRemove: { background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', padding: 0, fontSize: 13, lineHeight: 1 },
-}
-
-const rowStyle: React.CSSProperties = { borderBottom: '1px solid var(--border)' }
-const cellStyle: React.CSSProperties = { padding: '10px 16px', verticalAlign: 'top' }
-
-function StyledTable({ headers, children }: { headers: string[]; children: React.ReactNode }) {
-  return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-      <thead>
-        <tr style={{ background: 'var(--bg-secondary)' }}>
-          {headers.map(h => <th key={h} style={thStyle}>{h}</th>)}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
-  )
-}
-
-const thStyle: React.CSSProperties = {
-  padding: '8px 16px',
-  fontSize: 11,
-  fontWeight: 700,
-  textTransform: 'uppercase' as const,
-  letterSpacing: '0.05em',
-  color: 'var(--text-muted)',
-  borderBottom: '1px solid var(--border)',
-  textAlign: 'left',
 }

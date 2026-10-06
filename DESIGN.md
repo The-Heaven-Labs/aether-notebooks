@@ -248,6 +248,15 @@ Borders are always 1px: `var(--border)` for the outer edge of a surface, `var(--
 - **Hover / Focus:** global hover is a 0.15s opacity drop to 0.9, not a color change; keyboard focus is a 2px amethyst outline with 2px offset, always visible. No lift, glow, or scale.
 - **Secondary:** transparent fill, 1px hairline border, secondary ink text; icon buttons are the same at 4px radius and 12px glyphs. Delete actions gain red on hover only (`--error-full` text on `--error-light`).
 
+### Row Actions (resource tables)
+- **Shape:** 26×26px icon buttons (36×36px on touch devices), 1px hairline border, 4px radius, centered 13px Lucide stroke icons in a right-aligned flex grid with 3px gaps. The action column shrink-wraps to its buttons.
+- **Variants:** default is secondary ink with a 6% ink wash on hover; **accent** (usually Edit) is amethyst; **danger** (Delete) gains red text on an `--error-light` wash on hover only.
+- **Rhythm:** actions sit in right-aligned pairs — Test + Edit on the first line, Permissions + Delete on the second — separated by a full-width flex break.
+- **Status column:** testable resources state their state as a StatusBadge — "Testing…" neutral, "Connected" with a check, "Failed" with an X (message in the tooltip), or an italic muted "Unknown — click Test".
+
+### Resource Dialogs
+Create/edit for every resource list (connectors, models, tools, skills, MCP servers, agents, warehouses, dashboards) happens in a centered `Modal` — max-height 80vh, 4px radius, floating shadow, hairline border — with a `FormModal` body: two-column field grid over a sticky footer (Cancel + primary submit), errors inline above the footer, first field focused on open. Delete confirmations use the shared `ConfirmDialog`; permissions use the `PermissionsPanel` overlay. No resource form renders inline in the page body.
+
 ### Chips / Badges
 - **Type badges:** 10px uppercase JetBrains Mono, 700, tracked; canvas fill, hairline-light border, 4px radius, 1px 5px padding. They read as engraved plates ("SQL", "MD", column types).
 - **Status badges:** colored text plus a small icon, 12px/600, no fill — status is stated, not stamped. Semantic washers (tinted background + border + dark text) are reserved for banners and inline messages.
