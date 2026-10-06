@@ -24,8 +24,8 @@
 }
 
 .agent-modal-panel {
-  display: grid;
-  grid-template-columns: 236px minmax(0, 1fr);
+  display: flex;
+  align-items: stretch;
   width: min(940px, 94vw);
   max-width: 100%;
   max-height: 84vh;
@@ -39,6 +39,7 @@
 }
 
 .agent-modal-rail {
+  flex: 0 0 236px;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -151,6 +152,7 @@
 }
 
 .agent-modal-main {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
@@ -309,6 +311,7 @@
 
   .agent-modal-rail {
     order: 2;
+    flex: 0 0 auto;
     border-right: none;
     border-top: 1px solid var(--border-light);
     background: var(--bg-card);

@@ -1,8 +1,11 @@
 import { useState, useEffect, useMemo } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
+import { useQuery } from '@tanstack/react-query'
 import { Home, LayoutDashboard, Database, Warehouse, Users, UserCircle, ClipboardList, ChevronLeft, ChevronRight, Bot, Brain, Wrench, Puzzle, X, Settings, Zap, Trash2, Activity } from 'lucide-react'
+import { api } from '../api/client'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { useAuth } from '../hooks/useAuth'
+import type { Connector } from '../types'
 
 const ALL_NAV_ITEMS = [
   { to: '/',           title: 'Files',       icon: <Home size={16} />,              desc: 'Browse notebooks, dashboards, and connectors organized in folders' },
@@ -38,15 +41,24 @@ export function Sidebar() {
   const isMobile = useMediaQuery(768)
   const isTablet = useMediaQuery(1024)
   const homeFolderId = sessionStorage.getItem('aether_home_folder_id')
+  // The Warehouses page configures ClickHouse access namespaces; without a
+  // ClickHouse connector there is nothing to manage, so the entry stays
+  // hidden until one exists (it is admin-only either way).
+  const { data: connectors } = useQuery<Connector[]>({
+    queryKey: ['connectors'],
+    queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
+    enabled: user?.role === 'admin',
+  })
+  const hasClickHouseConnector = (connectors ?? []).some(c => c.type === 'clickhouse')
   const NAV_ITEMS = useMemo(() =>
     ALL_NAV_ITEMS.filter(item => {
       if (item.to === '/audit') return user?.role === 'admin'
       if (item.to === '/agents/stats') return user?.role === 'admin'
-      if (item.to === '/warehouses') return user?.role === 'admin'
+      if (item.to === '/warehouses') return user?.role === 'admin' && hasClickHouseConnector
       if (item.to === '/admin') return isPlatformAdmin
       return true
     }),
-    [user?.role, isPlatformAdmin]
+    [user?.role, isPlatformAdmin, hasClickHouseConnector]
   )
 
   const [expanded, setExpanded] = useState(() => {
