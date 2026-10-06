@@ -6,7 +6,6 @@ import { useAuth } from '../hooks/useAuth'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { SectionHeader } from '../components/SectionHeader'
-import { StyledTable } from '../components/StyledTable'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { EChartsContainer, getTooltipStyle, useChartColors } from '../charts/common'
 import {
@@ -204,23 +203,42 @@ export function StatsPage() {
 
         <div style={styles.card}>
           <div style={styles.cardTitle}>Agents</div>
-          <StyledTable headers={['Agent', ...(showUserCol ? ['User'] : []), 'Sessions', 'Messages', 'In', 'Out', 'Subagent', 'Avg ms', 'Est. cost'].map((h) => (
-            <SortHeader key={h} label={h} sortCol={sortCol} sortDir={sortDir} onSort={handleSort} />
-          ))}>
-            {table.map((a) => (
-              <tr key={a.agent_id} onClick={() => setAgentFilter(a.agent_id)} style={{ cursor: 'pointer' }} title="Filter to this agent">
-                <td>{a.agent_name}</td>
-                {showUserCol && <td>{a.user_email || a.user_name}</td>}
-                <td>{a.sessions.toLocaleString('en-US')}</td>
-                <td>{a.messages.toLocaleString('en-US')}</td>
-                <td>{formatTokens(a.tokensIn)}</td>
-                <td>{formatTokens(a.tokensOut)}</td>
-                <td>{formatTokens(a.tokensSubagent)}</td>
-                <td>{a.avgDurationMs.toLocaleString('en-US')}</td>
-                <td>{formatCost(a.cost)}</td>
-              </tr>
-            ))}
-          </StyledTable>
+          <div style={styles.tableWrap}>
+            <table style={styles.table}>
+              <thead>
+                <tr>
+                  <th style={styles.th}><SortHeader label="Agent" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>
+                  {showUserCol && <th style={styles.th}><SortHeader label="User" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>}
+                  <th style={{ ...styles.th, ...styles.thNum }}><SortHeader label="Sessions" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>
+                  <th style={{ ...styles.th, ...styles.thNum }}><SortHeader label="Messages" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>
+                  <th style={{ ...styles.th, ...styles.thNum }}><SortHeader label="In" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>
+                  <th style={{ ...styles.th, ...styles.thNum }}><SortHeader label="Out" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>
+                  <th style={{ ...styles.th, ...styles.thNum }}><SortHeader label="Subagent" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>
+                  <th style={{ ...styles.th, ...styles.thNum }}><SortHeader label="Avg ms" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>
+                  <th style={{ ...styles.th, ...styles.thNum }}><SortHeader label="Est. cost" sortCol={sortCol} sortDir={sortDir} onSort={handleSort} /></th>
+                </tr>
+              </thead>
+              <tbody>
+                {table.map((a, i) => {
+                  const isLast = i === table.length - 1
+                  const cell = (kind?: React.CSSProperties): React.CSSProperties => ({ ...styles.td, ...kind, ...(isLast ? styles.tdLast : {}) })
+                  return (
+                    <tr key={a.agent_id} title="Filter to this agent" onClick={() => setAgentFilter(a.agent_id)} style={{ cursor: 'pointer' }}>
+                      <td style={cell(styles.tdName)}>{a.agent_name}</td>
+                      {showUserCol && <td style={cell(styles.tdUser)}>{a.user_email || a.user_name}</td>}
+                      <td style={cell(styles.tdNum)}>{a.sessions.toLocaleString('en-US')}</td>
+                      <td style={cell(styles.tdNum)}>{a.messages.toLocaleString('en-US')}</td>
+                      <td style={cell(styles.tdNum)}>{formatTokens(a.tokensIn)}</td>
+                      <td style={cell(styles.tdNum)}>{formatTokens(a.tokensOut)}</td>
+                      <td style={cell(styles.tdNum)}>{formatTokens(a.tokensSubagent)}</td>
+                      <td style={cell(styles.tdNum)}>{a.avgDurationMs.toLocaleString('en-US')}</td>
+                      <td style={cell(styles.tdNum)}>{formatCost(a.cost)}</td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </AppShell>
@@ -280,4 +298,13 @@ const styles: Record<string, React.CSSProperties> = {
   kpiLabel: { fontSize: 12, color: 'var(--text-muted)', marginTop: 2 },
   card: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: 16, marginBottom: 16 },
   cardTitle: { display: 'flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 12 },
+  tableWrap: { borderRadius: 4, overflowX: 'auto', overflowY: 'hidden', border: '1px solid var(--border)' },
+  table: { width: '100%', borderCollapse: 'collapse', background: 'var(--bg-card)' },
+  th: { padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-muted)', letterSpacing: '0.06em', borderBottom: '1px solid var(--border)', background: 'var(--bg-card)', fontFamily: 'var(--font-mono)', textTransform: 'uppercase' },
+  thNum: { textAlign: 'right' },
+  td: { padding: '12px 16px', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-light)', fontVariantNumeric: 'tabular-nums' },
+  tdLast: { borderBottom: 'none' },
+  tdName: { fontWeight: 600 },
+  tdUser: { fontFamily: 'var(--font-mono)', fontSize: 11.5, color: 'var(--text-muted)' },
+  tdNum: { fontFamily: 'var(--font-mono)', fontSize: 12, textAlign: 'right' },
 }
