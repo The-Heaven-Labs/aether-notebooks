@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
-import { FormCard } from '../components/FormCard'
+import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { EmptyState } from '../components/EmptyState'
-import { Wrench } from 'lucide-react'
+import { StatusBadge } from '../components/StatusBadge'
+import { Wrench, Check, Pencil, ShieldCheck, Trash2, X, Zap } from 'lucide-react'
 import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { FormModal } from '../components/FormModal'
+import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '../components/RowActions'
 import type { Tool, ToolType } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 
@@ -77,6 +80,7 @@ export function ToolsPage() {
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; name: string } | null>(null)
   const [permissionsTarget, setPermissionsTarget] = useState<{ id: string; name: string } | null>(null)
   const [testResult, setTestResult] = useState<{ id: string; ok: boolean; message: string } | null>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
 
   const { data: tools = [], isLoading } = useQuery<Tool[]>({
     queryKey: ['tools'],
@@ -132,13 +136,23 @@ export function ToolsPage() {
     return payload
   }
 
+  const closeCreate = () => {
+    setCreating(false)
+    setForm(emptyForm())
+    setFormError(null)
+  }
+
+  const closeEdit = () => {
+    setEditingId(null)
+    setForm(emptyForm())
+    setFormError(null)
+  }
+
   const createMutation = useMutation({
     mutationFn: () => api.post<{ id: string }>('/api/v1/tools', buildPayload()),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tools'] })
-      setCreating(false)
-      setForm(emptyForm())
-      setFormError(null)
+      closeCreate()
     },
     onError: (e: unknown) => setFormError(String(e)),
   })
@@ -147,9 +161,7 @@ export function ToolsPage() {
     mutationFn: (id: string) => api.put<{ id: string }>(`/api/v1/tools/${id}`, buildPayload()),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['tools'] })
-      setEditingId(null)
-      setForm(emptyForm())
-      setFormError(null)
+      closeEdit()
     },
     onError: (e: unknown) => setFormError(String(e)),
   })
@@ -175,6 +187,7 @@ export function ToolsPage() {
 
   const startEdit = (tool: Tool) => {
     setEditingId(tool.id)
+    setFormError(null)
     const config = tool.config || {}
     const schema = tool.schema || {}
     const schemaProps = schema.properties as Record<string, { type: string; description?: string }> | undefined
@@ -206,6 +219,8 @@ export function ToolsPage() {
     })
   }
 
+  const editingTool = tools.find((t) => t.id === editingId)
+
   return (
     <AppShell>
       <div style={styles.body}>
@@ -217,31 +232,37 @@ export function ToolsPage() {
         </p>
 
         {creating && (
-          <FormCard title="New Tool">
-            <ToolFormFields form={form} setForm={setForm} connectors={connectors} editing={false} />
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || createMutation.isPending} title={!form.name ? 'Name is required' : undefined}>
-                {createMutation.isPending ? 'Creating…' : 'Create'}
-              </button>
-            </div>
-            {formError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{formError}</p>}
-          </FormCard>
+          <FormModal
+            title="New Tool"
+            onClose={closeCreate}
+            initialFocusRef={nameRef}
+            error={formError}
+            submitLabel="Create"
+            pendingLabel="Creating…"
+            pending={createMutation.isPending}
+            submitDisabled={!form.name}
+            submitTitle={!form.name ? 'Name is required' : undefined}
+            onSubmit={() => createMutation.mutate()}
+          >
+            <ToolFormFields form={form} setForm={setForm} connectors={connectors} editing={false} nameRef={nameRef} />
+          </FormModal>
         )}
 
         {editingId && (
-          <FormCard title="Edit Tool">
-            <ToolFormFields form={form} setForm={setForm} connectors={connectors} editing />
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || updateMutation.isPending} title={!form.name ? 'Name is required' : undefined}>
-                {updateMutation.isPending ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-            {formError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{formError}</p>}
-          </FormCard>
+          <FormModal
+            title={`Edit "${editingTool?.name ?? 'tool'}"`}
+            onClose={closeEdit}
+            initialFocusRef={nameRef}
+            error={formError}
+            submitLabel="Save"
+            pendingLabel="Saving…"
+            pending={updateMutation.isPending}
+            submitDisabled={!form.name}
+            submitTitle={!form.name ? 'Name is required' : undefined}
+            onSubmit={() => updateMutation.mutate(editingId!)}
+          >
+            <ToolFormFields form={form} setForm={setForm} connectors={connectors} editing nameRef={nameRef} />
+          </FormModal>
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
@@ -254,60 +275,69 @@ export function ToolsPage() {
             action={{ label: '+ New Tool', onClick: () => setCreating(true) }}
           />
         ) : (
-          <StyledTable headers={['Name', 'Type', 'Description', '']}>
+          <StyledTable
+            headers={['Name', 'Type', 'Description', 'Status', <RowActionsHeader />]}
+            headerClassNames={[undefined, undefined, undefined, undefined, 'row-actions-header']}
+          >
             {[...tools].sort((a, b) => {
               const typeOrder = { builtin: 1, sql_query: 0, webhook: 0 }
               const cmp = (typeOrder[a.type] ?? 0) - (typeOrder[b.type] ?? 0)
               if (cmp !== 0) return cmp
               if (a.type !== b.type) return a.type.localeCompare(b.type)
               return a.name.localeCompare(b.name)
-            }).map((t) => (
-              <tr key={t.id} style={rowStyle}>
-                <td style={cellStyle}><strong>{t.name}</strong></td>
-                <td style={cellStyle}>
-                  <span style={{ ...styles.typeBadge, background: TYPE_COLORS[t.type] + '20', color: TYPE_COLORS[t.type], borderColor: TYPE_COLORS[t.type] + '40' }}>
-                    {t.type.replace('_', ' ')}
-                  </span>
-                </td>
-                <td style={cellStyle}><span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t.description || '—'}</span></td>
-                <td style={styles.tdActions}>
-                  <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: t.id, name: t.name })}>Permissions</button>
-                  {t.type !== 'builtin' && (
-                    <>
-                      <button
-                        type="button"
-                        style={testMutation.isPending && testResult?.id === t.id ? { ...styles.testBtn, opacity: 0.6 } : styles.testBtn}
-                        onClick={() => { setTestResult(null); testMutation.mutate(t.id) }}
-                        disabled={testMutation.isPending}
-                      >
-                        {testMutation.isPending && testResult?.id === t.id ? 'Testing…' : 'Test'}
-                      </button>
-                      <button type="button" style={styles.editBtn} onClick={() => startEdit(t)}>Edit</button>
-                    </>
-                  )}
-                  {t.type !== 'builtin' && (
-                    <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget({ id: t.id, name: t.name })}>
-                      Delete
-                    </button>
-                  )}
-                </td>
-              </tr>
-            ))}
+            }).map((t) => {
+              const testing = testMutation.isPending && testMutation.variables === t.id
+              const test = testResult?.id === t.id ? testResult : null
+              return (
+                <tr key={t.id} style={rowStyle}>
+                  <td style={cellStyle}><strong>{t.name}</strong></td>
+                  <td style={cellStyle}>
+                    <span style={{ ...styles.typeBadge, background: TYPE_COLORS[t.type] + '20', color: TYPE_COLORS[t.type], borderColor: TYPE_COLORS[t.type] + '40' }}>
+                      {t.type.replace('_', ' ')}
+                    </span>
+                  </td>
+                  <td style={cellStyle}><span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{t.description || '—'}</span></td>
+                  <td style={cellStyle}>
+                    {t.type === 'builtin' ? (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>Built-in</span>
+                    ) : testing ? (
+                      <StatusBadge status="neutral" label="Testing…" />
+                    ) : test ? (
+                      <StatusBadge
+                        status={test.ok ? 'success' : 'error'}
+                        label={test.ok ? 'Connected' : 'Failed'}
+                        icon={test.ok ? <Check size={12} /> : <X size={12} />}
+                        title={test.message}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        Unknown — click Test
+                      </span>
+                    )}
+                  </td>
+                  <RowActionsCell>
+                    {t.type !== 'builtin' && (
+                      <>
+                        <RowAction
+                          label="Test tool"
+                          icon={<Zap size={13} />}
+                          spinning={testing}
+                          disabled={testMutation.isPending}
+                          onClick={() => { setTestResult(null); testMutation.mutate(t.id) }}
+                        />
+                        <RowAction label="Edit tool" icon={<Pencil size={13} />} accent onClick={() => startEdit(t)} />
+                        <RowActionsBreak />
+                      </>
+                    )}
+                    <RowAction label="Permissions" icon={<ShieldCheck size={13} />} onClick={() => setPermissionsTarget({ id: t.id, name: t.name })} />
+                    {t.type !== 'builtin' && (
+                      <RowAction label="Delete tool" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget({ id: t.id, name: t.name })} />
+                    )}
+                  </RowActionsCell>
+                </tr>
+              )
+            })}
           </StyledTable>
-        )}
-
-        {testResult && (
-          <div style={{
-            marginTop: 12,
-            padding: '10px 14px',
-            borderRadius: 6,
-            background: testResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-            border: `1px solid ${testResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
-            color: testResult.ok ? '#22c55e' : 'var(--error-full)',
-            fontSize: 13,
-          }}>
-            {testResult.ok ? '✅ OK: ' : '❌ Failed: '}{testResult.message}
-          </div>
         )}
       </div>
       <ConfirmDialog
@@ -331,11 +361,12 @@ export function ToolsPage() {
   )
 }
 
-function ToolFormFields({ form, setForm, connectors, editing }: {
+function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
   form: ToolForm
   setForm: React.Dispatch<React.SetStateAction<ToolForm>>
   connectors: Connector[]
   editing: boolean
+  nameRef: React.RefObject<HTMLInputElement | null>
 }) {
   const setField = (field: keyof ToolForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
     setForm(f => ({ ...f, [field]: e.target.value }))
@@ -357,9 +388,9 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
   })
 
   return (
-    <div style={styles.formGrid}>
+    <>
       <label style={styles.label}>Name
-        <input style={styles.input} value={form.name} onChange={setField('name')} placeholder="My Webhook" />
+        <input ref={nameRef} style={styles.input} value={form.name} onChange={setField('name')} placeholder="My Webhook" />
       </label>
       <label style={styles.label}>Description
         <input style={styles.input} value={form.description} onChange={setField('description')} placeholder="Sends data to external API" />
@@ -411,7 +442,7 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
                   <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error-full)', fontSize: 14, padding: '4px 6px' }} onClick={() => removeHeader(i)}>×</button>
                 </div>
               ))}
-              <button type="button" style={{ ...styles.cancelBtn, alignSelf: 'flex-start' }} onClick={addHeader}>+ Add Header</button>
+              <button type="button" style={{ ...styles.secondaryBtn, alignSelf: 'flex-start' }} onClick={addHeader}>+ Add Header</button>
             </div>
           </label>
         </>
@@ -464,45 +495,18 @@ function ToolFormFields({ form, setForm, connectors, editing }: {
               ))}
             </div>
           )}
-          <button type="button" style={{ ...styles.cancelBtn, alignSelf: 'flex-start' }} onClick={addParam}>+ Add Parameter</button>
+          <button type="button" style={{ ...styles.secondaryBtn, alignSelf: 'flex-start' }} onClick={addParam}>+ Add Parameter</button>
         </label>
       )}
-    </div>
+    </>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
-  formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
-  formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 },
-  cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  secondaryBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  permissionsBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
-  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
-  testBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   typeBadge: { display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 4, border: '1px solid', textTransform: 'capitalize' as const },
 }
-
-type RowProps = React.CSSProperties
-const rowStyle: RowProps = { borderBottom: '1px solid var(--border)' }
-const cellStyle: React.CSSProperties = { padding: '10px 16px', verticalAlign: 'top' }
-
-function StyledTable({ headers, children }: { headers: string[]; children: React.ReactNode }) {
-  return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-      <thead>
-        <tr style={{ background: 'var(--bg-secondary)' }}>
-          {headers.map(h => <th key={h} style={{ ...thStyle, textAlign: 'left' }}>{h}</th>)}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
-  )
-}
-
-const thStyle: React.CSSProperties = { padding: '8px 16px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.05em', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }

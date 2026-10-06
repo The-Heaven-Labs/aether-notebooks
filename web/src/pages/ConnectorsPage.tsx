@@ -4,7 +4,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Connector } from '../types'
 import { AppShell } from '../components/AppShell'
-import { Check, X, Loader2, Star, Database, Pencil, ShieldCheck, Link2, Unlink, Trash2, Zap } from 'lucide-react'
+import { Check, X, Star, Database, Pencil, ShieldCheck, Link2, Unlink, Trash2, Zap } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { StatusBadge } from '../components/StatusBadge'
 import { SectionHeader } from '../components/SectionHeader'
@@ -12,6 +12,8 @@ import { PermissionsPanel } from '../components/PermissionsPanel'
 import { EmptyState } from '../components/EmptyState'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { Modal } from '../components/Modal'
+import { FormModal } from '../components/FormModal'
+import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '../components/RowActions'
 import { useAuth } from '../hooks/useAuth'
 import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 import { listWarehouses, setConnectorWarehouse } from '../api/warehouses'
@@ -383,8 +385,38 @@ export function ConnectorsPage() {
           Connect to your databases (PostgreSQL, ClickHouse, OpenSearch, Databricks) to query data from notebooks.
         </p>
         {creating && (
-          <Modal title="New Connector" onClose={closeCreate} initialFocusRef={createNameRef}>
-            <div style={styles.modalFormGrid}>
+          <FormModal
+            title="New Connector"
+            onClose={closeCreate}
+            initialFocusRef={createNameRef}
+            error={createError}
+            footerExtra={
+              <>
+                <button
+                  type="button"
+                  className="form-modal-btn"
+                  onClick={testFormConnection}
+                  disabled={!connectorConfigComplete(form, false) || formTesting}
+                  title={connectorFormMissingField(form, false)}
+                >
+                  {formTesting ? 'Testing…' : 'Test Connection'}
+                </button>
+                {formTest && (
+                  <StatusBadge
+                    status={formTest.ok ? 'success' : 'error'}
+                    label={formTest.ok ? 'Connected' : (formTest.error ?? 'Failed')}
+                    icon={formTest.ok ? <Check size={12} /> : <X size={12} />}
+                  />
+                )}
+              </>
+            }
+            submitLabel="Create"
+            pendingLabel="Creating…"
+            pending={createConnector.isPending}
+            submitDisabled={!canSubmitConnector(form, false)}
+            submitTitle={!form.name ? 'Name is required' : connectorFormMissingField(form, false)}
+            onSubmit={() => createConnector.mutate()}
+          >
               <label style={styles.label}>Name
                 <input ref={createNameRef} style={styles.input} value={form.name} onChange={setField('name')} placeholder="My Postgres" />
               </label>
@@ -446,45 +478,22 @@ export function ConnectorsPage() {
                   onChange={e => setForm(f => ({ ...f, is_default: e.target.checked }))} />
                 Set as default connector for new notebooks
               </label>
-            </div>
-            <div style={styles.modalFooter}>
-              {createError && <p style={styles.modalError}>{createError}</p>}
-              <div style={styles.formActions}>
-                <button
-                  type="button"
-                  style={styles.testBtn}
-                  onClick={testFormConnection}
-                  disabled={!connectorConfigComplete(form, false) || formTesting}
-                  title={connectorFormMissingField(form, false)}
-                >
-                  {formTesting ? 'Testing…' : 'Test Connection'}
-                </button>
-                {formTest && (
-                  <StatusBadge
-                    status={formTest.ok ? 'success' : 'error'}
-                    label={formTest.ok ? 'Connected' : (formTest.error ?? 'Failed')}
-                    icon={formTest.ok ? <Check size={12} /> : <X size={12} />}
-                  />
-                )}
-                <span style={{ flex: 1 }} />
-                <button type="button" style={styles.cancelBtn} onClick={closeCreate}>Cancel</button>
-                <button
-                  type="button"
-                  style={styles.saveBtn}
-                  onClick={() => createConnector.mutate()}
-                  disabled={!canSubmitConnector(form, false) || createConnector.isPending}
-                  title={!form.name ? 'Name is required' : connectorFormMissingField(form, false)}
-                >
-                  {createConnector.isPending ? 'Creating…' : 'Create'}
-                </button>
-              </div>
-            </div>
-          </Modal>
+          </FormModal>
         )}
 
         {editing && (
-          <Modal title={`Edit "${editingConnector?.name ?? 'connector'}"`} onClose={closeEdit} initialFocusRef={editNameRef}>
-            <div style={styles.modalFormGrid}>
+          <FormModal
+            title={`Edit "${editingConnector?.name ?? 'connector'}"`}
+            onClose={closeEdit}
+            initialFocusRef={editNameRef}
+            error={editError}
+            submitLabel="Save"
+            pendingLabel="Saving…"
+            pending={updateConnector.isPending}
+            submitDisabled={!canSubmitConnector(editForm, true)}
+            submitTitle={!editForm.name ? 'Name is required' : connectorFormMissingField(editForm, true)}
+            onSubmit={() => updateConnector.mutate(editing!)}
+          >
               <label style={styles.label}>Name
                 <input ref={editNameRef} style={styles.input} value={editForm.name} onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))} />
               </label>
@@ -564,24 +573,7 @@ export function ConnectorsPage() {
                   onChange={e => setEditForm(f => ({ ...f, is_default: e.target.checked }))} />
                 Set as default connector for new notebooks
               </label>
-            </div>
-            <div style={styles.modalFooter}>
-              {editError && <p style={styles.modalError}>{editError}</p>}
-              <div style={styles.formActions}>
-                <span style={{ flex: 1 }} />
-                <button type="button" style={styles.cancelBtn} onClick={closeEdit}>Cancel</button>
-                <button
-                  type="button"
-                  style={styles.saveBtn}
-                  onClick={() => updateConnector.mutate(editing!)}
-                  disabled={!canSubmitConnector(editForm, true) || updateConnector.isPending}
-                  title={!editForm.name ? 'Name is required' : connectorFormMissingField(editForm, true)}
-                >
-                  {updateConnector.isPending ? 'Saving…' : 'Save'}
-                </button>
-              </div>
-            </div>
-          </Modal>
+          </FormModal>
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
@@ -595,8 +587,8 @@ export function ConnectorsPage() {
           />
         ) : (
           <StyledTable
-            headers={['Name', 'Type', 'Host', 'Database', 'Access', 'Status', <span className="sr-only">Actions</span>]}
-            headerClassNames={[undefined, undefined, undefined, undefined, undefined, undefined, 'connector-actions-header']}
+            headers={['Name', 'Type', 'Host', 'Database', 'Access', 'Status', <RowActionsHeader />]}
+            headerClassNames={[undefined, undefined, undefined, undefined, undefined, undefined, 'row-actions-header']}
           >
             {connectors.map((c) => {
               const test = testResults[c.id]
@@ -692,40 +684,24 @@ export function ConnectorsPage() {
                       </span>
                     )}
                   </td>
-                  <td className="connector-actions-cell">
-                    <div className="connector-actions-grid">
-                      <button type="button" className="connector-action" title="Test connection" aria-label="Test connection" onClick={() => testConnector(c.id)} disabled={testingIds[c.id]}>
-                        {testingIds[c.id] ? <Loader2 size={13} className="connector-action-spin" /> : <Zap size={13} />}
-                      </button>
-                      <button type="button" className="connector-action connector-action--accent" title="Edit connector" aria-label="Edit connector" onClick={() => openEdit(c)}>
-                        <Pencil size={13} />
-                      </button>
-                      <span className="connector-actions-break" aria-hidden="true" />
-                      <button type="button" className="connector-action" title="Permissions" aria-label="Permissions" onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })}>
-                        <ShieldCheck size={13} />
-                      </button>
-                      {isAdmin && c.type === 'clickhouse' && (
-                        c.warehouse_id ? (
-                          <button type="button" className="connector-action" title="Unlink from warehouse" aria-label="Unlink from warehouse" onClick={() => setUnlinkTarget(c)}>
-                            <Unlink size={13} />
-                          </button>
-                        ) : (
-                          <button type="button" className="connector-action" title="Link to warehouse" aria-label="Link to warehouse" onClick={() => { setLinkTarget(c); setLinkWarehouseId(''); setLinkError(null) }}>
-                            <Link2 size={13} />
-                          </button>
-                        )
-                      )}
-                      <span className="connector-actions-break" aria-hidden="true" />
-                      {!c.is_default && (
-                        <button type="button" className="connector-action" title="Set as default connector for new notebooks" aria-label="Set as default connector" onClick={() => setDefault.mutate(c.id)}>
-                          <Star size={13} />
-                        </button>
-                      )}
-                      <button type="button" className="connector-action connector-action--danger" title="Delete connector" aria-label="Delete connector" onClick={() => setDeleteTarget(c)}>
-                        <Trash2 size={13} />
-                      </button>
-                    </div>
-                  </td>
+                  <RowActionsCell>
+                    <RowAction label="Test connection" icon={<Zap size={13} />} spinning={!!testingIds[c.id]} disabled={!!testingIds[c.id]} onClick={() => testConnector(c.id)} />
+                    <RowAction label="Edit connector" icon={<Pencil size={13} />} accent onClick={() => openEdit(c)} />
+                    <RowActionsBreak />
+                    <RowAction label="Permissions" icon={<ShieldCheck size={13} />} onClick={() => setPermissionsTarget({ type: 'connector', id: c.id, name: c.name })} />
+                    {isAdmin && c.type === 'clickhouse' && (
+                      c.warehouse_id ? (
+                        <RowAction label="Unlink from warehouse" icon={<Unlink size={13} />} onClick={() => setUnlinkTarget(c)} />
+                      ) : (
+                        <RowAction label="Link to warehouse" icon={<Link2 size={13} />} onClick={() => { setLinkTarget(c); setLinkWarehouseId(''); setLinkError(null) }} />
+                      )
+                    )}
+                    <RowActionsBreak />
+                    {!c.is_default && (
+                      <RowAction label="Set as default connector" title="Set as default connector for new notebooks" icon={<Star size={13} />} onClick={() => setDefault.mutate(c.id)} />
+                    )}
+                    <RowAction label="Delete connector" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget(c)} />
+                  </RowActionsCell>
                 </tr>
               )
             })}
@@ -833,22 +809,8 @@ export function ConnectorsPage() {
 const styles: Record<string, React.CSSProperties> = {
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   body: { maxWidth: 1100, margin: '0 auto', padding: 'clamp(16px, 4vw, 32px)', width: '100%' },
-  modalFormGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12, padding: '16px 20px 20px', width: 'min(760px, 92vw)' },
-  modalFooter: {
-    position: 'sticky',
-    bottom: 0,
-    zIndex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-    padding: '12px 20px',
-    borderTop: '1px solid var(--border-light)',
-    background: 'var(--bg-card)',
-  },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
-  formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end' },
-  testBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)', fontWeight: 600 },
   cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   managedBadge: {

@@ -425,24 +425,26 @@ input[type="color"] {
 .hljs-deletion { background: rgba(255, 0, 0, 0.15); }
 .hljs-addition { background: rgba(0, 255, 0, 0.15); }
 
-/* ── Connector row actions (ConnectorsPage) ─────────────────────────────── */
-/* Reserve room for two actions side by side: 2×26px + 3px gap + 20px cell
-   padding. Without this the column shrinks to a single 26px item and the
-   pairs collapse into one tall column on common laptop widths. */
-.connector-actions-header,
-.connector-actions-cell {
+/* ── Table row actions (resource catalog pages) ─────────────────────────── */
+/* Shared pattern: icon-only actions in a right-aligned flex grid, used by
+   every resource table (connectors, models, tools, skills, MCP servers,
+   agents). Reserve room for two actions side by side: 2×26px + 3px gap +
+   20px cell padding. Without this the column shrinks to a single 26px item
+   and the pairs collapse into one tall column on common laptop widths. */
+.row-actions-header,
+.row-actions-cell {
   min-width: 75px;
   /* Shrink-to-fit: don't soak up table width the content columns can use. */
   width: 1%;
 }
 
-.connector-actions-cell {
+.row-actions-cell {
   padding: 8px 10px;
   text-align: right;
   vertical-align: middle;
 }
 
-.connector-actions-grid {
+.row-actions-grid {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -450,7 +452,7 @@ input[type="color"] {
   gap: 3px;
 }
 
-.connector-action {
+.row-action {
   flex: none;
   display: inline-flex;
   align-items: center;
@@ -465,21 +467,21 @@ input[type="color"] {
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
 
-.connector-action:hover:not(:disabled) {
+.row-action:hover:not(:disabled) {
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
   color: var(--text-primary);
 }
 
-.connector-action:disabled {
+.row-action:disabled {
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-.connector-action--accent {
+.row-action--accent {
   color: var(--accent);
 }
 
-.connector-action--danger:hover:not(:disabled) {
+.row-action--danger:hover:not(:disabled) {
   background: var(--error-light);
   border-color: var(--error-border);
   color: var(--error-full);
@@ -488,34 +490,99 @@ input[type="color"] {
 /* Invisible full-width flex item that forces the next button onto a new row.
    Together with the column min-width above, this keeps row actions in
    right-aligned pairs. */
-.connector-actions-break {
+.row-actions-break {
   flex-basis: 100%;
   height: 0;
   margin: 0;
   padding: 0;
 }
 
-.connector-action-spin {
+.row-action-spin {
   animation: spin 1s linear infinite;
 }
 
 /* Touch devices get a larger target; pointer-precise desktops keep the
    compact pairs. */
 @media (pointer: coarse) {
-  .connector-action {
+  .row-action {
     width: 36px;
     height: 36px;
   }
 
-  .connector-actions-grid {
+  .row-actions-grid {
     gap: 4px;
   }
 
-  .connector-actions-header,
-  .connector-actions-cell {
+  .row-actions-header,
+  .row-actions-cell {
     /* 2×36px + 4px gap + 20px cell padding. */
     min-width: 96px;
   }
+}
+
+/* ── Resource form modals (FormModal) ───────────────────────────────────── */
+/* Every resource create/edit dialog shares one shell: a two-column field
+   grid over a sticky Cancel/Save footer. */
+.form-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+  padding: 16px 20px 20px;
+}
+
+.form-modal-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--border-light);
+  background: var(--bg-card);
+}
+
+.form-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.form-modal-error {
+  margin: 0;
+  font-size: 12px;
+  color: var(--error-text);
+}
+
+.form-modal-btn {
+  padding: 6px 16px;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-family: var(--font-sans);
+  font-weight: 600;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.form-modal-btn--primary {
+  padding: 7px 16px;
+  background: var(--button-primary-bg);
+  color: var(--button-primary-text);
+  border: none;
+  font-weight: 600;
+}
+
+.form-modal-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.form-modal-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 /* ── Connector type chip (ConnectorsPage) ───────────────────────────────── */
@@ -1047,7 +1114,7 @@ input[type="color"] {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .connector-action-spin,
+  .row-action-spin,
   .cell-flash,
   .floating-panel-enter,
   .scrim-enter {

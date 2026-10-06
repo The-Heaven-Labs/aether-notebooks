@@ -74,15 +74,17 @@ func TestRollupHourlyStats(t *testing.T) {
 	}
 
 	var got struct {
-		sessions, messages, tin, tout, tdirect, tsub, calls, dur int64
-		cost                                                     float64
+		sessions, messages, tin, tout, tdirect, tsub, tsubIn, tsubOut, calls, dur int64
+		cost                                                                      float64
 	}
 	err = db.Pool.QueryRow(ctx, `
 		SELECT sessions_count, messages_count, tokens_input, tokens_output, tokens_direct,
-			tokens_subagent, model_calls, total_duration_ms, est_cost_usd::float8
+			tokens_subagent, tokens_subagent_input, tokens_subagent_output,
+			model_calls, total_duration_ms, est_cost_usd::float8
 		FROM agent_stats_hourly
 		WHERE agent_id = $1 AND user_id = $2
-	`, agentID, userID).Scan(&got.sessions, &got.messages, &got.tin, &got.tout, &got.tdirect, &got.tsub, &got.calls, &got.dur, &got.cost)
+	`, agentID, userID).Scan(&got.sessions, &got.messages, &got.tin, &got.tout, &got.tdirect,
+		&got.tsub, &got.tsubIn, &got.tsubOut, &got.calls, &got.dur, &got.cost)
 	if err != nil {
 		t.Fatalf("read bucket: %v", err)
 	}
@@ -92,15 +94,17 @@ func TestRollupHourlyStats(t *testing.T) {
 	if got.tin != 140 || got.tout != 60 || got.tdirect != 14 {
 		t.Fatalf("tokens: got in=%d out=%d direct=%d", got.tin, got.tout, got.tdirect)
 	}
-	if got.tsub != 50 {
-		t.Fatalf("subagent tokens: got %d", got.tsub)
+	if got.tsub != 50 || got.tsubIn != 30 || got.tsubOut != 20 {
+		t.Fatalf("subagent tokens: got %d (in=%d out=%d)", got.tsub, got.tsubIn, got.tsubOut)
 	}
 	if got.calls != 4 || got.dur != 3000 {
 		t.Fatalf("calls/duration: got %d/%d", got.calls, got.dur)
 	}
-	// cost = (140*0.15 + 60*0.60) / 1e6 = 0.000057 (prices are $ per 1M tokens,
-	// the unit the model-config UI uses).
-	if got.cost < 0.0000569 || got.cost > 0.0000571 {
+	// cost = (140*0.15 + 60*0.60 + 30*0.15 + 20*0.60) / 1e6 = 0.0000735, stored
+	// rounded to the column's 6-decimal precision (0.000074); direct and
+	// subagent usage are both priced (prices are $ per 1M tokens, the unit the
+	// model-config UI uses).
+	if got.cost < 0.0000739 || got.cost > 0.0000741 {
 		t.Fatalf("cost: got %v", got.cost)
 	}
 

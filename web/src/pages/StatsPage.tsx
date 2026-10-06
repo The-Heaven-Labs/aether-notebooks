@@ -133,8 +133,15 @@ export function StatsPage() {
     { label: 'Model calls', value: kpis.modelCalls.toLocaleString('en-US') },
     { label: 'Tokens in', value: formatTokens(kpis.tokensIn) },
     { label: 'Tokens out', value: formatTokens(kpis.tokensOut) },
+    { label: 'Subagent tokens', value: formatTokens(kpis.subagent) },
     { label: 'Est. cost', value: formatCost(kpis.cost) },
   ]
+
+  // Titles name every series so the single-agent bar+line view explains itself,
+  // and disclose that all-agents bars include subagent output. Buckets are UTC.
+  const chartTitle = chartMode === 'cost'
+    ? (agentFilter ? 'Cost per bucket (UTC)' : 'Cost per bucket, by agent (UTC)')
+    : (agentFilter ? 'Tokens in vs out per bucket (UTC)' : 'Tokens out per bucket, by agent (incl. subagent, UTC)')
 
   return (
     <AppShell>
@@ -193,7 +200,7 @@ export function StatsPage() {
         </div>
 
         <div style={{ ...styles.card, padding: 22.4 }}>
-          <div style={{ ...styles.cardTitle, marginBottom: 16.8 }}><BarChart3 size={14} /> {chartMode === 'tokens' ? 'Tokens out per bucket' : 'Cost per bucket'}</div>
+          <div style={{ ...styles.cardTitle, marginBottom: 16.8 }}><BarChart3 size={14} /> {chartTitle}</div>
           {rows.length === 0 && !isLoading ? (
             <EmptyState title="No usage yet" text="Chat with an agent, then roll up to see activity here." />
           ) : (
@@ -289,7 +296,7 @@ const styles: Record<string, React.CSSProperties> = {
   toggle: { display: 'inline-flex', border: '1px solid var(--border)', borderRadius: 6, overflow: 'hidden' },
   toggleBtn: { fontSize: 12, padding: '7px 12px', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' },
   toggleActive: { fontSize: 12, padding: '7px 12px', background: 'var(--accent-light)', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontWeight: 600 },
-  kpis: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 16 },
+  kpis: { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 12, marginBottom: 16 },
   kpi: { background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 8, padding: '14px 16px', minWidth: 0 },
   kpiValue: {
     fontSize: 22, fontWeight: 700, color: 'var(--text-primary)',

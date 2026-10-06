@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
-import { FormCard } from '../components/FormCard'
+import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { EmptyState } from '../components/EmptyState'
-import { Server, Loader2, CheckCircle2, XCircle } from 'lucide-react'
+import { StatusBadge } from '../components/StatusBadge'
+import { Server, Check, Pencil, ShieldCheck, Trash2, X, Zap } from 'lucide-react'
 import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { FormModal } from '../components/FormModal'
+import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '../components/RowActions'
 import type { MCPServerOrg } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 
@@ -37,11 +40,24 @@ export function MCPPage() {
   const [testingIds, setTestingIds] = useState<Set<string>>(new Set())
   const [deleteTarget, setDeleteTarget] = useState<MCPServerOrg | null>(null)
   const [permissionsTarget, setPermissionsTarget] = useState<{ id: string; name: string } | null>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
 
   const { data: servers = [], isLoading } = useQuery<MCPServerOrg[]>({
     queryKey: ['mcp-servers'],
     queryFn: () => api.get<MCPServerOrg[]>('/api/v1/mcp-servers'),
   })
+
+  const closeCreate = () => {
+    setCreating(false)
+    setForm(emptyForm())
+    setFormError(null)
+  }
+
+  const closeEdit = () => {
+    setEditingId(null)
+    setForm(emptyForm())
+    setFormError(null)
+  }
 
   const createMutation = useMutation({
     mutationFn: () => api.post<{ id: string }>('/api/v1/mcp-servers', {
@@ -52,9 +68,7 @@ export function MCPPage() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['mcp-servers'] })
-      setCreating(false)
-      setForm(emptyForm())
-      setFormError(null)
+      closeCreate()
     },
     onError: (e: unknown) => setFormError(String(e)),
   })
@@ -68,9 +82,7 @@ export function MCPPage() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['mcp-servers'] })
-      setEditingId(null)
-      setForm(emptyForm())
-      setFormError(null)
+      closeEdit()
     },
     onError: (e: unknown) => setFormError(String(e)),
   })
@@ -83,6 +95,7 @@ export function MCPPage() {
 
   const startEdit = (s: MCPServerOrg) => {
     setEditingId(s.id)
+    setFormError(null)
     setForm({
       name: s.name,
       type: s.type as 'stdio' | 'http',
@@ -108,6 +121,8 @@ export function MCPPage() {
     }
   }
 
+  const editingServer = servers.find((s) => s.id === editingId)
+
   return (
     <AppShell>
       <div style={styles.body}>
@@ -123,31 +138,39 @@ export function MCPPage() {
         </div>
 
         {creating && (
-          <FormCard title="New MCP Server">
-            <MCPFormFields form={form} setForm={setForm} />
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.command || createMutation.isPending} title={!form.name ? 'Name is required' : !form.command ? 'Command is required' : undefined}>
-                {createMutation.isPending ? 'Creating...' : 'Create'}
-              </button>
-            </div>
-            {formError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{formError}</p>}
-          </FormCard>
+          <FormModal
+            title="New MCP Server"
+            onClose={closeCreate}
+            initialFocusRef={nameRef}
+            width="min(560px, 92vw)"
+            error={formError}
+            submitLabel="Create"
+            pendingLabel="Creating…"
+            pending={createMutation.isPending}
+            submitDisabled={!form.name || !form.command}
+            submitTitle={!form.name ? 'Name is required' : !form.command ? 'Command is required' : undefined}
+            onSubmit={() => createMutation.mutate()}
+          >
+            <MCPFormFields form={form} setForm={setForm} nameRef={nameRef} />
+          </FormModal>
         )}
 
         {editingId && (
-          <FormCard title="Edit MCP Server">
-            <MCPFormFields form={form} setForm={setForm} />
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || !form.command || updateMutation.isPending} title={!form.name ? 'Name is required' : !form.command ? 'Command is required' : undefined}>
-                {updateMutation.isPending ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-            {formError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{formError}</p>}
-          </FormCard>
+          <FormModal
+            title={`Edit "${editingServer?.name ?? 'MCP server'}"`}
+            onClose={closeEdit}
+            initialFocusRef={nameRef}
+            width="min(560px, 92vw)"
+            error={formError}
+            submitLabel="Save"
+            pendingLabel="Saving…"
+            pending={updateMutation.isPending}
+            submitDisabled={!form.name || !form.command}
+            submitTitle={!form.name ? 'Name is required' : !form.command ? 'Command is required' : undefined}
+            onSubmit={() => updateMutation.mutate(editingId!)}
+          >
+            <MCPFormFields form={form} setForm={setForm} nameRef={nameRef} />
+          </FormModal>
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
@@ -160,35 +183,45 @@ export function MCPPage() {
             action={{ label: '+ New MCP Server', onClick: () => setCreating(true) }}
           />
         ) : (
-          <StyledTable headers={['Name', 'Type', 'Command', 'Args', '']}>
-            {servers.map(s => (
-              <tr key={s.id} style={rowStyle}>
-                <td style={cellStyle}><strong>{s.name}</strong></td>
-                <td style={cellStyle}><code style={styles.badge}>{s.type}</code></td>
-                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.command}</td>
-                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{s.args?.join(' ') || '—'}</td>
-                <td style={styles.tdActions}>
-                  <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: s.id, name: s.name })}>Permissions</button>
-                  <button type="button" style={styles.testBtn} onClick={() => testServer(s.id)} disabled={testingIds.has(s.id)}>
-                    {testingIds.has(s.id) ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : 'Test'}
-                  </button>
-                  <button type="button" style={styles.editBtn} onClick={() => startEdit(s)}>Edit</button>
-                  <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget(s)}>
-                    Delete
-                  </button>
-                  {testResults[s.id] && (
-                    <span style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 4,
-                      fontSize: 11, marginLeft: 6,
-                      color: testResults[s.id].success ? 'var(--success, #059669)' : 'var(--error-full)',
-                    }}>
-                      {testResults[s.id].success ? <CheckCircle2 size={12} /> : <XCircle size={12} />}
-                      {testResults[s.id].message}
-                    </span>
-                  )}
-                </td>
-              </tr>
-            ))}
+          <StyledTable
+            headers={['Name', 'Type', 'Command', 'Args', 'Status', <RowActionsHeader />]}
+            headerClassNames={[undefined, undefined, undefined, undefined, undefined, 'row-actions-header']}
+          >
+            {servers.map(s => {
+              const testing = testingIds.has(s.id)
+              const test = testResults[s.id]
+              return (
+                <tr key={s.id} style={rowStyle}>
+                  <td style={cellStyle}><strong>{s.name}</strong></td>
+                  <td style={cellStyle}><code style={styles.badge}>{s.type}</code></td>
+                  <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.command}</td>
+                  <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{s.args?.join(' ') || '—'}</td>
+                  <td style={cellStyle}>
+                    {testing ? (
+                      <StatusBadge status="neutral" label="Testing…" />
+                    ) : test ? (
+                      <StatusBadge
+                        status={test.success ? 'success' : 'error'}
+                        label={test.success ? 'Connected' : 'Failed'}
+                        icon={test.success ? <Check size={12} /> : <X size={12} />}
+                        title={test.message}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        Unknown — click Test
+                      </span>
+                    )}
+                  </td>
+                  <RowActionsCell>
+                    <RowAction label="Test MCP server" icon={<Zap size={13} />} spinning={testing} disabled={testing} onClick={() => testServer(s.id)} />
+                    <RowAction label="Edit MCP server" icon={<Pencil size={13} />} accent onClick={() => startEdit(s)} />
+                    <RowActionsBreak />
+                    <RowAction label="Permissions" icon={<ShieldCheck size={13} />} onClick={() => setPermissionsTarget({ id: s.id, name: s.name })} />
+                    <RowAction label="Delete MCP server" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget(s)} />
+                  </RowActionsCell>
+                </tr>
+              )
+            })}
           </StyledTable>
         )}
       </div>
@@ -213,11 +246,15 @@ export function MCPPage() {
   )
 }
 
-function MCPFormFields({ form, setForm }: { form: MCPForm; setForm: React.Dispatch<React.SetStateAction<MCPForm>> }) {
+function MCPFormFields({ form, setForm, nameRef }: {
+  form: MCPForm
+  setForm: React.Dispatch<React.SetStateAction<MCPForm>>
+  nameRef: React.RefObject<HTMLInputElement | null>
+}) {
   return (
-    <div style={styles.formGrid}>
+    <>
       <label style={styles.label}>Name
-        <input style={styles.input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="my-mcp-server" />
+        <input ref={nameRef} style={styles.input} value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="my-mcp-server" />
       </label>
       <label style={styles.label}>Type
         <select style={styles.input} value={form.type} onChange={e => setForm(f => ({ ...f, type: e.target.value as 'stdio' | 'http' }))}>
@@ -231,7 +268,7 @@ function MCPFormFields({ form, setForm }: { form: MCPForm; setForm: React.Dispat
       <label style={{ ...styles.label, gridColumn: '1 / -1' }}>Arguments (space-separated)
         <input style={styles.input} value={form.args} onChange={e => setForm(f => ({ ...f, args: e.target.value }))} placeholder="--flag value" />
       </label>
-    </div>
+    </>
   )
 }
 
@@ -239,35 +276,7 @@ const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   info: { fontSize: 13, color: 'var(--text-muted)', marginBottom: 16, background: 'var(--bg-secondary)', padding: '10px 14px', borderRadius: 6, border: '1px solid var(--border)' },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--accent-light)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: 3 },
-  formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
-  formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 },
-  cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  permissionsBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  testBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6, display: 'inline-flex', alignItems: 'center', gap: 4 },
-  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
-  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
-  tdActions: { padding: '8px 16px', textAlign: 'right' as const },
 }
-
-type RowProps = React.CSSProperties
-const rowStyle: RowProps = { borderBottom: '1px solid var(--border)' }
-const cellStyle: React.CSSProperties = { padding: '10px 16px', verticalAlign: 'top' }
-
-function StyledTable({ headers, children }: { headers: string[]; children: React.ReactNode }) {
-  return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-      <thead>
-        <tr style={{ background: 'var(--bg-secondary)' }}>
-          {headers.map(h => <th key={h} style={thStyle}>{h}</th>)}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
-  )
-}
-
-const thStyle: React.CSSProperties = { padding: '8px 16px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.05em', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }

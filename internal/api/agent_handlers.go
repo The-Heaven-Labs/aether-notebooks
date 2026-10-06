@@ -1114,21 +1114,24 @@ func (h *agentHandlers) handleUpdateSessionTitle(w http.ResponseWriter, r *http.
 // AgentStatRow is one hourly (or daily-aggregated) usage bucket with
 // resolved names so the UI can filter without extra requests.
 type AgentStatRow struct {
-	BucketStart     time.Time `json:"bucket_start"`
-	AgentID         string    `json:"agent_id"`
-	AgentName       string    `json:"agent_name"`
-	UserID          string    `json:"user_id"`
-	UserName        string    `json:"user_name"`
-	UserEmail       string    `json:"user_email"`
-	SessionsCount   int64     `json:"sessions_count"`
-	MessagesCount   int64     `json:"messages_count"`
-	TokensInput     int64     `json:"tokens_input"`
-	TokensOutput    int64     `json:"tokens_output"`
-	TokensDirect    int64     `json:"tokens_direct"`
-	TokensSubagent  int64     `json:"tokens_subagent"`
-	ModelCalls      int64     `json:"model_calls"`
-	TotalDurationMs int64     `json:"total_duration_ms"`
-	EstCostUSD      float64   `json:"est_cost_usd"`
+	BucketStart    time.Time `json:"bucket_start"`
+	AgentID        string    `json:"agent_id"`
+	AgentName      string    `json:"agent_name"`
+	UserID         string    `json:"user_id"`
+	UserName       string    `json:"user_name"`
+	UserEmail      string    `json:"user_email"`
+	SessionsCount  int64     `json:"sessions_count"`
+	MessagesCount  int64     `json:"messages_count"`
+	TokensInput    int64     `json:"tokens_input"`
+	TokensOutput   int64     `json:"tokens_output"`
+	TokensDirect   int64     `json:"tokens_direct"`
+	TokensSubagent int64     `json:"tokens_subagent"`
+	// Subagent input/output split; tokens_subagent stays their combined total.
+	TokensSubagentInput  int64   `json:"tokens_subagent_input"`
+	TokensSubagentOutput int64   `json:"tokens_subagent_output"`
+	ModelCalls           int64   `json:"model_calls"`
+	TotalDurationMs      int64   `json:"total_duration_ms"`
+	EstCostUSD           float64 `json:"est_cost_usd"`
 }
 
 type agentStatsParams struct {
@@ -1180,6 +1183,7 @@ func (h *agentHandlers) queryAgentStats(ctx context.Context, orgID, agentID stri
 		SELECT ` + bucket + `, h.agent_id, a.name, h.user_id, u.name, u.email,
 			SUM(h.sessions_count), SUM(h.messages_count),
 			SUM(h.tokens_input), SUM(h.tokens_output), SUM(h.tokens_direct), SUM(h.tokens_subagent),
+			SUM(h.tokens_subagent_input), SUM(h.tokens_subagent_output),
 			SUM(h.model_calls), SUM(h.total_duration_ms), SUM(h.est_cost_usd)::float8
 		FROM agent_stats_hourly h
 		JOIN agents a ON a.id = h.agent_id
@@ -1207,6 +1211,7 @@ func (h *agentHandlers) queryAgentStats(ctx context.Context, orgID, agentID stri
 		var s AgentStatRow
 		if err := rows.Scan(&s.BucketStart, &s.AgentID, &s.AgentName, &s.UserID, &s.UserName, &s.UserEmail,
 			&s.SessionsCount, &s.MessagesCount, &s.TokensInput, &s.TokensOutput, &s.TokensDirect, &s.TokensSubagent,
+			&s.TokensSubagentInput, &s.TokensSubagentOutput,
 			&s.ModelCalls, &s.TotalDurationMs, &s.EstCostUSD); err != nil {
 			return nil, err
 		}

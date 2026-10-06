@@ -135,7 +135,7 @@ describe('WarehouseSettingsPage', () => {
     expect(screen.queryByText(/provisions per-user ClickHouse access/)).toBeNull()
 
     // The delete confirmation must not promise identity revocation either.
-    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0])
+    fireEvent.click(screen.getAllByLabelText('Delete warehouse')[0])
     expect(
       await screen.findByText(/any provisioned identities are left in place/),
     ).toBeInTheDocument()
@@ -228,7 +228,7 @@ describe('WarehouseSettingsPage', () => {
     await waitFor(() => expect(putBody).toEqual({ connector_id: 'c-3' }))
   })
 
-  test('renames a warehouse through the inline input', async () => {
+  test('renames a warehouse through the rename modal', async () => {
     let putBody: Record<string, unknown> | null = null
     server.use(
       http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
@@ -240,13 +240,15 @@ describe('WarehouseSettingsPage', () => {
     fireEvent.click(await screen.findByText('Analytics'))
     await screen.findByLabelText('Provisioner connector')
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Rename' })[0])
-    const input = screen.getByLabelText('Warehouse name')
-    fireEvent.change(input, { target: { value: 'Analytics 2' } })
-    fireEvent.keyDown(input, { key: 'Enter' })
+    fireEvent.click(screen.getAllByLabelText('Rename warehouse')[0])
+    const dialog = await screen.findByRole('dialog')
+    expect(dialog).toHaveAccessibleName('Rename "Analytics"')
+    fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Analytics 2' } })
+    fireEvent.click(within(dialog).getByText('Save'))
 
     await waitFor(() => expect(putBody).toEqual({ name: 'Analytics 2' }))
-    // Enter commits the rename without collapsing the card.
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // The rename leaves the card expanded.
     expect(screen.getByLabelText('Provisioner connector')).toBeInTheDocument()
   })
 
@@ -347,9 +349,8 @@ describe('WarehouseSettingsPage', () => {
     await screen.findByText('Analytics')
     expect(listCalls).toBe(1)
 
-    fireEvent.click(screen.getAllByRole('button', { name: 'Delete' })[0])
-    const confirmButtons = screen.getAllByRole('button', { name: 'Delete' })
-    fireEvent.click(confirmButtons[confirmButtons.length - 1])
+    fireEvent.click(screen.getAllByLabelText('Delete warehouse')[0])
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete' }))
 
     expect(await screen.findByText('Warehouse has linked connectors')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: 'Delete and unlink' }))

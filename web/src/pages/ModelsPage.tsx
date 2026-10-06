@@ -1,12 +1,15 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
-import { FormCard } from '../components/FormCard'
+import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
 import { EmptyState } from '../components/EmptyState'
-import { Brain } from 'lucide-react'
+import { StatusBadge } from '../components/StatusBadge'
+import { Brain, Check, Pencil, ShieldCheck, Trash2, X, Zap } from 'lucide-react'
 import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
+import { FormModal } from '../components/FormModal'
+import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '../components/RowActions'
 import type { ModelConfig } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 
@@ -83,6 +86,7 @@ export function ModelsPage() {
   const [form, setForm] = useState<ModelConfigForm>(emptyForm())
   const [formError, setFormError] = useState<string | null>(null)
   const [deleteError, setDeleteError] = useState<string | null>(null)
+  const nameRef = useRef<HTMLInputElement>(null)
 
   const { data: configs = [], isLoading } = useQuery<ModelConfig[]>({
     queryKey: ['model-configs'],
@@ -96,6 +100,18 @@ export function ModelsPage() {
     }
     if (form.reasoning_effort) p['reasoning_effort'] = form.reasoning_effort
     return p
+  }
+
+  const closeCreate = () => {
+    setCreating(false)
+    setForm(emptyForm())
+    setFormError(null)
+  }
+
+  const closeEdit = () => {
+    setEditingId(null)
+    setForm(emptyForm())
+    setFormError(null)
   }
 
   const createMutation = useMutation({
@@ -113,9 +129,7 @@ export function ModelsPage() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
-      setCreating(false)
-      setForm(emptyForm())
-      setFormError(null)
+      closeCreate()
     },
     onError: (e: unknown) => setFormError(String(e)),
   })
@@ -135,9 +149,7 @@ export function ModelsPage() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
-      setEditingId(null)
-      setForm(emptyForm())
-      setFormError(null)
+      closeEdit()
     },
     onError: (e: unknown) => setFormError(String(e)),
   })
@@ -183,7 +195,10 @@ export function ModelsPage() {
       price_per_cache_read_token: String(config.price_per_cache_read_token ?? 0),
     })
     setEditingId(config.id)
+    setFormError(null)
   }
+
+  const editingConfig = configs.find((c) => c.id === editingId)
 
   return (
     <AppShell>
@@ -196,32 +211,38 @@ export function ModelsPage() {
         </p>
 
         {creating && (
-          <FormCard title="New Model">
-            <ModelFormFields form={form} setForm={setForm} />
-            <div style={styles.formActions}>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setCreating(false); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => createMutation.mutate()} disabled={!form.name || !form.model || createMutation.isPending} title={!form.name ? 'Name is required' : !form.model ? 'Model is required' : undefined}>
-                {createMutation.isPending ? 'Creating…' : 'Create'}
-              </button>
-            </div>
-            {formError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{formError}</p>}
-          </FormCard>
+          <FormModal
+            title="New Model"
+            onClose={closeCreate}
+            initialFocusRef={nameRef}
+            error={formError}
+            submitLabel="Create"
+            pendingLabel="Creating…"
+            pending={createMutation.isPending}
+            submitDisabled={!form.name || !form.model}
+            submitTitle={!form.name ? 'Name is required' : !form.model ? 'Model is required' : undefined}
+            onSubmit={() => createMutation.mutate()}
+          >
+            <ModelFormFields form={form} setForm={setForm} nameRef={nameRef} />
+          </FormModal>
         )}
 
         {editingId && (
-          <FormCard title="Edit Model">
-            <ModelFormFields form={form} setForm={setForm} />
-            <div style={styles.formActions}>
-              <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>(leave API key blank to keep current)</span>
-              <span style={{ flex: 1 }} />
-              <button type="button" style={styles.cancelBtn} onClick={() => { setEditingId(null); setForm(emptyForm()) }}>Cancel</button>
-              <button type="button" style={styles.saveBtn} onClick={() => updateMutation.mutate(editingId!)} disabled={!form.name || updateMutation.isPending} title={!form.name ? 'Name is required' : undefined}>
-                {updateMutation.isPending ? 'Saving…' : 'Save'}
-              </button>
-            </div>
-            {formError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{formError}</p>}
-          </FormCard>
+          <FormModal
+            title={`Edit "${editingConfig?.name ?? 'model'}"`}
+            onClose={closeEdit}
+            initialFocusRef={nameRef}
+            error={formError}
+            footerExtra={<span style={{ fontSize: 12, color: 'var(--text-muted)' }}>(leave API key blank to keep current)</span>}
+            submitLabel="Save"
+            pendingLabel="Saving…"
+            pending={updateMutation.isPending}
+            submitDisabled={!form.name}
+            submitTitle={!form.name ? 'Name is required' : undefined}
+            onSubmit={() => updateMutation.mutate(editingId!)}
+          >
+            <ModelFormFields form={form} setForm={setForm} nameRef={nameRef} />
+          </FormModal>
         )}
 
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
@@ -234,49 +255,56 @@ export function ModelsPage() {
             action={{ label: '+ New Model', onClick: () => setCreating(true) }}
           />
         ) : (
-          <StyledTable headers={['Name', 'Provider', 'Endpoint', 'Model', 'Context Window', 'Compaction', '']}>
-            {configs.map((c) => (
-              <tr key={c.id} style={rowStyle}>
-                <td style={cellStyle}><strong>{c.name}</strong></td>
-                <td style={cellStyle}><code style={styles.badge}>{c.provider}</code></td>
-                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{c.base_url}</td>
-                <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.model}</td>
-                <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>{c.context_window?.toLocaleString() ?? '—'}</td>
-                <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>
-                  {c.default_params?.['compaction_threshold'] != null ? `${c.default_params['compaction_threshold']}%` : '70%'}
-                </td>
-                  <td style={styles.tdActions}>
-                    <button type="button" style={styles.permissionsBtn} onClick={() => setPermissionsTarget({ id: c.id, name: c.name })}>Permissions</button>
-                    <button
-                    type="button"
-                    style={testMutation.isPending && testResult?.id === c.id ? { ...styles.testBtn, opacity: 0.6 } : styles.testBtn}
-                    onClick={() => { setTestResult(null); testMutation.mutate(c.id) }}
-                    disabled={testMutation.isPending}
-                  >
-                    {testMutation.isPending && testResult?.id === c.id ? 'Testing…' : 'Test'}
-                  </button>
-                  <button type="button" style={styles.editBtn} onClick={() => startEdit(c)}>Edit</button>
-                  <button type="button" style={styles.deleteBtn} onClick={() => setDeleteTarget(c)}>
-                    Delete
-                  </button>
-                </td>
-              </tr>
-            ))}
+          <StyledTable
+            headers={['Name', 'Provider', 'Endpoint', 'Model', 'Context Window', 'Compaction', 'Status', <RowActionsHeader />]}
+            headerClassNames={[undefined, undefined, undefined, undefined, undefined, undefined, undefined, 'row-actions-header']}
+          >
+            {configs.map((c) => {
+              const testing = testMutation.isPending && testMutation.variables === c.id
+              const test = testResult?.id === c.id ? testResult : null
+              return (
+                <tr key={c.id} style={rowStyle}>
+                  <td style={cellStyle}><strong>{c.name}</strong></td>
+                  <td style={cellStyle}><code style={styles.badge}>{c.provider}</code></td>
+                  <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{c.base_url}</td>
+                  <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{c.model}</td>
+                  <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>{c.context_window?.toLocaleString() ?? '—'}</td>
+                  <td style={{ ...cellStyle, fontSize: 12, color: 'var(--text-muted)' }}>
+                    {c.default_params?.['compaction_threshold'] != null ? `${c.default_params['compaction_threshold']}%` : '70%'}
+                  </td>
+                  <td style={cellStyle}>
+                    {testing ? (
+                      <StatusBadge status="neutral" label="Testing…" />
+                    ) : test ? (
+                      <StatusBadge
+                        status={test.ok ? 'success' : 'error'}
+                        label={test.ok ? 'Connected' : 'Failed'}
+                        icon={test.ok ? <Check size={12} /> : <X size={12} />}
+                        title={test.message}
+                      />
+                    ) : (
+                      <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                        Unknown — click Test
+                      </span>
+                    )}
+                  </td>
+                  <RowActionsCell>
+                    <RowAction
+                      label="Test model config"
+                      icon={<Zap size={13} />}
+                      spinning={testing}
+                      disabled={testMutation.isPending}
+                      onClick={() => { setTestResult(null); testMutation.mutate(c.id) }}
+                    />
+                    <RowAction label="Edit model config" icon={<Pencil size={13} />} accent onClick={() => startEdit(c)} />
+                    <RowActionsBreak />
+                    <RowAction label="Permissions" icon={<ShieldCheck size={13} />} onClick={() => setPermissionsTarget({ id: c.id, name: c.name })} />
+                    <RowAction label="Delete model config" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget(c)} />
+                  </RowActionsCell>
+                </tr>
+              )
+            })}
           </StyledTable>
-        )}
-
-        {testResult && (
-          <div style={{
-            marginTop: 12,
-            padding: '10px 14px',
-            borderRadius: 6,
-            background: testResult.ok ? 'rgba(34,197,94,0.1)' : 'rgba(239,68,68,0.1)',
-            border: `1px solid ${testResult.ok ? 'rgba(34,197,94,0.3)' : 'rgba(239,68,68,0.3)'}`,
-            color: testResult.ok ? '#22c55e' : 'var(--error-full)',
-            fontSize: 13,
-          }}>
-            {testResult.ok ? '✅ Connection OK: ' : '❌ Connection failed: '}{testResult.message}
-          </div>
         )}
       </div>
       <ConfirmDialog
@@ -300,14 +328,18 @@ export function ModelsPage() {
   )
 }
 
-function ModelFormFields({ form, setForm }: { form: ModelConfigForm; setForm: React.Dispatch<React.SetStateAction<ModelConfigForm>> }) {
+function ModelFormFields({ form, setForm, nameRef }: {
+  form: ModelConfigForm
+  setForm: React.Dispatch<React.SetStateAction<ModelConfigForm>>
+  nameRef: React.RefObject<HTMLInputElement | null>
+}) {
   const setField = (field: keyof ModelConfigForm) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
     setForm(f => ({ ...f, [field]: e.target.value }))
 
   return (
-    <div style={styles.formGrid}>
+    <>
       <label style={styles.label}>Name
-        <input style={styles.input} value={form.name} onChange={setField('name')} placeholder="GPT-4o Production" />
+        <input ref={nameRef} style={styles.input} value={form.name} onChange={setField('name')} placeholder="GPT-4o Production" />
       </label>
       <label style={styles.label}>Provider
         <select style={styles.input} value={form.provider} onChange={e => {
@@ -364,42 +396,14 @@ function ModelFormFields({ form, setForm }: { form: ModelConfigForm; setForm: Re
         <input style={styles.input} type="text" value={form.price_per_cache_read_token} onChange={e => setForm(f => ({ ...f, price_per_cache_read_token: e.target.value }))} placeholder="0.075" />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Cost per 1M cached input tokens (e.g. 0.075 for GPT-4o-mini).</span>
       </label>
-    </div>
+    </>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
-  formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2, appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none' },
-  formActions: { display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 16 },
-  cancelBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  saveBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  permissionsBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  editBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--accent)', marginRight: 6 },
-  deleteBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--error-full)' },
-  testBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', color: 'var(--text-secondary)', marginRight: 6 },
-  tdActions: { padding: '8px 16px', textAlign: 'right' as const },
   badge: { fontSize: 11, fontFamily: 'var(--font-mono)', background: 'var(--accent-light)', color: 'var(--text-secondary)', padding: '2px 7px', borderRadius: 3 },
 }
-
-type RowProps = React.CSSProperties
-const rowStyle: RowProps = { borderBottom: '1px solid var(--border)' }
-const cellStyle: React.CSSProperties = { padding: '10px 16px', verticalAlign: 'top' }
-
-function StyledTable({ headers, children }: { headers: string[]; children: React.ReactNode }) {
-  return (
-    <table style={{ width: '100%', borderCollapse: 'collapse', border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden' }}>
-      <thead>
-        <tr style={{ background: 'var(--bg-secondary)' }}>
-          {headers.map(h => <th key={h} style={{ ...thStyle, textAlign: 'left' }}>{h}</th>)}
-        </tr>
-      </thead>
-      <tbody>{children}</tbody>
-    </table>
-  )
-}
-
-const thStyle: React.CSSProperties = { padding: '8px 16px', fontSize: 11, fontWeight: 700, textTransform: 'uppercase' as const, letterSpacing: '0.05em', color: 'var(--text-muted)', borderBottom: '1px solid var(--border)' }

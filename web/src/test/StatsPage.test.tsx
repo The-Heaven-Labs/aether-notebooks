@@ -19,6 +19,8 @@ const ROWS = [
     tokens_output: 50,
     tokens_direct: 7,
     tokens_subagent: 5,
+    tokens_subagent_input: 4,
+    tokens_subagent_output: 1,
     model_calls: 2,
     total_duration_ms: 3000,
     est_cost_usd: 0.0006,
@@ -36,6 +38,8 @@ const ROWS = [
     tokens_output: 500,
     tokens_direct: 0,
     tokens_subagent: 0,
+    tokens_subagent_input: 0,
+    tokens_subagent_output: 0,
     model_calls: 3,
     total_duration_ms: 1000,
     est_cost_usd: 0.001,
@@ -67,6 +71,8 @@ describe('StatsPage', () => {
     await waitFor(() => expect(screen.getAllByText('Alpha').length).toBeGreaterThan(0))
     // KPIs: 3 sessions, 6 messages, 550 out → tokens, cost 0.0016
     expect(screen.getByText('$0.0016')).toBeDefined()
+    expect(screen.getByText('Subagent tokens')).toBeDefined()
+    expect(screen.getByText('Tokens out per bucket, by agent (incl. subagent, UTC)')).toBeDefined()
     expect(screen.getByRole('option', { name: 'Beta' })).toBeDefined()
     expect(screen.getAllByText('Beta').length).toBeGreaterThan(1)
     // Agent filter derived from rows
@@ -105,6 +111,8 @@ describe('StatsPage', () => {
       const sel = screen.getByLabelText('Filter by agent') as HTMLSelectElement
       expect(sel.value).toBe('a2')
     })
+    // Single-agent mode names the in/out view instead of the per-agent stack.
+    expect(screen.getByText('Tokens in vs out per bucket (UTC)')).toBeDefined()
   })
 
   it('denies non-admins without fetching', async () => {

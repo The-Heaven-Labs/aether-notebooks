@@ -27,6 +27,8 @@ function row(over: Partial<StatRow> = {}): StatRow {
     tokens_output: 50,
     tokens_direct: 7,
     tokens_subagent: 5,
+    tokens_subagent_input: 4,
+    tokens_subagent_output: 1,
     model_calls: 2,
     total_duration_ms: 3000,
     est_cost_usd: 0.0006,
@@ -37,7 +39,7 @@ function row(over: Partial<StatRow> = {}): StatRow {
 describe('computeKpis', () => {
   it('sums across rows', () => {
     const k = computeKpis([row(), row({ sessions_count: 2, tokens_input: 10, est_cost_usd: 0.0001 })])
-    expect(k).toMatchObject({ sessions: 3, messages: 4, modelCalls: 4, tokensIn: 110, tokensOut: 100 })
+    expect(k).toMatchObject({ sessions: 3, messages: 4, modelCalls: 4, tokensIn: 110, tokensOut: 100, subagent: 10 })
     expect(k.cost).toBeCloseTo(0.0007, 10)
   })
 
@@ -98,6 +100,55 @@ describe('buildTokenChartOption', () => {
     const opt = buildTokenChartOption([row()], { mode: 'tokens', granularity: 'hour', singleAgent: true })
     const series = opt.series as { name: string; type: string }[]
     expect(series.some((s) => s.type === 'line')).toBe(true)
+  })
+
+  it('splits direct and subagent usage in single-agent mode', () => {
+    const opt = buildTokenChartOption(
+      [row({ tokens_output: 50, tokens_subagent_output: 5, tokens_input: 100, tokens_subagent_input: 2 })],
+      { mode: 'tokens', granularity: 'hour', singleAgent: true },
+    )
+    const series = opt.series as { name: string; type: string; stack?: string; lineStyle?: { type?: string }; data: number[] }[]
+    expect(series.map((s) => s.name)).toEqual(['tokens out', 'subagent out', 'tokens in', 'subagent in'])
+    expect(series[0]).toMatchObject({ type: 'bar', stack: 'total', data: [50] })
+    expect(series[1]).toMatchObject({ type: 'bar', stack: 'total', data: [5] })
+    expect(series[2]).toMatchObject({ type: 'line', data: [100] })
+    expect(series[3].lineStyle).toEqual({ type: 'dashed' })
+    expect(series[3].data).toEqual([2])
+  })
+
+  it('omits subagent series when there is no subagent usage', () => {
+    const opt = buildTokenChartOption(
+      [row({ tokens_subagent: 0, tokens_subagent_input: 0, tokens_subagent_output: 0 })],
+      { mode: 'tokens', granularity: 'hour', singleAgent: true },
+    )
+    const series = opt.series as { name: string }[]
+    expect(series.map((s) => s.name)).toEqual(['tokens out', 'tokens in'])
+  })
+
+  it('names the single-agent cost bar after the metric', () => {
+    const opt = buildTokenChartOption([row()], { mode: 'cost', granularity: 'day', singleAgent: true })
+    const series = opt.series as { name: string; data: number[] }[]
+    expect(series.map((s) => s.name)).toEqual(['cost'])
+    expect(series[0].data).toEqual([0.0006])
+  })
+
+  it('includes subagent output in all-agents bars', () => {
+    const opt = buildTokenChartOption(
+      [row({ tokens_output: 50, tokens_subagent_output: 5 })],
+      { mode: 'tokens', granularity: 'day', singleAgent: false },
+    )
+    const series = opt.series as { data: number[] }[]
+    expect(series[0].data).toEqual([55])
+  })
+
+  it('labels buckets in UTC so daily buckets cannot drift a day', () => {
+    const opt = buildTokenChartOption(
+      [row({ bucket_start: '2026-09-29T00:00:00Z' })],
+      { mode: 'tokens', granularity: 'day', singleAgent: false },
+    )
+    const data = (opt.xAxis as { data: string[] }).data
+    expect(data[0]).toContain('29')
+    expect(data[0]).not.toContain('28')
   })
 
   it('cost mode uses est_cost_usd', () => {
