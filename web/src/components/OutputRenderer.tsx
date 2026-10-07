@@ -1,12 +1,16 @@
-import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, memo, lazy, Suspense } from 'react'
 import type React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import type { Output, ResultSet, Column, OutputStubData } from '../types'
-import { ChartView } from '../charts'
 import type { ChartConfig } from '../charts'
 import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import { getApiUrl } from '../config'
+
+// The chart renderer (ECharts + chart UI) is the largest dependency of the
+// notebook page. Load it only when a cell actually renders a chart so
+// notebooks without charts never pay for it.
+const ChartView = lazy(() => import('../charts').then((m) => ({ default: m.ChartView })))
 
 // Streaming download URL for a cell's raw stored outputs. A real navigation is
 // used (not fetch+blob) so the payload is streamed to disk rather than
@@ -996,7 +1000,9 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
         </div>
       ) : (
         <div style={{ flex: 1, minHeight: fixedView ? 0 : 300, display: 'flex', flexDirection: 'column' }}>
-          <ChartView rs={rs} onConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+          <Suspense fallback={<div style={styles.chartLoading}>Loading chart…</div>}>
+            <ChartView rs={rs} onConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+          </Suspense>
         </div>
       )}
 
@@ -1329,6 +1335,14 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
     lineHeight: 1.6,
+  },
+  chartLoading: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--text-muted)',
+    fontSize: 13,
   },
   arrayTable: {
     width: '100%',

@@ -1,13 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { useAuth } from '../hooks/useAuth'
 import { ApiError, api } from '../api/client'
 import { ErrorBanner } from '../components/ErrorBanner'
 import './LoginPage.css'
+
+// MOTDs are markdown but usually absent; keep the markdown renderer out of
+// the login page's initial bundle.
+const MotdMarkdown = lazy(() => import('../components/MotdMarkdown'))
 
 type LoginStep = 'email' | 'password' | 'sso_and_password'
 
@@ -210,7 +212,9 @@ export function LoginPage() {
                 {loginMotds.map(motd => (
                   <div key={motd.id} style={{ background: 'var(--warning-light)', border: '1px solid var(--warning-border)', borderLeft: '1px solid var(--accent)', borderRadius: 4, padding: '12px 16px', marginBottom: loginMotds.length > 1 ? 8 : 0, fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5 }}>
                     {motd.title && <strong style={{ marginRight: 8, fontWeight: 600 }}>{motd.title}:</strong>}
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{motd.content}</ReactMarkdown>
+                    <Suspense fallback={null}>
+                      <MotdMarkdown content={motd.content} />
+                    </Suspense>
                   </div>
                 ))}
               </div>

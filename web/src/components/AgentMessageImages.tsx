@@ -1,7 +1,9 @@
-import { memo, useState, useEffect } from 'react'
+import { memo, useState, useEffect, lazy, Suspense } from 'react'
 import { Loader2 } from 'lucide-react'
 import { getToken } from '../api/client'
-import { ImageViewer } from './ImageViewer'
+
+// Only needed once a user opens an attached image.
+const ImageViewer = lazy(() => import('./ImageViewer').then(m => ({ default: m.ImageViewer })))
 
 export const AgentMessageImages = memo(({ images }: { images: string[] }) => {
   const [blobUrls, setBlobUrls] = useState<Record<string, string>>({})
@@ -30,7 +32,11 @@ export const AgentMessageImages = memo(({ images }: { images: string[] }) => {
   }, [images.join(',')])
   return (
     <>
-      {viewerSrc && <ImageViewer src={viewerSrc} onClose={() => setViewerSrc(null)} />}
+      {viewerSrc && (
+        <Suspense fallback={null}>
+          <ImageViewer src={viewerSrc} onClose={() => setViewerSrc(null)} />
+        </Suspense>
+      )}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
         {images.map(id => (
           blobUrls[id] ? (

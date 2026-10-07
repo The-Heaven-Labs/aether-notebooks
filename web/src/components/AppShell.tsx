@@ -1,13 +1,16 @@
-import { useState, useEffect, useMemo, createContext, useContext } from 'react'
+import { useState, useEffect, useMemo, createContext, useContext, lazy, Suspense } from 'react'
 import { useLocation, matchPath } from 'react-router-dom'
 import { Bot } from 'lucide-react'
 import { TopBar } from './TopBar'
 import { Sidebar } from './Sidebar'
-import { ShortcutsModal } from './ShortcutsModal'
-import { AgentPanel } from './AgentPanel'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
+
+// Heavy, interaction-gated pieces of the shell. Keeping them lazy means pages
+// don't pay for the agent chat UI, the shortcuts dialog, or the markdown
+// renderer until the user actually opens them.
+const AgentPanel = lazy(() => import('./AgentPanel').then((m) => ({ default: m.AgentPanel })))
+const ShortcutsModal = lazy(() => import('./ShortcutsModal').then((m) => ({ default: m.ShortcutsModal })))
+const MotdMarkdown = lazy(() => import('./MotdMarkdown'))
 
 interface Props {
   children: React.ReactNode
@@ -184,7 +187,9 @@ export function AppShell({ children, noPadding }: Props) {
             <div key={motd.id} style={motdStyles.banner}>
               <div style={motdStyles.bannerContent}>
                 {motd.title && <strong style={motdStyles.bannerTitle}>{motd.title}:</strong>}
-                <ReactMarkdown remarkPlugins={[remarkGfm]}>{motd.content}</ReactMarkdown>
+                <Suspense fallback={null}>
+                  <MotdMarkdown content={motd.content} />
+                </Suspense>
               </div>
               <button onClick={() => dismissMotd(motd.id)} style={motdStyles.bannerClose} title="Dismiss">×</button>
             </div>
@@ -192,7 +197,11 @@ export function AppShell({ children, noPadding }: Props) {
           {children}
         </main>
       </div>
-      {showShortcuts && <ShortcutsModal onClose={() => setShowShortcuts(false)} />}
+      {showShortcuts && (
+        <Suspense fallback={null}>
+          <ShortcutsModal onClose={() => setShowShortcuts(false)} />
+        </Suspense>
+      )}
 
       {/* Global Agent FAB (floating action button) */}
       {!isChatPage && !showGlobalAgent && (
@@ -239,16 +248,18 @@ export function AppShell({ children, noPadding }: Props) {
                 }}
               />
             )}
-            <AgentPanel
-              notebookId={currentNotebookId}
-              pageContext={currentPageContext}
-              width={globalAgentWidth}
-              onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('aether:agentPanelWidth:__global__', String(w)) } catch {} }}
-              onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
-              onMinimize={() => setGlobalAgentMinimized(true)}
-              onDock={() => { setGlobalAgentDocked(d => { const next = !d; try { localStorage.setItem('aether:agentDocked:__global__', String(next)) } catch {}; return next; }) }}
-              docked={globalAgentDocked}
-            />
+            <Suspense fallback={<div style={globalAgentStyles.panelLoading}>Loading agent…</div>}>
+              <AgentPanel
+                notebookId={currentNotebookId}
+                pageContext={currentPageContext}
+                width={globalAgentWidth}
+                onResize={(w) => { setGlobalAgentWidth(w); try { localStorage.setItem('aether:agentPanelWidth:__global__', String(w)) } catch {} }}
+                onClose={() => { setShowGlobalAgent(false); try { localStorage.setItem('aether:agentDocked:__global__', 'false') } catch {} }}
+                onMinimize={() => setGlobalAgentMinimized(true)}
+                onDock={() => { setGlobalAgentDocked(d => { const next = !d; try { localStorage.setItem('aether:agentDocked:__global__', String(next)) } catch {}; return next; }) }}
+                docked={globalAgentDocked}
+              />
+            </Suspense>
           </div>
         </div>
       )}
@@ -276,6 +287,12 @@ const globalAgentStyles: Record<string, React.CSSProperties> = {
   floatingWrapper: {
     position: 'fixed', inset: 0, zIndex: 1500,
     pointerEvents: 'none',
+  },
+  panelLoading: {
+    flex: 1,
+    display: 'flex', alignItems: 'center', justifyContent: 'center',
+    color: 'var(--text-muted)',
+    fontSize: 13,
   },
   modal: {
     position: 'fixed', zIndex: 1501,

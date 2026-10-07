@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo, lazy, Suspense } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -8,7 +8,10 @@ import { getToken } from '../api/client'
 import type { Cell } from '../types'
 import { slugify, updateCellFocus } from './Cell'
 import { setMarkdownFocusCallback, clearMarkdownFocusCallback } from '../utils/editorFocus'
-import { ImageViewer } from './ImageViewer'
+
+// The full-screen image viewer is only needed after a click; keep it out of
+// the markdown cell's initial bundle.
+const ImageViewer = lazy(() => import('./ImageViewer').then(m => ({ default: m.ImageViewer })))
 
 export interface ResizableImageProps {
   src: string | null
@@ -718,7 +721,11 @@ export function MarkdownView({ cell, notebookId, onSourceChange, onSave, onEditS
       
       <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileSelect} />
 
-      {viewingImage && <ImageViewer src={viewingImage} onClose={() => setViewingImage(null)} />}
+      {viewingImage && (
+        <Suspense fallback={null}>
+          <ImageViewer src={viewingImage} onClose={() => setViewingImage(null)} />
+        </Suspense>
+      )}
 
       <style>{`
         .md-image-wrapper { position: relative; }

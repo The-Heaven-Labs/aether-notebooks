@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import { HocuspocusProvider } from '@hocuspocus/provider'
+import type { HocuspocusProvider } from '@hocuspocus/provider'
 
 interface Collaborator {
   email: string

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
 import { useParams, Link, useNavigate } from 'react-router-dom'
 import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock, Trash2, Globe, Pencil } from 'lucide-react'
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
@@ -18,22 +18,25 @@ import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll
 import { focusMarkdownCell } from '../utils/editorFocus'
 import { createFlashQueue, isAgentOrigin, resolveAgentAwareFlash, type FlashQueue } from '../utils/agentFocus'
 import { clearDirtyForSyncedCells, mergeServerCell, saveDelayFor } from '../utils/mergeCells'
-import { ParametersBar } from '../components/ParametersBar'
-import { SchemaBrowser } from '../components/SchemaBrowser'
-import { SchedulesPanel } from '../components/SchedulesPanel'
 import { useNotebookKeyboardShortcuts } from '../hooks/useNotebookKeyboardShortcuts'
-import { HistoryPanel } from '../components/HistoryPanel'
-import { NotebookHistoryPanel } from '../components/NotebookHistoryPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
+
+// Panels that only appear on demand: load them when opened instead of with
+// the notebook page.
+const ParametersBar = lazy(() => import('../components/ParametersBar').then(m => ({ default: m.ParametersBar })))
+const SchemaBrowser = lazy(() => import('../components/SchemaBrowser').then(m => ({ default: m.SchemaBrowser })))
+const SchedulesPanel = lazy(() => import('../components/SchedulesPanel').then(m => ({ default: m.SchedulesPanel })))
+const HistoryPanel = lazy(() => import('../components/HistoryPanel').then(m => ({ default: m.HistoryPanel })))
+const NotebookHistoryPanel = lazy(() => import('../components/NotebookHistoryPanel').then(m => ({ default: m.NotebookHistoryPanel })))
+const PermissionsPanel = lazy(() => import('../components/PermissionsPanel').then(m => ({ default: m.PermissionsPanel })))
+const ShareModal = lazy(() => import('../components/ShareModal').then(m => ({ default: m.ShareModal })))
+const SessionViewer = lazy(() => import('../components/SessionViewer').then(m => ({ default: m.SessionViewer })))
 import { ServiceChoiceDialog } from '../components/RoutingPreference'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { useNotebookWs, shouldFlashExecutingCell } from '../hooks/useNotebookWs'
 import { useAuth } from '../hooks/useAuth'
 import { ConfirmDialog } from '../components/ConfirmDialog'
-import { PermissionsPanel } from '../components/PermissionsPanel'
-import { ShareModal } from '../components/ShareModal'
-import { SessionViewer } from '../components/SessionViewer'
 import { NotebookChats } from '../components/NotebookChats'
 import type { AgentSessionListItem } from '../types/agent'
 import { exportNotebookHTML } from '../utils/notebookExport'
@@ -1682,21 +1685,25 @@ export function NotebookPage() {
       )}
 
       {(showParameters || (notebook?.parameters?.length ?? 0) > 0) && (
-        <ParametersBar
-          parameters={notebook.parameters ?? []}
-          values={paramValues}
-          onChange={setParamValues}
-          onSaveDefinitions={(params) => saveParameters.mutate(params)}
-        />
+        <Suspense fallback={null}>
+          <ParametersBar
+            parameters={notebook.parameters ?? []}
+            values={paramValues}
+            onChange={setParamValues}
+            onSaveDefinitions={(params) => saveParameters.mutate(params)}
+          />
+        </Suspense>
       )}
 
       {/* Body: optional schema sidebar + cells + optional schedules panel */}
       <div style={styles.body}>
         {showSchema && (
-          <SchemaBrowser
-            connectorId={schemaConnectorId}
-            onClose={() => setShowSchema(false)}
-          />
+          <Suspense fallback={null}>
+            <SchemaBrowser
+              connectorId={schemaConnectorId}
+              onClose={() => setShowSchema(false)}
+            />
+          </Suspense>
         )}
         <div style={styles.mainColumn}>
           <div ref={cellsContainerRef} style={styles.cellsArea}>
@@ -1796,10 +1803,12 @@ export function NotebookPage() {
             </div>
           </div>
           {showSchedules && (
-            <SchedulesPanel
-              notebookId={id!}
-              parameters={notebook.parameters ?? []}
-            />
+            <Suspense fallback={null}>
+              <SchedulesPanel
+                notebookId={id!}
+                parameters={notebook.parameters ?? []}
+              />
+            </Suspense>
           )}
         </div>
 
@@ -1848,12 +1857,14 @@ export function NotebookPage() {
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 199 }} onClick={() => setHistoryCell(null)} />
           <div role="dialog" aria-modal="true" aria-label="Cell version history" style={{ position: 'fixed', right: 0, top: 0, bottom: 0, width: 300, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
-            <HistoryPanel
-              versions={historyVersions}
-              currentSource={localCells.find((c) => c.id === historyCell)?.source ?? ''}
-              onRestore={(vId) => restoreVersion(historyCell, vId)}
-              onClose={() => setHistoryCell(null)}
-            />
+            <Suspense fallback={null}>
+              <HistoryPanel
+                versions={historyVersions}
+                currentSource={localCells.find((c) => c.id === historyCell)?.source ?? ''}
+                onRestore={(vId) => restoreVersion(historyCell, vId)}
+                onClose={() => setHistoryCell(null)}
+              />
+            </Suspense>
           </div>
         </>
       )}
@@ -1862,13 +1873,15 @@ export function NotebookPage() {
         <>
           <div className="scrim-enter" style={{ position: 'fixed', inset: 0, zIndex: 199, background: 'var(--bg-overlay)' }} onClick={() => setShowHistory(false)} />
           <div role="dialog" aria-modal="true" aria-label="Notebook history" className="floating-panel-enter" style={{ position: 'fixed', top: 'calc(52px + 16px)', right: 16, bottom: 16, width: 380, maxWidth: 'calc(100vw - 32px)', borderRadius: 8, border: '1px solid var(--border)', boxShadow: 'var(--shadow-md)', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 200 }}>
-            <NotebookHistoryPanel
-              snapshots={historySnapshots}
-              onCreateSnapshot={createSnapshot}
-              onRestore={restoreSnapshot}
-              onClose={() => setShowHistory(false)}
-              canEdit={notebook?.can_edit ?? false}
-            />
+            <Suspense fallback={null}>
+              <NotebookHistoryPanel
+                snapshots={historySnapshots}
+                onCreateSnapshot={createSnapshot}
+                onRestore={restoreSnapshot}
+                onClose={() => setShowHistory(false)}
+                canEdit={notebook?.can_edit ?? false}
+              />
+            </Suspense>
           </div>
         </>
       )}
@@ -1894,7 +1907,9 @@ export function NotebookPage() {
         <>
           <div style={{ position: 'fixed', inset: 0, zIndex: 201 }} onClick={closeSessionViewer} />
           <div role="dialog" aria-modal="true" aria-label="Agent session" style={{ position: 'fixed', right: 0, top: 52, bottom: 0, width: 420, maxWidth: '100vw', overflow: 'hidden', display: 'flex', flexDirection: 'column', zIndex: 202, background: 'var(--bg-primary)', borderLeft: '1px solid var(--border)' }}>
-            <SessionViewer sessionId={viewerSessionId} session={viewerSession} onClose={closeSessionViewer} />
+            <Suspense fallback={null}>
+              <SessionViewer sessionId={viewerSessionId} session={viewerSession} onClose={closeSessionViewer} />
+            </Suspense>
           </div>
         </>
       )}
@@ -1928,25 +1943,29 @@ export function NotebookPage() {
       onCancel={() => setDeleteNotebookConfirm(false)}
     />
     {showPermissions && notebook && (
-      <PermissionsPanel
-        resourceType="notebook"
-        resourceId={notebook.id}
-        resourceName={notebook.title}
-        parentFolderId={notebook.folder_id}
-        resourceOwnerId={notebook.created_by}
-        canEdit={notebook.can_edit}
-        onClose={() => setShowPermissions(false)}
-      />
+      <Suspense fallback={null}>
+        <PermissionsPanel
+          resourceType="notebook"
+          resourceId={notebook.id}
+          resourceName={notebook.title}
+          parentFolderId={notebook.folder_id}
+          resourceOwnerId={notebook.created_by}
+          canEdit={notebook.can_edit}
+          onClose={() => setShowPermissions(false)}
+        />
+      </Suspense>
     )}
     {showShare && notebook && (
-      <ShareModal
-        resourceType="notebook"
-        resourceId={notebook.id}
-        canShare={notebook.can_share ?? false}
-        onClose={() => { setShowShare(false); setEmbedCellId(undefined) }}
-        initialTab={embedCellId ? 'embed' : undefined}
-        initialCellId={embedCellId}
-      />
+      <Suspense fallback={null}>
+        <ShareModal
+          resourceType="notebook"
+          resourceId={notebook.id}
+          canShare={notebook.can_share ?? false}
+          onClose={() => { setShowShare(false); setEmbedCellId(undefined) }}
+          initialTab={embedCellId ? 'embed' : undefined}
+          initialCellId={embedCellId}
+        />
+      </Suspense>
     )}
     </AppShell>
   )
