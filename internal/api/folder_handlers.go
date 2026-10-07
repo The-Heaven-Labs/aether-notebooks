@@ -532,13 +532,13 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	if isOrgAdmin {
 		folderQuery = `SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
 			 FROM folders f
-			 WHERE f.org_id = $1 AND f.parent_id IS NULL AND f.is_home = false
+			 WHERE f.org_id = $1 AND f.parent_id IS NULL AND f.is_home = false AND f.deleted_at IS NULL
 			 ORDER BY f.name`
 		folderArgs = []any{claims.OrgID}
 	} else {
 		folderQuery = `SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
 		 FROM folders f
-		 WHERE f.org_id = $1 AND f.parent_id IS NULL AND f.is_home = false
+		 WHERE f.org_id = $1 AND f.parent_id IS NULL AND f.is_home = false AND f.deleted_at IS NULL
 		 AND (
 		   f.owner_id = $2
 		   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $2::text)

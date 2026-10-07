@@ -241,3 +241,64 @@ func TestListHomeFolders_DeeplySharedNotebook(t *testing.T) {
 	nbEntry := nbs[0].(map[string]any)
 	require.Equal(t, notebookID, nbEntry["id"].(string), "notebook ID should match")
 }
+
+func TestListRootContentsExcludesDeletedFolders(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("folder-delete-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Folder Delete Org")
+
+	createFolder := func(name string) string {
+		body, _ := json.Marshal(map[string]string{"name": name})
+		req := httptest.NewRequest("POST", "/api/v1/folders", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+		var folder map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&folder))
+		return folder["id"].(string)
+	}
+
+	listRoot := func(adminMode bool) []string {
+		req := httptest.NewRequest("GET", "/api/v1/folders", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		if adminMode {
+			req.Header.Set("X-AETHER-Admin-Mode", "true")
+		}
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var contents struct {
+			Folders []struct {
+				ID string `json:"id"`
+			} `json:"folders"`
+		}
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&contents))
+		ids := make([]string, 0, len(contents.Folders))
+		for _, f := range contents.Folders {
+			ids = append(ids, f.ID)
+		}
+		return ids
+	}
+
+	keepID := createFolder("Keep Me")
+	trashID := createFolder("Trash Me")
+
+	require.Contains(t, listRoot(true), keepID)
+	require.Contains(t, listRoot(true), trashID)
+	require.Contains(t, listRoot(false), trashID)
+
+	// Deleting a root folder moves it to trash; the trash page has its own
+	// endpoint, so it must disappear from the root listing in both listing
+	// branches.
+	reqDel := httptest.NewRequest("DELETE", "/api/v1/folders/"+trashID+"?force=true", nil)
+	reqDel.Header.Set("Authorization", "Bearer "+token)
+	recDel := httptest.NewRecorder()
+	srv.ServeHTTP(recDel, reqDel)
+	require.Equal(t, http.StatusNoContent, recDel.Code, recDel.Body.String())
+
+	require.Contains(t, listRoot(true), keepID)
+	require.NotContains(t, listRoot(true), trashID)
+	require.NotContains(t, listRoot(false), trashID)
+}
