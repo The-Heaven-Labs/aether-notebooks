@@ -1,9 +1,18 @@
+import type { ReactNode } from 'react'
 import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { DashboardVariablesPanel } from './DashboardVariablesPanel'
 import type { Dashboard } from '../types'
+
+// The panel embeds ConnectorSelector, which reads the shared ['connectors']
+// React Query cache.
+function renderWithQuery(ui: ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+}
 
 function dashboardWith(variables: Dashboard['settings']['variables']): Dashboard {
   return {
@@ -38,7 +47,7 @@ function capturePuts() {
 
 describe('DashboardVariablesPanel', () => {
   test('renders existing variables', () => {
-    render(
+    renderWithQuery(
       <DashboardVariablesPanel
         dashboardId="d1"
         dashboard={dashboardWith([{ name: 'region', type: 'text', default: 'EMEA' }])}
@@ -53,7 +62,7 @@ describe('DashboardVariablesPanel', () => {
   test('saves edited variables', async () => {
     const bodies = capturePuts()
     const onSaved = vi.fn()
-    render(
+    renderWithQuery(
       <DashboardVariablesPanel
         dashboardId="d1"
         dashboard={dashboardWith([{ name: 'region', type: 'text', default: 'EMEA' }])}
@@ -72,7 +81,7 @@ describe('DashboardVariablesPanel', () => {
 
   test('rejects invalid and duplicate names without saving', async () => {
     const bodies = capturePuts()
-    render(
+    renderWithQuery(
       <DashboardVariablesPanel
         dashboardId="d1"
         dashboard={dashboardWith([{ name: 'region', type: 'text' }])}
@@ -95,7 +104,7 @@ describe('DashboardVariablesPanel', () => {
 
   test('requires connector and SQL for query-backed options', async () => {
     const bodies = capturePuts()
-    render(
+    renderWithQuery(
       <DashboardVariablesPanel
         dashboardId="d1"
         dashboard={dashboardWith([{ name: 'city', type: 'single_select' }])}
@@ -110,7 +119,7 @@ describe('DashboardVariablesPanel', () => {
   })
 
   test('adds and removes variables', () => {
-    render(
+    renderWithQuery(
       <DashboardVariablesPanel
         dashboardId="d1"
         dashboard={dashboardWith([])}
@@ -126,7 +135,7 @@ describe('DashboardVariablesPanel', () => {
 
   test('saves the public live toggle', async () => {
     const bodies = capturePuts()
-    render(
+    renderWithQuery(
       <DashboardVariablesPanel
         dashboardId="d1"
         dashboard={dashboardWith([])}
@@ -142,7 +151,7 @@ describe('DashboardVariablesPanel', () => {
   })
 
   test('prefills a new variable from the widget drawer', () => {
-    render(
+    renderWithQuery(
       <DashboardVariablesPanel
         dashboardId="d1"
         dashboard={dashboardWith([])}
@@ -156,7 +165,7 @@ describe('DashboardVariablesPanel', () => {
 
   test('closes on Escape and on backdrop click', () => {
     const onClose = vi.fn()
-    render(
+    renderWithQuery(
       <DashboardVariablesPanel
         dashboardId="d1"
         dashboard={dashboardWith([])}

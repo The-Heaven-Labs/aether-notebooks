@@ -265,12 +265,30 @@ export function ConnectorsPage() {
   })
 
   const [autoTested, setAutoTested] = useState(false)
+  const autoTestCancelled = useRef(false)
 
   useEffect(() => {
-    if (connectors.length > 0 && !autoTested) {
-      setAutoTested(true)
-      connectors.forEach(c => testConnector(c.id))
+    return () => { autoTestCancelled.current = true }
+  }, [])
+
+  // Probe connections in small waves. Firing one request per connector at once
+  // made large lists compete with the page's own load and hammer the server;
+  // every connector still gets tested, just spread across a few workers.
+  useEffect(() => {
+    if (connectors.length === 0 || autoTested) return
+    setAutoTested(true)
+    const queue = connectors.map((c) => c.id)
+    let next = 0
+    const worker = async () => {
+      while (!autoTestCancelled.current) {
+        const id = queue[next++]
+        if (!id) return
+        await testConnector(id)
+        await new Promise((resolve) => setTimeout(resolve, 150))
+      }
     }
+    void Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectors, autoTested])
 
   useEffect(() => {

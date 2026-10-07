@@ -1,9 +1,18 @@
+import type { ReactNode } from 'react'
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { WidgetConfigDrawer } from './WidgetConfigDrawer'
 import type { Dashboard, Widget } from '../types'
+
+// The drawer embeds ConnectorSelector, which reads the shared ['connectors']
+// React Query cache.
+function renderWithQuery(ui: ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+}
 
 const dashboard: Dashboard = {
   id: 'd1',
@@ -64,7 +73,7 @@ afterEach(() => {
 
 describe('WidgetConfigDrawer', () => {
   test('renders the SQL source editor and connector selector', () => {
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
     )
     // The drawer portals to document.body, so query it there rather than in the render container.
@@ -79,7 +88,7 @@ describe('WidgetConfigDrawer', () => {
         HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
       ),
     )
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
     )
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
@@ -92,7 +101,7 @@ describe('WidgetConfigDrawer', () => {
         HttpResponse.json({ error: 'Query timed out' }, { status: 422 }),
       ),
     )
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
     )
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
@@ -101,7 +110,7 @@ describe('WidgetConfigDrawer', () => {
 
   test('offers to define detected variables that are not yet configured', async () => {
     const onDefineVariable = vi.fn()
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer
         dashboardId="d1"
         dashboard={dashboard}
@@ -123,7 +132,7 @@ describe('WidgetConfigDrawer', () => {
         return new HttpResponse(null, { status: 204 })
       }),
     )
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
     )
     fireEvent.change(screen.getByLabelText('Widget type'), { target: { value: 'chart' } })
@@ -146,7 +155,7 @@ describe('WidgetConfigDrawer', () => {
       notebook_id: 'nb-1',
       cell_id: 'cell-1',
     })
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={cellWidget} onClose={() => {}} onSaved={onSaved} />,
     )
     fireEvent.click(screen.getByRole('button', { name: 'Convert to query widget' }))
@@ -162,7 +171,7 @@ describe('WidgetConfigDrawer', () => {
         return new HttpResponse(null, { status: 204 })
       }),
     )
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
     )
     // Wait for the connector list to load: changing a controlled select to an
@@ -177,7 +186,7 @@ describe('WidgetConfigDrawer', () => {
 
   test('closes on Escape and on backdrop click', () => {
     const onClose = vi.fn()
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={onClose} onSaved={() => {}} />,
     )
     fireEvent.keyDown(document, { key: 'Escape' })
@@ -188,7 +197,7 @@ describe('WidgetConfigDrawer', () => {
 
   test('ignores Escape when closeOnEscape is false', () => {
     const onClose = vi.fn()
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer
         dashboardId="d1"
         dashboard={dashboard}
@@ -203,7 +212,7 @@ describe('WidgetConfigDrawer', () => {
   })
 
   test('disables Run without view_with_data and explains why', () => {
-    render(
+    renderWithQuery(
       <WidgetConfigDrawer
         dashboardId="d1"
         dashboard={{ ...dashboard, can_view_with_data: false }}
