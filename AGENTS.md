@@ -220,6 +220,10 @@ func (s *Server) handleGetNotebook(w http.ResponseWriter, r *http.Request) {
 
 **Tests hit a real database** — no mocks. `task test` starts infra automatically. Tests use `setupTestServer(t)` from `testhelpers_test.go` which wires a real DB, JWT issuer, and audit logger.
 
+**Static frontend assets** are embedded in the Go binary (`cmd/aether-server/embed.go`) and prepared once at startup: brotli (q5, preferred) and gzip variants plus content-hash ETags. `/assets/*` (Vite content-hashed) is served `Cache-Control: public, max-age=31536000, immutable`; other static files and the config-injected `index.html` are `no-cache` and revalidate via ETag (304). Ranges are served from the identity representation, and already-compressed extensions (`.woff2`, images, …) skip the compression pass.
+
+**Frontend code splitting**: every page is route-lazy; heavy interaction-gated modules load on demand — ECharts via `OutputRenderer`'s lazy `ChartView`, the agent panel / shortcuts / MOTD markdown in `AppShell`, the collaboration stack (`web/src/components/collabRuntime.ts`: Yjs + Hocuspocus + y-codemirror) from `Cell`, `sql-formatter` and `@codemirror/lang-javascript` from their triggers, the image viewer from `MarkdownCell`/`AgentMessageImages`, and the notebook side panels (schema, schedules, history, parameters, permissions, share, session viewer). Fonts are self-hosted woff2 subsets under `web/public/fonts/` (no third-party font requests).
+
 ## Roles & Admin
 
 Aether has a **two-level admin system**: org-level and instance-level. All non-admin permissioning is handled exclusively through ACL entries (user, group, or "Everyone" subjects) — org roles no longer grant implicit permissions.
