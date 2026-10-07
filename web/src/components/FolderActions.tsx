@@ -54,7 +54,6 @@ export function useFolderMutations(opts?: { onError?: (e: Error) => void; onRena
   const qc = useQueryClient()
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['folder-contents'] })
-    qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
     qc.invalidateQueries({ queryKey: ['folder-home'] })
   }
   const rename = useMutation({

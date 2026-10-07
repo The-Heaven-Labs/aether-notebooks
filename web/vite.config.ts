@@ -11,6 +11,20 @@ const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(file
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          // Cell normalizes chart config on every render; keep that pure
+          // helper in its own tiny chunk so the heavy ECharts chart UI
+          // (lazy-loaded by OutputRenderer) is not pulled into every
+          // notebook page.
+          if (id.includes('/charts/normalizeChartConfig')) return 'chart-config-normalize'
+          return undefined
+        },
+      },
+    },
+  },
   server: {
     proxy: {
       '/api': { target: 'http://localhost:8088', changeOrigin: true, ws: true },

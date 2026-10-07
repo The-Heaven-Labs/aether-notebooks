@@ -1,12 +1,17 @@
-import { useState, useRef, useCallback, useEffect, useMemo, memo } from 'react'
+import { useState, useRef, useCallback, useEffect, useMemo, memo, lazy, Suspense } from 'react'
 import type React from 'react'
 import { useVirtualizer } from '@tanstack/react-virtual'
+import { useQuery } from '@tanstack/react-query'
 import type { Output, ResultSet, Column, OutputStubData } from '../types'
-import { ChartView } from '../charts'
 import type { ChartConfig } from '../charts'
 import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import { getApiUrl } from '../config'
+
+// The chart renderer (ECharts + chart UI) is the largest dependency of the
+// notebook page. Load it only when a cell actually renders a chart so
+// notebooks without charts never pay for it.
+const ChartView = lazy(() => import('../charts').then((m) => ({ default: m.ChartView })))
 
 // Streaming download URL for a cell's raw stored outputs. A real navigation is
 // used (not fetch+blob) so the payload is streamed to disk rather than
@@ -392,13 +397,13 @@ function exportJSON(rs: ResultSet): void {
 const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, chartConfigOverridden, onChartConfigReset, hideExport: hideExportProp, viewMode, onViewModeChange, footerExtra }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; chartConfigOverridden?: boolean; onChartConfigReset?: () => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; footerExtra?: React.ReactNode }) {
   const storageKey = cellId ? `aether_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
-  const [dataExportEnabled, setDataExportEnabled] = useState(true)
-  useEffect(() => {
-    api.get<{ data_export_enabled: boolean }>('/api/v1/org/data-export')
-      .then(r => setDataExportEnabled(r.data_export_enabled))
-      .catch(() => {})
-  }, [])
-  const hideExport = hideExportProp || !dataExportEnabled
+  // Shared org setting: every table output reads the same cached query
+  // instead of fetching it once per output.
+  const { data: dataExportSetting } = useQuery<{ data_export_enabled: boolean }>({
+    queryKey: ['org-data-export'],
+    queryFn: () => api.get('/api/v1/org/data-export'),
+  })
+  const hideExport = hideExportProp || !(dataExportSetting?.data_export_enabled ?? true)
   const [view, setView] = useState<'table' | 'chart'>(() => {
     if (fixedView) return fixedView
     if (viewMode) return viewMode
@@ -996,7 +1001,9 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
         </div>
       ) : (
         <div style={{ flex: 1, minHeight: fixedView ? 0 : 300, display: 'flex', flexDirection: 'column' }}>
-          <ChartView rs={rs} onConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+          <Suspense fallback={<div style={styles.chartLoading}>Loading chart…</div>}>
+            <ChartView rs={rs} onConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} output={{ type: 'table', data: { columns: rs.columns, rows: rs.rows }, config: chartConfig }} />
+          </Suspense>
         </div>
       )}
 
@@ -1329,6 +1336,14 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'pre-wrap',
     wordBreak: 'break-all',
     lineHeight: 1.6,
+  },
+  chartLoading: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--text-muted)',
+    fontSize: 13,
   },
   arrayTable: {
     width: '100%',

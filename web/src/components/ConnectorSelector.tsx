@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { Lock, LockOpen } from 'lucide-react'
 import { api } from '../api/client'
 
@@ -30,13 +30,12 @@ export function ConnectorSelector({
   onTogglePin,
   style,
 }: ConnectorSelectorProps) {
-  const [connectors, setConnectors] = useState<ConnectorItem[]>([])
-
-  useEffect(() => {
-    api.get<ConnectorItem[]>('/api/v1/connectors')
-      .then(data => setConnectors(data))
-      .catch(() => {})
-  }, [])
+  // Shares the ['connectors'] query with the sidebar and page queries so the
+  // list is fetched once per cache window instead of once per consumer.
+  const { data: connectors = [] } = useQuery<ConnectorItem[]>({
+    queryKey: ['connectors'],
+    queryFn: () => api.get<ConnectorItem[]>('/api/v1/connectors'),
+  })
 
   return (
     <span style={styles.wrap}>

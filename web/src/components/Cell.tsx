@@ -6,30 +6,18 @@ import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL, StandardSQL } from '@codemirror/lang-sql'
-import { javascript } from '@codemirror/lang-javascript'
 import { syntaxHighlighting } from '@codemirror/language'
-import { format } from 'sql-formatter'
-import * as Y from 'yjs'
-import { HocuspocusProvider } from '@hocuspocus/provider'
-import { yCollab, ySyncFacet, YSyncConfig } from 'y-codemirror.next'
 import { OutputRenderer } from './OutputRenderer'
 import { sqlHighlight } from './sqlHighlight'
 const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m.MarkdownView })))
 import type { Cell as APICell, Connector, ExecuteRouting } from '../types'
 import type { ChartConfig } from '../charts'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
+import type { NotebookCollab } from './collabRuntime'
 
 // ── Yjs collaboration cache (shared across all cells in a notebook) ───────────
 
-import { getRelayUrl } from '../config'
-const RELAY_URL = getRelayUrl()
-
-export interface NotebookCollab {
-  doc: Y.Doc
-  provider: HocuspocusProvider
-  refCount: number
-  synced: boolean
-}
+export type { NotebookCollab } from './collabRuntime'
 export const collabCache = new Map<string, NotebookCollab>()
 
 /** Non-creating lookup: returns the shared collab entry only if one exists. */
@@ -37,34 +25,20 @@ export function peekCollab(notebookId: string): NotebookCollab | undefined {
   return collabCache.get(notebookId)
 }
 
-export function getOrCreateCollab(notebookId: string): NotebookCollab {
+/**
+ * Returns the shared collab entry for a notebook, creating the Yjs document
+ * and relay provider on first use. Async because the collaboration stack
+ * (Yjs + Hocuspocus + y-codemirror) is imported on demand.
+ */
+export async function getOrCreateCollab(notebookId: string): Promise<NotebookCollab> {
   const existing = collabCache.get(notebookId)
   if (existing) { existing.refCount++; return existing }
 
-  const doc = new Y.Doc()
-  const token = localStorage.getItem('aether_token') ?? ''
-  const userName = localStorage.getItem('aether_user_name') ?? ''
-  const userEmail = localStorage.getItem('aether_user_email') ?? ''
-
-  const provider = new HocuspocusProvider({
-    url: RELAY_URL,
-    name: notebookId,
-    document: doc,
-    token,
-    onAuthenticationFailed: () => console.warn('[yjs] Relay auth failed'),
-  })
-
-  provider.awareness?.setLocalStateField('user', {
-    name: userName || userEmail || 'Anonymous',
-    email: userEmail,
-    color: `hsl(${Math.abs(hashStr(userEmail || userName)) % 360}, 70%, 55%)`,
-  })
-
-  const entry: NotebookCollab = { doc, provider, refCount: 1, synced: false }
-  provider.on('synced', ({ state }: { state: boolean }) => { if (state) entry.synced = true })
-  collabCache.set(notebookId, entry)
-  window.dispatchEvent(new CustomEvent('aether-collab', { detail: { notebookId } }))
-  return entry
+  const { createCollab } = await import('./collabRuntime')
+  // Another cell may have created the provider while the module loaded.
+  const raced = collabCache.get(notebookId)
+  if (raced) { raced.refCount++; return raced }
+  return createCollab(notebookId, collabCache)
 }
 
 export function updateCellFocus(notebookId: string, cellId: string | null) {
@@ -98,12 +72,6 @@ function releaseCollab(notebookId: string) {
     entry.doc.destroy()
     collabCache.delete(notebookId)
   }
-}
-
-function hashStr(s: string): number {
-  let h = 0
-  for (let i = 0; i < s.length; i++) h = (Math.imul(31, h) + s.charCodeAt(i)) | 0
-  return h
 }
 
 export function slugify(text: string): string | null {
@@ -212,7 +180,10 @@ interface CodeEditorProps {
 }
 
 function languageExtension(cell: APICell, connector?: Connector) {
-  if (cell.language === 'javascript') return javascript()
+  // JavaScript cells load their language package on demand (see the editor
+  // effect); SQL dialects ship with the editor because every code cell uses
+  // one.
+  if (cell.language === 'javascript') return []
   // Choose SQL dialect based on connector type
   const connType = connector?.type
   if (connType === 'clickhouse') return sql({ dialect: MySQL })
@@ -240,18 +211,25 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
   useEffect(() => {
     if (!editorRef.current) return
 
-    const collab = getOrCreateCollab(notebookId)
-    const ytext = collab.doc.getText(`cell:${cell.id}`)
+    let cancelled = false
+    let acquired = false
+    let detachCollab: (() => void) | undefined
+    const langCompartment = new Compartment()
     const compartment = collabCompartment.current
 
     const formatCell = (editorView: EditorView) => {
       const raw = editorView.state.doc.toString()
-      try {
-        const formatted = format(raw, { language: 'sql', tabWidth: 2 })
-        editorView.dispatch({
-          changes: { from: 0, to: raw.length, insert: formatted },
-        })
-      } catch { /* leave as-is */ }
+      void import('sql-formatter').then(({ format }) => {
+        // The editor may have been recreated (or the cell unmounted) while
+        // the formatter loaded.
+        if (editorViews.get(cell.id) !== editorView) return
+        try {
+          const formatted = format(raw, { language: 'sql', tabWidth: 2 })
+          editorView.dispatch({
+            changes: { from: 0, to: raw.length, insert: formatted },
+          })
+        } catch { /* leave as-is */ }
+      })
       return true
     }
 
@@ -295,7 +273,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
         doc: cell.source,
         extensions: [
           cellKeymap,
-          languageExtension(cell, connector),
+          langCompartment.of(languageExtension(cell, connector)),
           syntaxHighlighting(sqlHighlight),
           EditorView.theme({
             '&': { fontFamily: 'var(--font-mono)', fontSize: '13px' },
@@ -334,57 +312,41 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     cmEditor.addEventListener('focusin', handleFocus)
     cmEditor.addEventListener('focusout', handleBlur)
 
-    const attachCollab = () => {
-      const editorContent = view.state.doc.toString()
-      const yjsContent = ytext.toString()
-      // Single config instance: the seed transaction origin and the ySync facet
-      // must be identical so the observer's origin guard ignores the seed change.
-      const ySyncConfig = new YSyncConfig(ytext, collab.provider.awareness)
-      // Seed Yjs from the database-backed editor only when the shared doc is
-      // empty. Otherwise Yjs wins: the shared text is applied to the editor
-      // below, which is what fixes the stale-update race (an agent update can
-      // land in Yjs before the provider has synced).
-      if (ytext.length === 0 && editorContent.length > 0) {
-        collab.doc.transact(() => {
-          ytext.insert(0, editorContent)
-        }, ySyncConfig)
-      } else if (yjsContent !== editorContent) {
-        // Apply the shared text to the editor before activating yCollab so
-        // this programmatic change is not echoed back into the shared doc, and
-        // suppress onSourceChange so a stale shared doc can never be
-        // autosaved over fresher database content.
-        applyingYjsRef.current = true
-        try {
-          view.dispatch({
-            changes: { from: 0, to: editorContent.length, insert: yjsContent },
-          })
-        } finally {
-          applyingYjsRef.current = false
-        }
-      }
-      // Activate yCollab with our config last (overrides yCollab's internal one)
-      // so the observer's origin guard matches our transact origin above.
-      view.dispatch({ effects: compartment.reconfigure([
-        yCollab(ytext, collab.provider.awareness, { undoManager: false }),
-        ySyncFacet.of(ySyncConfig),
-      ]) })
+    // JavaScript cells: load the JS language package on demand instead of
+    // shipping it with the SQL editor.
+    if (cell.language === 'javascript') {
+      void import('@codemirror/lang-javascript').then(({ javascript }) => {
+        if (cancelled) return
+        view.dispatch({ effects: langCompartment.reconfigure(javascript()) })
+      })
     }
 
-    let onSynced: (({ state }: { state: boolean }) => void) | null = null
-    if (collab.synced) {
-      attachCollab()
-    } else {
-      onSynced = ({ state }: { state: boolean }) => { if (state) attachCollab() }
-      collab.provider.on('synced', onSynced)
-    }
+    // Collaboration (Yjs + Hocuspocus + y-codemirror) loads on demand; the
+    // editor stays usable while it arrives and binds to the shared document
+    // once the provider has synced.
+    void (async () => {
+      const collab = await getOrCreateCollab(notebookId)
+      acquired = true
+      if (cancelled) { releaseCollab(notebookId); acquired = false; return }
+      const { attachCollabToEditor } = await import('./collabRuntime')
+      if (cancelled) return
+      detachCollab = attachCollabToEditor({
+        view,
+        compartment,
+        collab,
+        cellId: cell.id,
+        applyingYjsRef,
+      })
+    })()
 
     return () => {
+      cancelled = true
       editorViews.delete(cell.id)
       cmEditor.removeEventListener('focusin', handleFocus)
       cmEditor.removeEventListener('focusout', handleBlur)
-      if (onSynced) collab.provider.off('synced', onSynced)
+      detachCollab?.()
       view.destroy()
-      releaseCollab(notebookId)
+      if (acquired) releaseCollab(notebookId)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cell.id, notebookId, collapsed])
@@ -705,11 +667,14 @@ export const Cell = memo(function Cell({
                 const edView = editorViews.get(cell.id)
                 if (edView) {
                   const raw = edView.state.doc.toString()
-                  try {
-                    const lang = cell.language === 'javascript' ? 'postgresql' : 'sql'
-                    const formatted = format(raw, { language: lang, tabWidth: 2 })
-                    edView.dispatch({ changes: { from: 0, to: raw.length, insert: formatted } })
-                  } catch { /* leave as-is */ }
+                  const lang = cell.language === 'javascript' ? 'postgresql' : 'sql'
+                  void import('sql-formatter').then(({ format }) => {
+                    if (editorViews.get(cell.id) !== edView) return
+                    try {
+                      const formatted = format(raw, { language: lang, tabWidth: 2 })
+                      edView.dispatch({ changes: { from: 0, to: raw.length, insert: formatted } })
+                    } catch { /* leave as-is */ }
+                  })
                 }
               }}
               title="Format SQL (Ctrl+Shift+F / Ctrl+.)"

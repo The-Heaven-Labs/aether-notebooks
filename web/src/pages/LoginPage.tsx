@@ -1,12 +1,15 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, lazy, Suspense } from 'react'
 import type { FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
-import ReactMarkdown from 'react-markdown'
-import remarkGfm from 'remark-gfm'
 import { useAuth } from '../hooks/useAuth'
 import { ApiError, api } from '../api/client'
 import { ErrorBanner } from '../components/ErrorBanner'
+import './LoginPage.css'
+
+// MOTDs are markdown but usually absent; keep the markdown renderer out of
+// the login page's initial bundle.
+const MotdMarkdown = lazy(() => import('../components/MotdMarkdown'))
 
 type LoginStep = 'email' | 'password' | 'sso_and_password'
 
@@ -32,6 +35,7 @@ export function LoginPage() {
   const { login, register, loginWithToken } = useAuth()
   const navigate = useNavigate()
   const passwordRef = useRef<HTMLInputElement>(null)
+  const ssoButtonRef = useRef<HTMLButtonElement>(null)
   const [mode, setMode] = useState<'login' | 'register'>('login')
   const [step, setStep] = useState<LoginStep>('email')
   const [email, setEmail] = useState('')
@@ -163,312 +167,138 @@ export function LoginPage() {
   const showEmailStep = mode === 'login' && step === 'email'
   const showSSOProviders = mode === 'login' && step === 'sso_and_password' && ssoProviders.length > 0
 
+  // Focus the first OIDC button when it appears so Enter starts that sign-in.
+  useEffect(() => {
+    if (showSSOProviders) ssoButtonRef.current?.focus()
+  }, [showSSOProviders])
+
   return (
-    <div style={styles.page}>
+    <div className="login-page">
       <a
         href="#login-form"
-        style={styles.skipLink}
+        className="login-skip"
         onFocus={(e) => { e.currentTarget.style.top = '0' }}
-        onBlur={(e) => { e.currentTarget.style.top = '-40px' }}
+        onBlur={(e) => { e.currentTarget.style.top = '-44px' }}
       >
         Skip to form
       </a>
-      {/* Brand panel */}
-      <div style={styles.brand}>
-        <div style={styles.brandInner}>
-          <div style={styles.logoMark}>
-            <span style={styles.logoIcon}>▦</span>
-          </div>
-          <h1 style={styles.brandTitle}>Aether<br />Notebooks</h1>
-          <p style={styles.brandTagline}>
-            Collaborative SQL notebooks<br />built for data teams.
-          </p>
-          <div style={styles.brandFeatures}>
-            <div style={styles.feature}>
-              <span style={styles.featureDot} />
-              Live collaborative editing
-            </div>
-            <div style={styles.feature}>
-              <span style={styles.featureDot} />
-              Multi-database connectors
-            </div>
-            <div style={styles.feature}>
-              <span style={styles.featureDot} />
-              Scheduled query runs
-            </div>
-          </div>
+      <aside className="login-rail">
+        <div className="login-rail-brand">
+          <div className="login-rail-mark"><span>▦</span></div>
+          <span className="login-rail-wordmark">Aether Notebooks</span>
         </div>
-      </div>
-
-      {/* Form panel */}
-      <div id="login-form" style={styles.formPanel}>
-        <div style={styles.formInner}>
-          <div style={styles.tabs}>
-            <button
-              style={{ ...styles.tab, ...(mode === 'login' ? styles.tabActive : {}) }}
-              onClick={() => { setMode('login'); setStep('email'); setEmailInput(email); setError('') }}
-            >
-              Sign In
-            </button>
-            {!registrationDisabled && (
-              <button
-                style={{ ...styles.tab, ...(mode === 'register' ? styles.tabActive : {}) }}
-                onClick={() => { setMode('register'); setError('') }}
-              >
-                Create account
-              </button>
+        <div className="login-rail-story">
+          <h1 className="login-rail-title">Aether<br />Notebooks</h1>
+          <p className="login-rail-tagline">Collaborative SQL notebooks<br />built for data teams.</p>
+        </div>
+        <ul className="login-rail-features">
+          <li>Live collaborative editing</li>
+          <li>Multi-database connectors</li>
+          <li>Scheduled query runs</li>
+        </ul>
+      </aside>
+      <main className="login-main">
+        <div className="login-column">
+          <div id="login-form">
+          <div style={styles.formInner}>
+            <div style={styles.tabs}>
+              <button style={{ ...styles.tab, ...(mode === 'login' ? styles.tabActive : {}) }} onClick={() => { setMode('login'); setStep('email'); setEmailInput(email); setError('') }}>Sign In</button>
+              {!registrationDisabled && (
+                <button style={{ ...styles.tab, ...(mode === 'register' ? styles.tabActive : {}) }} onClick={() => { setMode('register'); setError('') }}>Create account</button>
+              )}
+            </div>
+            {loginMotds.length > 0 && (
+              <div style={{ marginBottom: 16 }}>
+                {loginMotds.map(motd => (
+                  <div key={motd.id} style={{ background: 'var(--warning-light)', border: '1px solid var(--warning-border)', borderLeft: '1px solid var(--accent)', borderRadius: 4, padding: '12px 16px', marginBottom: loginMotds.length > 1 ? 8 : 0, fontSize: 13, color: 'var(--text-primary)', lineHeight: 1.5 }}>
+                    {motd.title && <strong style={{ marginRight: 8, fontWeight: 600 }}>{motd.title}:</strong>}
+                    <Suspense fallback={null}>
+                      <MotdMarkdown content={motd.content} />
+                    </Suspense>
+                  </div>
+                ))}
+              </div>
             )}
-          </div>
-
-          {loginMotds.length > 0 && (
-            <div style={{ marginBottom: 16 }}>
-              {loginMotds.map(motd => (
-                <div key={motd.id} style={{
-                  background: 'var(--warning-light)',
-                  border: '1px solid var(--warning-border)',
-                  borderLeft: '1px solid var(--accent)',
-                  borderRadius: 4,
-                  padding: '12px 16px',
-                  marginBottom: loginMotds.length > 1 ? 8 : 0,
-                  fontSize: 13,
-                  color: 'var(--text-primary)',
-                  lineHeight: 1.5,
-                }}>
-                  {motd.title && <strong style={{ marginRight: 8, fontWeight: 600 }}>{motd.title}:</strong>}
-                  <ReactMarkdown remarkPlugins={[remarkGfm]}>{motd.content}</ReactMarkdown>
+            <p style={styles.formHeading}>{mode === 'login' ? 'Welcome back' : 'Get started free'}</p>
+            {showEmailStep && (
+              <form onSubmit={handleEmailContinue} style={styles.form}>
+                <div style={styles.field}>
+                  <label style={styles.label}>Email</label>
+                  <input style={styles.input} type="email" value={emailInput} onChange={(e) => setEmailInput(e.target.value)} required placeholder="you@example.com" autoFocus />
                 </div>
-              ))}
-            </div>
-          )}
-
-          <p style={styles.formHeading}>
-            {mode === 'login' ? 'Welcome back' : 'Get started free'}
-          </p>
-
-          {/* Step 1: Email input (login mode only) */}
-          {showEmailStep && (
-            <form onSubmit={handleEmailContinue} style={styles.form}>
-              <div style={styles.field}>
-                <label style={styles.label}>Email</label>
-                <input
-                  style={styles.input}
-                  type="email"
-                  value={emailInput}
-                  onChange={(e) => setEmailInput(e.target.value)}
-                  required
-                  placeholder="you@example.com"
-                  autoFocus
-                />
-              </div>
-              {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
-              <button type="submit" style={styles.submit} disabled={probing}>
-                {probing ? 'Please wait…' : 'Sign In'}
-              </button>
-            </form>
-          )}
-
-          {/* Step 2: SSO providers + password form */}
-          {mode === 'login' && (step === 'password' || step === 'sso_and_password') && (
-            <>
-              {/* Email label with back link */}
-              <div style={styles.emailLabel}>
-                <span style={styles.emailDisplay}>{email}</span>
-                <button
-                  type="button"
-                  style={styles.backLink}
-                  onClick={handleBackToEmail}
-                >
-                  ← Use different email
-                </button>
-              </div>
-
-              {/* SSO buttons */}
-              {showSSOProviders && (
-                <>
-                  <div style={styles.ssoList}>
-                    {ssoProviders.map(provider => (
-                      <button
-                        key={provider.id}
-                        type="button"
-                        style={styles.ssoProviderButton}
-                        onClick={() => handleSSOProviderLogin(provider.id)}
-                      >
-                        Sign in with {provider.name}
-                      </button>
-                    ))}
-                  </div>
-                  <div style={styles.divider}>
-                    <div style={styles.dividerLine} />
-                    <span style={styles.dividerText}>or</span>
-                    <div style={styles.dividerLine} />
-                  </div>
-                </>
-              )}
-            </>
-          )}
-
-          {/* Password form (login step 2 or register) */}
-          {showPasswordStep && (
-            <form onSubmit={handleSubmit} style={styles.form}>
-              {mode === 'register' && (
-                <>
-                  <div style={styles.field}>
-                    <label style={styles.label}>Your name</label>
-                    <input
-                      style={styles.input}
-                      type="text"
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      required
-                      placeholder="Jane Doe"
-                    />
-                  </div>
-                  <div style={styles.field}>
-                    <label style={styles.label}>Email</label>
-                    <input
-                      style={styles.input}
-                      type="email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      required
-                      placeholder="you@example.com"
-                    />
-                  </div>
-                </>
-              )}
-              <div style={styles.field}>
-                <label style={styles.label}>Password</label>
-                <div style={{ position: 'relative' }}>
-                  <input
-                    ref={passwordRef}
-                    style={{ ...styles.input, paddingRight: 36 }}
-                    type={showPassword ? 'text' : 'password'}
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    required
-                    placeholder="••••••••"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword(v => !v)}
-                    style={styles.passwordToggle}
-                    tabIndex={-1}
-                    aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  >
-                    {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
-                  </button>
+                {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
+                <button type="submit" style={styles.submit} disabled={probing}>{probing ? 'Please wait…' : 'Sign In'}</button>
+              </form>
+            )}
+            {mode === 'login' && (step === 'password' || step === 'sso_and_password') && (
+              <>
+                <div className="login-email-row">
+                  <span className="login-email-value">{email}</span>
+                  <button type="button" className="login-back" style={styles.backLink} onClick={handleBackToEmail}>← Use different email</button>
                 </div>
-                {mode === 'register' && password.length > 0 && (
-                  <div style={styles.strengthRow}>
-                    <div style={styles.strengthBarBg}>
-                      <div style={{
-                        ...styles.strengthBarFill,
-                        transform: `scaleX(${getPasswordStrength(password).score / 5})`,
-                        background: getPasswordStrength(password).color,
-                      }} />
+                {showSSOProviders && (
+                  <>
+                    <div style={styles.ssoList}>
+                      {ssoProviders.map((provider, idx) => (
+                        <button key={provider.id} ref={idx === 0 ? ssoButtonRef : undefined} type="button" className="login-sso" onClick={() => handleSSOProviderLogin(provider.id)}>Sign in with {provider.name}</button>
+                      ))}
                     </div>
-                    <span style={{ ...styles.strengthLabel, color: getPasswordStrength(password).color }}>
-                      {getPasswordStrength(password).label}
-                    </span>
-                  </div>
+                    <div className="login-divider">
+                      <span className="login-divider-line" />
+                      <span className="login-divider-label">or</span>
+                      <span className="login-divider-line" />
+                    </div>
+                  </>
                 )}
-              </div>
-              {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
-              <button type="submit" style={styles.submit} disabled={loading}>
-                {loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}
-              </button>
-            </form>
-          )}
+              </>
+            )}
+            {showPasswordStep && (
+              <form onSubmit={handleSubmit} style={styles.form}>
+                {mode === 'register' && (
+                  <>
+                    <div style={styles.field}>
+                      <label style={styles.label}>Your name</label>
+                      <input style={styles.input} type="text" value={name} onChange={(e) => setName(e.target.value)} required placeholder="Jane Doe" />
+                    </div>
+                    <div style={styles.field}>
+                      <label style={styles.label}>Email</label>
+                      <input style={styles.input} type="email" value={email} onChange={(e) => setEmail(e.target.value)} required placeholder="you@example.com" />
+                    </div>
+                  </>
+                )}
+                <div style={styles.field}>
+                  <label style={styles.label}>Password</label>
+                  <div style={{ position: 'relative' }}>
+                    <input ref={passwordRef} style={{ ...styles.input, paddingRight: 36 }} type={showPassword ? 'text' : 'password'} value={password} onChange={(e) => setPassword(e.target.value)} required placeholder="••••••••" />
+                    <button type="button" onClick={() => setShowPassword(v => !v)} style={styles.passwordToggle} tabIndex={-1} aria-label={showPassword ? 'Hide password' : 'Show password'}>{showPassword ? <EyeOff size={14} /> : <Eye size={14} />}</button>
+                  </div>
+                  {mode === 'register' && password.length > 0 && (
+                    <div style={styles.strengthRow}>
+                      <div style={styles.strengthBarBg}>
+                        <div style={{ ...styles.strengthBarFill, transform: `scaleX(${getPasswordStrength(password).score / 5})`, background: getPasswordStrength(password).color }} />
+                      </div>
+                      <span style={{ ...styles.strengthLabel, color: getPasswordStrength(password).color }}>{getPasswordStrength(password).label}</span>
+                    </div>
+                  )}
+                </div>
+                {error && <ErrorBanner message={error} onDismiss={() => setError('')} />}
+                <button type="submit" style={styles.submit} disabled={loading}>{loading ? 'Please wait…' : mode === 'login' ? 'Sign In' : 'Create Account'}</button>
+              </form>
+                )}
+          </div>
+          </div>
+          <div className="login-facts">
+            <span>Self-hosted</span>
+            <span>MIT licensed</span>
+            <span>Your infrastructure</span>
+          </div>
         </div>
-      </div>
+      </main>
     </div>
   )
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  page: {
-    minHeight: '100vh',
-    display: 'flex',
-    position: 'relative',
-  },
-  skipLink: {
-    position: 'absolute',
-    top: -40,
-    left: 0,
-    background: 'var(--accent)',
-    color: '#fff',
-    padding: '8px 16px',
-    zIndex: 100,
-    fontSize: 13,
-    borderRadius: '0 0 4px 0',
-    transition: 'top 0.15s',
-  },
-  brand: {
-    flex: '0 0 420px',
-    background: 'var(--nav-bg)',
-    display: 'flex',
-    alignItems: 'center',
-    padding: '60px 48px',
-  },
-  brandInner: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 24,
-  },
-  logoMark: {
-    width: 48,
-    height: 48,
-    background: 'var(--accent)',
-    borderRadius: 4,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  logoIcon: {
-    fontSize: 24,
-    color: 'white',
-    lineHeight: 1,
-  },
-  brandTitle: {
-    fontSize: 40,
-    fontWeight: 700,
-    color: '#f8f6f1',
-    lineHeight: 1.15,
-    letterSpacing: '-0.5px',
-  },
-  brandTagline: {
-    fontSize: 16,
-    color: '#8a8278',
-    lineHeight: 1.6,
-  },
-  brandFeatures: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 10,
-    marginTop: 8,
-  },
-  feature: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    fontSize: 14,
-    color: '#7a7068',
-  },
-  featureDot: {
-    width: 6,
-    height: 6,
-    borderRadius: '50%',
-    background: 'var(--accent)',
-    flexShrink: 0,
-  },
-  formPanel: {
-    flex: 1,
-    background: 'var(--bg-primary)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '60px 48px',
-  },
   formInner: {
     width: '100%',
     maxWidth: 360,
@@ -549,21 +379,6 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: '0.01em',
     transition: 'background 0.15s',
   },
-  emailLabel: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginBottom: 16,
-    padding: '8px 10px',
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-  },
-  emailDisplay: {
-    fontSize: 13,
-    color: 'var(--text-primary)',
-    fontWeight: 500,
-  },
   backLink: {
     background: 'none',
     border: 'none',
@@ -578,35 +393,6 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 8,
     marginBottom: 4,
-  },
-  ssoProviderButton: {
-    width: '100%',
-    padding: '11px',
-    background: 'var(--accent)',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 4,
-    fontSize: 14,
-    fontWeight: 600,
-    cursor: 'pointer',
-    letterSpacing: '0.01em',
-    transition: 'opacity 0.15s',
-  },
-  divider: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    margin: '20px 0',
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    background: 'var(--border)',
-  },
-  dividerText: {
-    fontSize: 12,
-    color: 'var(--text-secondary)',
-    flexShrink: 0,
   },
   passwordToggle: {
     position: 'absolute',
