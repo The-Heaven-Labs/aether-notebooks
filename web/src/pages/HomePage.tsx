@@ -511,10 +511,12 @@ export function HomePage() {
   const [bulkDeleteConfirm, setBulkDeleteConfirm] = useState(false)
 
   const contentsKey = ['folder-contents', folderID ?? 'root']
-  const [fetchKey, setFetchKey] = useState(0)
 
+  // The root listing is shared with the sidebar tree (same key), so the two
+  // views fetch /api/v1/folders once; folder-contents invalidations refresh
+  // both.
   const { data, isLoading } = useQuery<FolderContents>({
-    queryKey: [...contentsKey, fetchKey],
+    queryKey: contentsKey,
     queryFn: () => folderID
       ? api.get<FolderContents>(`/api/v1/folders/${folderID}`)
       : api.get<FolderContents>('/api/v1/folders'),
@@ -575,7 +577,6 @@ export function HomePage() {
       api.post<Folder>('/api/v1/folders', { name, ...(folderID ? { parent_id: folderID } : {}) }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
       setCreating(null)
       setNewName('')
@@ -588,7 +589,6 @@ export function HomePage() {
       api.post<{ id: string }>('/api/v1/notebooks', { title, ...(folderID ? { folder_id: folderID } : {}) }),
     onSuccess: (nb) => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
       if (folderID) sessionStorage.setItem('aether_last_folder', folderID)
       navigate(`/notebooks/${nb.id}`)
@@ -601,7 +601,6 @@ export function HomePage() {
       api.post<{ id: string }>('/api/v1/dashboards', { title, ...(folderID ? { folder_id: folderID } : {}) }),
     onSuccess: (d) => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
       if (folderID) sessionStorage.setItem('aether_last_folder', folderID)
       navigate(`/dashboards/${d.id}`)
@@ -620,7 +619,6 @@ export function HomePage() {
     mutationFn: (id: string) => api.delete(`/api/v1/notebooks/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
     },
     onError: (e: Error) => setError(e.message),
@@ -631,7 +629,6 @@ export function HomePage() {
       api.put(`/api/v1/notebooks/${id}`, { title }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
       setRenaming(null)
     },
@@ -643,7 +640,6 @@ export function HomePage() {
       api.post<{ notebook: Notebook; cells: Cell[] }>(`/api/v1/notebooks/${id}/clone`, { title, folder_id: folderID }),
     onSuccess: (result) => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
       if (folderID) sessionStorage.setItem('aether_last_folder', folderID)
       navigate(`/notebooks/${result.notebook.id}`)
@@ -664,8 +660,7 @@ export function HomePage() {
       }
     },
     onSuccess: () => {
-      setFetchKey(k => k + 1)
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'], exact: false, refetchType: 'all' })
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
       qc.invalidateQueries({ queryKey: ['folder-home'], exact: false, refetchType: 'all' })
       setMoving(null)
     },
@@ -819,7 +814,6 @@ export function HomePage() {
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
       clearSelection()
     },
@@ -838,8 +832,7 @@ export function HomePage() {
       await Promise.all(promises)
     },
       onSuccess: () => {
-      setFetchKey(k => k + 1)
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'], exact: false, refetchType: 'all' })
+      qc.invalidateQueries({ queryKey: ['folder-contents'] })
       qc.invalidateQueries({ queryKey: ['folder-home'], exact: false, refetchType: 'all' })
       clearSelection()
     },

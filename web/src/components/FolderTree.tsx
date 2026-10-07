@@ -65,8 +65,10 @@ export function FolderTree({ onSelectFolder, selectedFolderId, onMoveFolder, onP
     }
   }, [openMenuId])
 
+  // Shares the ['folder-contents', 'root'] cache entry with the home page's
+  // root listing, so the tree and the list fetch /api/v1/folders once.
   const { data: folderData } = useQuery<FolderContents>({
-    queryKey: ['folder-tree-root'],
+    queryKey: ['folder-contents', 'root'],
     queryFn: () => api.get<FolderContents>('/api/v1/folders'),
   })
 

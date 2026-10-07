@@ -38,7 +38,6 @@ export function TrashPage() {
       await api.post('/api/v1/trash/restore', { type: item.type, id: item.id })
       setItems((prev) => prev.filter((i) => i.id !== item.id))
       qc.invalidateQueries({ queryKey: ['folder-contents'] })
-      qc.invalidateQueries({ queryKey: ['folder-tree-root'] })
       qc.invalidateQueries({ queryKey: ['folder-home'] })
     } catch {}
   }
