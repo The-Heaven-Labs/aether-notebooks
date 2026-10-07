@@ -129,6 +129,9 @@ export const handlers = [
     { id: 'f-home', name: "Alice's Home", is_home: true, owner_id: 'user-1', sub_folders: [] },
   ])),
 
+  // Org settings
+  http.get('/api/v1/org/data-export', () => HttpResponse.json({ data_export_enabled: true })),
+
   // Folders
   http.get('/api/v1/folders', () => HttpResponse.json(FOLDER_ROOT)),
   http.get('/api/v1/folders/:id', ({ params }) => {

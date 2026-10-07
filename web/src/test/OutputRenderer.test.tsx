@@ -1,7 +1,16 @@
+import type { ReactNode } from 'react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, act, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { OutputRenderer, isAnyDetailActive, selectionBounds, selectionToTSV } from '../components/OutputRenderer'
 import type { Output } from '../types'
+
+// TableOutput reads the shared ['org-data-export'] query, so tests need a
+// QueryClientProvider around it.
+function renderWithQuery(ui: ReactNode) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>)
+}
 
 const makeTableOutput = (colType: string): Output => ({
   type: 'table',
@@ -13,47 +22,47 @@ const makeTableOutput = (colType: string): Output => ({
 
 describe('OutputRenderer type icons', () => {
   it('shows # icon for integer type', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('integer')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('integer')]} />)
     expect(screen.getByTitle('Integer (integer)')).toBeDefined()
   })
 
   it('shows 0.1 icon for float type', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('float')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('float')]} />)
     expect(screen.getByTitle('Float (float)')).toBeDefined()
   })
 
   it('shows calendar icon for date type', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('date')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('date')]} />)
     expect(screen.getByTitle('Date (date)')).toBeDefined()
   })
 
   it('shows ? icon for unknown type', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('super_weird_type')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('super_weird_type')]} />)
     expect(screen.getByTitle('Unknown (super_weird_type)')).toBeDefined()
   })
 
   it('shows {} icon for jsonb type', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('jsonb')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('jsonb')]} />)
     expect(screen.getByTitle('JSON (jsonb)')).toBeDefined()
   })
 
   it('resolves LowCardinality(String) to String', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('LowCardinality(String)')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('LowCardinality(String)')]} />)
     expect(screen.getByTitle('String (LowCardinality(String))')).toBeDefined()
   })
 
   it('resolves UInt64 to Integer', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('UInt64')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('UInt64')]} />)
     expect(screen.getByTitle('Integer (UInt64)')).toBeDefined()
   })
 
   it('resolves Decimal(10, 2) to Float', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('Decimal(10, 2)')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('Decimal(10, 2)')]} />)
     expect(screen.getByTitle('Float (Decimal(10, 2))')).toBeDefined()
   })
 
   it('resolves Nullable(DateTime) to Datetime', () => {
-    render(<OutputRenderer outputs={[makeTableOutput('Nullable(DateTime)')]} />)
+    renderWithQuery(<OutputRenderer outputs={[makeTableOutput('Nullable(DateTime)')]} />)
     expect(screen.getByTitle('Datetime (Nullable(DateTime))')).toBeDefined()
   })
 })
@@ -84,13 +93,13 @@ describe('TableOutput virtualization', () => {
   }
 
   it('renders the full result set logically with no "Load more rows" button', async () => {
-    const { container } = render(<OutputRenderer outputs={[makeBigOutput(2000)]} />)
+    const { container } = renderWithQuery(<OutputRenderer outputs={[makeBigOutput(2000)]} />)
     await waitFor(() => expect(getRenderedRows(container).length).toBeGreaterThan(0))
     expect(screen.queryByText(/Load more rows/)).toBeNull()
   })
 
   it('keeps the DOM bounded regardless of result size', async () => {
-    const { container } = render(<OutputRenderer outputs={[makeBigOutput(2000)]} />)
+    const { container } = renderWithQuery(<OutputRenderer outputs={[makeBigOutput(2000)]} />)
     await waitFor(() => expect(getRenderedRows(container).length).toBeGreaterThan(0))
     // Only the visible window + overscan render, not all 2000 rows.
     expect(getRenderedRows(container).length).toBeLessThan(50)
@@ -99,7 +108,7 @@ describe('TableOutput virtualization', () => {
   })
 
   it('windows wide result sets horizontally', async () => {
-    const { container } = render(<OutputRenderer outputs={[makeBigOutput(10, 60)]} />)
+    const { container } = renderWithQuery(<OutputRenderer outputs={[makeBigOutput(10, 60)]} />)
     await waitFor(() => expect(getRenderedRows(container).length).toBeGreaterThan(0))
     const cellCount = container.querySelector('tbody tr')?.querySelectorAll('td').length ?? 0
     expect(cellCount).toBeGreaterThan(1)
@@ -109,7 +118,7 @@ describe('TableOutput virtualization', () => {
   it('shows the full cell value with no JS truncation', async () => {
     const longValue = 'very-long-value-'.repeat(20)
     expect(longValue.length).toBeGreaterThan(100)
-    const { container } = render(
+    const { container } = renderWithQuery(
       <OutputRenderer outputs={[{ type: 'table', data: { columns: [{ name: 'val', type: 'string' }], rows: [[longValue]] } }]} />
     )
     await waitFor(() => expect(getRenderedRows(container).length).toBeGreaterThan(0))
@@ -119,7 +128,7 @@ describe('TableOutput virtualization', () => {
   })
 
   it('re-windows the rendered rows when the table is scrolled', async () => {
-    const { container } = render(<OutputRenderer outputs={[makeBigOutput(2000)]} />)
+    const { container } = renderWithQuery(<OutputRenderer outputs={[makeBigOutput(2000)]} />)
     await waitFor(() => expect(getRenderedRows(container).length).toBeGreaterThan(0))
     const area = container.querySelector('.output-scroll-area')!
     act(() => {
@@ -133,7 +142,7 @@ describe('TableOutput virtualization', () => {
   })
 
   it('keeps the sticky header painted above the virtualized rows', async () => {
-    const { container } = render(<OutputRenderer outputs={[makeBigOutput(50, 3)]} />)
+    const { container } = renderWithQuery(<OutputRenderer outputs={[makeBigOutput(50, 3)]} />)
     await waitFor(() => expect(getRenderedRows(container).length).toBeGreaterThan(0))
     const th = container.querySelector('thead th')!
     const styles = getComputedStyle(th)
@@ -146,7 +155,7 @@ describe('TableOutput virtualization', () => {
 
   it('opens the detail panel with the full value on click', async () => {
     const longValue = 'payload-'.repeat(40)
-    const { container } = render(
+    const { container } = renderWithQuery(
       <OutputRenderer
         outputs={[{ type: 'table', data: { columns: [{ name: 'val', type: 'string' }], rows: [[longValue]] } }]}
         cellId="cell-1"
@@ -178,7 +187,7 @@ describe('TableOutput detail copy', () => {
   })
 
   function renderOpenDetail(cellId: string) {
-    const { container, unmount } = render(
+    const { container, unmount } = renderWithQuery(
       <OutputRenderer
         outputs={[{ type: 'table', data: { columns: [{ name: 'val', type: 'string' }], rows: [[fullValue]] } }]}
         cellId={cellId}
@@ -302,7 +311,7 @@ describe('OutputRenderer truncation', () => {
         bytes: 5120,
       },
     }
-    render(<OutputRenderer outputs={[truncated]} cellId="cell-42" />)
+    renderWithQuery(<OutputRenderer outputs={[truncated]} cellId="cell-42" />)
     await waitFor(() => expect(screen.getByText(/Truncated — 2 .*rows \/ 5\.0 KB/)).toBeDefined())
     const fullLink = screen.getByLabelText('Download full result')
     expect(fullLink.getAttribute('href')).toBe('/api/v1/cells/cell-42/outputs/download?token=test-token')
@@ -320,13 +329,13 @@ describe('OutputRenderer truncation', () => {
         bytes: 10485760,
       },
     }
-    render(<OutputRenderer outputs={[truncated]} cellId="cell-43" />)
+    renderWithQuery(<OutputRenderer outputs={[truncated]} cellId="cell-43" />)
     await waitFor(() => expect(screen.getByText(/Truncated — 2 of 26573 rows \/ 10\.0 MB/)).toBeDefined())
   })
 
   it('renders the read-path stub with a download button when outputs were not inlined', async () => {
     const stub: Output = { type: 'table', data: { truncated: true, bytes: 149600000 } }
-    render(<OutputRenderer outputs={[stub]} cellId="cell-44" />)
+    renderWithQuery(<OutputRenderer outputs={[stub]} cellId="cell-44" />)
     await waitFor(() => expect(screen.getByText(/Output truncated — 142\.7 MB not inlined/)).toBeDefined())
     const downloadLink = screen.getByLabelText('Download full result')
     expect(downloadLink.getAttribute('href')).toBe('/api/v1/cells/cell-44/outputs/download?token=test-token')
@@ -344,7 +353,7 @@ describe('OutputRenderer truncation', () => {
         bytes: 1024,
       },
     }
-    render(<OutputRenderer outputs={[truncated]} cellId="cell-45" hideExport />)
+    renderWithQuery(<OutputRenderer outputs={[truncated]} cellId="cell-45" hideExport />)
     await waitFor(() => expect(screen.getByText(/Truncated — 1 of 5 rows \/ 1\.0 KB/)).toBeDefined())
     expect(screen.queryByLabelText('Download full result')).toBeNull()
     expect(screen.queryByLabelText('Download as CSV')).toBeNull()
@@ -411,7 +420,7 @@ describe('TableOutput selection & TSV copy', () => {
   }
 
   async function renderTable(cellId: string) {
-    const utils = render(<OutputRenderer outputs={[makeOutput()]} cellId={cellId} />)
+    const utils = renderWithQuery(<OutputRenderer outputs={[makeOutput()]} cellId={cellId} />)
     await waitFor(() => expect(cell(utils.container, 0, 0)).toBeTruthy())
     return utils
   }
@@ -496,7 +505,7 @@ describe('TableOutput selection & TSV copy', () => {
   })
 
   it('only the last-interacted table responds to selection shortcuts', async () => {
-    const { container } = render(
+    const { container } = renderWithQuery(
       <>
         <OutputRenderer outputs={[{ type: 'table', data: { columns: [{ name: 'a', type: 'text' }], rows: [['a1'], ['a2']] } }]} />
         <OutputRenderer outputs={[{ type: 'table', data: { columns: [{ name: 'b', type: 'text' }], rows: [['b1'], ['b2']] } }]} />
@@ -539,7 +548,7 @@ describe('TableOutput column resize', () => {
   })
 
   async function renderTable(cellId: string, rows: unknown[][] = [['b'], ['a']]) {
-    const utils = render(
+    const utils = renderWithQuery(
       <OutputRenderer
         outputs={[{ type: 'table', data: { columns: [{ name: 'val', type: 'string' }], rows } }]}
         cellId={cellId}
