@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Connector } from '../types'
+import type { Connector, ConnectorCloudState } from '../types'
 import { AppShell } from '../components/AppShell'
 import { Check, X, Star, Database, Pencil, ShieldCheck, Link2, Unlink, Trash2, Zap } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
@@ -18,7 +18,13 @@ import { useAuth } from '../hooks/useAuth'
 import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 import { listWarehouses, setConnectorWarehouse } from '../api/warehouses'
 import { formatRelativeTime } from '../utils/formatRelativeTime'
-import { parseIdleTimeoutMinutes } from '../utils/cloudState'
+import {
+  cloudStateView,
+  connectorIdleTimeoutMinutes,
+  formatRelativeAgo,
+  inferIdleState,
+  parseIdleTimeoutMinutes,
+} from '../utils/cloudState'
 
 type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch' | 'databricks'
 type DatabricksAuthType = 'pat' | 'oauth_m2m'
@@ -280,6 +286,85 @@ function ClickHouseCloudFields({ form, setForm, isEdit }: {
   )
 }
 
+/** Second status line for ClickHouse connectors: exact Cloud control-plane
+ * state when credentials are configured, probabilistic activity inference
+ * otherwise. Control-plane reads never wake the service; the query polls one
+ * connector at a time while the page stays open. */
+function ClickHouseCloudStatus({ connector }: { connector: Connector }) {
+  const { data, isError } = useQuery({
+    queryKey: ['connector-cloud-state', connector.id],
+    queryFn: () => api.get<ConnectorCloudState>(`/api/v1/connectors/${connector.id}/cloud-state`),
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    retry: false,
+  })
+
+  const lineStyle: React.CSSProperties = {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    marginTop: 4,
+    fontStyle: 'italic',
+  }
+
+  const configuredHint = Boolean(
+    connector.config?.cloud_org_id &&
+    connector.config?.cloud_service_id &&
+    connector.config?.cloud_key_id &&
+    connector.config?.cloud_key_secret,
+  )
+
+  if (data?.configured && data.error) {
+    return (
+      <div style={lineStyle}>
+        <StatusBadge status="neutral" label="Cloud state unavailable" title={data.error} />
+      </div>
+    )
+  }
+  if (isError) {
+    return (
+      <div style={lineStyle}>
+        <StatusBadge status="neutral" label="Cloud state unavailable" title="Could not load Cloud state from Aether" />
+      </div>
+    )
+  }
+  if (data?.configured && data.state) {
+    const view = cloudStateView(data.state)
+    const scaling = data.idle_scaling ? 'Idle scaling on' : 'Idle scaling off'
+    const timeout = data.idle_timeout_minutes ? `, timeout ${data.idle_timeout_minutes}m` : ''
+    const checked = data.checked_at
+      ? ` · checked ${formatRelativeAgo(Date.now() - new Date(data.checked_at).getTime())}`
+      : ''
+    return (
+      <div style={lineStyle}>
+        <StatusBadge status={view.status} label={view.label} title={`${scaling}${timeout}${checked}`} />
+      </div>
+    )
+  }
+  if (!data && configuredHint) {
+    // Credentials exist but the first response has not arrived: don't flash an
+    // inference line the exact state is about to replace.
+    return null
+  }
+
+  const inference = inferIdleState({
+    host: connector.config?.host,
+    lastSuccessAt: connector.last_success_at,
+    idleTimeoutMinutes: connectorIdleTimeoutMinutes(connector),
+  })
+  if (!inference) return null
+  if (inference.kind === 'likely_idle') {
+    return (
+      <div style={lineStyle}>
+        {`Likely idle — last activity ${formatRelativeAgo(inference.lastActivityAgeMs ?? 0)} (idle timeout ${inference.idleTimeoutMinutes}m)`}
+      </div>
+    )
+  }
+  if (inference.kind === 'active') {
+    return <div style={lineStyle}>Active recently</div>
+  }
+  return <div style={lineStyle}>Idle state unknown</div>
+}
+
 export function ConnectorsPage() {
   useEffect(() => { document.title = "Connectors — Aether Notebooks" }, [])
   const qc = useQueryClient()
@@ -386,6 +471,7 @@ export function ConnectorsPage() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
+      qc.invalidateQueries({ queryKey: ['connector-cloud-state'] })
       closeEdit()
     },
     onError: (e: Error) => setEditError(e.message),
@@ -762,6 +848,7 @@ export function ConnectorsPage() {
                         icon={health.status === 'success' ? <Check size={12} /> : <X size={12} />}
                       />
                     )}
+                    {c.type === 'clickhouse' && <ClickHouseCloudStatus connector={c} />}
                   </td>
                   <RowActionsCell>
                     <RowAction label="Test connection" icon={<Zap size={13} />} spinning={!!testingIds[c.id]} disabled={!!testingIds[c.id]} onClick={() => testConnector(c.id)} />

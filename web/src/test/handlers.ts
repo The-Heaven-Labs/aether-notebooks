@@ -169,6 +169,9 @@ export const handlers = [
     const body = await request.json() as Record<string, unknown>
     return HttpResponse.json({ id: params.id, ...body })
   }),
+  // ClickHouse Cloud state: default to "not configured" so list tests without
+  // cloud credentials render the inference path.
+  http.get('/api/v1/connectors/:id/cloud-state', () => HttpResponse.json({ configured: false })),
 
   // Warehouses
   http.get('/api/v1/warehouses', () => HttpResponse.json([])),

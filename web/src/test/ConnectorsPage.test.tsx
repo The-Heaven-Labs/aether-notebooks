@@ -491,4 +491,112 @@ describe('ConnectorsPage', () => {
     })
     expect(putBody!.config).not.toHaveProperty('cloud_key_secret')
   })
+
+  test('renders the exact Cloud state chip for a configured ClickHouse connector (CH-CLOUD-3)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-idle', name: 'CH Idle', type: 'clickhouse', is_default: false,
+            config: {
+              host: 'abc.clickhouse.cloud',
+              cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+              cloud_key_id: 'key-1', cloud_key_secret: '***',
+            },
+            last_success_at: '2026-01-01T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () =>
+        HttpResponse.json({
+          configured: true, state: 'idle', idle_scaling: true,
+          idle_timeout_minutes: 15, checked_at: new Date().toISOString(),
+        }),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    expect(await screen.findByText('Idle — wakes on next query')).toBeInTheDocument()
+    // The exact chip wins over inference: no "likely idle" copy.
+    expect(screen.queryByText(/Likely idle/)).toBeNull()
+  })
+
+  test('shows a muted unavailable chip when Cloud state fails (CH-CLOUD-4)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-err', name: 'CH Err', type: 'clickhouse', is_default: false,
+            config: {
+              host: 'abc.clickhouse.cloud',
+              cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+              cloud_key_id: 'key-1', cloud_key_secret: '***',
+            },
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () =>
+        HttpResponse.json({ configured: true, error: 'clickhouse cloud API returned HTTP 403' }),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    const chip = await screen.findByText('Cloud state unavailable')
+    expect(chip).toHaveAttribute('title', 'clickhouse cloud API returned HTTP 403')
+  })
+
+  test('infers likely idle for an unconfigured ClickHouse Cloud host (CH-CLOUD-5)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-infer', name: 'CH Infer', type: 'clickhouse', is_default: false,
+            config: { host: 'abc.clickhouse.cloud', idle_timeout_minutes: 15 },
+            last_success_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => HttpResponse.json({ configured: false })),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    expect(await screen.findByText(/Likely idle — last activity .* ago \(idle timeout 15m\)/)).toBeInTheDocument()
+  })
+
+  test('shows idle state unknown for a never-used unconfigured ClickHouse Cloud host (CH-CLOUD-6)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-new', name: 'CH New', type: 'clickhouse', is_default: false,
+            config: { host: 'abc.clickhouse.cloud' },
+            last_success_at: null,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => HttpResponse.json({ configured: false })),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    expect(await screen.findByText('Idle state unknown')).toBeInTheDocument()
+  })
+
+  test('renders no idle inference for non-Cloud ClickHouse hosts (CH-CLOUD-7)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-self', name: 'CH Self-hosted', type: 'clickhouse', is_default: false,
+            config: { host: 'ch.internal.example.com' },
+            last_success_at: '2020-01-01T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => HttpResponse.json({ configured: false })),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('CH Self-hosted')
+    expect(screen.queryByText(/Likely idle|Idle state unknown|Active recently/)).toBeNull()
+  })
 })
