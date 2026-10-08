@@ -306,3 +306,58 @@ describe('NewTablesInbox', () => {
     await waitFor(() => expect(validationCalls).toBeGreaterThanOrEqual(2))
   })
 })
+
+describe('pending grants', () => {
+  test('stages a pending grant from the inbox email input', async () => {
+    let posted: Record<string, unknown> | null = null
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(
+          {
+            id: 'gr-pending', org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: 'pending_user', subject_id: 'future@example.com',
+            subject_email: 'future@example.com', database: 'analytics', table: 'events',
+            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+          },
+          { status: 201 },
+        )
+      }),
+    )
+    renderInbox()
+    await screen.findByText('analytics.events')
+
+    fireEvent.change(screen.getByLabelText('Pending email for analytics.events'), {
+      target: { value: 'Future@Example.com' },
+    })
+    fireEvent.click(screen.getByLabelText('Add grant for analytics.events'))
+
+    await waitFor(() =>
+      expect(posted).toEqual({
+        subject_type: 'pending_user',
+        subject_id: 'future@example.com',
+        database: 'analytics',
+        table: 'events',
+      }),
+    )
+  })
+
+  test('marks a table with only a staged grant as pending, not granted', async () => {
+    server.use(
+      http.get('/api/v1/warehouses/wh-1/grants', () =>
+        HttpResponse.json([
+          {
+            id: 'gr-pending', org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: 'pending_user', subject_id: 'future@example.com',
+            subject_email: 'future@example.com', database: 'analytics', table: 'events',
+            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+    )
+    renderInbox()
+    expect(await screen.findByText('analytics.events')).toBeInTheDocument()
+    expect(screen.getAllByText(/pending — awaiting first login/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText('already granted')).toBeNull()
+  })
+})

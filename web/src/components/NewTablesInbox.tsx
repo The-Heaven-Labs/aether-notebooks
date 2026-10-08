@@ -14,6 +14,7 @@ import {
 import { ErrorBanner } from './ErrorBanner'
 import { StyledTable, rowStyle, cellStyle } from './StyledTable'
 import { groupLabel } from '../utils/groupLabel'
+import { looksLikeEmail, normalizeEmail } from '../utils/email'
 import type { Group, Member } from '../types'
 
 interface Props {
@@ -46,6 +47,7 @@ function tableKey(table: WarehouseNewTable): string {
 export function NewTablesInbox({ warehouseId }: Props) {
   const qc = useQueryClient()
   const [selections, setSelections] = useState<Record<string, string>>({})
+  const [pendingEmails, setPendingEmails] = useState<Record<string, string>>({})
   const [error, setError] = useState<string | null>(null)
 
   const {
@@ -70,9 +72,19 @@ export function NewTablesInbox({ warehouseId }: Props) {
     queryFn: () => listGrants(warehouseId),
   })
 
-  const grantedTables = useMemo(() => {
+  const realGrantedTables = useMemo(() => {
     const set = new Set<string>()
-    for (const grant of grants) set.add(`${grant.database}.${grant.table}`)
+    for (const grant of grants) {
+      if (grant.subject_type !== 'pending_user') set.add(`${grant.database}.${grant.table}`)
+    }
+    return set
+  }, [grants])
+
+  const pendingGrantedTables = useMemo(() => {
+    const set = new Set<string>()
+    for (const grant of grants) {
+      if (grant.subject_type === 'pending_user') set.add(`${grant.database}.${grant.table}`)
+    }
     return set
   }, [grants])
 
@@ -108,8 +120,14 @@ export function NewTablesInbox({ warehouseId }: Props) {
 
   const addGrant = useMutation({
     mutationFn: ({ table, selection }: { table: WarehouseNewTable; selection: string }) => {
-      const parsed = parseSubjectKey(selection)
-      if (!parsed) throw new Error('Select a subject')
+      const key = tableKey(table)
+      const email = pendingEmails[key] ?? ''
+      // A valid email takes precedence over the subject select: it stages the
+      // grant for someone who has no account yet.
+      const parsed = looksLikeEmail(email)
+        ? { subjectType: 'pending_user' as const, subjectId: normalizeEmail(email) }
+        : parseSubjectKey(selection)
+      if (!parsed) throw new Error('Select a subject or enter an email')
       return createGrant(warehouseId, {
         subject_type: parsed.subjectType,
         subject_id: parsed.subjectId,
@@ -120,6 +138,12 @@ export function NewTablesInbox({ warehouseId }: Props) {
     onSuccess: (_, { table }) => {
       const key = tableKey(table)
       setSelections((prev) => {
+        if (!(key in prev)) return prev
+        const next = { ...prev }
+        delete next[key]
+        return next
+      })
+      setPendingEmails((prev) => {
         if (!(key in prev)) return prev
         const next = { ...prev }
         delete next[key]
@@ -196,8 +220,11 @@ export function NewTablesInbox({ warehouseId }: Props) {
               {inbox?.tables.map((table) => {
                 const key = tableKey(table)
                 const selection = selections[key] ?? ''
+                const pendingEmail = pendingEmails[key] ?? ''
+                const pendingEmailValid = looksLikeEmail(pendingEmail)
                 const pending = pendingKey === key
-                const granted = grantedTables.has(key)
+                const granted = realGrantedTables.has(key)
+                const pendingStaged = pendingGrantedTables.has(key)
                 return (
                   <tr key={key} style={rowStyle}>
                     <td style={cellStyle}>
@@ -210,33 +237,49 @@ export function NewTablesInbox({ warehouseId }: Props) {
                       {granted ? (
                         <span style={styles.grantedBadge}>already granted</span>
                       ) : (
-                        <select
-                          aria-label={`Subject for ${key}`}
-                          style={styles.input}
-                          value={selection}
-                          onChange={(e) =>
-                            setSelections((prev) => ({ ...prev, [key]: e.target.value }))
-                          }
-                        >
-                          <option value="">Select subject…</option>
-                          <optgroup label="Users">
-                            {members.map((m) => (
-                              <option key={m.user_id} value={`user:${m.user_id}`}>
-                                {m.name || m.email}
-                              </option>
-                            ))}
-                          </optgroup>
-                          <optgroup label="Groups">
-                            {groups
-                              .filter((g) => !/^everyone$/i.test(g.name))
-                              .map((g) => (
-                                <option key={g.id} value={`group:${g.id}`}>
-                                  {groupLabel(g)}
+                        <>
+                          <select
+                            aria-label={`Subject for ${key}`}
+                            style={styles.input}
+                            value={selection}
+                            onChange={(e) =>
+                              setSelections((prev) => ({ ...prev, [key]: e.target.value }))
+                            }
+                          >
+                            <option value="">Select subject…</option>
+                            <optgroup label="Users">
+                              {members.map((m) => (
+                                <option key={m.user_id} value={`user:${m.user_id}`}>
+                                  {m.name || m.email}
                                 </option>
                               ))}
-                          </optgroup>
-                          <option value="everyone:everyone">Everyone</option>
-                        </select>
+                            </optgroup>
+                            <optgroup label="Groups">
+                              {groups
+                                .filter((g) => !/^everyone$/i.test(g.name))
+                                .map((g) => (
+                                  <option key={g.id} value={`group:${g.id}`}>
+                                    {groupLabel(g)}
+                                  </option>
+                                ))}
+                            </optgroup>
+                            <option value="everyone:everyone">Everyone</option>
+                          </select>
+                          <input
+                            aria-label={`Pending email for ${key}`}
+                            style={{ ...styles.input, marginTop: 4 }}
+                            type="email"
+                            autoComplete="off"
+                            placeholder="email@example.com (pending)"
+                            value={pendingEmail}
+                            onChange={(e) =>
+                              setPendingEmails((prev) => ({ ...prev, [key]: e.target.value }))
+                            }
+                          />
+                          {pendingStaged && (
+                            <span style={styles.pendingBadge}>pending — awaiting first login</span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td style={styles.actionCell}>
@@ -246,10 +289,10 @@ export function NewTablesInbox({ warehouseId }: Props) {
                           aria-label={`Add grant for ${key}`}
                           style={{
                             ...styles.addBtn,
-                            opacity: selection && !pending ? 1 : 0.5,
-                            cursor: selection && !pending ? 'pointer' : 'not-allowed',
+                            opacity: (selection || pendingEmailValid) && !pending ? 1 : 0.5,
+                            cursor: (selection || pendingEmailValid) && !pending ? 'pointer' : 'not-allowed',
                           }}
-                          disabled={!selection || pending}
+                          disabled={(!selection && !pendingEmailValid) || pending}
                           onClick={() => addGrant.mutate({ table, selection })}
                         >
                           {pending ? 'Adding…' : 'Add grant'}
@@ -342,6 +385,18 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-muted)',
     background: 'var(--bg-secondary)',
     border: '1px solid var(--border)',
+    borderRadius: 10,
+    padding: '2px 8px',
+    whiteSpace: 'nowrap' as const,
+  },
+  pendingBadge: {
+    display: 'inline-block',
+    marginTop: 4,
+    fontSize: 11,
+    fontWeight: 600,
+    color: 'var(--text-muted)',
+    background: 'color-mix(in srgb, var(--text-primary) 6%, transparent)',
+    border: '1px dashed var(--border)',
     borderRadius: 10,
     padding: '2px 8px',
     whiteSpace: 'nowrap' as const,
