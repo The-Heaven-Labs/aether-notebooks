@@ -137,6 +137,7 @@ func TestSessionStoreDeleteClearsStreamRedisState(t *testing.T) {
 	require.NoError(t, store.DeleteSession(ctx, session.ID))
 	require.Equal(t, int64(0), rdb.Exists(ctx, seqKey, bufKey).Val())
 	require.Zero(t, countSessionTestACLs(t, db.Pool, session.ID))
+	require.Zero(t, countSessionTestPendingACLs(t, db.Pool, session.ID))
 }
 
 func insertSessionTestACL(t *testing.T, pool *pgxpool.Pool, orgID, sessionID, userID string) {
@@ -147,6 +148,18 @@ func insertSessionTestACL(t *testing.T, pool *pgxpool.Pool, orgID, sessionID, us
 		       ($1, 'agent_session', $2::uuid, 'org_role', 'everyone', ARRAY['view'])
 	`, orgID, sessionID, userID)
 	require.NoError(t, err)
+	// Every session with ACL rows also gets a staged pending share so delete
+	// paths are covered for pending_acl_entries too.
+	insertSessionTestPendingACL(t, pool, orgID, sessionID, "pending-"+sessionID+"@example.com")
+}
+
+func insertSessionTestPendingACL(t *testing.T, pool *pgxpool.Pool, orgID, sessionID, email string) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `
+		INSERT INTO pending_acl_entries (org_id, resource_type, resource_id, email, actions)
+		VALUES ($1, 'agent_session', $2::uuid, $3, ARRAY['view'])
+	`, orgID, sessionID, email)
+	require.NoError(t, err)
 }
 
 func countSessionTestACLs(t *testing.T, pool *pgxpool.Pool, sessionID string) int {
@@ -154,6 +167,15 @@ func countSessionTestACLs(t *testing.T, pool *pgxpool.Pool, sessionID string) in
 	var count int
 	require.NoError(t, pool.QueryRow(context.Background(),
 		`SELECT COUNT(*) FROM acl_entries WHERE resource_type = 'agent_session' AND resource_id = $1::uuid`,
+		sessionID).Scan(&count))
+	return count
+}
+
+func countSessionTestPendingACLs(t *testing.T, pool *pgxpool.Pool, sessionID string) int {
+	t.Helper()
+	var count int
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM pending_acl_entries WHERE resource_type = 'agent_session' AND resource_id = $1::uuid`,
 		sessionID).Scan(&count))
 	return count
 }
@@ -176,6 +198,7 @@ func TestSessionStoreDeleteSessionRemovesACLs(t *testing.T) {
 	insertSessionTestACL(t, db.Pool, orgID, session.ID, userID)
 	insertSessionTestACL(t, db.Pool, orgID, other.ID, userID)
 	require.Equal(t, 2, countSessionTestACLs(t, db.Pool, session.ID))
+	require.Equal(t, 1, countSessionTestPendingACLs(t, db.Pool, session.ID))
 
 	require.NoError(t, store.DeleteSession(ctx, session.ID))
 
@@ -183,6 +206,8 @@ func TestSessionStoreDeleteSessionRemovesACLs(t *testing.T) {
 	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT COUNT(*) FROM agent_sessions WHERE id = $1`, session.ID).Scan(&sessions))
 	require.Zero(t, sessions)
 	require.Zero(t, countSessionTestACLs(t, db.Pool, session.ID))
+	require.Zero(t, countSessionTestPendingACLs(t, db.Pool, session.ID))
 
 	require.Equal(t, 2, countSessionTestACLs(t, db.Pool, other.ID), "other sessions' ACL rows must survive")
+	require.Equal(t, 1, countSessionTestPendingACLs(t, db.Pool, other.ID), "other sessions' staged rows must survive")
 }

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -92,6 +93,27 @@ func TestSessionPendingShareRoundTrip(t *testing.T) {
 	})
 	require.Equal(t, http.StatusOK, lastCode)
 	require.Zero(t, countPendingSessionShares(t, fx.srv, sessionID), "a PUT omitting the staged share removes it")
+}
+
+func TestSessionPendingShareConvertsMemberEmail(t *testing.T) {
+	fx := setupSessionSharingFixture(t)
+	bobEmail := userEmailByID(t, fx.srv, fx.bobID)
+
+	// A member's email submitted as pending_user becomes a real user share;
+	// only the non-member email stays staged.
+	code, resp := postCreateSession(t, fx.srv, fx.aliceToken, fx.agentID, map[string]any{
+		"shares": []map[string]any{
+			{"subject_type": "pending_user", "subject_id": strings.ToUpper(bobEmail), "actions": []string{"view"}},
+			{"subject_type": "pending_user", "subject_id": "Future.Viewer@Example.com", "actions": []string{"view"}},
+		},
+	})
+	require.Equal(t, http.StatusCreated, code, fmt.Sprint(resp))
+	sessionID := resp["session_id"].(string)
+
+	require.Equal(t, []string{"view"}, sessionACLActions(t, fx.srv, sessionID, "user", fx.bobID),
+		"a member's email becomes a real user share")
+	require.Equal(t, 1, countPendingSessionShares(t, fx.srv, sessionID),
+		"only the non-member email is staged")
 }
 
 func TestEmptySessionSweepRemovesPendingShares(t *testing.T) {

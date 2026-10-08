@@ -31,6 +31,17 @@ func createSessionForCleanup(t *testing.T, f *sessionSharingFixture, token, agen
 	return sessionID
 }
 
+// insertPendingSessionShare stages one pending session share directly so
+// hard-delete cleanup can be asserted for pending_acl_entries.
+func insertPendingSessionShare(t *testing.T, f *sessionSharingFixture, sessionID, email string) {
+	t.Helper()
+	_, err := f.srv.DB().Pool.Exec(context.Background(), `
+		INSERT INTO pending_acl_entries (org_id, resource_type, resource_id, email, actions)
+		VALUES ($1, 'agent_session', $2::uuid, $3, ARRAY['view'])`,
+		f.orgID, sessionID, email)
+	require.NoError(t, err)
+}
+
 func TestDeleteAgentRemovesSessionACLs(t *testing.T) {
 	f := setupSessionSharingFixture(t)
 	ctx := context.Background()
@@ -48,6 +59,10 @@ func TestDeleteAgentRemovesSessionACLs(t *testing.T) {
 	otherAgentID := createAgent(t, f.srv, f.aliceToken, mcID)
 	otherSession := createSessionForCleanup(t, f, f.aliceToken, otherAgentID, notebookA, "")
 
+	insertPendingSessionShare(t, f, sharedSession, "agent-delete-pending@example.com")
+	insertPendingSessionShare(t, f, otherSession, "agent-delete-other@example.com")
+	require.Equal(t, 1, countPendingSessionShares(t, f.srv, sharedSession))
+
 	code, _ := doRequest(t, f.srv, f.aliceToken, "DELETE", "/api/v1/agents/"+f.agentID, nil)
 	require.Equal(t, http.StatusNoContent, code)
 
@@ -55,9 +70,12 @@ func TestDeleteAgentRemovesSessionACLs(t *testing.T) {
 	require.False(t, sessionExists(t, f.srv, plainSession))
 	require.Zero(t, sessionACLCount(t, f.srv, sharedSession))
 	require.Zero(t, sessionACLCount(t, f.srv, plainSession))
+	require.Zero(t, countPendingSessionShares(t, f.srv, sharedSession), "staged shares of the deleted agent's session must be swept")
+	require.Zero(t, countPendingSessionShares(t, f.srv, plainSession))
 
 	require.True(t, sessionExists(t, f.srv, otherSession), "another agent's session must survive")
 	require.NotZero(t, sessionACLCount(t, f.srv, otherSession), "another agent's session ACLs must survive")
+	require.Equal(t, 1, countPendingSessionShares(t, f.srv, otherSession), "another agent's staged shares must survive")
 
 	var agentCount int
 	require.NoError(t, f.srv.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM agents WHERE id = $1`, f.agentID).Scan(&agentCount))
