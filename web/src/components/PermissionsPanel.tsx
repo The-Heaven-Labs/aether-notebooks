@@ -10,16 +10,18 @@ import {
   Check,
   Copy,
   ShieldCheck,
+  Mail,
 } from 'lucide-react'
 import { api } from '../api/client'
 import { groupLabel } from '../utils/groupLabel'
 import { chatLinkUrl } from '../utils/chatLink'
+import { looksLikeEmail, normalizeEmail } from '../utils/email'
 import { ConfirmModal } from './ConfirmModal'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
 type ResourceType = 'folder' | 'notebook' | 'connector' | 'dashboard' | 'agent' | 'model_config' | 'skill' | 'mcp_server' | 'tool' | 'agent_session'
-type SubjectType = 'user' | 'group' | 'org_role'
+type SubjectType = 'user' | 'group' | 'org_role' | 'pending_user'
 
 const ACTION_LABELS: Record<ResourceType, string[]> = {
   folder:      ['view', 'create', 'edit', 'manage', 'delete'],
@@ -123,6 +125,7 @@ interface AclEntry {
   subject_type: SubjectType
   subject_id: string
   actions: string[]
+  pending?: boolean
 }
 
 interface Member {
@@ -199,10 +202,16 @@ function Avatar({ name, type, size = 30 }: { name: string; type: SubjectType; si
   return (
     <span
       aria-hidden="true"
-      className={`access-avatar${type === 'user' ? ' is-user' : ''}`}
+      className={`access-avatar${type === 'user' ? ' is-user' : type === 'pending_user' ? ' is-pending' : ''}`}
       style={{ width: size, height: size, fontSize: size <= 24 ? 10 : 11 }}
     >
-      {type === 'user' ? initials(name) : type === 'group' ? <Users size={13} /> : <UsersRound size={13} />}
+      {type === 'user'
+        ? initials(name)
+        : type === 'pending_user'
+          ? <Mail size={13} />
+          : type === 'group'
+            ? <Users size={13} />
+            : <UsersRound size={13} />}
     </span>
   )
 }
@@ -249,16 +258,17 @@ interface PickerOption {
   kind: SubjectType
   name: string
   secondary?: string
-  section: 'People' | 'Groups' | 'Organization'
+  section: 'People' | 'Groups' | 'Organization' | 'Pending'
 }
 
 interface SubjectPickerProps {
   options: PickerOption[]
+  knownEmails: Set<string>
   onPick: (option: PickerOption) => void
   onCancel: () => void
 }
 
-function SubjectPicker({ options, onPick, onCancel }: SubjectPickerProps) {
+function SubjectPicker({ options, knownEmails, onPick, onCancel }: SubjectPickerProps) {
   const [query, setQuery] = useState('')
   const [focusedIdx, setFocusedIdx] = useState(-1)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -274,16 +284,35 @@ function SubjectPicker({ options, onPick, onCancel }: SubjectPickerProps) {
         (o.secondary ?? '').toLowerCase().includes(q))
     : options
 
+  // Offer an explicit "add by email" action when the query looks like an email
+  // that matches no person, group, or existing entry — never a global user
+  // search. The email is lowercased to match the pending API's canonical form.
+  const pendingEmail =
+    q.length > 0 && looksLikeEmail(q) && !knownEmails.has(normalizeEmail(q))
+      ? normalizeEmail(q)
+      : null
+  const pendingOption: PickerOption | null =
+    pendingEmail && filtered.length === 0
+      ? {
+          key: subjectKey('pending_user', pendingEmail),
+          kind: 'pending_user',
+          name: pendingEmail,
+          secondary: 'Pending — awaiting first login',
+          section: 'Pending',
+        }
+      : null
+  const displayOptions = pendingOption ? [...filtered, pendingOption] : filtered
+
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      setFocusedIdx((i) => Math.min(i + 1, filtered.length - 1))
+      setFocusedIdx((i) => Math.min(i + 1, displayOptions.length - 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
       setFocusedIdx((i) => Math.max(i - 1, -1))
-    } else if (e.key === 'Enter' && focusedIdx >= 0 && filtered[focusedIdx]) {
+    } else if (e.key === 'Enter' && focusedIdx >= 0 && displayOptions[focusedIdx]) {
       e.preventDefault()
-      onPick(filtered[focusedIdx])
+      onPick(displayOptions[focusedIdx])
     } else if (e.key === 'Escape') {
       // Close the picker first; the dialog's window-level Escape handler
       // skips events already handled locally (defaultPrevented).
@@ -322,13 +351,13 @@ function SubjectPicker({ options, onPick, onCancel }: SubjectPickerProps) {
         </button>
       </div>
       <ul id="access-picker-listbox" role="listbox" aria-label="People and groups" className="access-picker-list">
-        {filtered.length === 0 && (
+        {displayOptions.length === 0 && (
           <li className="access-picker-empty">
             {q ? <>No matches for “{query}”.</> : 'No people or groups left to add.'}
           </li>
         )}
-        {filtered.map((option, idx) => {
-          const showSection = idx === 0 || filtered[idx - 1].section !== option.section
+        {displayOptions.map((option, idx) => {
+          const showSection = idx === 0 || displayOptions[idx - 1].section !== option.section
           return (
             <Fragment key={option.key}>
               {showSection && (
@@ -484,6 +513,18 @@ export function PermissionsPanel({
   const inheritedCount = inheritedEntries.length
 
   const visibleKeys = new Set(visibleEntries.map((e) => subjectKey(e.subject_type, e.subject_id)))
+
+  // Emails that must not be offered as "pending": current members (even when
+  // their entry is already in the draft) and any staged pending entry.
+  const knownEmails = new Set<string>(members.map((m) => m.email.toLowerCase()))
+  for (const e of visibleEntries) {
+    if (e.subject_type === 'pending_user') knownEmails.add(e.subject_id.toLowerCase())
+    if (e.subject_type === 'user') {
+      const m = members.find((m) => m.user_id === e.subject_id)
+      if (m) knownEmails.add(m.email.toLowerCase())
+    }
+  }
+
   const allPickerOptions: PickerOption[] = [
     ...members
       .filter((m) => m.user_id !== resourceOwnerId)
@@ -516,6 +557,7 @@ export function PermissionsPanel({
   // ── Helpers ──
 
   function subjectName(entry: AclEntry): string {
+    if (entry.subject_type === 'pending_user') return entry.subject_id
     if (entry.subject_type === 'user') {
       const m = members.find((m) => m.user_id === entry.subject_id)
       return m ? (m.name || m.email) : entry.subject_id
@@ -528,6 +570,7 @@ export function PermissionsPanel({
   }
 
   function subjectSecondary(entry: AclEntry): string {
+    if (entry.subject_type === 'pending_user') return 'Pending — awaiting first login'
     if (entry.subject_type === 'user') {
       const m = members.find((m) => m.user_id === entry.subject_id)
       return m ? m.email : 'User'
@@ -564,7 +607,12 @@ export function PermissionsPanel({
     const current = draft ?? aclData ?? []
     const updated: AclEntry[] = [
       ...current,
-      { id: '', subject_type: newSubject.kind, subject_id: newSubject.key.split(':')[1], actions: newActions },
+      {
+        id: '',
+        subject_type: newSubject.kind,
+        subject_id: newSubject.key.slice(newSubject.key.indexOf(':') + 1),
+        actions: newActions,
+      },
     ]
     setDraft(updated)
     setNewSubject(null)
@@ -581,7 +629,7 @@ export function PermissionsPanel({
   function handleSave() {
     if (draft === null) return
     saveAcl.mutate(
-      draft.map(({ id: _id, ...rest }) => ({
+      draft.map(({ id: _id, pending: _pending, ...rest }) => ({
         ...rest,
         actions: constrainActions(resourceType, rest.actions),
       }))
@@ -817,6 +865,7 @@ export function PermissionsPanel({
                     {composerPhase === 'picking' && (
                       <SubjectPicker
                         options={pickerOptions}
+                        knownEmails={knownEmails}
                         onPick={handlePickSubject}
                         onCancel={() => setComposerPhase('idle')}
                       />
@@ -1057,6 +1106,11 @@ const css = `
   background: color-mix(in srgb, var(--accent) 14%, transparent);
   border-color: color-mix(in srgb, var(--accent) 35%, transparent);
   color: var(--accent);
+}
+.access-avatar.is-pending {
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  border-style: dashed;
+  color: var(--text-muted);
 }
 
 .access-chips { display: flex; flex-wrap: wrap; gap: 4px; min-width: 0; }

@@ -379,10 +379,11 @@ export interface ACLEntry {
   org_id: string
   resource_type: string
   resource_id: string
-  subject_type: 'user' | 'group' | 'org_role'
+  subject_type: 'user' | 'group' | 'org_role' | 'pending_user'
   subject_id: string
   actions: string[]
   created_at: string
+  pending?: boolean
 }
 
 export interface SSOProvider {

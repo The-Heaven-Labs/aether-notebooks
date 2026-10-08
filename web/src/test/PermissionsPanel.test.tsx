@@ -637,3 +637,102 @@ describe('Session chat link', () => {
     expect(input.selectionEnd).toBe(input.value.length)
   })
 })
+
+// ── Pending users ───────────────────────────────────────────────────────────
+
+describe('Pending users', () => {
+  test('offers a pending option for an email that matches nobody and adds it as a draft', async () => {
+    renderPanel()
+    await waitForAclLoaded()
+    await openComposer()
+
+    const input = screen.getByRole('combobox', { name: /search people and groups/i })
+    fireEvent.change(input, { target: { value: 'Future.User@Example.com' } })
+
+    const option = await screen.findByRole('option', { name: /future\.user@example\.com/i })
+    expect(within(option).getByText('Pending — awaiting first login')).toBeInTheDocument()
+    fireEvent.mouseDown(option)
+
+    // The composer shows the pending subject and defaults to view.
+    expect(await screen.findByText('future.user@example.com')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Add$/i }))
+
+    // The draft row renders with the pending secondary line and chips.
+    const row = findEntryRow('future.user@example.com')
+    expect(row).not.toBeNull()
+    expect(within(row!).getByText('Pending — awaiting first login')).toBeInTheDocument()
+    expect(within(row!).getByRole('button', { name: 'view' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('saving a pending entry PUTs pending_user with the lowercased email', async () => {
+    let putBody: { entries: Array<{ subject_type: string; subject_id: string; actions: string[] }> } | null = null
+    server.use(
+      http.put('/api/v1/acl/notebook/nb-1', async ({ request }) => {
+        putBody = (await request.json()) as typeof putBody
+        return HttpResponse.json(putBody!.entries.map((e, i) => ({ id: `e-${i}`, ...e })))
+      }),
+    )
+    renderPanel()
+    await waitForAclLoaded()
+    await openComposer()
+
+    fireEvent.change(screen.getByRole('combobox', { name: /search people and groups/i }), {
+      target: { value: 'Future.User@Example.com' },
+    })
+    fireEvent.mouseDown(await screen.findByRole('option', { name: /future\.user@example\.com/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Add$/i }))
+    fireEvent.click(await screen.findByRole('button', { name: /^Save$/i }))
+
+    await waitFor(() => expect(putBody).not.toBeNull())
+    const pending = putBody!.entries.find((e) => e.subject_type === 'pending_user')
+    expect(pending).toMatchObject({ subject_type: 'pending_user', subject_id: 'future.user@example.com' })
+    expect(pending!.actions).toEqual(['view'])
+  })
+
+  test('renders staged pending rows returned by GET and removes them on save', async () => {
+    server.use(
+      http.get('/api/v1/acl/notebook/nb-1', () => HttpResponse.json([
+        ...ACL_ENTRIES,
+        {
+          id: 'pending-1', org_id: 'org-1', resource_type: 'notebook', resource_id: 'nb-1',
+          subject_type: 'pending_user', subject_id: 'future@example.com', pending: true,
+          actions: ['view', 'edit'], created_at: '2026-01-01T00:00:00Z',
+        },
+      ])),
+    )
+    let putBody: unknown = null
+    server.use(
+      http.put('/api/v1/acl/notebook/nb-1', async ({ request }) => {
+        putBody = await request.json()
+        return HttpResponse.json([])
+      }),
+    )
+    renderPanel()
+    await waitForAclLoaded()
+
+    const row = findEntryRow('future@example.com')
+    expect(row).not.toBeNull()
+    expect(within(row!).getByText('Pending — awaiting first login')).toBeInTheDocument()
+    fireEvent.click(within(row!).getByTitle('Remove'))
+    fireEvent.click(await screen.findByRole('button', { name: /^Save$/i }))
+
+    await waitFor(() => expect(putBody).not.toBeNull())
+    const entries = (putBody as { entries: Array<{ subject_type: string }> }).entries
+    expect(entries.some((e) => e.subject_type === 'pending_user')).toBe(false)
+  })
+
+  test('does not offer pending when the typed email already belongs to a member', async () => {
+    renderPanel()
+    await waitForAclLoaded()
+    await openComposer()
+
+    fireEvent.change(screen.getByRole('combobox', { name: /search people and groups/i }), {
+      target: { value: 'alice@test.com' },
+    })
+    // Alice already has an entry, so she is not offered as an option; the
+    // point is that her known email is never offered as pending either.
+    expect(await screen.findByText(/No matches for/i)).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /alice admin/i })).toBeNull()
+    expect(screen.queryByText(/pending — awaiting first login/i)).toBeNull()
+  })
+})
