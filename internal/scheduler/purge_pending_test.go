@@ -101,3 +101,48 @@ func TestPurgeTrashRemovesPendingACLsOfPurgedResources(t *testing.T) {
 			"pending rows for %s %s", r.resourceType, r.id)
 	}
 }
+
+// TestPurgeTrashRemovesPendingACLsOfCascadePurgedChildFolders covers the case
+// where a past-retention folder is purged while its subtree is still live:
+// the parent_id ON DELETE CASCADE removes the children, so their pending rows
+// must be consumed too (a plain RETURNING id from the purge predicate would
+// miss them).
+func TestPurgeTrashRemovesPendingACLsOfCascadePurgedChildFolders(t *testing.T) {
+	db := setupPurgeTestDB(t)
+	ctx := context.Background()
+	f := seedPurgeTestOrg(t, db)
+
+	pastRetention := time.Now().Add(-8 * 24 * time.Hour)
+
+	seedFolder := func(name string, parentID *string, deletedAt *time.Time) string {
+		id := uuid.NewString()
+		_, err := db.Pool.Exec(ctx, `
+			INSERT INTO folders (id, org_id, parent_id, name, created_by, deleted_at)
+			VALUES ($1, $2, $3, $4, $5, $6)`, id, f.orgID, parentID, name, f.userID, deletedAt)
+		require.NoError(t, err)
+		return id
+	}
+
+	parentID := seedFolder("Purge Parent", nil, &pastRetention)
+	childID := seedFolder("Live Child", &parentID, nil)
+	grandchildID := seedFolder("Live Grandchild", &childID, nil)
+	liveID := seedFolder("Live Unrelated", nil, nil)
+
+	for _, id := range []string{parentID, childID, grandchildID, liveID} {
+		seedPendingACLForResource(t, db, f.orgID, "folder", id)
+	}
+
+	New(db, nil).purgeTrash(ctx)
+
+	for _, id := range []string{parentID, childID, grandchildID} {
+		require.Zero(t, countPurgeRows(t, db, `SELECT COUNT(*) FROM folders WHERE id = $1`, id),
+			"folder %s is removed by the parent purge cascade", id)
+		require.Zero(t, countPendingFor(t, db, "folder", id),
+			"pending rows for cascade-purged folder %s must be consumed", id)
+	}
+
+	require.Equal(t, 1, countPurgeRows(t, db, `SELECT COUNT(*) FROM folders WHERE id = $1`, liveID),
+		"unrelated live folder must survive the purge")
+	require.Equal(t, 1, countPendingFor(t, db, "folder", liveID),
+		"unrelated live folder must keep its pending rows")
+}
