@@ -357,3 +357,22 @@ func TestConnectorHealthRecordsDatabasesConnectFailure(t *testing.T) {
 	require.NotNil(t, got["last_failure_at"], "a buildExecutor failure must persist last_failure_at")
 	require.NotEmpty(t, got["last_error"])
 }
+
+func TestConnectorHealthQueryErrorLeavesStatusUnchanged(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-query-err-%d@example.com", ts), "Conn Query Err Org")
+	connID := createConnector(t, srv, token)
+	nbID := createNotebook(t, srv, token, "Query Err NB")
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT * FROM aether_health_missing_table_xyz", connID)
+
+	rec := executeCell(t, srv, token, nbID, cellID)
+	require.Equal(t, http.StatusUnprocessableEntity, rec.Code, rec.Body.String())
+
+	// D7: SQL/semantic errors are not connection-level and must never flip
+	// connector health. A fresh connector keeps its never-used state.
+	got := getConnectorJSON(t, srv, token, connID)
+	require.Nil(t, got["last_success_at"], "a failed query must not record a success: %v", got)
+	require.Nil(t, got["last_failure_at"], "a query error must not record a failure: %v", got)
+}
