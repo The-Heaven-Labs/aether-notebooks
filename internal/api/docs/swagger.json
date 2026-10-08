@@ -2618,6 +2618,59 @@
                 }
             }
         },
+        "/connectors/{id}/cloud-state": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns the ClickHouse Cloud control-plane state for a ClickHouse connector with Cloud API credentials. Non-ClickHouse connectors and connectors without credentials return 200 with {\"configured\": false}; upstream failures return 200 with an error field. Reading state never wakes an idle service.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "connectors"
+                ],
+                "summary": "Get ClickHouse Cloud service state",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Connector ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/connectors/{id}/databases": {
             "get": {
                 "security": [
@@ -9412,7 +9465,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Create a table grant for a user, group, or everyone in a warehouse. Replayed duplicates are idempotent and return the existing grant.",
+                "description": "Create a table grant for a user, group, everyone, or pending_user in a warehouse. A pending_user subject is an email staged for a not-yet-registered person; an email that already belongs to an org member becomes a user grant. Replayed duplicates are idempotent and return the existing grant.",
                 "consumes": [
                     "application/json"
                 ],
@@ -10373,6 +10426,16 @@
                 },
                 "is_default": {
                     "type": "boolean"
+                },
+                "last_error": {
+                    "type": "string"
+                },
+                "last_failure_at": {
+                    "type": "string"
+                },
+                "last_success_at": {
+                    "description": "Connector health timeline (D6): status is derived by comparing\nlast_failure_at with last_success_at; last_error carries the most recent\nconnection-level failure message.",
+                    "type": "string"
                 },
                 "max_rows": {
                     "type": "integer"
