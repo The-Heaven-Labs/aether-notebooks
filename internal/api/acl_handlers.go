@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -91,6 +92,16 @@ func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "scan failed")
 		return
 	}
+
+	// Staged rows follow the real entries: same visibility rules, additional
+	// pending_user subject type.
+	pendingEntries, err := queryPendingACLEntries(ctx, s.db.Pool, scanOrgID, resourceType, resourceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	entries = append(entries, pendingEntries...)
+
 	if entries == nil {
 		entries = []models.ACLEntry{}
 	}
@@ -107,6 +118,43 @@ func scanACLEntries(rows pgx.Rows) ([]models.ACLEntry, error) {
 			&e.SubjectType, &e.SubjectID, &e.Actions, &e.CreatedAt); err != nil {
 			return nil, err
 		}
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
+// pendingQueryer is the query surface staged-row loading needs; both
+// *pgxpool.Pool and pgx.Tx satisfy it.
+type pendingQueryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// pendingACLSelect loads staged rows for a resource. Emails are stored
+// lowercased by every writer and are synthesized as the subject_id.
+const pendingACLSelect = `
+	SELECT id, org_id, resource_type, resource_id::text, email, actions, created_at
+	FROM pending_acl_entries
+	WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3
+	ORDER BY lower(email)`
+
+// queryPendingACLEntries returns the staged rows for a resource through q as
+// models.ACLEntry rows with subject_type "pending_user" and pending: true. The
+// row ID is the pending row's UUID so clients can key and remove it.
+func queryPendingACLEntries(ctx context.Context, q pendingQueryer, orgID, resourceType, resourceID string) ([]models.ACLEntry, error) {
+	rows, err := q.Query(ctx, pendingACLSelect, resourceType, resourceID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []models.ACLEntry
+	for rows.Next() {
+		var e models.ACLEntry
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.ResourceType, &e.ResourceID,
+			&e.SubjectID, &e.Actions, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.SubjectType = "pending_user"
+		e.Pending = true
 		entries = append(entries, e)
 	}
 	return entries, rows.Err()
