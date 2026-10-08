@@ -735,4 +735,51 @@ describe('Pending users', () => {
     expect(screen.queryByRole('option', { name: /alice admin/i })).toBeNull()
     expect(screen.queryByText(/pending — awaiting first login/i)).toBeNull()
   })
+
+  test('keyboard selection of the pending option adds it to the draft', async () => {
+    renderPanel()
+    await waitForAclLoaded()
+    await openComposer()
+
+    const input = screen.getByRole('combobox', { name: /search people and groups/i })
+    fireEvent.change(input, { target: { value: 'future@example.com' } })
+    await screen.findByRole('option', { name: /future@example\.com/i })
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' })
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    // The composer shows the pending subject and defaults to view.
+    expect(await screen.findByText('future@example.com')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: /^Add$/i }))
+
+    const row = findEntryRow('future@example.com')
+    expect(row).not.toBeNull()
+    expect(within(row!).getByText('Pending — awaiting first login')).toBeInTheDocument()
+    expect(within(row!).getByRole('button', { name: 'view' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('does not offer a pending email that is already staged', async () => {
+    server.use(
+      http.get('/api/v1/acl/notebook/nb-1', () => HttpResponse.json([
+        ...ACL_ENTRIES,
+        {
+          id: 'pending-1', org_id: 'org-1', resource_type: 'notebook', resource_id: 'nb-1',
+          subject_type: 'pending_user', subject_id: 'future@example.com', pending: true,
+          actions: ['view'], created_at: '2026-01-01T00:00:00Z',
+        },
+      ])),
+    )
+    renderPanel()
+    await waitForAclLoaded()
+    await openComposer()
+
+    fireEvent.change(screen.getByRole('combobox', { name: /search people and groups/i }), {
+      target: { value: 'Future@Example.com' },
+    })
+
+    expect(await screen.findByText(/No matches for/i)).toBeInTheDocument()
+    const listbox = screen.getByRole('listbox', { name: /people and groups/i })
+    expect(within(listbox).queryByRole('option')).toBeNull()
+    expect(within(listbox).queryByText(/pending — awaiting first login/i)).toBeNull()
+  })
 })

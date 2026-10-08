@@ -288,8 +288,8 @@ function SubjectPicker({ options, knownEmails, onPick, onCancel }: SubjectPicker
   // that matches no person, group, or existing entry — never a global user
   // search. The email is lowercased to match the pending API's canonical form.
   const pendingEmail =
-    q.length > 0 && looksLikeEmail(q) && !knownEmails.has(normalizeEmail(q))
-      ? normalizeEmail(q)
+    q.length > 0 && looksLikeEmail(query) && !knownEmails.has(q)
+      ? normalizeEmail(query)
       : null
   const pendingOption: PickerOption | null =
     pendingEmail && filtered.length === 0
@@ -514,15 +514,11 @@ export function PermissionsPanel({
 
   const visibleKeys = new Set(visibleEntries.map((e) => subjectKey(e.subject_type, e.subject_id)))
 
-  // Emails that must not be offered as "pending": current members (even when
-  // their entry is already in the draft) and any staged pending entry.
+  // Emails that must not be offered as "pending": current members and any
+  // staged pending entry.
   const knownEmails = new Set<string>(members.map((m) => m.email.toLowerCase()))
   for (const e of visibleEntries) {
     if (e.subject_type === 'pending_user') knownEmails.add(e.subject_id.toLowerCase())
-    if (e.subject_type === 'user') {
-      const m = members.find((m) => m.user_id === e.subject_id)
-      if (m) knownEmails.add(m.email.toLowerCase())
-    }
   }
 
   const allPickerOptions: PickerOption[] = [
