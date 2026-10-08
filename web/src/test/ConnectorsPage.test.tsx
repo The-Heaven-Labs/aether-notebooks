@@ -411,4 +411,84 @@ describe('ConnectorsPage', () => {
     expect(screen.getByText('Testing…')).toBeInTheDocument()
     expect(await screen.findByText(/^Connected · used /)).toBeInTheDocument()
   })
+
+  test('creates a ClickHouse connector with idle timeout and Cloud API config (CH-CLOUD-1)', async () => {
+    let postBody: { config?: Record<string, unknown> } | null = null
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([])),
+      http.post('/api/v1/connectors', async ({ request }) => {
+        postBody = (await request.json()) as { config?: Record<string, unknown> }
+        return HttpResponse.json(
+          { id: 'c-ch', name: 'CH', type: 'clickhouse', config: {}, created_at: '2026-01-01T00:00:00Z' },
+          { status: 201 },
+        )
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByText('+ New Connector'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'CH' } })
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'clickhouse' } })
+    fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'abc.clickhouse.cloud' } })
+    fireEvent.change(screen.getByLabelText('Idle timeout (minutes)'), { target: { value: '30' } })
+    fireEvent.change(screen.getByLabelText('Organization ID'), { target: { value: 'org-1' } })
+    fireEvent.change(screen.getByLabelText('Service ID'), { target: { value: 'svc-1' } })
+    fireEvent.change(screen.getByLabelText('Key ID'), { target: { value: 'key-1' } })
+    fireEvent.change(screen.getByLabelText('Key Secret'), { target: { value: 'super-secret' } })
+    fireEvent.click(screen.getByText('Create'))
+
+    await waitFor(() =>
+      expect(postBody?.config).toEqual({
+        host: 'abc.clickhouse.cloud',
+        port: 9000,
+        database: '',
+        user: '',
+        ssl_mode: 'disable',
+        idle_timeout_minutes: 30,
+        cloud_org_id: 'org-1',
+        cloud_service_id: 'svc-1',
+        cloud_key_id: 'key-1',
+        cloud_key_secret: 'super-secret',
+        password: '',
+      }),
+    )
+  })
+
+  test('editing ClickHouse keeps the stored Cloud key secret when left blank (CH-CLOUD-2)', async () => {
+    let putBody: { config?: Record<string, unknown> } | null = null
+    const stored = {
+      id: 'c-ch-edit', name: 'CH Edit', type: 'clickhouse', is_default: false,
+      config: {
+        host: 'abc.clickhouse.cloud', port: 8443, database: '', user: 'default',
+        ssl_mode: 'require', idle_timeout_minutes: 15,
+        cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+        cloud_key_id: 'key-1', cloud_key_secret: '***',
+      },
+      created_at: '2026-01-01T00:00:00Z',
+    }
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([stored])),
+      http.get('/api/v1/connectors/:id/cloud-state', () =>
+        HttpResponse.json({ configured: true, state: 'running', checked_at: new Date().toISOString() }),
+      ),
+      http.put('/api/v1/connectors/c-ch-edit', async ({ request }) => {
+        putBody = (await request.json()) as { config?: Record<string, unknown> }
+        return HttpResponse.json({ ...stored, config: { ...stored.config, idle_timeout_minutes: 45 } })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByLabelText('Edit connector'))
+    // The stored secret comes back masked and must never be pre-filled.
+    expect((screen.getByLabelText(/Key Secret/) as HTMLInputElement).value).toBe('')
+    fireEvent.change(screen.getByLabelText('Idle timeout (minutes)'), { target: { value: '45' } })
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(putBody).not.toBeNull())
+    expect(putBody!.config).toMatchObject({
+      idle_timeout_minutes: 45,
+      cloud_org_id: 'org-1',
+      cloud_service_id: 'svc-1',
+      cloud_key_id: 'key-1',
+    })
+    expect(putBody!.config).not.toHaveProperty('cloud_key_secret')
+  })
 })

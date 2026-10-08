@@ -18,6 +18,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 import { listWarehouses, setConnectorWarehouse } from '../api/warehouses'
 import { formatRelativeTime } from '../utils/formatRelativeTime'
+import { parseIdleTimeoutMinutes } from '../utils/cloudState'
 
 type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch' | 'databricks'
 type DatabricksAuthType = 'pat' | 'oauth_m2m'
@@ -46,6 +47,11 @@ interface ConnectorForm {
   timeout_seconds: string
   table_allowlist: string
   table_denylist: string
+  idle_timeout_minutes: string
+  cloud_org_id: string
+  cloud_service_id: string
+  cloud_key_id: string
+  cloud_key_secret: string
 }
 
 const defaultForm = (): ConnectorForm => ({
@@ -55,6 +61,7 @@ const defaultForm = (): ConnectorForm => ({
   client_id: '', client_secret: '', catalog: '', schema: '', stored_auth_type: '',
   is_default: false, timeout_seconds: '0',
   table_allowlist: '', table_denylist: '',
+  idle_timeout_minutes: '', cloud_org_id: '', cloud_service_id: '', cloud_key_id: '', cloud_key_secret: '',
 })
 
 /** Builds the per-type config object for create (forUpdate=false) and edit
@@ -83,6 +90,16 @@ function buildConnectorConfig(f: ConnectorForm, forUpdate: boolean): Record<stri
     user: f.user,
     ssl_mode: f.ssl_mode,
     ...(f.type === 'opensearch' ? { use_tls: f.use_tls } : {}),
+  }
+  if (f.type === 'clickhouse') {
+    // The manual idle threshold always round-trips (empty = the 15m default).
+    cfg.idle_timeout_minutes = parseIdleTimeoutMinutes(f.idle_timeout_minutes)
+    // Non-secret Cloud API fields round-trip verbatim (blank clears access);
+    // the secret is omitted on edit when blank so the server keeps the stored one.
+    cfg.cloud_org_id = f.cloud_org_id.trim()
+    cfg.cloud_service_id = f.cloud_service_id.trim()
+    cfg.cloud_key_id = f.cloud_key_id.trim()
+    if (!forUpdate || f.cloud_key_secret !== '') cfg.cloud_key_secret = f.cloud_key_secret
   }
   if (!forUpdate || f.password !== '') cfg.password = f.password
   return cfg
@@ -149,6 +166,11 @@ function formFromConnector(c: Connector): ConnectorForm {
     timeout_seconds: String(c.timeout_seconds ?? 0),
     table_allowlist: (c.table_allowlist ?? []).join('\n'),
     table_denylist: (c.table_denylist ?? []).join('\n'),
+    idle_timeout_minutes: c.config?.idle_timeout_minutes != null ? String(c.config.idle_timeout_minutes) : '',
+    cloud_org_id: c.config?.cloud_org_id ?? '',
+    cloud_service_id: c.config?.cloud_service_id ?? '',
+    cloud_key_id: c.config?.cloud_key_id ?? '',
+    cloud_key_secret: '',
   }
 }
 
@@ -206,6 +228,54 @@ function DatabricksFields({ form, setForm, isEdit }: {
       <label style={styles.label}>Schema
         <input style={styles.input} value={form.schema} onChange={set('schema')} placeholder="default (optional)" />
       </label>
+    </>
+  )
+}
+
+function ClickHouseCloudFields({ form, setForm, isEdit }: {
+  form: ConnectorForm
+  setForm: React.Dispatch<React.SetStateAction<ConnectorForm>>
+  isEdit?: boolean
+}) {
+  const set = (field: keyof ConnectorForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [field]: e.target.value }))
+  return (
+    <>
+      <label style={styles.label}>Idle timeout (minutes)
+        <input
+          style={styles.input}
+          type="number"
+          min="1"
+          value={form.idle_timeout_minutes}
+          onChange={set('idle_timeout_minutes')}
+          placeholder="15"
+        />
+      </label>
+      <details style={{ gridColumn: '1 / -1', fontSize: 13 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+          ClickHouse Cloud API (optional)
+        </summary>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0', lineHeight: 1.5 }}>
+          Add an API key to show the service's exact state (running, idle, stopped). Aether reads
+          the control plane, which never wakes an idle service. Without a key, idle state is
+          inferred from recorded query activity using the timeout above.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <label style={styles.label}>Organization ID
+            <input style={styles.input} value={form.cloud_org_id} onChange={set('cloud_org_id')} />
+          </label>
+          <label style={styles.label}>Service ID
+            <input style={styles.input} value={form.cloud_service_id} onChange={set('cloud_service_id')} />
+          </label>
+          <label style={styles.label}>Key ID
+            <input style={styles.input} value={form.cloud_key_id} onChange={set('cloud_key_id')} />
+          </label>
+          <label style={styles.label}>
+            Key Secret{isEdit ? ' (leave blank to keep current)' : ''}
+            <input style={styles.input} type="password" value={form.cloud_key_secret} onChange={set('cloud_key_secret')} />
+          </label>
+        </div>
+      </details>
     </>
   )
 }
@@ -475,6 +545,7 @@ export function ConnectorsPage() {
                 </>
               )}
               {form.type === 'databricks' && <DatabricksFields form={form} setForm={setForm} />}
+              {form.type === 'clickhouse' && <ClickHouseCloudFields form={form} setForm={setForm} />}
               <label style={styles.label}>Query Timeout (s)
                 <input style={styles.input} type="text" value={form.timeout_seconds}
                   onChange={(e) => setForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
@@ -552,6 +623,7 @@ export function ConnectorsPage() {
                 </>
               )}
               {editForm.type === 'databricks' && <DatabricksFields form={editForm} setForm={setEditForm} isEdit />}
+              {editForm.type === 'clickhouse' && <ClickHouseCloudFields form={editForm} setForm={setEditForm} isEdit />}
               <label style={styles.label}>Query Timeout (s)
                 <input style={styles.input} type="text" value={editForm.timeout_seconds}
                   onChange={(e) => setEditForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
