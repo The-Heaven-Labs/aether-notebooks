@@ -2943,6 +2943,12 @@ paths:
         name: name
         required: true
         type: string
+      - description: variables, connector_id (viewer's dashboard selector)
+        in: body
+        name: request
+        required: true
+        schema:
+          type: object
       produces:
       - application/json
       responses:
@@ -2958,10 +2964,9 @@ paths:
               type: string
             type: object
         "403":
-          description: Forbidden
+          description: service_access_denied with warehouse_id and services
           schema:
-            additionalProperties:
-              type: string
+            additionalProperties: true
             type: object
       security:
       - BearerAuth: []

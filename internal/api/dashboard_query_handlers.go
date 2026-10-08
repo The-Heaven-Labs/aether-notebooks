@@ -190,9 +190,10 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 // @Produce json
 // @Param id path string true "Dashboard ID"
 // @Param name path string true "Variable name"
+// @Param request body object true "variables, connector_id (viewer's dashboard selector)"
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} map[string]string
-// @Failure 403 {object} map[string]string
+// @Failure 403 {object} map[string]interface{} "service_access_denied with warehouse_id and services"
 // @Security BearerAuth
 // @Router /dashboards/{id}/variables/{name}/options [post]
 func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.Request) {
