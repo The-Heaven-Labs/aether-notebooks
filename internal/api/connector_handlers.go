@@ -172,11 +172,13 @@ func (s *Server) handleGetConnector(w http.ResponseWriter, r *http.Request) {
 	var c models.Connector
 	var encryptedConfig []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist,
+		        last_success_at, last_failure_at, COALESCE(last_error, '')
 		 FROM connectors WHERE id=$1 AND org_id=$2`,
 		id, claims.OrgID,
 	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist)
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist,
+		&c.LastSuccessAt, &c.LastFailureAt, &c.LastError)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -200,6 +202,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT c.id, c.org_id, c.name, c.type, c.config_encrypted, c.max_rows, c.timeout_seconds, c.is_default, c.created_at, c.updated_at, c.folder_id, c.warehouse_id, c.table_allowlist, c.table_denylist,
+		        c.last_success_at, c.last_failure_at, COALESCE(c.last_error, ''),
 		        EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id AND wp.org_id = c.org_id) AS is_provisioner,
 		        CASE WHEN w.provisioner_connector_id = c.id THEN w.allow_provisioner_execution ELSE false END AS allow_provisioner_execution
 		 FROM connectors c
@@ -225,6 +228,7 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		var isProvisioner, allowProvisionerExecution bool
 		if err := rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
 			&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist,
+			&c.LastSuccessAt, &c.LastFailureAt, &c.LastError,
 			&isProvisioner, &allowProvisionerExecution); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
@@ -406,11 +410,13 @@ func (s *Server) handleUpdateConnector(w http.ResponseWriter, r *http.Request) {
 	var c models.Connector
 	var encryptedConfig []byte
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist
+		`SELECT id, org_id, name, type, config_encrypted, max_rows, timeout_seconds, is_default, created_at, updated_at, folder_id, warehouse_id, table_allowlist, table_denylist,
+		        last_success_at, last_failure_at, COALESCE(last_error, '')
 		 FROM connectors WHERE id=$1`,
 		id,
 	).Scan(&c.ID, &c.OrgID, &c.Name, &c.Type, &encryptedConfig,
-		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist)
+		&c.MaxRows, &c.TimeoutSeconds, &c.IsDefault, &c.CreatedAt, &c.UpdatedAt, &c.FolderID, &c.WarehouseID, &c.TableAllowlist, &c.TableDenylist,
+		&c.LastSuccessAt, &c.LastFailureAt, &c.LastError)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
 		return

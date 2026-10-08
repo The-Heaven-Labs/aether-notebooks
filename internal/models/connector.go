@@ -21,6 +21,13 @@ type Connector struct {
 	CreatedAt      time.Time       `json:"created_at"`
 	UpdatedAt      time.Time       `json:"updated_at"`
 	DeletedAt      *time.Time      `json:"deleted_at,omitempty"`
+
+	// Connector health timeline (D6): status is derived by comparing
+	// last_failure_at with last_success_at; last_error carries the most recent
+	// connection-level failure message.
+	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
+	LastFailureAt *time.Time `json:"last_failure_at,omitempty"`
+	LastError     string     `json:"last_error,omitempty"`
 }
 
 type ConnectorType string
