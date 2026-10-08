@@ -190,7 +190,24 @@ export interface Connector {
     client_secret?: string
     catalog?: string
     schema?: string
+    /** Manual idle threshold (minutes) for ClickHouse Cloud inference; absent = 15. */
+    idle_timeout_minutes?: number
+    cloud_org_id?: string
+    cloud_service_id?: string
+    cloud_key_id?: string
+    /** Returned as "***" once stored; never a real secret. */
+    cloud_key_secret?: string
   }
+}
+
+/** GET /api/v1/connectors/{id}/cloud-state response. */
+export interface ConnectorCloudState {
+  configured: boolean
+  state?: string
+  idle_scaling?: boolean
+  idle_timeout_minutes?: number
+  checked_at?: string
+  error?: string
 }
 
 export interface SchemaColumn {
