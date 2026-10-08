@@ -148,11 +148,11 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 	// pending rows are cleaned in the same statement. Data-modifying CTEs keep
 	// the notebook delete and both cleanups atomic.
 	//
-	// Source-order invariant: the pending cleanup is written before the
-	// real-ACL cleanup, mirroring the pending → real order used by
-	// materialization and session deletes. PostgreSQL gives no execution-order
-	// guarantee for data-modifying CTEs (they share one snapshot), so do not
-	// reorder these without checking that nothing relies on the invariant.
+	// The pending-cleanup CTEs are written AFTER the real-ACL CTE so that,
+	// under PostgreSQL's reverse-textual execution order for unreferenced
+	// data-modifying CTEs, they run first — preserving the codebase's
+	// pending → real lock order. Do not reorder without verifying that
+	// invariant.
 	if _, err := s.db.Pool.Exec(ctx, `
 		WITH purged AS (
 			DELETE FROM notebooks
