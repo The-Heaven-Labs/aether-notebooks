@@ -24,7 +24,14 @@ var cloudAPIBaseURL = "https://api.clickhouse.cloud"
 
 // cloudStateHTTPClient bounds every control-plane read. The 5s timeout is far
 // above normal latency but keeps a stuck upstream from holding a request open.
-var cloudStateHTTPClient = &http.Client{Timeout: cloudStateRequestTimeout}
+// Redirects are refused: a control-plane read is a single GET of a fixed host,
+// and following one would add an SSRF-amplification tail.
+var cloudStateHTTPClient = &http.Client{
+	Timeout: cloudStateRequestTimeout,
+	CheckRedirect: func(req *http.Request, via []*http.Request) error {
+		return http.ErrUseLastResponse
+	},
+}
 
 const (
 	// cloudStateRequestTimeout caps one control-plane call.
@@ -244,7 +251,10 @@ func (s *Server) cachedCloudServiceState(ctx context.Context, connID string, cre
 		if result, ok := s.cloudStateCache.get(connID); ok {
 			return result, nil
 		}
-		state, err := fetchCloudServiceState(ctx, creds)
+		// Detach from the leader's request context: a leader disconnect must
+		// not poison followers that are still alive. fetchCloudServiceState
+		// still bounds the call with its own 5s timeout.
+		state, err := fetchCloudServiceState(context.WithoutCancel(ctx), creds)
 		if err != nil {
 			return cloudStateResult{}, err
 		}
