@@ -23,6 +23,7 @@ import {
   connectorIdleTimeoutMinutes,
   formatRelativeAgo,
   inferIdleState,
+  isClickHouseCloudHost,
   parseIdleTimeoutMinutes,
 } from '../utils/cloudState'
 
@@ -291,9 +292,22 @@ function ClickHouseCloudFields({ form, setForm, isEdit }: {
  * otherwise. Control-plane reads never wake the service; the query polls one
  * connector at a time while the page stays open. */
 function ClickHouseCloudStatus({ connector }: { connector: Connector }) {
+  const configuredHint = Boolean(
+    connector.config?.cloud_org_id &&
+    connector.config?.cloud_service_id &&
+    connector.config?.cloud_key_id &&
+    connector.config?.cloud_key_secret,
+  )
+  // Query only when the answer can change what the row renders: configured
+  // connectors (exact state) and Cloud-hosted ones (inference). Self-hosted
+  // rows without credentials render nothing, so they must make no request —
+  // and a transient fetch error there can never paint a misleading chip.
+  const enabled = configuredHint || isClickHouseCloudHost(connector.config?.host)
+
   const { data, isError } = useQuery({
     queryKey: ['connector-cloud-state', connector.id],
     queryFn: () => api.get<ConnectorCloudState>(`/api/v1/connectors/${connector.id}/cloud-state`),
+    enabled,
     staleTime: 30_000,
     refetchInterval: 60_000,
     retry: false,
@@ -305,13 +319,6 @@ function ClickHouseCloudStatus({ connector }: { connector: Connector }) {
     marginTop: 4,
     fontStyle: 'italic',
   }
-
-  const configuredHint = Boolean(
-    connector.config?.cloud_org_id &&
-    connector.config?.cloud_service_id &&
-    connector.config?.cloud_key_id &&
-    connector.config?.cloud_key_secret,
-  )
 
   if (data?.configured && data.error) {
     return (

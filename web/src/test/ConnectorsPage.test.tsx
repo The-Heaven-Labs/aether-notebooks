@@ -599,4 +599,92 @@ describe('ConnectorsPage', () => {
     await screen.findByText('CH Self-hosted')
     expect(screen.queryByText(/Likely idle|Idle state unknown|Active recently/)).toBeNull()
   })
+
+  test('shows neither chip nor inference while a configured Cloud state is pending (CH-CLOUD-8)', async () => {
+    let release: () => void = () => {}
+    const parked = new Promise<void>((resolve) => { release = resolve })
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-pending', name: 'CH Pending', type: 'clickhouse', is_default: false,
+            config: {
+              host: 'abc.clickhouse.cloud',
+              cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+              cloud_key_id: 'key-1', cloud_key_secret: '***',
+            },
+            // Ancient activity: an inference line would say "Likely idle" if the
+            // pending exact state did not suppress it.
+            last_success_at: '2020-01-01T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', async () => {
+        await parked
+        return HttpResponse.json({
+          configured: true, state: 'running', checked_at: new Date().toISOString(),
+        })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('CH Pending')
+    // Give a buggy inference render a beat to appear before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(screen.queryByText(/Likely idle|Idle state unknown|Active recently/)).toBeNull()
+    expect(screen.queryByText('Running')).toBeNull()
+
+    // Releasing the parked response lets the exact chip replace the blank line.
+    release()
+    expect(await screen.findByText('Running')).toBeInTheDocument()
+  })
+
+  test('shows the unavailable chip when the Cloud state request itself fails (CH-CLOUD-9)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-reject', name: 'CH Reject', type: 'clickhouse', is_default: false,
+            config: {
+              host: 'abc.clickhouse.cloud',
+              cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+              cloud_key_id: 'key-1', cloud_key_secret: '***',
+            },
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () =>
+        HttpResponse.json({ error: 'boom' }, { status: 500 }),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    const chip = await screen.findByText('Cloud state unavailable')
+    expect(chip).toHaveAttribute('title', 'Could not load Cloud state from Aether')
+  })
+
+  test('makes no Cloud state request for a self-hosted ClickHouse connector (CH-CLOUD-10)', async () => {
+    const cloudStateSpy = vi.fn()
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-self', name: 'CH Self-hosted', type: 'clickhouse', is_default: false,
+            config: { host: 'ch.internal.example.com' },
+            last_success_at: '2020-01-01T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => {
+        cloudStateSpy()
+        return HttpResponse.json({ configured: false })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('CH Self-hosted')
+    // Give a buggy enabled query a beat to fire before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(cloudStateSpy).not.toHaveBeenCalled()
+  })
 })
