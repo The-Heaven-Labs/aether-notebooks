@@ -687,4 +687,30 @@ describe('ConnectorsPage', () => {
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(cloudStateSpy).not.toHaveBeenCalled()
   })
+
+  test('makes no Cloud state request for an uncredentialed ClickHouse Cloud host (CH-CLOUD-11)', async () => {
+    const cloudStateSpy = vi.fn()
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-infer-noreq', name: 'CH Infer No Request', type: 'clickhouse', is_default: false,
+            config: { host: 'abc.clickhouse.cloud', idle_timeout_minutes: 15 },
+            last_success_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => {
+        cloudStateSpy()
+        return HttpResponse.json({ configured: false })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    // Inference is computed locally, so the line renders without a request.
+    expect(await screen.findByText(/Likely idle — last activity .* ago \(idle timeout 15m\)/)).toBeInTheDocument()
+    // Give a buggy enabled query a beat to fire before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(cloudStateSpy).not.toHaveBeenCalled()
+  })
 })

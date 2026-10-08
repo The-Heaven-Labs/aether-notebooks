@@ -23,7 +23,6 @@ import {
   connectorIdleTimeoutMinutes,
   formatRelativeAgo,
   inferIdleState,
-  isClickHouseCloudHost,
   parseIdleTimeoutMinutes,
 } from '../utils/cloudState'
 
@@ -298,11 +297,12 @@ function ClickHouseCloudStatus({ connector }: { connector: Connector }) {
     connector.config?.cloud_key_id &&
     connector.config?.cloud_key_secret,
   )
-  // Query only when the answer can change what the row renders: configured
-  // connectors (exact state) and Cloud-hosted ones (inference). Self-hosted
-  // rows without credentials render nothing, so they must make no request —
-  // and a transient fetch error there can never paint a misleading chip.
-  const enabled = configuredHint || isClickHouseCloudHost(connector.config?.host)
+  // Query only when the answer can change what the row renders: the exact
+  // state requires credentials, and inference is computed locally from the
+  // connector list data. Rows without credentials must make no request — the
+  // server would deterministically answer {"configured": false} — and a
+  // transient fetch error can never paint a misleading chip on them.
+  const enabled = configuredHint
 
   const { data, isError } = useQuery({
     queryKey: ['connector-cloud-state', connector.id],
