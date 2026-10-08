@@ -231,8 +231,6 @@ func TestConnectorCloudStateDedupesInFlightReads(t *testing.T) {
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	// Unblock before ts.Close so a failing Eventually cannot hang cleanup.
-	t.Cleanup(unblock)
 
 	var hits atomic.Int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -244,6 +242,9 @@ func TestConnectorCloudStateDedupesInFlightReads(t *testing.T) {
 		})
 	}))
 	t.Cleanup(ts.Close)
+	// Registered after ts.Close: t.Cleanup runs LIFO, so this unblocks the
+	// parked handler before Close waits on it.
+	t.Cleanup(unblock)
 	setCloudAPIBaseURL(t, ts.URL)
 
 	recs := make([]*httptest.ResponseRecorder, 2)
@@ -413,7 +414,6 @@ func TestConnectorCloudStateFollowerNotPoisonedByLeaderCancel(t *testing.T) {
 	release := make(chan struct{})
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
-	t.Cleanup(unblock)
 
 	var hits atomic.Int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -425,6 +425,9 @@ func TestConnectorCloudStateFollowerNotPoisonedByLeaderCancel(t *testing.T) {
 		})
 	}))
 	t.Cleanup(ts.Close)
+	// Registered after ts.Close: t.Cleanup runs LIFO, so this unblocks the
+	// parked handler before Close waits on it.
+	t.Cleanup(unblock)
 	setCloudAPIBaseURL(t, ts.URL)
 
 	creds := cloudCredentialsFromConfig([]byte(cloudStateCredsConfig))
