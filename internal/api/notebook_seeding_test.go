@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,6 +58,21 @@ func createNotebookForFixtureUser(t *testing.T, fx *executionTargetFixture, body
 	return created.ConnectorID
 }
 
+// addSecondWarehouse inserts a second ready warehouse in the fixture org with
+// one service connector, for multi-warehouse preference cases. The fixture's
+// org cleanup cascades both rows, so no extra cleanup is registered.
+func addSecondWarehouse(t *testing.T, fx *executionTargetFixture) (uuid.UUID, uuid.UUID) {
+	t.Helper()
+	secondWH := uuid.New()
+	_, err := fx.s.db.Pool.Exec(context.Background(), `
+		INSERT INTO warehouses (id, org_id, name, sync_status)
+		VALUES ($1, $2, $3, 'ready')`,
+		secondWH.String(), fx.orgID.String(), "Second Warehouse")
+	require.NoError(t, err)
+	serviceID := insertClickHouseService(t, fx.s, fx.orgID, fx.provisionerID, "Second Warehouse Service", &secondWH)
+	return secondWH, serviceID
+}
+
 // TestCreateNotebookSeedsConnectorFromSolePreference pins the seeding rule: a
 // creator with exactly one live preference naming a service they may still use
 // gets that service on a new notebook.
@@ -69,16 +85,79 @@ func TestCreateNotebookSeedsConnectorFromSolePreference(t *testing.T) {
 	require.Equal(t, fx.connB.String(), createNotebookForFixtureUser(t, fx, `{"title":"Sole preference"}`))
 }
 
-// TestCreateNotebookAmbiguousPreferenceLeavesConnectorEmpty pins that no
-// preference leaves the notebook connector unset (the fixture org has no
-// org-default connector).
-func TestCreateNotebookAmbiguousPreferenceLeavesConnectorEmpty(t *testing.T) {
+// TestCreateNotebookNoPreferenceLeavesConnectorEmpty pins that no preference
+// leaves the notebook connector unset (the fixture org has no org-default
+// connector).
+func TestCreateNotebookNoPreferenceLeavesConnectorEmpty(t *testing.T) {
 	fx := setupExecutionTargetFixture(t)
 	fx.grantUse(t, fx.connA)
 	fx.grantUse(t, fx.connB)
 	// two usable services, no preference recorded
 
-	require.Empty(t, createNotebookForFixtureUser(t, fx, `{"title":"Ambiguous preference"}`))
+	require.Empty(t, createNotebookForFixtureUser(t, fx, `{"title":"No preference"}`))
+}
+
+// TestCreateNotebookSeveralPreferencesLeaveConnectorEmpty pins the structural
+// "exactly one" rule: live preferences in two warehouses yield two candidates
+// and no seed, even though both name services the creator may use.
+func TestCreateNotebookSeveralPreferencesLeaveConnectorEmpty(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	secondWH, secondConn := addSecondWarehouse(t, fx)
+	fx.grantUse(t, fx.connB)
+	fx.grantUse(t, secondConn)
+	fx.prefer(t, fx.connB)
+	preferWarehouseService(t, fx.s, fx.userID, secondWH, secondConn)
+
+	require.Empty(t, createNotebookForFixtureUser(t, fx, `{"title":"Several preferences"}`))
+}
+
+// TestCreateNotebookProvisionerPreferenceDoesNotSeed pins that a stale
+// preference naming the warehouse provisioner is excluded while the admin
+// override is off, exactly as execution fails closed; with the override on,
+// the provisioner is a selectable service and seeds like any other.
+func TestCreateNotebookProvisionerPreferenceDoesNotSeed(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.provisionerID)
+	fx.prefer(t, fx.provisionerID)
+
+	require.Empty(t, createNotebookForFixtureUser(t, fx, `{"title":"Provisioner preference"}`))
+
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE warehouses SET allow_provisioner_execution = true WHERE id = $1`,
+		fx.warehouseID.String())
+	require.NoError(t, err)
+	require.Equal(t, fx.provisionerID.String(),
+		createNotebookForFixtureUser(t, fx, `{"title":"Provisioner override"}`))
+}
+
+// TestCreateNotebookPreferenceBeatsOrgDefault pins that a resolvable
+// preference outranks the org-default connector.
+func TestCreateNotebookPreferenceBeatsOrgDefault(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connA)
+	fx.grantUse(t, fx.connB)
+	fx.prefer(t, fx.connB)
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET is_default = true WHERE id = $1`, fx.connA.String())
+	require.NoError(t, err)
+
+	require.Equal(t, fx.connB.String(), createNotebookForFixtureUser(t, fx, `{"title":"Preference beats org default"}`))
+}
+
+// TestCreateNotebookMovedConnectorDoesNotSeed pins that a preference whose
+// connector was moved to another warehouse no longer seeds.
+func TestCreateNotebookMovedConnectorDoesNotSeed(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	secondWH, _ := addSecondWarehouse(t, fx)
+	fx.grantUse(t, fx.connB)
+	fx.prefer(t, fx.connB)
+
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET warehouse_id = $1 WHERE id = $2`,
+		secondWH.String(), fx.connB.String())
+	require.NoError(t, err)
+
+	require.Empty(t, createNotebookForFixtureUser(t, fx, `{"title":"Moved connector"}`))
 }
 
 // TestCreateNotebookExplicitConnectorBeatsPreference pins that a connector_id

@@ -117,11 +117,15 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 			slog.Warn("notebook connector preference seeding skipped",
 				"user_id", claims.UserID, "error", err)
 		} else if seedID != "" {
-			_, _ = s.db.Pool.Exec(ctx,
+			if _, err := s.db.Pool.Exec(ctx,
 				`UPDATE notebooks SET connector_id=$1 WHERE id=$2`,
 				seedID, nb.ID,
-			)
-			nb.ConnectorID = seedID
+			); err != nil {
+				slog.Warn("notebook connector preference seed not persisted",
+					"notebook_id", nb.ID, "connector_id", seedID, "error", err)
+			} else {
+				nb.ConnectorID = seedID
+			}
 		}
 	}
 
@@ -132,11 +136,15 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 			claims.OrgID,
 		).Scan(&defaultID)
 		if err == nil {
-			_, _ = s.db.Pool.Exec(ctx,
+			if _, err := s.db.Pool.Exec(ctx,
 				`UPDATE notebooks SET connector_id=$1 WHERE id=$2`,
 				defaultID, nb.ID,
-			)
-			nb.ConnectorID = defaultID
+			); err != nil {
+				slog.Warn("notebook org default connector not persisted",
+					"notebook_id", nb.ID, "connector_id", defaultID, "error", err)
+			} else {
+				nb.ConnectorID = defaultID
+			}
 		}
 	}
 
@@ -212,8 +220,10 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 // The preference table is keyed by (user_id, warehouse_id), so a creator with
 // preferences in two warehouses yields two candidates and no seed; a stale
 // preference (revoked access, soft-deleted or moved service, not-ready
-// warehouse) is filtered out rather than seeding a connector the creator
-// could not execute on.
+// warehouse, blocked provisioner) is filtered out rather than seeding a
+// connector the creator could not execute on. The provisioner guard mirrors
+// execution: an org-wide provisioner is excluded unless its warehouse allows
+// provisioner execution and warehouse management is enabled.
 func (s *Server) seedConnectorFromSolePreference(ctx context.Context, userID, orgID, role string) (string, error) {
 	userUUID, err := uuid.Parse(userID)
 	if err != nil {
@@ -236,8 +246,12 @@ func (s *Server) seedConnectorFromSolePreference(ctx context.Context, userID, or
 		  AND c.org_id = $2
 		  AND c.deleted_at IS NULL
 		  AND c.type = 'clickhouse'
+		  AND (
+		    NOT EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id AND wp.org_id = c.org_id)
+		    OR (w.allow_provisioner_execution AND $3)
+		  )
 		ORDER BY p.warehouse_id`,
-		userUUID.String(), orgUUID.String())
+		userUUID.String(), orgUUID.String(), s.warehouseManagementEnabled())
 	if err != nil {
 		return "", fmt.Errorf("load warehouse service preferences: %w", err)
 	}
