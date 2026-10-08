@@ -175,12 +175,25 @@ func (s *Server) lookupShareSubjectIDs(ctx context.Context, q shareQueryer, quer
 	return found, rows.Err()
 }
 
-// insertSessionACLEntries inserts one agent_session ACL row per normalized share
-// through tx. ON CONFLICT DO NOTHING preserves any pre-existing row — in
-// particular the owner's full-access entry, so a share naming the owner can
-// never downgrade it.
-func insertSessionACLEntries(ctx context.Context, tx pgx.Tx, orgID, sessionID string, shares []aclEntryInput) error {
+// insertSessionACLEntries inserts one agent_session ACL row per normalized
+// share through tx. pending_user shares are staged in pending_acl_entries
+// instead, keyed by lowercased email, and materialize as view-only rows when
+// the person first joins. ON CONFLICT DO NOTHING preserves any pre-existing
+// real row — in particular the owner's full-access entry, so a share naming
+// the owner can never downgrade it.
+func insertSessionACLEntries(ctx context.Context, tx pgx.Tx, orgID, sessionID, createdBy string, shares []aclEntryInput) error {
 	for _, share := range shares {
+		if share.SubjectType == "pending_user" {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO pending_acl_entries (org_id, resource_type, resource_id, email, actions, created_by)
+				VALUES ($1, 'agent_session', $2::uuid, $3, $4, $5)
+				ON CONFLICT (resource_type, resource_id, lower(email)) DO UPDATE
+				SET actions = (SELECT ARRAY(SELECT DISTINCT unnest(pending_acl_entries.actions || EXCLUDED.actions)))
+			`, orgID, sessionID, share.SubjectID, share.Actions, createdBy); err != nil {
+				return fmt.Errorf("insert pending session share: %w", err)
+			}
+			continue
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 			VALUES ($1, 'agent_session', $2::uuid, $3, $4, $5)

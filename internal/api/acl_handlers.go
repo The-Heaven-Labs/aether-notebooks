@@ -514,13 +514,14 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 // handlePutSessionACL implements ACL writes for agent_session resources. Only
 // the owner or an org admin in admin mode may write; org admins without admin
 // mode are ordinary members here. The session row is locked before any
-// acl_entries work (agent_sessions -> acl_entries, matching create/delete), so
-// concurrent PUTs serialize and a session delete cannot interleave to leave
-// orphan ACL rows. The owner and org used to validate and mutate come from that
-// locked row, and a missing session is a 404. Entries are validated as same-org
-// read-only shares and replace the previous non-owner entries; the owner's
-// full-access entry is upserted last, so a replace-style PUT can never lock the
-// owner out.
+// acl_entries or pending_acl_entries work (agent_sessions -> pending -> real,
+// matching create/delete and materialization), so concurrent PUTs serialize
+// and a session delete cannot interleave to leave orphan ACL rows. The owner
+// and org used to validate and mutate come from that locked row, and a missing
+// session is a 404. Entries are validated as same-org read-only shares —
+// pending_user emails included — and replace the previous non-owner entries in
+// both tables; the owner's full-access entry is upserted last, so a
+// replace-style PUT can never lock the owner out.
 func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, sessionID string) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -608,7 +609,29 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 	}
 	oldRows.Close()
 
+	// Staged pending shares are part of the replace set too; they are always
+	// non-owner rows.
+	pendingOld, err := queryPendingACLEntries(ctx, tx, sessionOrgID, "agent_session", sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to query existing ACL")
+		return
+	}
+	oldEntries = append(oldEntries, pendingOld...)
+
 	// Replace only the non-owner entries; the owner row is untouched here.
+	//
+	// Delete staged rows first. Materialization (applyPendingACL's single
+	// statement) locks pending_acl_entries before acl_entries, and the session
+	// row is already locked above, so this path takes locks in the same order
+	// (agent_sessions -> pending -> real) and cannot deadlock with a
+	// concurrent join materializing the same email.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM pending_acl_entries
+		WHERE resource_type = 'agent_session' AND resource_id = $1::uuid AND org_id = $2
+	`, sessionID, sessionOrgID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear pending ACL")
+		return
+	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM acl_entries
 		WHERE resource_type = 'agent_session' AND resource_id = $1::uuid AND org_id = $2
@@ -618,7 +641,7 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
-	if err := insertSessionACLEntries(ctx, tx, sessionOrgID, sessionID, shares); err != nil {
+	if err := insertSessionACLEntries(ctx, tx, sessionOrgID, sessionID, claims.UserID, shares); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to insert ACL entry")
 		return
 	}
@@ -637,11 +660,15 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 
 	newEntries := make([]models.ACLEntry, 0, len(shares))
 	for _, share := range shares {
-		newEntries = append(newEntries, models.ACLEntry{
+		entry := models.ACLEntry{
 			SubjectType: share.SubjectType,
 			SubjectID:   share.SubjectID,
 			Actions:     share.Actions,
-		})
+		}
+		if share.SubjectType == "pending_user" {
+			entry.Pending = true
+		}
+		newEntries = append(newEntries, entry)
 	}
 	// Attribute the audit to the session's org: that is where the ACL rows
 	// live even when the owner writes with a token for another org.
@@ -663,6 +690,12 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 		writeError(w, http.StatusInternalServerError, "failed to load ACL")
 		return
 	}
+	pendingEntries, err := queryPendingACLEntries(ctx, tx, sessionOrgID, "agent_session", sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load ACL")
+		return
+	}
+	entries = append(entries, pendingEntries...)
 
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "commit failed")
