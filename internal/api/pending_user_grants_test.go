@@ -194,3 +194,97 @@ func TestApplyPendingAccessConstrainsSessionRowsToView(t *testing.T) {
 
 	require.Equal(t, []string{"view"}, aclActionsFor(t, s, "agent_session", sessionID, userID))
 }
+
+// TestApplyPendingAccessRespectsCallerTransactionRollback pins the
+// caller-owns-the-transaction contract: ApplyPendingAccess must never commit
+// on its own, so rolling back the caller's transaction undoes the whole
+// materialization and leaves the staged rows in place.
+func TestApplyPendingAccessRespectsCallerTransactionRollback(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+	orgID := pendingTestOrg(t, s)
+	userID := pendingTestUser(t, s, fmt.Sprintf("pua-rollback-%d@example.com", time.Now().UnixNano()))
+	nbID := uuid.NewString()
+
+	stagePendingACL(t, s, orgID, "notebook", nbID, "rollback@example.com", []string{"view"})
+
+	tx, err := s.DB().Pool.Begin(ctx)
+	require.NoError(t, err)
+	require.NoError(t, api.ApplyPendingAccess(ctx, tx, orgID, userID, "rollback@example.com"))
+	require.NoError(t, tx.Rollback(ctx))
+
+	var count int
+	require.NoError(t, s.DB().Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM acl_entries
+		WHERE resource_id = $1::uuid AND subject_type = 'user' AND subject_id = $2`,
+		nbID, userID).Scan(&count))
+	require.Zero(t, count, "a rolled-back materialization must not leave acl_entries rows")
+
+	require.Equal(t, 1, countPendingACLRows(t, s, orgID, "rollback@example.com"),
+		"a rolled-back materialization must leave the staged row in place")
+}
+
+// TestApplyPendingAccessSessionUnionConstrainedToView exercises the defensive
+// session constraint through the union path: a staged view must never
+// downgrade an owner entry, and staged extra actions must never widen an
+// existing view-only entry.
+func TestApplyPendingAccessSessionUnionConstrainedToView(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+	orgID := pendingTestOrg(t, s)
+	userID := pendingTestUser(t, s, fmt.Sprintf("pua-session-union-%d@example.com", time.Now().UnixNano()))
+
+	// Matches sessionOwnerActions in session_sharing.go.
+	ownerActions := []string{"view", "edit", "share", "delete", "admin"}
+	ownerSessionID := uuid.NewString()
+	_, err := s.DB().Pool.Exec(ctx, `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'agent_session', $2, 'user', $3, $4)`, orgID, ownerSessionID, userID, ownerActions)
+	require.NoError(t, err)
+	stagePendingACL(t, s, orgID, "agent_session", ownerSessionID, "owner@example.com", []string{"view"})
+
+	viewerSessionID := uuid.NewString()
+	_, err = s.DB().Pool.Exec(ctx, `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'agent_session', $2, 'user', $3, ARRAY['view'])`, orgID, viewerSessionID, userID)
+	require.NoError(t, err)
+	stagePendingACL(t, s, orgID, "agent_session", viewerSessionID, "viewer@example.com", []string{"view", "edit", "delete"})
+
+	applyPendingAccessInTx(t, s, orgID, userID, "owner@example.com")
+	applyPendingAccessInTx(t, s, orgID, userID, "viewer@example.com")
+
+	require.ElementsMatch(t, ownerActions, aclActionsFor(t, s, "agent_session", ownerSessionID, userID),
+		"a staged view must not downgrade the owner entry")
+	require.Equal(t, []string{"view"}, aclActionsFor(t, s, "agent_session", viewerSessionID, userID),
+		"staged extra actions must not widen an existing view-only session entry")
+}
+
+// TestApplyPendingAccessWarehouseOrgIsolation is the warehouse counterpart of
+// TestApplyPendingAccessOrgIsolation: org A's join must neither materialize
+// nor consume org B's staged grant for the same email.
+func TestApplyPendingAccessWarehouseOrgIsolation(t *testing.T) {
+	s := setupTestServer(t)
+	ctx := context.Background()
+	orgA := pendingTestOrg(t, s)
+	orgB := pendingTestOrg(t, s)
+	userA := pendingTestUser(t, s, fmt.Sprintf("pua-wh-iso-%d@example.com", time.Now().UnixNano()))
+	whB := uuid.NewString()
+
+	_, err := s.DB().Pool.Exec(ctx,
+		`INSERT INTO warehouses (id, org_id, name) VALUES ($1, $2, 'Pending WH B')`, whB, orgB)
+	require.NoError(t, err)
+	stagePendingWarehouseGrant(t, s, orgB, whB, "shared-wh@example.com", "analytics", "events")
+
+	applyPendingAccessInTx(t, s, orgA, userA, "shared-wh@example.com")
+
+	var grants int
+	require.NoError(t, s.DB().Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM warehouse_table_grants WHERE warehouse_id = $1 AND subject_id = $2`,
+		whB, userA).Scan(&grants))
+	require.Zero(t, grants, "org A's join must not materialize org B's staged warehouse grant")
+
+	var pending int
+	require.NoError(t, s.DB().Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pending_warehouse_table_grants WHERE warehouse_id = $1`, whB).Scan(&pending))
+	require.Equal(t, 1, pending, "org B's staged grant must remain")
+}

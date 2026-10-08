@@ -31,52 +31,62 @@ func normalizePendingEmail(raw string) (string, bool) {
 // user entries for userID and consumes them. Staged actions are unioned into
 // any existing direct entry (never a downgrade); agent_session rows are
 // defensively re-constrained to view-only even if a staged row was written
-// with extra actions, matching the read-only session-share rule. It returns
-// the number of real ACL rows inserted or updated.
+// with extra actions, matching the read-only session-share rule.
+//
+// Materialization and consumption are one data-modifying CTE so both halves
+// share a snapshot: a grant staged concurrently after this statement's
+// snapshot stays staged instead of being consumed unmaterialized (the DELETE
+// of a two-statement version would see it under READ COMMITTED).
+//
+// It returns the number of consumed pending rows: each one inserts or updates
+// exactly one real ACL row, and DO UPDATE affects every conflict.
 func applyPendingACL(ctx context.Context, tx pgx.Tx, orgID, userID, email string) (int64, error) {
 	tag, err := tx.Exec(ctx, `
+		WITH consumed AS (
+			DELETE FROM pending_acl_entries
+			WHERE org_id = $1 AND lower(email) = lower($3)
+			RETURNING org_id, resource_type, resource_id, actions
+		)
 		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		SELECT pae.org_id, pae.resource_type, pae.resource_id, 'user', $2,
-		       CASE WHEN pae.resource_type = 'agent_session'
-		            THEN ARRAY(SELECT DISTINCT a FROM unnest(pae.actions) AS a WHERE a = 'view')
-		            ELSE pae.actions END
-		FROM pending_acl_entries pae
-		WHERE pae.org_id = $1 AND lower(pae.email) = lower($3)
+		SELECT org_id, resource_type, resource_id, 'user', $2,
+		       CASE WHEN resource_type = 'agent_session'
+		            THEN ARRAY(SELECT DISTINCT a FROM unnest(actions) AS a WHERE a = 'view' ORDER BY 1)
+		            ELSE actions END
+		FROM consumed
 		ON CONFLICT (resource_type, resource_id, subject_type, subject_id)
 		DO UPDATE SET actions = (
-			SELECT ARRAY(SELECT DISTINCT unnest(acl_entries.actions || EXCLUDED.actions))
+			SELECT ARRAY(SELECT DISTINCT unnest(acl_entries.actions || EXCLUDED.actions) ORDER BY 1)
 		)`, orgID, userID, email)
 	if err != nil {
 		return 0, fmt.Errorf("materialize pending ACL entries: %w", err)
-	}
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM pending_acl_entries WHERE org_id = $1 AND lower(email) = lower($2)`,
-		orgID, email); err != nil {
-		return 0, fmt.Errorf("consume pending ACL entries: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }
 
 // applyPendingWarehouseGrants materializes pending warehouse table grants
 // staged for email as real user grants and consumes them. An existing grant
-// for the same (warehouse, user, database, table) dedupes with DO NOTHING. It
-// returns the number of real grant rows inserted.
+// for the same (warehouse, user, database, table) dedupes with DO NOTHING.
+//
+// Like applyPendingACL, the delete and insert share one statement snapshot so
+// a concurrently staged grant cannot be consumed unmaterialized.
+//
+// It returns the number of real grant rows inserted: rows deduped by DO
+// NOTHING are consumed but not counted.
 func applyPendingWarehouseGrants(ctx context.Context, tx pgx.Tx, orgID, userID, email string) (int64, error) {
 	tag, err := tx.Exec(ctx, `
+		WITH consumed AS (
+			DELETE FROM pending_warehouse_table_grants
+			WHERE org_id = $1 AND lower(email) = lower($3)
+			RETURNING org_id, warehouse_id, database_name, table_name, created_by
+		)
 		INSERT INTO warehouse_table_grants
 			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name, created_by)
-		SELECT pgt.org_id, pgt.warehouse_id, 'user', $2, pgt.database_name, pgt.table_name, pgt.created_by
-		FROM pending_warehouse_table_grants pgt
-		WHERE pgt.org_id = $1 AND lower(pgt.email) = lower($3)
+		SELECT org_id, warehouse_id, 'user', $2, database_name, table_name, created_by
+		FROM consumed
 		ON CONFLICT (warehouse_id, subject_type, subject_id, database_name, table_name) DO NOTHING`,
 		orgID, userID, email)
 	if err != nil {
 		return 0, fmt.Errorf("materialize pending warehouse grants: %w", err)
-	}
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM pending_warehouse_table_grants WHERE org_id = $1 AND lower(email) = lower($2)`,
-		orgID, email); err != nil {
-		return 0, fmt.Errorf("consume pending warehouse grants: %w", err)
 	}
 	return tag.RowsAffected(), nil
 }
