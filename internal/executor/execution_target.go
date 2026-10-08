@@ -3,6 +3,7 @@ package executor
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -67,6 +68,28 @@ func (e *ServiceChoiceError) Error() string {
 // Unwrap makes errors.Is(err, ErrServiceChoiceRequired) succeed.
 func (e *ServiceChoiceError) Unwrap() error { return ErrServiceChoiceRequired }
 
+// ServiceAccessDeniedError reports that the requested connector cannot serve
+// the acting user: they hold no `use` grant on it. It carries the services
+// the user MAY use in the same warehouse so callers can render an actionable
+// message instead of a bare denial.
+type ServiceAccessDeniedError struct {
+	WarehouseID uuid.UUID
+	Allowed     []ServiceChoice
+}
+
+func (e *ServiceAccessDeniedError) Error() string {
+	names := make([]string, 0, len(e.Allowed))
+	for _, svc := range e.Allowed {
+		names = append(names, svc.Name)
+	}
+	return fmt.Sprintf("no access to the requested service; permitted services in warehouse %s: %s",
+		e.WarehouseID, strings.Join(names, ", "))
+}
+
+// Unwrap makes errors.Is(err, ErrServiceAccessDenied) true for every caller
+// that only needs the sentinel.
+func (e *ServiceAccessDeniedError) Unwrap() error { return ErrServiceAccessDenied }
+
 // ExecutionTarget is a fully resolved per-user ClickHouse execution endpoint:
 // the warehouse that governs access, the service connector to dial, and the
 // derived per-user identity. It is self-contained so callers can open a pooled
@@ -110,10 +133,12 @@ func (t *ExecutionTarget) String() string {
 }
 
 // Compile-time guards: callers rely on Error for messages, Unwrap for
-// errors.Is(err, ErrServiceChoiceRequired) routing, and String for redacted
-// rendering.
+// errors.Is routing (ErrServiceChoiceRequired, ErrServiceAccessDenied), and
+// String for redacted rendering.
 var (
 	_ error                       = (*ServiceChoiceError)(nil)
 	_ interface{ Unwrap() error } = (*ServiceChoiceError)(nil)
+	_ error                       = (*ServiceAccessDeniedError)(nil)
+	_ interface{ Unwrap() error } = (*ServiceAccessDeniedError)(nil)
 	_ fmt.Stringer                = (*ExecutionTarget)(nil)
 )
