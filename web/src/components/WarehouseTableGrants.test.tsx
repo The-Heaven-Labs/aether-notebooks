@@ -472,7 +472,7 @@ describe('pending grants', () => {
     fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
     await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
     fireEvent.click(screen.getByLabelText('users'))
-    fireEvent.click(screen.getByText('Add grant'))
+    fireEvent.click(screen.getByText('Add grant for future@example.com'))
 
     await waitFor(() =>
       expect(posted).toEqual({
@@ -498,5 +498,158 @@ describe('pending grants', () => {
     expect(screen.getAllByText('Pending — awaiting first login').length).toBeGreaterThan(0)
     fireEvent.click(screen.getByLabelText('Remove grant analytics.sessions'))
     await waitFor(() => expect(deleted).toBe('gr-pending'))
+  })
+
+  test('a valid pending email overrides the selected subject and names the recipient', async () => {
+    let posted: Record<string, unknown> | null = null
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ ...PENDING_GRANT, table: 'users' }, { status: 201 })
+      }),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-1' } })
+    fireEvent.change(screen.getByLabelText('Pending email'), { target: { value: 'Future@Example.com' } })
+
+    const select = screen.getByLabelText('Subject')
+    expect(select).toBeDisabled()
+    expect(select).toHaveAttribute('title', 'Granting to future@example.com')
+    expect(screen.getByText('Granting to future@example.com')).toBeInTheDocument()
+
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('users'))
+    fireEvent.click(screen.getByText('Add grant for future@example.com'))
+
+    await waitFor(() =>
+      expect(posted).toEqual({
+        subject_type: 'pending_user',
+        subject_id: 'future@example.com',
+        database: 'analytics',
+        table: 'users',
+      }),
+    )
+  })
+
+  test('clears checked tables when switching from a subject to a pending email', async () => {
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-2' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('users'))
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Pending email'), { target: { value: 'future@example.com' } })
+    expect(screen.getByText('0 selected')).toBeInTheDocument()
+  })
+
+  test('disables add and warns when the pending email is invalid', async () => {
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'group:g-2' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('users'))
+
+    fireEvent.change(screen.getByLabelText('Pending email'), { target: { value: 'not-an-email' } })
+    expect(screen.getByText('Not a valid email')).toBeInTheDocument()
+    expect(screen.getByText('Add grant')).toBeDisabled()
+  })
+
+  test('clears the pending email and checked tables after a successful add', async () => {
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', () =>
+        HttpResponse.json({ ...PENDING_GRANT, table: 'users' }, { status: 201 }),
+      ),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Pending email'), { target: { value: 'future@example.com' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('users'))
+    expect(screen.getByText('1 selected')).toBeInTheDocument()
+    fireEvent.click(screen.getByText('Add grant for future@example.com'))
+
+    await waitFor(() => expect(screen.getByLabelText('Pending email')).toHaveValue(''))
+    expect(screen.getByText('0 selected')).toBeInTheDocument()
+    expect(screen.getByLabelText('Subject')).not.toBeDisabled()
+  })
+
+  test('keeps the pending email when the add fails', async () => {
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', () =>
+        HttpResponse.json({ error: 'bad table name' }, { status: 400 }),
+      ),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Pending email'), { target: { value: 'future@example.com' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('users'))
+    fireEvent.click(screen.getByText('Add grant for future@example.com'))
+
+    expect(await screen.findByText(/1 of 1 grants failed/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Pending email')).toHaveValue('future@example.com')
+  })
+
+  test('a pending grant for one email does not mark tables granted for a real user', async () => {
+    server.use(
+      http.get('/api/v1/warehouses/wh-1/grants', () =>
+        HttpResponse.json([{ ...PENDING_GRANT, table: 'users' }]),
+      ),
+    )
+    renderGrants()
+    await screen.findByText('future@example.com')
+
+    fireEvent.change(screen.getByLabelText('Subject'), { target: { value: 'user:user-2' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+
+    expect(screen.getByLabelText('users')).not.toBeDisabled()
+    expect(screen.getByLabelText('users')).not.toBeChecked()
+  })
+
+  test('keys the service warning by the converted user grant for a member email', async () => {
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(
+          {
+            id: 'gr-converted', org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: 'user', subject_id: 'user-2', subject_name: 'Bob Editor',
+            database: body.database, table: body.table, created_by: 'user-1',
+            created_at: '2026-01-01T00:00:00Z', warning: 'no_service_access',
+          },
+          { status: 201 },
+        )
+      }),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Pending email'), { target: { value: 'bob@test.com' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('users'))
+    fireEvent.click(screen.getByText('Add grant for bob@test.com'))
+
+    expect(await screen.findByText(/No service access: Bob Editor/)).toBeInTheDocument()
   })
 })

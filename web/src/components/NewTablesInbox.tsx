@@ -123,7 +123,9 @@ export function NewTablesInbox({ warehouseId }: Props) {
       const key = tableKey(table)
       const email = pendingEmails[key] ?? ''
       // A valid email takes precedence over the subject select: it stages the
-      // grant for someone who has no account yet.
+      // grant for someone who has no account yet. A non-empty invalid email is
+      // an explicit error rather than a silent fallback to the subject.
+      if (email.trim() !== '' && !looksLikeEmail(email)) throw new Error('Not a valid email')
       const parsed = looksLikeEmail(email)
         ? { subjectType: 'pending_user' as const, subjectId: normalizeEmail(email) }
         : parseSubjectKey(selection)
@@ -222,6 +224,7 @@ export function NewTablesInbox({ warehouseId }: Props) {
                 const selection = selections[key] ?? ''
                 const pendingEmail = pendingEmails[key] ?? ''
                 const pendingEmailValid = looksLikeEmail(pendingEmail)
+                const pendingEmailInvalid = pendingEmail.trim() !== '' && !pendingEmailValid
                 const pending = pendingKey === key
                 const granted = realGrantedTables.has(key)
                 const pendingStaged = pendingGrantedTables.has(key)
@@ -242,6 +245,12 @@ export function NewTablesInbox({ warehouseId }: Props) {
                             aria-label={`Subject for ${key}`}
                             style={styles.input}
                             value={selection}
+                            disabled={pendingEmailValid}
+                            title={
+                              pendingEmailValid
+                                ? `Granting to ${normalizeEmail(pendingEmail)}`
+                                : undefined
+                            }
                             onChange={(e) =>
                               setSelections((prev) => ({ ...prev, [key]: e.target.value }))
                             }
@@ -276,8 +285,11 @@ export function NewTablesInbox({ warehouseId }: Props) {
                               setPendingEmails((prev) => ({ ...prev, [key]: e.target.value }))
                             }
                           />
+                          {pendingEmailInvalid && (
+                            <span style={styles.emailError}>Not a valid email</span>
+                          )}
                           {pendingStaged && (
-                            <span style={styles.pendingBadge}>pending — awaiting first login</span>
+                            <span style={styles.pendingBadge}>Pending — awaiting first login</span>
                           )}
                         </>
                       )}
@@ -286,13 +298,28 @@ export function NewTablesInbox({ warehouseId }: Props) {
                       {!granted && (
                         <button
                           type="button"
-                          aria-label={`Add grant for ${key}`}
+                          aria-label={
+                            pendingEmailValid
+                              ? `Add grant for ${normalizeEmail(pendingEmail)}`
+                              : `Add grant for ${key}`
+                          }
+                          title={
+                            pendingEmailValid
+                              ? `Granting to ${normalizeEmail(pendingEmail)}`
+                              : undefined
+                          }
                           style={{
                             ...styles.addBtn,
-                            opacity: (selection || pendingEmailValid) && !pending ? 1 : 0.5,
-                            cursor: (selection || pendingEmailValid) && !pending ? 'pointer' : 'not-allowed',
+                            opacity:
+                              !pendingEmailInvalid && (selection || pendingEmailValid) && !pending
+                                ? 1
+                                : 0.5,
+                            cursor:
+                              !pendingEmailInvalid && (selection || pendingEmailValid) && !pending
+                                ? 'pointer'
+                                : 'not-allowed',
                           }}
-                          disabled={(!selection && !pendingEmailValid) || pending}
+                          disabled={pendingEmailInvalid || (!selection && !pendingEmailValid) || pending}
                           onClick={() => addGrant.mutate({ table, selection })}
                         >
                           {pending ? 'Adding…' : 'Add grant'}
@@ -427,6 +454,12 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     minWidth: 0,
     width: '100%',
+  },
+  emailError: {
+    display: 'inline-block',
+    marginTop: 4,
+    fontSize: 11,
+    color: 'var(--error-full)',
   },
   addBtn: {
     padding: '6px 14px',

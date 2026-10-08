@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -57,6 +57,7 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
   const tablePermissionsEnabled = useWarehouseTablePermissions()
   const [subjectSelection, setSubjectSelection] = useState('')
   const [pendingEmail, setPendingEmail] = useState('')
+  const pendingRecipientHintId = useId()
   const [connectorId, setConnectorId] = useState('')
   const [database, setDatabase] = useState('')
   const [tableFilter, setTableFilter] = useState('')
@@ -88,6 +89,10 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
         : null,
     [pendingEmail],
   )
+
+  // A non-empty email that is not valid is an explicit error: the form must
+  // not silently fall back to the selected subject.
+  const pendingEmailInvalid = pendingEmail.trim() !== '' && !pendingCandidate
 
   const defaultConnectorId = useMemo(() => {
     const provisioner = connectors.find((c) => c.is_provisioner)
@@ -162,9 +167,10 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
     [checkedTables, grantedTables],
   )
 
-  // Switching subject or database invalidates what the checked set refers to.
+  // Switching the effective subject or database invalidates what the checked
+  // set refers to. The effective subject is the pending email when one is set.
   const [pickerScope, setPickerScope] = useState('')
-  const currentScope = `${subjectSelection}|${database}`
+  const currentScope = `${pendingCandidate?.subjectId ?? subjectSelection}|${database}`
   if (pickerScope !== currentScope) {
     setPickerScope(currentScope)
     if (checkedTables.size > 0) setCheckedTables(new Set())
@@ -273,6 +279,7 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
 
   const addGrants = useMutation({
     mutationFn: async () => {
+      if (pendingEmailInvalid) throw new Error('Not a valid email')
       const parsed = pendingCandidate ?? parseSubjectKey(subjectSelection)
       if (!parsed) throw new Error('Select a subject')
       if (!database) throw new Error('Select a database')
@@ -299,7 +306,13 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
       return { parsed, fulfilled, failures, requested: targets.length }
     },
     onSuccess: ({ parsed, fulfilled, failures, requested }) => {
-      const key = subjectKey(parsed.subjectType, parsed.subjectId)
+      // A pending email that already belongs to a member is converted to a
+      // real user grant server-side, so the warning must be keyed by the
+      // grant the server actually wrote.
+      const key =
+        fulfilled.length > 0
+          ? subjectKey(fulfilled[0].subject_type, fulfilled[0].subject_id)
+          : subjectKey(parsed.subjectType, parsed.subjectId)
       if (fulfilled.length > 0) {
         if (fulfilled.some((g) => g.warning)) {
           setWarnings((prev) => ({ ...prev, [key]: true }))
@@ -309,7 +322,8 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
         }
       }
       setCheckedTables(new Set())
-      setPendingEmail('')
+      // A failed add keeps the email so the admin can retry the same recipient.
+      if (failures.length === 0) setPendingEmail('')
       invalidateAfterGrantChange()
       if (failures.length > 0) {
         setError(`${failures.length} of ${requested} grants failed: ${failures.join('; ')}`)
@@ -344,7 +358,11 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
   })
 
   const canSubmit =
-    !!(pendingCandidate ?? subjectSelection) && !!database && pendingTables.length > 0 && !addGrants.isPending
+    !pendingEmailInvalid &&
+    !!(pendingCandidate ?? subjectSelection) &&
+    !!database &&
+    pendingTables.length > 0 &&
+    !addGrants.isPending
 
   return (
     <section style={styles.section} aria-label="Table grants">
@@ -438,8 +456,11 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
           <span style={styles.fieldLabel}>Subject</span>
           <select
             aria-label="Subject"
+            aria-describedby={pendingCandidate ? pendingRecipientHintId : undefined}
             style={styles.input}
             value={subjectSelection}
+            disabled={!!pendingCandidate}
+            title={pendingCandidate ? `Granting to ${pendingCandidate.subjectId}` : undefined}
             onChange={(e) => setSubjectSelection(e.target.value)}
           >
             <option value="">Select subject…</option>
@@ -461,6 +482,11 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
             </optgroup>
             <option value={subjectKey('everyone', 'everyone')}>Everyone</option>
           </select>
+          {pendingCandidate && (
+            <span id={pendingRecipientHintId} role="status" style={styles.recipientHint}>
+              Granting to {pendingCandidate.subjectId}
+            </span>
+          )}
         </label>
 
         <label style={styles.field}>
@@ -470,10 +496,11 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
             style={styles.input}
             type="email"
             autoComplete="off"
-            placeholder="email@example.com (no account yet)"
+            placeholder="email@example.com (pending)"
             value={pendingEmail}
             onChange={(e) => setPendingEmail(e.target.value)}
           />
+          {pendingEmailInvalid && <span style={styles.emailError}>Not a valid email</span>}
         </label>
 
         {connectors.length > 1 && (
@@ -523,9 +550,13 @@ export function WarehouseTableGrants({ warehouseId, connectors = [] }: Props) {
         >
           {addGrants.isPending
             ? 'Adding…'
-            : pendingTables.length > 1
-              ? `Add ${pendingTables.length} grants`
-              : 'Add grant'}
+            : pendingCandidate
+              ? pendingTables.length > 1
+                ? `Add ${pendingTables.length} grants for ${pendingCandidate.subjectId}`
+                : `Add grant for ${pendingCandidate.subjectId}`
+              : pendingTables.length > 1
+                ? `Add ${pendingTables.length} grants`
+                : 'Add grant'}
         </button>
       </div>
 
@@ -720,6 +751,14 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     fontWeight: 600,
     color: 'var(--text-secondary)',
+  },
+  recipientHint: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+  },
+  emailError: {
+    fontSize: 11,
+    color: 'var(--error-full)',
   },
   checklistWrap: {
     display: 'flex',
