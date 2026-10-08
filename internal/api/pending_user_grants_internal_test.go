@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -94,4 +95,89 @@ func TestApplyPendingAccessPhaseFailureKeepsOuterTxCommittable(t *testing.T) {
 		`SELECT COUNT(*) FROM audit_logs WHERE org_id = $1 AND action = 'warehouse.grant.pending_materialize.error'`,
 		orgID.String()).Scan(&n))
 	require.Equal(t, 1, n, "warehouse materialization failure must be audited")
+}
+
+// TestApplyPendingAccessAuditsErrorsWithCancelledContext pins the durable audit
+// writes: the request context is already cancelled, so every phase fails
+// before doing SQL, yet the .error records must still land because audit
+// writes detach from cancellation. A closed transaction keeps the phase
+// failure deterministic (ErrTxClosed is checked before the context is used).
+func TestApplyPendingAccessAuditsErrorsWithCancelledContext(t *testing.T) {
+	s := newSessionPermissionTestServer(t)
+	orgID := insertSessionPermOrg(t, s, "pending-cancel")
+	userID := insertSessionPermUser(t, s, "pending-cancel-user")
+	addSessionPermMember(t, s, orgID, userID, "editor")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tx, err := s.db.Pool.Begin(context.Background())
+	require.NoError(t, err)
+	require.NoError(t, tx.Rollback(context.Background())) // closed transaction
+
+	s.applyPendingAccess(ctx, tx, orgID.String(), userID.String(), "future@example.com")
+
+	var n int
+	require.NoError(t, s.db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM audit_logs WHERE org_id = $1 AND action = 'acl.pending_materialize.error'`,
+		orgID.String()).Scan(&n))
+	require.Equal(t, 1, n, "a cancelled request context must not drop the ACL error audit")
+	require.NoError(t, s.db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM audit_logs WHERE org_id = $1 AND action = 'warehouse.grant.pending_materialize.error'`,
+		orgID.String()).Scan(&n))
+	require.Equal(t, 1, n, "a cancelled request context must not drop the warehouse error audit")
+}
+
+// TestApplyPendingAccessAuditsConsumedWarehouseGrantCount pins the audit count
+// semantics: a staged grant deduped by ON CONFLICT DO NOTHING is still
+// consumed, so the success audit reports everything materialized away, not
+// just the inserted rows.
+func TestApplyPendingAccessAuditsConsumedWarehouseGrantCount(t *testing.T) {
+	s := newSessionPermissionTestServer(t)
+	ctx := context.Background()
+	orgID := insertSessionPermOrg(t, s, "pending-wh-count")
+	userID := insertSessionPermUser(t, s, "pending-wh-count-user")
+	addSessionPermMember(t, s, orgID, userID, "editor")
+
+	whID := uuid.New()
+	_, err := s.db.Pool.Exec(ctx,
+		`INSERT INTO warehouses (id, org_id, name) VALUES ($1, $2, 'Pending WH Count')`,
+		whID.String(), orgID.String())
+	require.NoError(t, err)
+
+	// One staged grant dedupes against a real grant; one is new.
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO warehouse_table_grants (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+		VALUES ($1, $2, 'user', $3, 'analytics', 'events')`,
+		orgID.String(), whID.String(), userID.String())
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(ctx, `
+		INSERT INTO pending_warehouse_table_grants (org_id, warehouse_id, email, database_name, table_name)
+		VALUES ($1, $2, 'future@example.com', 'analytics', 'events'),
+		       ($1, $2, 'future@example.com', 'analytics', 'users')`,
+		orgID.String(), whID.String())
+	require.NoError(t, err)
+
+	tx, err := s.db.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	s.applyPendingAccess(ctx, tx, orgID.String(), userID.String(), "future@example.com")
+	require.NoError(t, tx.Commit(ctx))
+
+	var audited string
+	require.NoError(t, s.db.Pool.QueryRow(ctx, `
+		SELECT metadata->>'count' FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.grant.pending_materialize'`,
+		orgID.String()).Scan(&audited))
+	require.Equal(t, "2", audited, "deduped staged grants are consumed and must be counted")
+
+	var grants, pending int
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM warehouse_table_grants WHERE warehouse_id = $1 AND subject_id = $2`,
+		whID.String(), userID.String()).Scan(&grants))
+	require.Equal(t, 2, grants)
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM pending_warehouse_table_grants WHERE warehouse_id = $1`,
+		whID.String()).Scan(&pending))
+	require.Zero(t, pending)
 }

@@ -71,25 +71,31 @@ func applyPendingACL(ctx context.Context, tx pgx.Tx, orgID, userID, email string
 // Like applyPendingACL, the delete and insert share one statement snapshot so
 // a concurrently staged grant cannot be consumed unmaterialized.
 //
-// It returns the number of real grant rows inserted: rows deduped by DO
-// NOTHING are consumed but not counted.
+// It returns the number of consumed pending rows — including rows deduped by
+// DO NOTHING — so the success audit reports everything that was materialized
+// away, consistent with applyPendingACL.
 func applyPendingWarehouseGrants(ctx context.Context, tx pgx.Tx, orgID, userID, email string) (int64, error) {
-	tag, err := tx.Exec(ctx, `
+	var consumed int64
+	err := tx.QueryRow(ctx, `
 		WITH consumed AS (
 			DELETE FROM pending_warehouse_table_grants
 			WHERE org_id = $1 AND lower(email) = lower($3)
 			RETURNING org_id, warehouse_id, database_name, table_name, created_by
+		),
+		inserted AS (
+			INSERT INTO warehouse_table_grants
+				(org_id, warehouse_id, subject_type, subject_id, database_name, table_name, created_by)
+			SELECT org_id, warehouse_id, 'user', $2, database_name, table_name, created_by
+			FROM consumed
+			ON CONFLICT (warehouse_id, subject_type, subject_id, database_name, table_name) DO NOTHING
+			RETURNING 1
 		)
-		INSERT INTO warehouse_table_grants
-			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name, created_by)
-		SELECT org_id, warehouse_id, 'user', $2, database_name, table_name, created_by
-		FROM consumed
-		ON CONFLICT (warehouse_id, subject_type, subject_id, database_name, table_name) DO NOTHING`,
-		orgID, userID, email)
+		SELECT count(*) FROM consumed`,
+		orgID, userID, email).Scan(&consumed)
 	if err != nil {
 		return 0, fmt.Errorf("materialize pending warehouse grants: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return consumed, nil
 }
 
 // ApplyPendingAccess materializes both pending ACL entries and pending
@@ -106,13 +112,14 @@ func ApplyPendingAccess(ctx context.Context, tx pgx.Tx, orgID, userID, email str
 	return err
 }
 
-// runPendingPhase executes fn inside a savepoint of the caller's transaction
-// and returns the phase's row count. On error it rolls back to the savepoint
-// so the failure cannot abort the outer transaction — without it a phase SQL
-// error would leave the transaction aborted, the caller's commit would roll
-// back (pgx.ErrTxCommitRollback), and first login would be blocked. pgx
-// implements Tx.Begin on a transaction as SAVEPOINT, Rollback as ROLLBACK TO
-// SAVEPOINT, and Commit as RELEASE SAVEPOINT.
+// runPendingPhase executes one pending-materialization phase — pending groups,
+// pending ACL entries, or pending warehouse grants — inside a savepoint of the
+// caller's transaction and returns the phase's row count. On error it rolls
+// back to the savepoint so the failure cannot abort the outer transaction —
+// without it a phase SQL error would leave the transaction aborted, the
+// caller's commit would roll back (pgx.ErrTxCommitRollback), and first login
+// would be blocked. pgx implements Tx.Begin on a transaction as SAVEPOINT,
+// Rollback as ROLLBACK TO SAVEPOINT, and Commit as RELEASE SAVEPOINT.
 func runPendingPhase(ctx context.Context, tx pgx.Tx, fn func(pgx.Tx) (int64, error)) (int64, error) {
 	sp, err := tx.Begin(ctx)
 	if err != nil {
@@ -140,11 +147,15 @@ func runPendingPhase(ctx context.Context, tx pgx.Tx, fn func(pgx.Tx) (int64, err
 // warehouse.grant.pending_materialize with the materialized row count; each
 // phase's failure emits its own .error event.
 func (s *Server) applyPendingAccess(ctx context.Context, tx pgx.Tx, orgID, userID, email string) {
+	// Audit writes are detached from request cancellation so a cancelled
+	// context cannot silently drop a materialization outcome record.
+	auditCtx := context.WithoutCancel(ctx)
+
 	aclCount, aclErr := runPendingPhase(ctx, tx, func(phaseTx pgx.Tx) (int64, error) {
 		return applyPendingACL(ctx, phaseTx, orgID, userID, email)
 	})
 	if aclErr != nil {
-		s.audit.Log(ctx, audit.Entry{
+		s.audit.Log(auditCtx, audit.Entry{
 			OrgID: orgID, UserID: userID,
 			Action: "acl.pending_materialize.error", ResourceType: "acl",
 			Metadata: map[string]any{
@@ -154,7 +165,7 @@ func (s *Server) applyPendingAccess(ctx context.Context, tx pgx.Tx, orgID, userI
 			},
 		})
 	} else if aclCount > 0 {
-		s.audit.Log(ctx, audit.Entry{
+		s.audit.Log(auditCtx, audit.Entry{
 			OrgID: orgID, UserID: userID,
 			Action: "acl.pending_materialize", ResourceType: "acl",
 			Metadata: map[string]any{
@@ -169,7 +180,7 @@ func (s *Server) applyPendingAccess(ctx context.Context, tx pgx.Tx, orgID, userI
 		return applyPendingWarehouseGrants(ctx, phaseTx, orgID, userID, email)
 	})
 	if grantErr != nil {
-		s.audit.Log(ctx, audit.Entry{
+		s.audit.Log(auditCtx, audit.Entry{
 			OrgID: orgID, UserID: userID,
 			Action: "warehouse.grant.pending_materialize.error", ResourceType: "warehouse",
 			Metadata: map[string]any{
@@ -179,7 +190,7 @@ func (s *Server) applyPendingAccess(ctx context.Context, tx pgx.Tx, orgID, userI
 			},
 		})
 	} else if grantCount > 0 {
-		s.audit.Log(ctx, audit.Entry{
+		s.audit.Log(auditCtx, audit.Entry{
 			OrgID: orgID, UserID: userID,
 			Action: "warehouse.grant.pending_materialize", ResourceType: "warehouse",
 			Metadata: map[string]any{

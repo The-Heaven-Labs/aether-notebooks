@@ -34,12 +34,19 @@ func ApplyPendingGroups(ctx context.Context, tx pgx.Tx, orgID, userID, email str
 	return nil
 }
 
-// applyPendingGroups runs ApplyPendingGroups and audits (without failing) on
-// error. A materialization failure must never block first login, so call sites
-// keep committing their transaction regardless.
+// applyPendingGroups runs ApplyPendingGroups inside a savepoint and audits
+// (without failing) on error. A materialization failure must never block first
+// login, so call sites keep committing their transaction regardless; the
+// savepoint keeps the failure from aborting the join transaction before the
+// pending-access phases run (see runPendingPhase).
 func (s *Server) applyPendingGroups(ctx context.Context, tx pgx.Tx, orgID, userID, email string) {
-	if err := ApplyPendingGroups(ctx, tx, orgID, userID, email); err != nil {
-		s.audit.Log(ctx, audit.Entry{
+	_, err := runPendingPhase(ctx, tx, func(phaseTx pgx.Tx) (int64, error) {
+		return 0, ApplyPendingGroups(ctx, phaseTx, orgID, userID, email)
+	})
+	if err != nil {
+		// Detached from cancellation so a cancelled request context cannot
+		// silently drop the error record.
+		s.audit.Log(context.WithoutCancel(ctx), audit.Entry{
 			OrgID: orgID, UserID: userID,
 			Action: "group.pending_materialize.error", ResourceType: "group",
 			Metadata: map[string]any{
