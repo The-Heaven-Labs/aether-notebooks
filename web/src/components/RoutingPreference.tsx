@@ -15,8 +15,9 @@ interface RoutingPreferenceProps {
 
 /**
  * Per-user service routing for one warehouse: pick which of the services the
- * user may `use` their queries run on, or clear the choice to route
- * automatically (a sole service, or a prompt when several are available).
+ * user may `use` their queries run on. The choice acts as the default service
+ * for new notebook and dashboard selections; clearing it leaves them without
+ * a default.
  */
 export function RoutingPreference({ warehouseId, warehouseName }: RoutingPreferenceProps) {
   const qc = useQueryClient()
@@ -54,7 +55,7 @@ export function RoutingPreference({ warehouseId, warehouseName }: RoutingPrefere
             ? 'No service access: ask an admin to grant use on a service.'
             : services.length === 1
               ? 'Queries run on the only service you can use.'
-              : 'Queries run on your preferred service unless a run is pinned.'}
+              : 'Used as the default service for new notebooks and dashboard selections.'}
         </div>
       </div>
       {isLoading ? (
@@ -70,7 +71,7 @@ export function RoutingPreference({ warehouseId, warehouseName }: RoutingPrefere
           onChange={(e) => handleChange(e.target.value)}
         >
           <option value="">
-            {services.length === 0 ? 'No permitted services' : 'Automatic (choose when needed)'}
+            {services.length === 0 ? 'No permitted services' : 'No default'}
           </option>
           {services.map((service) => (
             <option key={service.connector_id} value={service.connector_id}>
@@ -180,7 +181,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
-    // Wide enough for "Automatic (choose when needed)" without clipping.
+    // Wide enough for long service names without clipping.
     maxWidth: 320,
   },
   dialogBody: {

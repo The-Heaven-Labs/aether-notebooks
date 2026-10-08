@@ -47,14 +47,14 @@ describe('RoutingPreference', () => {
     expect(await screen.findByRole('option', { name: 'CH RO' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'CH RW (current)' })).toBeInTheDocument()
     expect(screen.getByLabelText('Preferred service for Analytics WH')).toHaveValue('c-2')
-    expect(screen.getByRole('option', { name: /Automatic/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'No default' })).toBeInTheDocument()
   })
 
-  test('fits the full automatic option without clipping', async () => {
+  test('renders the no-default option without clipping', async () => {
     renderPreference()
 
     const select = await screen.findByLabelText('Preferred service for Analytics WH')
-    expect(screen.getByRole('option', { name: 'Automatic (choose when needed)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'No default' })).toBeInTheDocument()
     expect(select).toHaveStyle('max-width: 320px')
   })
 
