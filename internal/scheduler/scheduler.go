@@ -142,32 +142,57 @@ func (s *Scheduler) rollupStats() {
 }
 
 func (s *Scheduler) purgeTrash(ctx context.Context) {
-	// The notebook purge must also clear the agent_session ACL rows of the
-	// sessions that the notebook FK cascade removes: acl_entries has no FK to
-	// agent_sessions, so those rows would leak. One data-modifying CTE keeps
-	// the notebook delete and the ACL cleanup atomic.
+	// The notebook purge must also clear the agent_session ACL rows and pending
+	// ACL rows of the sessions that the notebook FK cascade removes: neither
+	// table has an FK to agent_sessions, so those rows would leak. Notebook
+	// pending rows are cleaned in the same statement. Data-modifying CTEs keep
+	// the notebook delete and both cleanups atomic.
 	if _, err := s.db.Pool.Exec(ctx, `
 		WITH purged AS (
 			DELETE FROM notebooks
 			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
 			RETURNING id
-		), cleanup AS (
+		), session_acl_cleanup AS (
 			DELETE FROM acl_entries
 			WHERE resource_type = 'agent_session'
 			  AND resource_id IN (
 				  SELECT s.id FROM agent_sessions s
 				  WHERE s.notebook_id IN (SELECT id FROM purged)
 			  )
+		), session_pending_cleanup AS (
+			DELETE FROM pending_acl_entries
+			WHERE resource_type = 'agent_session'
+			  AND resource_id IN (
+				  SELECT s.id FROM agent_sessions s
+				  WHERE s.notebook_id IN (SELECT id FROM purged)
+			  )
+		), notebook_pending_cleanup AS (
+			DELETE FROM pending_acl_entries
+			WHERE resource_type = 'notebook'
+			  AND resource_id IN (SELECT id FROM purged)
 		)
 		SELECT COUNT(*) FROM purged
 	`); err != nil {
 		slog.Warn("scheduler: purge trash", "table", "notebooks", "error", err)
 	}
 
+	// Each table purge also consumes the pending ACL rows staged for the
+	// deleted resources; pending_acl_entries has no FK to clean up via cascade.
+	pendingResourceType := map[string]string{
+		"connectors": "connector",
+		"dashboards": "dashboard",
+		"folders":    "folder",
+	}
 	for _, table := range []string{"connectors", "dashboards", "folders"} {
-		_, err := s.db.Pool.Exec(ctx,
-			fmt.Sprintf(`DELETE FROM %s WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'`, table),
-		)
+		_, err := s.db.Pool.Exec(ctx, fmt.Sprintf(`
+			WITH purged AS (
+				DELETE FROM %s
+				WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
+				RETURNING id
+			)
+			DELETE FROM pending_acl_entries
+			WHERE resource_type = '%s' AND resource_id IN (SELECT id FROM purged)`,
+			table, pendingResourceType[table]))
 		if err != nil {
 			slog.Warn("scheduler: purge trash", "table", table, "error", err)
 		}
