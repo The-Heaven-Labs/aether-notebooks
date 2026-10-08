@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"golang.org/x/sync/singleflight"
+
+	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/models"
 )
 
 // cloudAPIBaseURL is the ClickHouse Cloud control-plane API root. It is a
@@ -161,4 +164,96 @@ func fetchCloudServiceState(ctx context.Context, creds cloudStateCredentials) (c
 		return cloudServiceState{}, fmt.Errorf("clickhouse cloud response carried no service state")
 	}
 	return body.Result, nil
+}
+
+// cloudStateResponse is the wire shape for GET /connectors/{id}/cloud-state.
+// `configured` separates "no Cloud API credentials" from "configured but the
+// read failed"; failures stay HTTP 200 so the page degrades into the inferred
+// state instead of showing a request error.
+type cloudStateResponse struct {
+	Configured         bool     `json:"configured"`
+	State              string   `json:"state,omitempty"`
+	IdleScaling        *bool    `json:"idle_scaling,omitempty"`
+	IdleTimeoutMinutes *float64 `json:"idle_timeout_minutes,omitempty"`
+	CheckedAt          string   `json:"checked_at,omitempty"`
+	Error              string   `json:"error,omitempty"`
+}
+
+// @Summary Get ClickHouse Cloud service state
+// @Description Returns the ClickHouse Cloud control-plane state for a ClickHouse connector with Cloud API credentials. Non-ClickHouse connectors and connectors without credentials return 200 with {"configured": false}; upstream failures return 200 with an error field. Reading state never wakes an idle service.
+// @Tags connectors
+// @Produce json
+// @Param id path string true "Connector ID"
+// @Success 200 {object} map[string]interface{}
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /connectors/{id}/cloud-state [get]
+func (s *Server) handleConnectorCloudState(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	connID := r.PathValue("id")
+	ctx := r.Context()
+
+	connType, configEnc, err := s.loadConnectorRow(ctx, connID, claims.OrgID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+	if connType != models.ConnectorClickHouse {
+		writeJSON(w, http.StatusOK, cloudStateResponse{Configured: false})
+		return
+	}
+
+	plain, err := crypto.Decrypt(configEnc, s.masterKey)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load connector config")
+		return
+	}
+	creds := cloudCredentialsFromConfig(plain)
+	if !creds.configured() {
+		writeJSON(w, http.StatusOK, cloudStateResponse{Configured: false})
+		return
+	}
+
+	result, err := s.cachedCloudServiceState(ctx, connID, creds)
+	if err != nil {
+		// The upstream error carries no credential material: fetchCloudServiceState
+		// builds messages from transport and status information only.
+		writeJSON(w, http.StatusOK, cloudStateResponse{Configured: true, Error: err.Error()})
+		return
+	}
+	idleScaling := result.state.IdleScaling
+	idleTimeout := result.state.IdleTimeoutMinutes
+	writeJSON(w, http.StatusOK, cloudStateResponse{
+		Configured:         true,
+		State:              result.state.State,
+		IdleScaling:        &idleScaling,
+		IdleTimeoutMinutes: &idleTimeout,
+		CheckedAt:          result.checkedAt.UTC().Format(time.RFC3339),
+	})
+}
+
+// cachedCloudServiceState serves the in-memory TTL cache, falling back to one
+// deduplicated control-plane read per connector.
+func (s *Server) cachedCloudServiceState(ctx context.Context, connID string, creds cloudStateCredentials) (cloudStateResult, error) {
+	if result, ok := s.cloudStateCache.get(connID); ok {
+		return result, nil
+	}
+	value, err, _ := cloudStateFlight.Do(connID, func() (any, error) {
+		// The flight window may have filled the cache while this call waited.
+		if result, ok := s.cloudStateCache.get(connID); ok {
+			return result, nil
+		}
+		state, err := fetchCloudServiceState(ctx, creds)
+		if err != nil {
+			return cloudStateResult{}, err
+		}
+		result := cloudStateResult{state: state, checkedAt: time.Now()}
+		s.cloudStateCache.put(connID, result)
+		return result, nil
+	})
+	if err != nil {
+		return cloudStateResult{}, err
+	}
+	return value.(cloudStateResult), nil
 }
