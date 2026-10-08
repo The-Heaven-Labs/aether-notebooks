@@ -112,9 +112,11 @@ func writeGrantValidationError(w http.ResponseWriter, err error) {
 
 // validateGrantSubject canonicalizes a grant subject and verifies it belongs
 // to the warehouse's org: "user" must be an org member, "group" must be an org
-// group, and "everyone" carries the fixed canonical ID. subject_id is stored
-// as text with no foreign key, so this validation is the only thing keeping a
-// grant from naming a subject in another org.
+// group, "everyone" carries the fixed canonical ID, and "pending_user" is an
+// email staged for a not-yet-registered person (validated and lowercased, no
+// membership check — the row is keyed by email until the person joins).
+// subject_id is stored as text with no foreign key, so this validation is the
+// only thing keeping a grant from naming a subject in another org.
 //
 // The org's "Everyone" group is rejected as a group subject: permissions.go
 // treats it as an implicit membership for every member while chaccess.Compute
@@ -159,8 +161,14 @@ func (s *Server) validateGrantSubject(ctx context.Context, orgID, subjectType, s
 			return "", invalidGrant(`subject_type "group" cannot target the "Everyone" group — use subject_type "everyone" for all members`)
 		}
 		return parsed.String(), nil
+	case "pending_user":
+		email, ok := normalizePendingEmail(subjectID)
+		if !ok {
+			return "", invalidGrant("subject_id must be an email for subject_type pending_user")
+		}
+		return email, nil
 	default:
-		return "", invalidGrant("subject_type must be one of user, group, everyone")
+		return "", invalidGrant("subject_type must be one of user, group, everyone, pending_user")
 	}
 }
 
@@ -214,6 +222,38 @@ func scanWarehouseGrant(row pgx.Row) (warehouseGrantJSON, error) {
 func (s *Server) loadWarehouseGrant(ctx context.Context, orgID, grantID string) (warehouseGrantJSON, error) {
 	return scanWarehouseGrant(s.db.Pool.QueryRow(ctx,
 		warehouseGrantSelect+` WHERE wtg.id = $1 AND wtg.org_id = $2`, grantID, orgID))
+}
+
+// pendingWarehouseGrantSelect loads staged grants; the email is synthesized as
+// the subject_id and subject_email and labeled as the subject name.
+const pendingWarehouseGrantSelect = `
+	SELECT id, org_id, warehouse_id, email, database_name, table_name, created_by, created_at
+	FROM pending_warehouse_table_grants`
+
+// scanPendingWarehouseGrant maps a staged row onto the API representation with
+// subject_type "pending_user".
+func scanPendingWarehouseGrant(row pgx.Row) (warehouseGrantJSON, error) {
+	var (
+		g         warehouseGrantJSON
+		email     string
+		createdBy *string
+	)
+	err := row.Scan(&g.ID, &g.OrgID, &g.WarehouseID, &email, &g.Database, &g.Table, &createdBy, &g.CreatedAt)
+	if err != nil {
+		return g, err
+	}
+	g.SubjectType = "pending_user"
+	g.SubjectID = email
+	g.SubjectName = email
+	g.SubjectEmail = email
+	g.CreatedBy = createdBy
+	return g, nil
+}
+
+// loadPendingWarehouseGrant returns one staged grant scoped to its org.
+func (s *Server) loadPendingWarehouseGrant(ctx context.Context, orgID, grantID string) (warehouseGrantJSON, error) {
+	return scanPendingWarehouseGrant(s.db.Pool.QueryRow(ctx,
+		pendingWarehouseGrantSelect+` WHERE id = $1 AND org_id = $2`, grantID, orgID))
 }
 
 // loadWarehouseFromPath parses the warehouse path value, loads it scoped
@@ -328,6 +368,96 @@ func (s *Server) handleCreateWarehouseGrant(w http.ResponseWriter, r *http.Reque
 	if err != nil {
 		writeGrantValidationError(w, err)
 		return
+	}
+
+	// Pending subjects are staged in their own table: they cannot connect yet
+	// by construction, so the service-access warning is suppressed, and the
+	// staging write changes no ClickHouse desired state, so no sync is
+	// enqueued. The insert is idempotent like the real-grant path.
+	if req.SubjectType == "pending_user" {
+		// An email that already belongs to an org member becomes a real user
+		// grant rather than a staged row that could never materialize (they
+		// have already appeared in the org), mirroring
+		// handleAddPendingGroupMembers and the ACL pending path. The
+		// conversion re-runs validateGrantSubject's user semantics on the
+		// resolved member.
+		var memberID string
+		memberErr := s.db.Pool.QueryRow(ctx, `
+			SELECT u.id FROM users u
+			JOIN org_members om ON om.user_id = u.id AND om.org_id = $1
+			WHERE lower(u.email) = $2
+			LIMIT 1`, claims.OrgID, subjectID).Scan(&memberID)
+		if memberErr != nil && !errors.Is(memberErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to resolve pending email")
+			return
+		}
+		if memberErr == nil {
+			req.SubjectType = "user"
+			subjectID, err = s.validateGrantSubject(ctx, claims.OrgID, "user", memberID)
+			if err != nil {
+				writeGrantValidationError(w, err)
+				return
+			}
+		} else {
+			inserted := false
+			var grantID string
+			err = s.db.Pool.QueryRow(ctx, `
+				INSERT INTO pending_warehouse_table_grants
+					(org_id, warehouse_id, email, database_name, table_name, created_by)
+				VALUES ($1, $2, $3, $4, $5, $6)
+				ON CONFLICT (warehouse_id, lower(email), database_name, table_name) DO NOTHING
+				RETURNING id`,
+				claims.OrgID, warehouseUUID.String(), subjectID,
+				req.Database, req.Table, claims.UserID).Scan(&grantID)
+			switch {
+			case err == nil:
+				inserted = true
+			case errors.Is(err, pgx.ErrNoRows):
+				// Idempotent replay: return the staged grant that already exists.
+				err = s.db.Pool.QueryRow(ctx, `
+					SELECT id FROM pending_warehouse_table_grants
+					WHERE warehouse_id = $1 AND org_id = $2 AND lower(email) = $3
+					  AND database_name = $4 AND table_name = $5`,
+					warehouseUUID.String(), claims.OrgID, subjectID,
+					req.Database, req.Table).Scan(&grantID)
+				if errors.Is(err, pgx.ErrNoRows) {
+					writeError(w, http.StatusNotFound, "warehouse not found")
+					return
+				}
+			case isForeignKeyViolation(err):
+				writeError(w, http.StatusNotFound, "warehouse not found")
+				return
+			}
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to create grant")
+				return
+			}
+
+			grant, err := s.loadPendingWarehouseGrant(ctx, claims.OrgID, grantID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load grant")
+				return
+			}
+
+			status := http.StatusOK
+			if inserted {
+				status = http.StatusCreated
+				s.audit.Log(ctx, audit.Entry{
+					OrgID: claims.OrgID, UserID: claims.UserID,
+					Action: "warehouse.grant.create", ResourceType: "warehouse", ResourceID: warehouseUUID.String(),
+					Metadata: map[string]any{
+						"grant_id":     grantID,
+						"subject_type": "pending_user",
+						"subject_id":   subjectID,
+						"database":     req.Database,
+						"table":        req.Table,
+						"pending":      true,
+					},
+				})
+			}
+			writeJSON(w, status, warehouseGrantCreateJSON{warehouseGrantJSON: grant})
+			return
+		}
 	}
 
 	inserted := false
