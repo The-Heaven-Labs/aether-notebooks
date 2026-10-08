@@ -3127,7 +3127,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "widget_id, variables, bypass_cache",
+                        "description": "widget_id, connector_id, variables, bypass_cache",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -3154,16 +3154,7 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Forbidden",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    },
-                    "409": {
-                        "description": "service_choice_required with warehouse_id and services",
+                        "description": "service_access_denied with warehouse_id and services",
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
@@ -5484,7 +5475,7 @@ const docTemplate = `{
                 "summary": "Create a notebook",
                 "parameters": [
                     {
-                        "description": "Notebook details (title required; cells optional with type, language, source)",
+                        "description": "Notebook details (title required; connector_id, cells optional with type, language, source)",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -6624,7 +6615,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Execute a cell's SQL query and return results. Warehouse-routed runs also return a routing object naming the warehouse, service, and ClickHouse identity that served the query. When several services are permitted and no routing preference is set, the request fails with 409 service_choice_required listing the allowed services and their warehouse.",
+                "description": "Execute a cell's SQL query and return results. Warehouse-routed runs also return a routing object naming the warehouse, service, and ClickHouse identity that served the query. Selecting a service the caller cannot use fails with 403 service_access_denied listing the warehouse and the services they may use.",
                 "consumes": [
                     "application/json"
                 ],
@@ -6651,7 +6642,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "Execution parameters; pinned=true dials the cell's connector directly",
+                        "description": "Execution parameters; pinned is deprecated and ignored",
                         "name": "request",
                         "in": "body",
                         "schema": {
@@ -6677,12 +6668,10 @@ const docTemplate = `{
                         }
                     },
                     "403": {
-                        "description": "Forbidden",
+                        "description": "service_access_denied with warehouse_id and services",
                         "schema": {
                             "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "additionalProperties": true
                         }
                     },
                     "404": {
@@ -6692,13 +6681,6 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
-                        }
-                    },
-                    "409": {
-                        "description": "service_choice_required with warehouse_id and services",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": true
                         }
                     }
                 }
@@ -9604,7 +9586,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Choose which of the caller's permitted services their warehouse queries run on. The connector must belong to the warehouse and the caller must have ` + "`" + `use` + "`" + ` on it; an explicit null clears the preference. The warehouse provisioner is rejected unless allow_provisioner_execution is on and ClickHouse table permissions are enabled.",
+                "description": "Set the caller's preferred warehouse service. The preference seeds defaults for new notebooks and dashboard selections; it no longer routes execution, which always uses the selected connector. The connector must belong to the warehouse and the caller must have ` + "`" + `use` + "`" + ` on it; an explicit null clears the preference. The warehouse provisioner is rejected unless allow_provisioner_execution is on and ClickHouse table permissions are enabled.",
                 "consumes": [
                     "application/json"
                 ],

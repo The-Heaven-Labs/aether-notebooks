@@ -60,7 +60,7 @@ func (s *Server) openQuery(ctx context.Context, orgID, userID, orgRole, connecto
 	}
 
 	// Managed ClickHouse service access is enforced against the service that
-	// actually serves the run (routing preference / sole-allowed-service).
+	// actually serves the run — the selected connector (selection wins).
 	managedClickHouse := connType == models.ConnectorClickHouse && connectorWarehouseID != nil
 	if !managedClickHouse || !s.warehouseManagementEnabled() {
 		useOK, err := s.checkPermission(ctx, userID, orgID, orgRole, "connector", connectorID, "use")

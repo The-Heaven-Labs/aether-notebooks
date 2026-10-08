@@ -677,13 +677,15 @@ func (s *Server) handleWarehouseEffectiveAccess(w http.ResponseWriter, r *http.R
 }
 
 // setWarehousePreferenceRequest: connector_id is required; an explicit null
-// clears the stored preference and returns routing to the automatic fallback.
+// clears the stored preference. The preference seeds defaults (new notebooks
+// and dashboard selections) and never routes execution, so clearing it just
+// removes that default.
 type setWarehousePreferenceRequest struct {
 	ConnectorID json.RawMessage `json:"connector_id"`
 }
 
 // @Summary Set a user's warehouse service preference
-// @Description Choose which of the caller's permitted services their warehouse queries run on. The connector must belong to the warehouse and the caller must have `use` on it; an explicit null clears the preference. The warehouse provisioner is rejected unless allow_provisioner_execution is on and ClickHouse table permissions are enabled.
+// @Description Set the caller's preferred warehouse service. The preference seeds defaults for new notebooks and dashboard selections; it no longer routes execution, which always uses the selected connector. The connector must belong to the warehouse and the caller must have `use` on it; an explicit null clears the preference. The warehouse provisioner is rejected unless allow_provisioner_execution is on and ClickHouse table permissions are enabled.
 // @Tags warehouses
 // @Accept json
 // @Produce json

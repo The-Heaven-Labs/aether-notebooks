@@ -156,4 +156,3 @@ describe('RoutingPreference', () => {
     expect(await screen.findByText('Failed to load services')).toBeInTheDocument()
   })
 })
-

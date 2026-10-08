@@ -15,7 +15,7 @@ export function clearToken(): void {
 
 export class ApiError extends Error {
   status: number
-  /** Parsed JSON error body, when the server sent one (e.g. 409 service choices). */
+  /** Parsed JSON error body, when the server sent one (e.g. 403 service_access_denied). */
   body: unknown
   constructor(status: number, message: string, body?: unknown) {
     super(message)

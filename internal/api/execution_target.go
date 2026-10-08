@@ -255,8 +255,9 @@ func (s *Server) warnRejectedConnectorLink(ctx context.Context, connectorID uuid
 }
 
 // listWarehouseServices lists the non-deleted ClickHouse connectors of a
-// warehouse in a stable order (name, then ID) for deterministic choice
-// prompts. orgID is the warehouse's org, so cross-org rows are filtered out
+// warehouse in a stable order (name, then ID) for denial payloads and
+// listings; it no longer feeds choice prompts. orgID is the warehouse's org,
+// so cross-org rows are filtered out
 // here too. A provisioner is excluded unless both the admin override is on and
 // warehouse management is enabled: with the kill switch off the override is
 // inert, matching handleListConnectors and resolveExecutionTarget.

@@ -57,15 +57,6 @@ export interface WarehouseEffectiveService {
   preferred: boolean
 }
 
-/**
- * One service offered by the routing preference picker: a warehouse service
- * the user may `use`, selectable as their default execution target.
- */
-export interface WarehouseServiceChoice {
-  connector_id: string
-  name: string
-}
-
 export interface WarehouseEffectiveAccess {
   user_id: string
   warehouse_id: string
