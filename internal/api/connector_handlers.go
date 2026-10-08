@@ -775,15 +775,18 @@ func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 	}
 	exec, err := s.buildExecutor(connType, configEnc)
 	if err != nil {
+		s.recordConnectorFailure(ctx, claims.OrgID, connID, err)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "failed to connect"})
 		return
 	}
 	defer exec.Close()
 
 	if err := exec.TestConnection(ctx); err != nil {
+		s.recordConnectorFailure(ctx, claims.OrgID, connID, err)
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "connection failed"})
 		return
 	}
+	s.recordConnectorSuccess(ctx, claims.OrgID, connID)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 

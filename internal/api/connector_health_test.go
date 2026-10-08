@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -100,4 +101,79 @@ func TestConnectorHealthFieldsRoundTrip(t *testing.T) {
 	parsedListFailure, err := time.Parse(time.RFC3339Nano, listFailureStr)
 	require.NoError(t, err)
 	require.WithinDuration(t, failure, parsedListFailure, time.Millisecond)
+}
+
+// createConnectorWithConfig posts a postgres connector with the given raw
+// config and returns its id.
+func createConnectorWithConfig(t *testing.T, srv *api.Server, token, name string, config map[string]any) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"name": name, "type": "postgres", "config": config})
+	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	return resp["id"].(string)
+}
+
+// testConnectorEndpoint calls POST /connectors/{id}/test and returns the body.
+func testConnectorEndpoint(t *testing.T, srv *api.Server, token, connID string) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/v1/connectors/"+connID+"/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var out map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&out))
+	return out
+}
+
+func TestConnectorHealthRecordedOnTestEndpoint(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-test-health-%d@example.com", ts), "Conn Test Health Org")
+
+	// Success: the helper connector points at the dev database.
+	goodID := createConnector(t, srv, token)
+	resp := testConnectorEndpoint(t, srv, token, goodID)
+	require.Equal(t, true, resp["ok"], resp)
+	good := getConnectorJSON(t, srv, token, goodID)
+	require.NotNil(t, good["last_success_at"], "a successful test must persist last_success_at")
+	require.Nil(t, good["last_failure_at"], "a successful test must not set last_failure_at")
+
+	// Failure: nothing listens on port 1, so TestConnection's ping is refused.
+	badID := createConnectorWithConfig(t, srv, token, "Broken DB", map[string]any{
+		"host": "127.0.0.1", "port": 1, "user": "x", "password": "x", "database": "x",
+	})
+	resp = testConnectorEndpoint(t, srv, token, badID)
+	require.Equal(t, false, resp["ok"], resp)
+	bad := getConnectorJSON(t, srv, token, badID)
+	require.NotNil(t, bad["last_failure_at"], "a failed test must persist last_failure_at")
+	require.NotEmpty(t, bad["last_error"], "a failed test must persist the error text")
+	require.Nil(t, bad["last_success_at"], "a failed test must not set last_success_at")
+}
+
+func TestConnectorHealthSuccessDebounced(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-debounce-%d@example.com", ts), "Conn Debounce Org")
+	connID := createConnector(t, srv, token)
+
+	require.Equal(t, true, testConnectorEndpoint(t, srv, token, connID)["ok"])
+	first := getConnectorJSON(t, srv, token, connID)["last_success_at"]
+	require.NotNil(t, first, "the first test must persist a success timestamp")
+
+	// Without the debounce, the second write would land on a later timestamp
+	// (Postgres NOW() has microsecond resolution).
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, true, testConnectorEndpoint(t, srv, token, connID)["ok"])
+	second := getConnectorJSON(t, srv, token, connID)["last_success_at"]
+
+	require.Equal(t, first, second, "success writes within the ~30s window must be debounced")
 }
