@@ -24,8 +24,9 @@ var (
 	// connector credential.
 	ErrProvisioningNotReady = errors.New("warehouse provisioning is not ready")
 
-	// ErrServiceAccessDenied reports that the user has no `use` grant on any
-	// eligible service in the warehouse, or on the explicitly pinned connector.
+	// ErrServiceAccessDenied reports that the user has no `use` grant on the
+	// requested (selected) connector. The enriched ServiceAccessDeniedError
+	// carries the services the user may use in that warehouse instead.
 	ErrServiceAccessDenied = errors.New("no permitted service in warehouse")
 
 	// ErrServiceChoiceRequired reports ambiguous routing: several services are
@@ -114,10 +115,9 @@ type ExecutionTarget struct {
 	// CHUser is the derived ClickHouse username, duplicated from Config.User
 	// only for audit fields that should not reach into Config.
 	CHUser string
-	// MaxRows and TimeoutSeconds are the routed service's execution limits.
-	// They can differ from the requested connector's values when a preference
-	// or sole-service fallback picks another service, and callers must apply
-	// the routed service's limits, not the requested connector's.
+	// MaxRows and TimeoutSeconds are the selected service's execution limits.
+	// Selection wins, so they are the requested connector's values; callers
+	// must apply them to the run.
 	MaxRows        int
 	TimeoutSeconds int
 }
