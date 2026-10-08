@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -17,10 +18,14 @@ func TestNormalizePendingEmail(t *testing.T) {
 	}{
 		{"lowercases", "Alice@Example.com", "alice@example.com", true},
 		{"trims surrounding whitespace", "  alice@example.com  ", "alice@example.com", true},
+		{"trims surrounding tabs and newlines", "\talice@example.com\n", "alice@example.com", true},
 		{"rejects missing domain", "alice@", "", false},
 		{"rejects missing local part", "@example.com", "", false},
 		{"rejects double at", "alice@@example.com", "", false},
 		{"rejects inner whitespace", "ali ce@example.com", "", false},
+		{"rejects NUL", "ali\x00ce@example.com", "", false},
+		{"rejects non-breaking space", "ali\u00a0ce@example.com", "", false},
+		{"rejects over-length email", strings.Repeat("a", 321) + "@example.com", "", false},
 		{"rejects empty", "", "", false},
 		{"rejects plain name", "alice", "", false},
 	}

@@ -4,18 +4,32 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 )
 
+// maxPendingEmailRunes caps the normalized email length. 320 runes covers the
+// RFC 5321 maximum path (254) with headroom, while staying far below the btree
+// index limit that an unbounded string could hit.
+const maxPendingEmailRunes = 320
+
 // normalizePendingEmail canonicalizes an email staged for a not-yet-registered
 // user: trimmed, lowercased, required to have exactly one "@" with a
-// non-empty local part and domain, and no whitespace. The lowercased form is
+// non-empty local part and domain, and no control or whitespace character
+// anywhere (including NUL and Unicode spaces such as NBSP, which would
+// otherwise reach the database and fail with a 500). The lowercased form is
 // what the pending tables' lower(email) indexes and all lookups use.
 func normalizePendingEmail(raw string) (string, bool) {
 	email := strings.ToLower(strings.TrimSpace(raw))
-	if strings.ContainsAny(email, " \t\n\r") {
+	if strings.ContainsFunc(email, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.IsSpace(r)
+	}) {
+		return "", false
+	}
+	if utf8.RuneCountInString(email) > maxPendingEmailRunes {
 		return "", false
 	}
 	local, domain, found := strings.Cut(email, "@")
