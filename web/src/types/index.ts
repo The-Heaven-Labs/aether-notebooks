@@ -169,6 +169,11 @@ export interface Connector {
   timeout_seconds?: number
   table_allowlist?: string[]
   table_denylist?: string[]
+  /** Persisted connector health (V128): failure newer than success => Failed. */
+  last_success_at?: string | null
+  last_failure_at?: string | null
+  /** Most recent connection-level failure message. */
+  last_error?: string
   config?: {
     host?: string
     port?: number

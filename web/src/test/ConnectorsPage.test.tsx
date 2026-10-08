@@ -346,4 +346,69 @@ describe('ConnectorsPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(newButton).toHaveFocus()
   })
+
+  test('does not probe connectors on mount (zero /test requests)', async () => {
+    const testSpy = vi.fn()
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors)),
+      http.post('/api/v1/connectors/:id/test', () => {
+        testSpy()
+        return HttpResponse.json({ ok: true })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('Prod DB')
+    await screen.findByText('Staging DB')
+    // Give any buggy effect a beat to fire before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(testSpy).not.toHaveBeenCalled()
+  })
+
+  test('renders the persisted health status without probing', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-failed', name: 'Broken DB', type: 'postgres', config: {}, created_at: '2026-10-08T08:00:00Z',
+            last_success_at: '2026-10-08T08:00:00Z',
+            last_failure_at: '2026-10-08T09:00:00Z',
+            last_error: 'dial tcp 10.0.0.5:5432: connection refused',
+          },
+          {
+            id: 'c-recovered', name: 'Recovered DB', type: 'postgres', config: {}, created_at: '2026-10-08T08:00:00Z',
+            last_success_at: '2026-10-08T10:00:00Z',
+            last_failure_at: '2026-10-08T09:00:00Z',
+          },
+          {
+            id: 'c-new', name: 'Fresh DB', type: 'postgres', config: {}, created_at: '2026-10-08T08:00:00Z',
+          },
+        ]),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+
+    const failed = await screen.findByText(/^Failed · /)
+    expect(failed).toHaveAttribute('title', 'dial tcp 10.0.0.5:5432: connection refused')
+    expect(await screen.findByText(/^Connected · used /)).toBeInTheDocument()
+    expect(screen.getByText('Never used — click Test')).toBeInTheDocument()
+  })
+
+  test('manual Test refreshes the persisted status', async () => {
+    let connectors: Record<string, unknown>[] = [
+      { id: 'c-1', name: 'Prod DB', type: 'postgres', config: {}, created_at: '2026-10-08T08:00:00Z' },
+    ]
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(connectors)),
+      http.post('/api/v1/connectors/c-1/test', () => {
+        connectors = [{ ...connectors[0], last_success_at: new Date().toISOString() }]
+        return HttpResponse.json({ ok: true })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('Never used — click Test')
+
+    fireEvent.click(screen.getByLabelText('Test connection'))
+    expect(screen.getByText('Testing…')).toBeInTheDocument()
+    expect(await screen.findByText(/^Connected · used /)).toBeInTheDocument()
+  })
 })

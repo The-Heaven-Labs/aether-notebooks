@@ -17,6 +17,7 @@ import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '..
 import { useAuth } from '../hooks/useAuth'
 import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 import { listWarehouses, setConnectorWarehouse } from '../api/warehouses'
+import { formatRelativeTime } from '../utils/formatRelativeTime'
 
 type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch' | 'databricks'
 type DatabricksAuthType = 'pat' | 'oauth_m2m'
@@ -151,6 +152,22 @@ function formFromConnector(c: Connector): ConnectorForm {
   }
 }
 
+/** Derives the persisted health badge from the connector's outcome timeline
+ * (D6): a failure newer than the last success wins; otherwise a success means
+ * Connected; otherwise the connector has never been exercised. */
+function connectorHealth(c: Connector): { status: 'success' | 'error' | 'neutral'; label: string; title?: string } {
+  const failed = !!c.last_failure_at && (!c.last_success_at || new Date(c.last_failure_at) > new Date(c.last_success_at))
+  if (failed) {
+    const when = formatRelativeTime(c.last_failure_at)
+    return { status: 'error', label: when ? `Failed · ${when}` : 'Failed', title: c.last_error || undefined }
+  }
+  if (c.last_success_at) {
+    const when = formatRelativeTime(c.last_success_at)
+    return { status: 'success', label: when ? `Connected · used ${when}` : 'Connected' }
+  }
+  return { status: 'neutral', label: 'Never used — click Test' }
+}
+
 function DatabricksFields({ form, setForm, isEdit }: {
   form: ConnectorForm
   setForm: React.Dispatch<React.SetStateAction<ConnectorForm>>
@@ -204,7 +221,6 @@ export function ConnectorsPage() {
   const [editing, setEditing] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<ConnectorForm>(defaultForm())
   const [form, setForm] = useState<ConnectorForm>(defaultForm())
-  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({})
   const [testingIds, setTestingIds] = useState<Record<string, boolean>>({})
   const [createError, setCreateError] = useState<string | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
@@ -264,33 +280,6 @@ export function ConnectorsPage() {
     onError: (err: Error) => setLinkError(err.message),
   })
 
-  const [autoTested, setAutoTested] = useState(false)
-  const autoTestCancelled = useRef(false)
-
-  useEffect(() => {
-    return () => { autoTestCancelled.current = true }
-  }, [])
-
-  // Probe connections in small waves. Firing one request per connector at once
-  // made large lists compete with the page's own load and hammer the server;
-  // every connector still gets tested, just spread across a few workers.
-  useEffect(() => {
-    if (connectors.length === 0 || autoTested) return
-    setAutoTested(true)
-    const queue = connectors.map((c) => c.id)
-    let next = 0
-    const worker = async () => {
-      while (!autoTestCancelled.current) {
-        const id = queue[next++]
-        if (!id) return
-        await testConnector(id)
-        await new Promise((resolve) => setTimeout(resolve, 150))
-      }
-    }
-    void Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectors, autoTested])
-
   useEffect(() => {
     const editId = searchParams.get('edit')
     if (editId && connectors.length > 0) {
@@ -340,9 +329,8 @@ export function ConnectorsPage() {
       timeout_seconds: parseInt(form.timeout_seconds) || 0,
       config: buildConnectorConfig(form, false),
     }),
-    onSuccess: (connector) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
-      if (formTest) setTestResults((prev) => ({ ...prev, [connector.id]: formTest }))
       closeCreate()
     },
     onError: (err: Error) => setCreateError(err.message),
@@ -360,14 +348,14 @@ export function ConnectorsPage() {
   })
 
   const testConnector = async (id: string) => {
-    setTestResults((prev) => ({ ...prev, [id]: undefined as unknown as { ok: boolean; error?: string } }))
     setTestingIds((prev) => ({ ...prev, [id]: true }))
     try {
-      const result = await api.post<{ ok: boolean; error?: string }>(`/api/v1/connectors/${id}/test`, {})
-      setTestResults((prev) => ({ ...prev, [id]: result }))
-    } catch (e) {
-      setTestResults((prev) => ({ ...prev, [id]: { ok: false, error: String(e) } }))
+      await api.post<{ ok: boolean; error?: string }>(`/api/v1/connectors/${id}/test`, {})
+    } catch {
+      // The outcome is persisted server-side; the refetch below surfaces it.
+      // A network failure leaves the last known persisted state in place.
     } finally {
+      await qc.invalidateQueries({ queryKey: ['connectors'] })
       setTestingIds((prev) => { const n = { ...prev }; delete n[id]; return n })
     }
   }
@@ -609,7 +597,7 @@ export function ConnectorsPage() {
             headerClassNames={[undefined, undefined, undefined, undefined, undefined, undefined, 'row-actions-header']}
           >
             {connectors.map((c) => {
-              const test = testResults[c.id]
+              const health = connectorHealth(c)
               return (
                 <tr key={c.id} style={rowStyle}>
                   <td style={cellStyle}>
@@ -690,16 +678,17 @@ export function ConnectorsPage() {
                   <td style={cellStyle}>
                     {testingIds[c.id] ? (
                       <StatusBadge status="neutral" label="Testing…" />
-                    ) : test ? (
-                      <StatusBadge
-                        status={test.ok ? 'success' : 'error'}
-                        label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
-                        icon={test.ok ? <Check size={12} /> : <X size={12} />}
-                      />
-                    ) : (
+                    ) : health.status === 'neutral' ? (
                       <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                        Unknown — click Test
+                        {health.label}
                       </span>
+                    ) : (
+                      <StatusBadge
+                        status={health.status}
+                        label={health.label}
+                        title={health.title}
+                        icon={health.status === 'success' ? <Check size={12} /> : <X size={12} />}
+                      />
                     )}
                   </td>
                   <RowActionsCell>
