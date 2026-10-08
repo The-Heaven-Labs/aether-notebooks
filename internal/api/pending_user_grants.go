@@ -18,14 +18,15 @@ const maxPendingEmailRunes = 320
 
 // normalizePendingEmail canonicalizes an email staged for a not-yet-registered
 // user: trimmed, lowercased, required to have exactly one "@" with a
-// non-empty local part and domain, and no control or whitespace character
-// anywhere (including NUL and Unicode spaces such as NBSP, which would
-// otherwise reach the database and fail with a 500). The lowercased form is
-// what the pending tables' lower(email) indexes and all lookups use.
+// non-empty local part and domain, and no control, whitespace, or Unicode
+// format character anywhere (including NUL, NBSP, zero-width space, BOM, and
+// RTL override — all of which would otherwise reach the database and fail with
+// a 500 or corrupt lookups). The lowercased form is what the pending tables'
+// lower(email) indexes and all lookups use.
 func normalizePendingEmail(raw string) (string, bool) {
 	email := strings.ToLower(strings.TrimSpace(raw))
 	if strings.ContainsFunc(email, func(r rune) bool {
-		return unicode.IsControl(r) || unicode.IsSpace(r)
+		return unicode.IsControl(r) || unicode.IsSpace(r) || unicode.In(r, unicode.Cf)
 	}) {
 		return "", false
 	}

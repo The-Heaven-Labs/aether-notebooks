@@ -341,16 +341,21 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 
 	// Replace semantics apply to both sources: a PUT that omits staged rows
 	// removes them, exactly like omitting a real entry.
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM acl_entries WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
-		resourceType, resourceID, claims.OrgID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to clear ACL")
-		return
-	}
+	//
+	// Delete staged rows first. Materialization (applyPendingACL's single
+	// statement) locks pending_acl_entries before acl_entries; taking the
+	// locks in the same order here prevents a lock-order deadlock with a
+	// concurrent join materializing the same email.
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM pending_acl_entries WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
 		resourceType, resourceID, claims.OrgID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to clear pending ACL")
+		return
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM acl_entries WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
+		resourceType, resourceID, claims.OrgID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear ACL")
 		return
 	}
 
@@ -384,6 +389,8 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 		err := tx.QueryRow(ctx,
 			`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
              VALUES ($1, $2, $3::uuid, $4, $5, $6)
+             ON CONFLICT (resource_type, resource_id, subject_type, subject_id)
+             DO UPDATE SET actions = (SELECT ARRAY(SELECT DISTINCT unnest(acl_entries.actions || EXCLUDED.actions) ORDER BY 1))
              RETURNING id, org_id, resource_type, resource_id::text, subject_type, subject_id, actions, created_at`,
 			claims.OrgID, resourceType, resourceID, "user", userID, actions,
 		).Scan(&entry.ID, &entry.OrgID, &entry.ResourceType, &entry.ResourceID,
@@ -398,6 +405,13 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 
 	for _, e := range req.Entries {
 		if e.SubjectType == "" || e.SubjectID == "" || len(e.Actions) == 0 {
+			continue
+		}
+		// Unknown subject types would violate acl_entries' check constraint
+		// and turn into a 500; skip them like any other invalid entry.
+		switch e.SubjectType {
+		case "user", "group", "org_role", "pending_user":
+		default:
 			continue
 		}
 		if e.SubjectType == "pending_user" {
@@ -467,7 +481,7 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 		).Scan(&entry.ID, &entry.OrgID, &entry.ResourceType, &entry.ResourceID,
 			&entry.SubjectID, &entry.Actions, &entry.CreatedAt)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to insert ACL entry")
+			writeError(w, http.StatusInternalServerError, "failed to insert pending ACL entry")
 			return
 		}
 		entry.SubjectType = "pending_user"

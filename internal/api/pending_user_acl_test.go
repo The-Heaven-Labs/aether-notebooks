@@ -179,3 +179,104 @@ func TestACLPutConvertsExistingMemberPendingEmailToUser(t *testing.T) {
 	require.Equal(t, "user", inserted[0].SubjectType)
 	require.ElementsMatch(t, []string{"view", "edit"}, inserted[0].Actions)
 }
+
+// TestACLPutUpdatesPendingAuditOnResubmit pins the replace path for staged
+// rows: resubmitting the same email with changed actions audits an
+// acl.updated event carrying the pending marker.
+func TestACLPutUpdatesPendingAuditOnResubmit(t *testing.T) {
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	email := fmt.Sprintf("acl-put-update-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Pending Update Org")
+	nbID := createNotebook(t, srv, token, "Pending Update NB")
+	orgID := orgIDFromUser(t, srv, userIDFromToken(t, srv, token))
+
+	code, _ := putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{
+		{"subject_type": "pending_user", "subject_id": "future.update@example.com", "actions": []string{"view"}},
+	})
+	require.Equal(t, http.StatusOK, code)
+
+	code, inserted := putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{
+		{"subject_type": "pending_user", "subject_id": "future.update@example.com", "actions": []string{"view", "edit"}},
+	})
+	require.Equal(t, http.StatusOK, code)
+	require.Len(t, inserted, 1)
+	require.Equal(t, "pending_user", inserted[0].SubjectType)
+	require.ElementsMatch(t, []string{"view", "edit"}, inserted[0].Actions)
+
+	var metaRaw []byte
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `
+		SELECT metadata FROM audit_logs
+		WHERE org_id = $1 AND action = 'acl.updated' AND metadata->>'subject_type' = 'pending_user'
+		ORDER BY id DESC LIMIT 1`, orgID).Scan(&metaRaw))
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(metaRaw, &meta))
+	require.Equal(t, true, meta["pending"])
+	require.ElementsMatch(t, []any{"view"}, meta["old_actions"])
+	require.ElementsMatch(t, []any{"view", "edit"}, meta["new_actions"])
+}
+
+// TestACLPutRevokesPendingAuditOnClear pins the other half of the replace
+// semantics: dropping a staged row audits an acl.revoked event with the
+// pending marker and the revoked actions.
+func TestACLPutRevokesPendingAuditOnClear(t *testing.T) {
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	email := fmt.Sprintf("acl-put-revoke-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Pending Revoke Org")
+	nbID := createNotebook(t, srv, token, "Pending Revoke NB")
+	orgID := orgIDFromUser(t, srv, userIDFromToken(t, srv, token))
+
+	code, _ := putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{
+		{"subject_type": "pending_user", "subject_id": "future.revoke@example.com", "actions": []string{"view", "edit"}},
+	})
+	require.Equal(t, http.StatusOK, code)
+
+	code, cleared := putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{})
+	require.Equal(t, http.StatusOK, code)
+	require.Empty(t, cleared)
+
+	var metaRaw []byte
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `
+		SELECT metadata FROM audit_logs
+		WHERE org_id = $1 AND action = 'acl.revoked' AND metadata->>'subject_type' = 'pending_user'
+		ORDER BY id DESC LIMIT 1`, orgID).Scan(&metaRaw))
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(metaRaw, &meta))
+	require.Equal(t, true, meta["pending"])
+	require.ElementsMatch(t, []any{"view", "edit"}, meta["actions"])
+}
+
+// TestACLNonMemberEmailStaysStaged pins design §5.1.6: a registered user who
+// is not a member of the caller's org is not a member entry, so the email is
+// staged until they join that org. Unknown subject types are skipped instead
+// of reaching the acl_entries check constraint.
+func TestACLNonMemberEmailStaysStaged(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("acl-put-nonmember-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Pending Nonmember Org")
+	nbID := createNotebook(t, srv, token, "Pending Nonmember NB")
+	userID := userIDFromToken(t, srv, token)
+
+	otherEmail := fmt.Sprintf("acl-other-org-%d@example.com", time.Now().UnixNano())
+	_ = registerAndGetToken(t, srv, otherEmail, "Pending Other Org")
+
+	code, inserted := putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{
+		{"subject_type": "pending_user", "subject_id": strings.ToUpper(otherEmail), "actions": []string{"view"}},
+		{"subject_type": "widget", "subject_id": userID, "actions": []string{"view"}},
+	})
+	require.Equal(t, http.StatusOK, code)
+	require.Len(t, inserted, 1, "unknown subject types are skipped")
+	require.Equal(t, "pending_user", inserted[0].SubjectType)
+	require.True(t, inserted[0].Pending)
+	require.Equal(t, otherEmail, inserted[0].SubjectID)
+
+	got := getACLViaAPI(t, srv, token, "notebook", nbID)
+	found := false
+	for _, e := range got {
+		if e.SubjectType == "pending_user" && e.SubjectID == otherEmail {
+			found = true
+		}
+	}
+	require.True(t, found, "a non-member email stays staged after GET")
+}
