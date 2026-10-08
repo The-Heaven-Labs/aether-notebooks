@@ -292,7 +292,7 @@ In dev, `Taskfile.yml` sets `AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com`
 
 **Migrations run automatically** on server startup (not a separate migration tool).
 
-**Vite proxy**: In dev, Vite forwards `/api`, `/internal`, `/docs`, and `/swagger.json` to `localhost:8088`. The `API_URL` env var overrides the target (used inside Docker).
+**Vite proxy**: In dev, Vite forwards `/api`, `/internal`, `/docs`, and `/swagger.json` to `localhost:8088`. The `API_URL` env var overrides the target to point the dev proxy at a non-default API (e.g., a worktree-local server).
 
 **Connector credentials** are AES-encrypted using `crypto.DeriveKey(masterKey)` before storing in Postgres.
 
