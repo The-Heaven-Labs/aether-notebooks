@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -79,4 +80,102 @@ func TestACLGetIncludesPendingRows(t *testing.T) {
 	require.True(t, pending.Pending)
 	require.NotEmpty(t, pending.ID, "the request gets the pending row's UUID so it can key/remove it")
 	require.ElementsMatch(t, []string{"view", "edit"}, pending.Actions)
+}
+
+func TestACLPutStagesAndReplacesPendingEntries(t *testing.T) {
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	email := fmt.Sprintf("acl-put-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Pending PUT Org")
+	nbID := createNotebook(t, srv, token, "Pending PUT NB")
+	userID := userIDFromToken(t, srv, token)
+
+	putCode, inserted := putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{
+		{"subject_type": "user", "subject_id": userID, "actions": []string{"view", "edit"}},
+		{"subject_type": "pending_user", "subject_id": "Future.User@Example.com", "actions": []string{"view", "edit"}},
+		{"subject_type": "pending_user", "subject_id": "future.user@example.com", "actions": []string{"run"}},
+		{"subject_type": "pending_user", "subject_id": "not-an-email", "actions": []string{"view"}},
+	})
+	require.Equal(t, http.StatusOK, putCode)
+	require.Len(t, inserted, 2, "invalid pending emails are skipped")
+
+	var pending *aclEntryJSON
+	for i := range inserted {
+		if inserted[i].SubjectType == "pending_user" {
+			pending = &inserted[i]
+		}
+	}
+	require.NotNil(t, pending)
+	require.Equal(t, "future.user@example.com", pending.SubjectID, "emails are lowercased")
+	require.True(t, pending.Pending)
+	require.ElementsMatch(t, []string{"view", "edit", "run"}, pending.Actions, "duplicate submissions union actions")
+
+	// GET round-trips the staged row with the same pending row UUID.
+	got := getACLViaAPI(t, srv, token, "notebook", nbID)
+	found := false
+	for _, e := range got {
+		if e.SubjectType == "pending_user" {
+			found = true
+			require.Equal(t, pending.ID, e.ID)
+		}
+	}
+	require.True(t, found)
+
+	// The grant audit reuses acl.granted with the pending marker.
+	var metaRaw []byte
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `
+		SELECT metadata FROM audit_logs
+		WHERE action = 'acl.granted' AND metadata->>'subject_type' = 'pending_user'
+		ORDER BY id DESC LIMIT 1`).Scan(&metaRaw))
+	var meta map[string]any
+	require.NoError(t, json.Unmarshal(metaRaw, &meta))
+	require.Equal(t, true, meta["pending"])
+
+	// Replace semantics: a PUT that omits staged rows removes them.
+	clearCode, cleared := putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{})
+	require.Equal(t, http.StatusOK, clearCode)
+	require.Empty(t, cleared)
+	require.Empty(t, getACLViaAPI(t, srv, token, "notebook", nbID))
+}
+
+// TestACLPutConvertsExistingMemberPendingEmailToUser pins amendment A2: a
+// pending_user entry whose email already belongs to an org member is written
+// as a real user entry, never staged (a staged row for a member could never
+// materialize), mirroring handleAddPendingGroupMembers.
+func TestACLPutConvertsExistingMemberPendingEmailToUser(t *testing.T) {
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	email := fmt.Sprintf("acl-put-member-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Pending Member Org")
+	nbID := createNotebook(t, srv, token, "Pending Member NB")
+	userID := userIDFromToken(t, srv, token)
+
+	// Uppercase input proves the membership lookup is case-insensitive.
+	code, inserted := putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{
+		{"subject_type": "pending_user", "subject_id": strings.ToUpper(email), "actions": []string{"view", "edit"}},
+	})
+	require.Equal(t, http.StatusOK, code)
+	require.Len(t, inserted, 1)
+	require.Equal(t, "user", inserted[0].SubjectType)
+	require.Equal(t, userID, inserted[0].SubjectID)
+	require.False(t, inserted[0].Pending)
+	require.ElementsMatch(t, []string{"view", "edit"}, inserted[0].Actions)
+
+	var staged int
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `
+		SELECT COUNT(*) FROM pending_acl_entries
+		WHERE resource_type = 'notebook' AND resource_id = $1::uuid AND lower(email) = lower($2)`,
+		nbID, email).Scan(&staged))
+	require.Zero(t, staged, "an existing member's email must not be staged")
+
+	// A direct entry and a pending email naming the same member merge into one
+	// user entry (the unique constraint forbids two entries for one subject).
+	code, inserted = putACLViaAPI(t, srv, token, "notebook", nbID, []map[string]any{
+		{"subject_type": "user", "subject_id": userID, "actions": []string{"view"}},
+		{"subject_type": "pending_user", "subject_id": email, "actions": []string{"edit"}},
+	})
+	require.Equal(t, http.StatusOK, code)
+	require.Len(t, inserted, 1)
+	require.Equal(t, "user", inserted[0].SubjectType)
+	require.ElementsMatch(t, []string{"view", "edit"}, inserted[0].Actions)
 }
