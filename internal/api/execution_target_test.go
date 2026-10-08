@@ -136,65 +136,57 @@ func TestResolveExecutionTargetRequiresServiceAccess(t *testing.T) {
 	require.Nil(t, target)
 }
 
-func TestResolveExecutionTargetUsesPreference(t *testing.T) {
+func TestResolveExecutionTargetRunsSelectedConnector(t *testing.T) {
 	fx := setupExecutionTargetFixture(t)
 	fx.grantUse(t, fx.connA)
-	fx.grantUse(t, fx.connB)
-	fx.prefer(t, fx.connB)
 
 	target, err := fx.resolve(t, fx.connA, false)
 	require.NoError(t, err)
-	require.Equal(t, fx.connB, target.ConnectorID)
+	require.Equal(t, fx.connA, target.ConnectorID)
+	require.Equal(t, fx.warehouseID, target.WarehouseID)
 }
 
-func TestResolveExecutionTargetFallsBackToSoleService(t *testing.T) {
-	fx := setupExecutionTargetFixture(t)
-	fx.grantUse(t, fx.connB)
-
-	// The requested connector needs no grant of its own: the warehouse's sole
-	// permitted service is used when nothing is pinned.
-	target, err := fx.resolve(t, fx.connA, false)
-	require.NoError(t, err)
-	require.Equal(t, fx.connB, target.ConnectorID)
-}
-
-func TestResolveExecutionTargetHonorsPin(t *testing.T) {
+func TestResolveExecutionTargetPreferenceIgnored(t *testing.T) {
 	fx := setupExecutionTargetFixture(t)
 	fx.grantUse(t, fx.connA)
 	fx.grantUse(t, fx.connB)
-	fx.prefer(t, fx.connB)
+	fx.prefer(t, fx.connB) // preference no longer routes
 
-	target, err := fx.resolve(t, fx.connA, true)
+	target, err := fx.resolve(t, fx.connA, false)
 	require.NoError(t, err)
-	require.Equal(t, fx.connA, target.ConnectorID, "a pin must override the stored preference")
+	require.Equal(t, fx.connA, target.ConnectorID)
+}
 
-	fx.revokeUse(t, fx.connA)
-	target, err = fx.resolve(t, fx.connA, true)
+func TestResolveExecutionTargetSelectedConnectorDenied(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	fx.grantUse(t, fx.connA) // other service is usable — still denied
+
+	_, err := fx.resolve(t, fx.connB, false)
+	var denied *executor.ServiceAccessDeniedError
+	require.ErrorAs(t, err, &denied)
+	require.Equal(t, fx.warehouseID, denied.WarehouseID)
+	require.Len(t, denied.Allowed, 1)
+	require.Equal(t, "Service A", denied.Allowed[0].Name)
+}
+
+func TestResolveExecutionTargetNoAccessAnywhere(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+
+	_, err := fx.resolve(t, fx.connA, false)
 	require.ErrorIs(t, err, executor.ErrServiceAccessDenied)
-	require.Nil(t, target, "a pin without use must not fall back to another service")
-
-	// Without the pin the warehouse still routes through the permitted service.
-	target, err = fx.resolve(t, fx.connA, false)
-	require.NoError(t, err)
-	require.Equal(t, fx.connB, target.ConnectorID)
 }
 
-func TestResolveExecutionTargetAmbiguousWithoutPreference(t *testing.T) {
+func TestResolveExecutionTargetCarriesSelectedServiceLimits(t *testing.T) {
 	fx := setupExecutionTargetFixture(t)
 	fx.grantUse(t, fx.connA)
-	fx.grantUse(t, fx.connB)
+	_, err := fx.s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET max_rows = 123, timeout_seconds = 45 WHERE id = $1`, fx.connA.String())
+	require.NoError(t, err)
 
 	target, err := fx.resolve(t, fx.connA, false)
-	require.ErrorIs(t, err, executor.ErrServiceChoiceRequired)
-	require.Nil(t, target)
-
-	var choice *executor.ServiceChoiceError
-	require.ErrorAs(t, err, &choice)
-	require.Equal(t, fx.warehouseID, choice.WarehouseID)
-	require.ElementsMatch(t, []executor.ServiceChoice{
-		{ConnectorID: fx.connA, Name: "Service A"},
-		{ConnectorID: fx.connB, Name: "Service B"},
-	}, choice.Allowed)
+	require.NoError(t, err)
+	require.Equal(t, 123, target.MaxRows)
+	require.Equal(t, 45, target.TimeoutSeconds)
 }
 
 func TestResolveExecutionTargetExcludesSoftDeletedConnector(t *testing.T) {
@@ -249,23 +241,6 @@ func TestResolveExecutionTargetIdentityAndEndpoint(t *testing.T) {
 	require.NotContains(t, rendered, target.Config.Password, "String() must redact the per-user credential")
 	var nilTarget *executor.ExecutionTarget
 	require.Equal(t, "<nil>", nilTarget.String())
-}
-
-func TestResolveExecutionTargetCarriesRoutedServiceLimits(t *testing.T) {
-	fx := setupExecutionTargetFixture(t)
-	fx.grantUse(t, fx.connB)
-	_, err := fx.s.db.Pool.Exec(context.Background(),
-		`UPDATE connectors SET max_rows = 123, timeout_seconds = 45 WHERE id = $1`,
-		fx.connB.String())
-	require.NoError(t, err)
-
-	// The target must carry the routed service's limits, not the requested
-	// connector's values.
-	target, err := fx.resolve(t, fx.connA, false)
-	require.NoError(t, err)
-	require.Equal(t, fx.connB, target.ConnectorID)
-	require.Equal(t, 123, target.MaxRows)
-	require.Equal(t, 45, target.TimeoutSeconds)
 }
 
 func TestResolveExecutionTargetDefaultEndpointPort(t *testing.T) {
@@ -366,7 +341,7 @@ func TestResolveExecutionTargetGroupGrantForViewer(t *testing.T) {
 	require.NoError(t, err)
 	fx.grantGroupUse(t, fx.connB)
 
-	target, err := fx.resolve(t, fx.connA, false)
+	target, err := fx.resolve(t, fx.connB, false)
 	require.NoError(t, err, "a viewer's group ACL must authorize warehouse routing")
 	require.Equal(t, fx.connB, target.ConnectorID)
 }

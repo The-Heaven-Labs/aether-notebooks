@@ -33,12 +33,17 @@ type warehouseService struct {
 }
 
 // resolveExecutionTarget implements the routing rules:
-//  1. A pinned connector must be usable directly (use on that exact service).
-//  2. Otherwise, resolve the warehouse from the requested connector.
-//  3. Allowed services = connectors in the warehouse with `use` for the user.
-//  4. Preference wins when allowed; a sole allowed service is used directly;
-//     several allowed services without a preference return
-//     executor.ErrServiceChoiceRequired.
+//  1. Resolve the warehouse from the requested (selected) connector.
+//  2. The requested connector is the execution target when the user holds
+//     `use` on it: selection always wins, and the stored service preference
+//     never re-routes a run (it is advisory only, seeding defaults elsewhere).
+//  3. Without `use` on the requested connector, resolution fails closed with
+//     executor.ServiceAccessDeniedError, which carries the services the user
+//     may use in the warehouse. Ambiguous-routing errors are no longer
+//     returned; the selected connector is always the target when permitted.
+//
+// The pinned parameter is ignored: the requested connector is always the
+// selection. It is kept only because callers still pass it.
 //
 // Managed warehouses must be ready before any routing happens. A requested
 // connector without a warehouse returns executor.ErrUnmanagedConnector, which
@@ -109,49 +114,36 @@ func (s *Server) resolveExecutionTarget(ctx context.Context, userID uuid.UUID, r
 		return nil, fmt.Errorf("load org role: %w", err)
 	}
 
-	if pinned {
-		allowed, err := s.connectorUseAllowed(ctx, userID, orgID, role, requested.id)
-		if err != nil {
-			return nil, err
-		}
-		if !allowed {
-			return nil, fmt.Errorf("pinned connector %s: %w", requestedConnectorID, executor.ErrServiceAccessDenied)
-		}
-		return s.buildExecutionTarget(warehouseID, warehouseName, orgID, userID, requested)
-	}
-
-	services, preferredID, err := s.allowedWarehouseServices(ctx, userID, orgID, role, warehouseID)
+	allowed, _, err := s.allowedWarehouseServices(ctx, userID, orgID, role, warehouseID)
 	if err != nil {
 		return nil, err
 	}
-	if preferredID != nil {
-		for _, svc := range services {
-			if svc.id == *preferredID {
-				return s.buildExecutionTarget(warehouseID, warehouseName, orgID, userID, svc)
-			}
+
+	// Selection wins: the requested connector is the execution target when the
+	// user holds `use` on it. The preference never re-routes a run.
+	allowedOnRequested := false
+	for _, svc := range allowed {
+		if svc.id == requested.id {
+			allowedOnRequested = true
+			break
 		}
 	}
-
-	switch len(services) {
-	case 0:
-		return nil, fmt.Errorf("warehouse %s: %w", warehouseID, executor.ErrServiceAccessDenied)
-	case 1:
-		return s.buildExecutionTarget(warehouseID, warehouseName, orgID, userID, services[0])
-	default:
-		choices := make([]executor.ServiceChoice, 0, len(services))
-		for _, svc := range services {
+	if !allowedOnRequested {
+		choices := make([]executor.ServiceChoice, 0, len(allowed))
+		for _, svc := range allowed {
 			choices = append(choices, executor.ServiceChoice{ConnectorID: svc.id, Name: svc.name})
 		}
-		return nil, &executor.ServiceChoiceError{WarehouseID: warehouseID, Allowed: choices}
+		return nil, &executor.ServiceAccessDeniedError{WarehouseID: warehouseID, Allowed: choices}
 	}
+	return s.buildExecutionTarget(warehouseID, warehouseName, orgID, userID, requested)
 }
 
 // allowedWarehouseServices returns the warehouse's live ClickHouse services
-// the user may execute on, in stable order, plus the user's effective routing
+// the user may execute on, in stable order, plus the user's effective
 // preference: the stored preference only while it still names one of those
-// services, and nil otherwise (unset, revoked, moved, or soft-deleted).
-// Resolving the preference here keeps execution routing and effective-access
-// reporting from disagreeing about stale rows.
+// services, and nil otherwise (unset, revoked, moved, or soft-deleted), so
+// effective-access reporting and default-seeding never surface a stale
+// service. Execution routing ignores the preference entirely (selection wins).
 func (s *Server) allowedWarehouseServices(ctx context.Context, userID, orgID uuid.UUID, role string, warehouseID uuid.UUID) ([]warehouseService, *uuid.UUID, error) {
 	services, err := s.listWarehouseServices(ctx, warehouseID, orgID)
 	if err != nil {
@@ -263,8 +255,9 @@ func (s *Server) warnRejectedConnectorLink(ctx context.Context, connectorID uuid
 }
 
 // listWarehouseServices lists the non-deleted ClickHouse connectors of a
-// warehouse in a stable order (name, then ID) for deterministic choice
-// prompts. orgID is the warehouse's org, so cross-org rows are filtered out
+// warehouse in a stable order (name, then ID) for denial payloads and
+// listings; it no longer feeds choice prompts. orgID is the warehouse's org,
+// so cross-org rows are filtered out
 // here too. A provisioner is excluded unless both the admin override is on and
 // warehouse management is enabled: with the kill switch off the override is
 // inert, matching handleListConnectors and resolveExecutionTarget.

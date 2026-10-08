@@ -36,6 +36,7 @@ type Engine struct {
 	// the shared HTTP implementations (see router.go). Agent tools use them to
 	// execute ClickHouse queries as the acting user's warehouse identity and to
 	// enforce ACLs with the canonical resolver. See ToolContext for semantics.
+	// pinned is deprecated and ignored; the requested connector is always the target.
 	ResolveTarget        func(ctx context.Context, userID, connectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error)
 	ConnPool             *executor.ConnPool
 	CheckPermissionFunc  func(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error)

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/dashboard"
@@ -27,12 +28,14 @@ const (
 
 type dashboardExecuteRequest struct {
 	WidgetID    string         `json:"widget_id"`
+	ConnectorID string         `json:"connector_id,omitempty"` // viewer's dashboard selector
 	Variables   map[string]any `json:"variables,omitempty"`
 	BypassCache bool           `json:"bypass_cache,omitempty"`
 }
 
 type dashboardVariableOptionsRequest struct {
-	Variables map[string]any `json:"variables,omitempty"`
+	ConnectorID string         `json:"connector_id,omitempty"` // viewer's dashboard selector
+	Variables   map[string]any `json:"variables,omitempty"`
 }
 
 type dashboardQueryResponse struct {
@@ -74,11 +77,10 @@ type dashboardQueryParams struct {
 // @Accept json
 // @Produce json
 // @Param id path string true "Dashboard ID"
-// @Param request body object true "widget_id, variables, bypass_cache"
+// @Param request body object true "widget_id, connector_id, variables, bypass_cache"
 // @Success 200 {object} map[string]interface{} "outputs, metrics, cached"
 // @Failure 400 {object} map[string]string
-// @Failure 403 {object} map[string]string
-// @Failure 409 {object} map[string]interface{} "service_choice_required with warehouse_id and services"
+// @Failure 403 {object} map[string]interface{} "service_access_denied with warehouse_id and services"
 // @Security BearerAuth
 // @Router /dashboards/{id}/execute [post]
 func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Request) {
@@ -131,6 +133,12 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	servedConnector, err := s.resolveWidgetConnector(ctx, claims.OrgID, *widget.ConnectorID, req.ConnectorID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+
 	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -144,7 +152,7 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 	resp, err := s.runDashboardQuery(ctx, dashboardQueryParams{
 		OrgID:        claims.OrgID,
 		Identity:     dashboardIdentity{UserID: claims.UserID, Role: claims.Role},
-		ConnectorID:  *widget.ConnectorID,
+		ConnectorID:  servedConnector,
 		SQL:          sqlText,
 		BypassCache:  req.BypassCache,
 		CacheSeconds: dash.Settings.QueryCacheSeconds,
@@ -165,7 +173,7 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		Action: "dashboard.query", ResourceType: "dashboard", ResourceID: dashID,
 		Metadata: map[string]any{
 			"widget_id":    req.WidgetID,
-			"connector_id": *widget.ConnectorID,
+			"connector_id": servedConnector,
 			"query":        sqlText,
 			"row_count":    rowCount,
 			"duration_ms":  time.Since(startTime).Milliseconds(),
@@ -182,9 +190,10 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 // @Produce json
 // @Param id path string true "Dashboard ID"
 // @Param name path string true "Variable name"
+// @Param request body object true "variables, connector_id (viewer's dashboard selector)"
 // @Success 200 {object} map[string]any
 // @Failure 400 {object} map[string]string
-// @Failure 403 {object} map[string]string
+// @Failure 403 {object} map[string]interface{} "service_access_denied with warehouse_id and services"
 // @Security BearerAuth
 // @Router /dashboards/{id}/variables/{name}/options [post]
 func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.Request) {
@@ -237,10 +246,16 @@ func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	servedConnector, err := s.resolveWidgetConnector(ctx, claims.OrgID, v.Options.Query.ConnectorID, req.ConnectorID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+
 	resp, err := s.runDashboardQuery(ctx, dashboardQueryParams{
 		OrgID:           claims.OrgID,
 		Identity:        dashboardIdentity{UserID: claims.UserID, Role: claims.Role},
-		ConnectorID:     v.Options.Query.ConnectorID,
+		ConnectorID:     servedConnector,
 		SQL:             sqlText,
 		CacheSeconds:    dash.Settings.QueryCacheSeconds,
 		MaxRowsOverride: dashboardOptionMaxRows,
@@ -730,6 +745,45 @@ func (s *Server) loadQueryWidget(ctx context.Context, dashID, widgetID string) (
 	return &w, nil
 }
 
+// resolveWidgetConnector applies the viewer's dashboard-selector choice:
+// it serves the widget only when it lives in the same warehouse as the
+// widget's saved connector; otherwise the widget's own connector wins
+// (cross-warehouse selections cannot redirect a widget at tables that
+// do not exist on the selected service). An unknown or deleted viewer
+// selection falls back to the widget connector so stale per-viewer UI state
+// never breaks a widget; the served connector's `use` grant is enforced later
+// by openQuery/resolveExecutionTarget, not here.
+func (s *Server) resolveWidgetConnector(ctx context.Context, orgID, widgetConnectorID, viewerConnectorID string) (string, error) {
+	if viewerConnectorID == "" || viewerConnectorID == widgetConnectorID {
+		return widgetConnectorID, nil
+	}
+	// A malformed viewer selection is stale UI state, not a DB error: it must
+	// never turn a working widget into a 404 (the lookup below would fail on
+	// the uuid cast before reaching the ErrNoRows fallback).
+	if _, err := uuid.Parse(viewerConnectorID); err != nil {
+		return widgetConnectorID, nil
+	}
+	var whW, whV *string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT warehouse_id FROM connectors WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+		widgetConnectorID, orgID).Scan(&whW); err != nil {
+		return "", err
+	}
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT warehouse_id FROM connectors WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+		viewerConnectorID, orgID).Scan(&whV)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return widgetConnectorID, nil // unknown viewer selection: the widget connector serves
+	}
+	if err != nil {
+		return "", err
+	}
+	if whW != nil && whV != nil && *whW == *whV {
+		return viewerConnectorID, nil
+	}
+	return widgetConnectorID, nil
+}
+
 func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) (*dashboardQueryResponse, error) {
 	ttl := defaultDashboardQueryCacheSeconds
 	if p.CacheSeconds != nil {
@@ -812,15 +866,11 @@ func dashboardQueryResult(rs *executor.ResultSet, queryMS int64, cached bool, ex
 
 func writeDashboardQueryError(w http.ResponseWriter, err error) {
 	var httpErr *httpQueryError
-	var choice *queryServiceChoiceError
-	switch {
-	case errors.As(err, &httpErr):
+	if errors.As(err, &httpErr) {
 		writeError(w, httpErr.status, httpErr.message)
-	case errors.As(err, &choice):
-		writeServiceChoiceRequired(w, choice.Choice)
-	default:
-		writeOpenQueryError(w, err, false)
+		return
 	}
+	writeOpenQueryError(w, err)
 }
 
 func dashboardQueryCacheKey(p dashboardQueryParams) string {

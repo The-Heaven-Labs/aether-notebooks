@@ -37,6 +37,7 @@ type ToolContext struct {
 	// and the caller selects the legacy stored-credential path. Every other
 	// outcome is a tool error and fails closed — managed ClickHouse execution
 	// never falls back to the connector's stored credential.
+	// pinned is deprecated and ignored; the requested connector is always the target.
 	ResolveTarget func(ctx context.Context, userID, connectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error)
 	// ConnPool leases per-user ClickHouse connections for resolved targets. It
 	// is required whenever ResolveTarget returns a managed target.

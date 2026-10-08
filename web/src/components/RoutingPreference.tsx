@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { effectiveAccess, setPreference, type WarehouseServiceChoice } from '../api/warehouses'
+import { effectiveAccess, setPreference } from '../api/warehouses'
 import { ErrorBanner } from './ErrorBanner'
-import { Modal } from './Modal'
 
 interface RoutingPreferenceProps {
   warehouseId: string
@@ -15,8 +14,9 @@ interface RoutingPreferenceProps {
 
 /**
  * Per-user service routing for one warehouse: pick which of the services the
- * user may `use` their queries run on, or clear the choice to route
- * automatically (a sole service, or a prompt when several are available).
+ * user may `use` their queries run on. The choice acts as the default service
+ * for new notebook and dashboard selections; clearing it leaves them without
+ * a default.
  */
 export function RoutingPreference({ warehouseId, warehouseName }: RoutingPreferenceProps) {
   const qc = useQueryClient()
@@ -54,7 +54,7 @@ export function RoutingPreference({ warehouseId, warehouseName }: RoutingPrefere
             ? 'No service access: ask an admin to grant use on a service.'
             : services.length === 1
               ? 'Queries run on the only service you can use.'
-              : 'Queries run on your preferred service unless a run is pinned.'}
+              : 'Used as the default service for new notebooks and dashboard selections.'}
         </div>
       </div>
       {isLoading ? (
@@ -70,7 +70,7 @@ export function RoutingPreference({ warehouseId, warehouseName }: RoutingPrefere
           onChange={(e) => handleChange(e.target.value)}
         >
           <option value="">
-            {services.length === 0 ? 'No permitted services' : 'Automatic (choose when needed)'}
+            {services.length === 0 ? 'No permitted services' : 'No default'}
           </option>
           {services.map((service) => (
             <option key={service.connector_id} value={service.connector_id}>
@@ -83,61 +83,6 @@ export function RoutingPreference({ warehouseId, warehouseName }: RoutingPrefere
       {save.isPending && <span style={styles.muted}>Saving…</span>}
       {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
     </section>
-  )
-}
-
-interface ServiceChoiceDialogProps {
-  open: boolean
-  services: WarehouseServiceChoice[]
-  saving?: boolean
-  error?: string | null
-  onSelect: (connectorId: string) => void
-  onCancel: () => void
-  onDismissError?: () => void
-}
-
-/**
- * Prompt shown when an execution returns 409 service_choice_required: the
- * warehouse has several permitted services and no preference picked one.
- * Choosing a service stores it as the user's routing preference. The dialog
- * stays open while the preference saves and the cell re-runs; callers close it
- * only once the run has succeeded.
- */
-export function ServiceChoiceDialog({
-  open,
-  services,
-  saving = false,
-  error = null,
-  onSelect,
-  onCancel,
-  onDismissError,
-}: ServiceChoiceDialogProps) {
-  if (!open) return null
-
-  return (
-    <Modal title="Choose a warehouse service" onClose={onCancel} minWidth={360}>
-      <div style={styles.dialogBody}>
-        <p style={styles.dialogText}>
-          More than one service in this warehouse is available to you. Pick the service
-          this query should run on — the choice is saved as your routing preference.
-        </p>
-        {error && <ErrorBanner message={error} onDismiss={onDismissError} />}
-        <div style={styles.choiceList}>
-          {services.map((service) => (
-            <button
-              key={service.connector_id}
-              type="button"
-              style={styles.choiceBtn}
-              disabled={saving}
-              onClick={() => onSelect(service.connector_id)}
-            >
-              {service.name}
-            </button>
-          ))}
-        </div>
-        {saving && <span style={styles.muted}>Saving preference…</span>}
-      </div>
-    </Modal>
   )
 }
 
@@ -180,35 +125,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
-    // Wide enough for "Automatic (choose when needed)" without clipping.
+    // Wide enough for long service names without clipping.
     maxWidth: 320,
-  },
-  dialogBody: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
-    padding: 16,
-  },
-  dialogText: {
-    margin: 0,
-    fontSize: 13,
-    color: 'var(--text-secondary)',
-    lineHeight: 1.5,
-  },
-  choiceList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  choiceBtn: {
-    padding: '8px 12px',
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 13,
-    fontWeight: 600,
-    color: 'var(--text-primary)',
-    cursor: 'pointer',
-    textAlign: 'left',
   },
 }

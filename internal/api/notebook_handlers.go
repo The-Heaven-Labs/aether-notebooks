@@ -1,16 +1,19 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -25,6 +28,7 @@ type createCellInput struct {
 type createNotebookRequest struct {
 	Title       string             `json:"title"`
 	Description string             `json:"description"`
+	ConnectorID string             `json:"connector_id,omitempty"`
 	Parameters  []models.Parameter `json:"parameters"`
 	FolderID    *string            `json:"folder_id,omitempty"`
 	Cells       []createCellInput  `json:"cells,omitempty"`
@@ -35,7 +39,7 @@ type createNotebookRequest struct {
 // @Tags notebooks
 // @Accept json
 // @Produce json
-// @Param request body object true "Notebook details (title required; cells optional with type, language, source)"
+// @Param request body object true "Notebook details (title required; connector_id, cells optional with type, language, source)"
 // @Success 201 {object} object
 // @Failure 400 {object} map[string]string
 // @Security BearerAuth
@@ -63,21 +67,28 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
+	var reqConnID *string
+	if req.ConnectorID != "" {
+		reqConnID = &req.ConnectorID
+	}
 	var nb models.Notebook
 	var paramsOut []byte
-	var folderID *string
+	var folderID, connID *string
 	err := s.db.Pool.QueryRow(ctx,
-		`INSERT INTO notebooks (org_id, title, description, parameters, created_by, folder_id)
-		 VALUES ($1, $2, $3, $4, $5, $6)
-		 RETURNING id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at, folder_id`,
-		claims.OrgID, req.Title, req.Description, params, claims.UserID, req.FolderID,
-	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt, &folderID)
+		`INSERT INTO notebooks (org_id, title, description, parameters, created_by, folder_id, connector_id)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7)
+		 RETURNING id, org_id, title, COALESCE(description,''), parameters, created_by, created_at, updated_at, folder_id, connector_id`,
+		claims.OrgID, req.Title, req.Description, params, claims.UserID, req.FolderID, reqConnID,
+	).Scan(&nb.ID, &nb.OrgID, &nb.Title, &nb.Description, &paramsOut, &nb.CreatedBy, &nb.CreatedAt, &nb.UpdatedAt, &folderID, &connID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create notebook")
 		return
 	}
 	json.Unmarshal(paramsOut, &nb.Parameters)
 	nb.FolderID = folderID
+	if connID != nil {
+		nb.ConnectorID = *connID
+	}
 
 	// Seed ACL entry for the creator
 	_, aclErr := s.db.Pool.Exec(ctx,
@@ -95,17 +106,45 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if nb.ConnectorID == "" {
+		// Seed from the creator's warehouse service preference when it
+		// resolves to exactly one live, granted service; otherwise fall back
+		// to the org default connector. An explicit connector_id always wins
+		// and existing notebooks are never re-seeded.
+		seedID, err := s.seedConnectorFromSolePreference(ctx, claims.UserID, claims.OrgID, claims.Role)
+		if err != nil {
+			// Seeding is a convenience: a lookup failure must never fail
+			// notebook creation.
+			slog.Warn("notebook connector preference seeding skipped",
+				"user_id", claims.UserID, "error", err)
+		} else if seedID != "" {
+			if _, err := s.db.Pool.Exec(ctx,
+				`UPDATE notebooks SET connector_id=$1 WHERE id=$2`,
+				seedID, nb.ID,
+			); err != nil {
+				slog.Warn("notebook connector preference seed not persisted",
+					"notebook_id", nb.ID, "connector_id", seedID, "error", err)
+			} else {
+				nb.ConnectorID = seedID
+			}
+		}
+	}
+
+	if nb.ConnectorID == "" {
 		var defaultID string
 		err := s.db.Pool.QueryRow(ctx,
 			`SELECT id FROM connectors WHERE org_id=$1 AND is_default=true LIMIT 1`,
 			claims.OrgID,
 		).Scan(&defaultID)
 		if err == nil {
-			_, _ = s.db.Pool.Exec(ctx,
+			if _, err := s.db.Pool.Exec(ctx,
 				`UPDATE notebooks SET connector_id=$1 WHERE id=$2`,
 				defaultID, nb.ID,
-			)
-			nb.ConnectorID = defaultID
+			); err != nil {
+				slog.Warn("notebook org default connector not persisted",
+					"notebook_id", nb.ID, "connector_id", defaultID, "error", err)
+			} else {
+				nb.ConnectorID = defaultID
+			}
 		}
 	}
 
@@ -169,6 +208,86 @@ func (s *Server) handleCreateNotebook(w http.ResponseWriter, r *http.Request) {
 	} else {
 		writeJSON(w, http.StatusCreated, nb)
 	}
+}
+
+// seedConnectorFromSolePreference resolves the connector a newly created
+// notebook should inherit from its creator's warehouse service preferences. It
+// returns a connector ID only when exactly one live preference names a service
+// of a ready warehouse in the creating org that the creator may still `use`;
+// zero, several, or a lookup error yield no seed so the caller falls back to
+// the org default. Seeding must never fail notebook creation.
+//
+// The preference table is keyed by (user_id, warehouse_id), so a creator with
+// preferences in two warehouses yields two candidates and no seed; a stale
+// preference (revoked access, soft-deleted or moved service, not-ready
+// warehouse, blocked provisioner) is filtered out rather than seeding a
+// connector the creator could not execute on. The provisioner guard mirrors
+// execution: an org-wide provisioner is excluded unless its warehouse allows
+// provisioner execution and warehouse management is enabled.
+func (s *Server) seedConnectorFromSolePreference(ctx context.Context, userID, orgID, role string) (string, error) {
+	userUUID, err := uuid.Parse(userID)
+	if err != nil {
+		return "", fmt.Errorf("parse user id: %w", err)
+	}
+	orgUUID, err := uuid.Parse(orgID)
+	if err != nil {
+		return "", fmt.Errorf("parse org id: %w", err)
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT p.connector_id
+		FROM warehouse_service_preferences p
+		JOIN connectors c ON c.id = p.connector_id
+		JOIN warehouses w ON w.id = p.warehouse_id
+		WHERE p.user_id = $1
+		  AND w.org_id = $2
+		  AND w.sync_status = 'ready'
+		  AND c.warehouse_id = p.warehouse_id
+		  AND c.org_id = $2
+		  AND c.deleted_at IS NULL
+		  AND c.type = 'clickhouse'
+		  AND (
+		    NOT EXISTS (SELECT 1 FROM warehouses wp WHERE wp.provisioner_connector_id = c.id AND wp.org_id = c.org_id)
+		    OR (w.allow_provisioner_execution AND $3)
+		  )
+		ORDER BY p.warehouse_id`,
+		userUUID.String(), orgUUID.String(), s.warehouseManagementEnabled())
+	if err != nil {
+		return "", fmt.Errorf("load warehouse service preferences: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []uuid.UUID
+	for rows.Next() {
+		var connectorID uuid.UUID
+		if err := rows.Scan(&connectorID); err != nil {
+			return "", fmt.Errorf("scan warehouse service preference: %w", err)
+		}
+		candidates = append(candidates, connectorID)
+	}
+	if err := rows.Err(); err != nil {
+		return "", fmt.Errorf("iterate warehouse service preferences: %w", err)
+	}
+	// Release the connection before the per-candidate ACL lookups below.
+	rows.Close()
+
+	// A preference counts only while its service is still usable: the full
+	// ACL resolution (direct, group, folder, Everyone) decides, exactly as it
+	// does for execution.
+	var usable []uuid.UUID
+	for _, connectorID := range candidates {
+		allowed, err := s.connectorUseAllowed(ctx, userUUID, orgUUID, role, connectorID)
+		if err != nil {
+			return "", err
+		}
+		if allowed {
+			usable = append(usable, connectorID)
+		}
+	}
+	if len(usable) != 1 {
+		return "", nil
+	}
+	return usable[0].String(), nil
 }
 
 // @Summary List notebooks

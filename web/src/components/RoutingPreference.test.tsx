@@ -1,11 +1,10 @@
-import { describe, test, expect, beforeEach, vi } from 'vitest'
+import { describe, test, expect, beforeEach } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
-import { RoutingPreference, ServiceChoiceDialog } from './RoutingPreference'
-import { ApiError } from '../api/client'
-import { serviceChoicesFromError, type WarehouseEffectiveAccess } from '../api/warehouses'
+import { RoutingPreference } from './RoutingPreference'
+import { type WarehouseEffectiveAccess } from '../api/warehouses'
 
 const ACCESS: WarehouseEffectiveAccess = {
   user_id: 'user-1',
@@ -47,14 +46,14 @@ describe('RoutingPreference', () => {
     expect(await screen.findByRole('option', { name: 'CH RO' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'CH RW (current)' })).toBeInTheDocument()
     expect(screen.getByLabelText('Preferred service for Analytics WH')).toHaveValue('c-2')
-    expect(screen.getByRole('option', { name: /Automatic/ })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'No default' })).toBeInTheDocument()
   })
 
-  test('fits the full automatic option without clipping', async () => {
+  test('renders the no-default option without clipping', async () => {
     renderPreference()
 
     const select = await screen.findByLabelText('Preferred service for Analytics WH')
-    expect(screen.getByRole('option', { name: 'Automatic (choose when needed)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'No default' })).toBeInTheDocument()
     expect(select).toHaveStyle('max-width: 320px')
   })
 
@@ -155,147 +154,5 @@ describe('RoutingPreference', () => {
     renderPreference()
 
     expect(await screen.findByText('Failed to load services')).toBeInTheDocument()
-  })
-})
-
-describe('ServiceChoiceDialog', () => {
-  const SERVICES = [
-    { connector_id: 'c-1', name: 'CH RO' },
-    { connector_id: 'c-2', name: 'CH RW' },
-  ]
-
-  test('offers the services from the 409 and selects one', async () => {
-    const onSelect = vi.fn()
-    renderWithProviders(
-      <ServiceChoiceDialog
-        open
-        services={SERVICES}
-        onSelect={onSelect}
-        onCancel={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByRole('dialog')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'CH RW' }))
-    expect(onSelect).toHaveBeenCalledWith('c-2')
-  })
-
-  test('renders through a portal so a transformed ancestor cannot trap it', () => {
-    const { container } = renderWithProviders(
-      <div style={{ transform: 'translateY(4px)' }}>
-        <ServiceChoiceDialog
-          open
-          services={SERVICES}
-          onSelect={vi.fn()}
-          onCancel={vi.fn()}
-        />
-      </div>,
-    )
-
-    const dialog = screen.getByRole('dialog')
-    expect(container.contains(dialog)).toBe(false)
-    expect(document.body.contains(dialog)).toBe(true)
-  })
-
-  test('shows the save error and disables choices while saving', () => {
-    renderWithProviders(
-      <ServiceChoiceDialog
-        open
-        services={SERVICES}
-        saving
-        error="no access to the selected service"
-        onSelect={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    )
-
-    expect(screen.getByText('no access to the selected service')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'CH RO' })).toBeDisabled()
-  })
-
-  test('dismisses the error through the caller handler', () => {
-    const onDismissError = vi.fn()
-    renderWithProviders(
-      <ServiceChoiceDialog
-        open
-        services={SERVICES}
-        error="your preference was saved, but the query did not run"
-        onSelect={vi.fn()}
-        onCancel={vi.fn()}
-        onDismissError={onDismissError}
-      />,
-    )
-
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }))
-    expect(onDismissError).toHaveBeenCalledTimes(1)
-  })
-
-  test('renders nothing when closed', () => {
-    renderWithProviders(
-      <ServiceChoiceDialog
-        open={false}
-        services={SERVICES}
-        onSelect={vi.fn()}
-        onCancel={vi.fn()}
-      />,
-    )
-    expect(screen.queryByRole('dialog')).toBeNull()
-  })
-})
-
-describe('serviceChoicesFromError', () => {
-  test('extracts the warehouse and services from a 409 ApiError body', () => {
-    const err = new ApiError(409, 'service_choice_required', {
-      error: 'service_choice_required',
-      warehouse_id: 'wh-1',
-      services: [
-        { connector_id: 'c-1', name: 'CH RO' },
-        { connector_id: 'c-2', name: 'CH RW' },
-      ],
-    })
-    expect(serviceChoicesFromError(err)).toEqual({
-      warehouseId: 'wh-1',
-      services: [
-        { connector_id: 'c-1', name: 'CH RO' },
-        { connector_id: 'c-2', name: 'CH RW' },
-      ],
-    })
-  })
-
-  test('tolerates a missing warehouse_id and rejects unrelated 409s', () => {
-    expect(
-      serviceChoicesFromError(new ApiError(409, 'service_choice_required', {
-        error: 'service_choice_required',
-        services: [{ connector_id: 'c-1', name: 'CH RO' }],
-      })),
-    ).toEqual({ warehouseId: null, services: [{ connector_id: 'c-1', name: 'CH RO' }] })
-
-    // A 409 whose error is not service_choice_required is never a routing choice.
-    expect(
-      serviceChoicesFromError(new ApiError(409, 'conflict', {
-        error: 'some_other_conflict',
-        services: [{ connector_id: 'c-1', name: 'CH RO' }],
-      })),
-    ).toBeNull()
-    expect(
-      serviceChoicesFromError(new ApiError(409, 'conflict', { services: [{ connector_id: 'c-1', name: 'CH RO' }] })),
-    ).toBeNull()
-  })
-
-  test('ignores non-409 errors and malformed payloads', () => {
-    expect(
-      serviceChoicesFromError(new ApiError(403, 'forbidden', {
-        error: 'service_choice_required',
-        services: [{ connector_id: 'c-1', name: 'CH RO' }],
-      })),
-    ).toBeNull()
-    expect(serviceChoicesFromError(new ApiError(409, 'nope', 'oops'))).toBeNull()
-    expect(
-      serviceChoicesFromError(new ApiError(409, 'service_choice_required', {
-        error: 'service_choice_required',
-        services: [{ connector_id: 1 }],
-      })),
-    ).toBeNull()
-    expect(serviceChoicesFromError(new Error('network'))).toBeNull()
   })
 })

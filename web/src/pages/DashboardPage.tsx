@@ -14,6 +14,9 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { QueryDataWidget } from '../components/QueryDataWidget'
+import { ConnectorSelector } from '../components/ConnectorSelector'
+import { useDashboardConnector } from '../hooks/useDashboardConnector'
+import { useAuth } from '../hooks/useAuth'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
@@ -211,6 +214,11 @@ const toGridItem = (w: Widget): LayoutItem => ({
 
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
+  const { user } = useAuth()
+  const { selected, suggestion, select, resolving } = useDashboardConnector(id, user?.user_id ?? '')
+  // The live default (viewer's sole warehouse preference) is preselected;
+  // an explicit pick persists and overrides it.
+  const viewerConnectorId = selected ?? suggestion
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [containerWidth, setContainerWidth] = useState(0)
   const [refreshSeconds, setRefreshSeconds] = useState<number>(0)
@@ -334,7 +342,7 @@ function DashboardContent({ id }: { id: string }) {
   const variables = dashboard.settings?.variables ?? []
 
   return (
-    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables}>
+    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId}>
     <AppShell noPadding>
       {/* Sub-header */}
       <header className="dash-header" style={styles.subHeader}>
@@ -348,6 +356,18 @@ function DashboardContent({ id }: { id: string }) {
         </div>
         {/* Run all + auto-refresh */}
         <div className="dash-header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Per-viewer connector selection: query widgets in the same
+              warehouse run on the selected service; others keep their own.
+              allowClear is off while a live default exists — clearing would
+              just re-select the suggestion on the next render. */}
+          <ConnectorSelector
+            value={viewerConnectorId}
+            onChange={select}
+            types={['clickhouse']}
+            allowClear={!suggestion}
+            placeholder="Widget's connector"
+            style={{ fontSize: 12, maxWidth: 220 }}
+          />
           <button
             style={{
               padding: '5px 12px', fontSize: 12, fontWeight: 600,
@@ -508,7 +528,9 @@ function DashboardContent({ id }: { id: string }) {
                       dashboardId={dashboard.id}
                       widget={widget}
                       canViewWithData={dashboard.can_view_with_data !== false}
+                      queryEnabled={selected != null || !resolving}
                       refreshNonce={refreshNonce}
+                      viewerConnectorId={viewerConnectorId}
                     />
                   ) : (
                     <WidgetCard widget={widget} qc={qc} widgetsData={dashboard.widgets_data} dashboardId={id} />

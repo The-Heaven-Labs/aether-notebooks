@@ -75,4 +75,57 @@ describe('useWidgetQuery', () => {
     expect(bodies[0].bypass_cache).toBe(false)
     expect(bodies[1].bypass_cache).toBe(true)
   })
+
+  test('carries the viewer connector id in the request body', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({ outputs: [], metrics: {}, cached: false })
+      }),
+    )
+    const { result } = renderHook(
+      () => useWidgetQuery({ dashboardId: 'd1', widget, values: {}, enabled: true, viewerConnectorId: 'conn-2' }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.data).toBeTruthy())
+    expect(bodies[0]).toMatchObject({ connector_id: 'conn-2' })
+  })
+
+  test('omits connector_id when no viewer selection is passed', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({ outputs: [], metrics: {}, cached: false })
+      }),
+    )
+    const { result } = renderHook(
+      () => useWidgetQuery({ dashboardId: 'd1', widget, values: {}, enabled: true }),
+      { wrapper },
+    )
+    await waitFor(() => expect(result.current.data).toBeTruthy())
+    expect(bodies[0]).not.toHaveProperty('connector_id')
+  })
+
+  test('refetches when the viewer selection changes', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({ outputs: [], metrics: {}, cached: false })
+      }),
+    )
+    let viewer: string | null = null
+    const { rerender } = renderHook(
+      () => useWidgetQuery({ dashboardId: 'd1', widget, values: {}, enabled: true, viewerConnectorId: viewer }),
+      { wrapper },
+    )
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(bodies[0]).not.toHaveProperty('connector_id')
+    viewer = 'conn-2'
+    rerender()
+    await waitFor(() => expect(bodies.length).toBe(2))
+    expect(bodies[1]).toMatchObject({ connector_id: 'conn-2' })
+  })
 })

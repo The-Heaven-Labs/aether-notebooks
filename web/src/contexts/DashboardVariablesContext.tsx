@@ -62,7 +62,7 @@ function serializeValue(v: DashboardVariable, value: unknown): string[] {
   }
 }
 
-export function DashboardVariablesProvider({ dashboardId, variables, children, endpointBase, storageId }: {
+export function DashboardVariablesProvider({ dashboardId, variables, children, endpointBase, storageId, viewerConnectorId }: {
   dashboardId: string
   variables: DashboardVariable[]
   children: React.ReactNode
@@ -70,6 +70,8 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
   endpointBase?: string
   /** Overrides the localStorage namespace, e.g. a public token so visitors don't leak values across dashboards. */
   storageId?: string
+  /** Viewer's dashboard connector selection, forwarded to query-backed option loads. */
+  viewerConnectorId?: string | null
 }) {
   const storageNamespace = storageId ?? dashboardId
   const optionsBase = endpointBase ?? `/api/v1/dashboards/${dashboardId}`
@@ -111,16 +113,18 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     try {
       const resp = await api.post<{ options: DashboardVariableOption[] }>(
         `${optionsBase}/variables/${name}/options`,
-        { variables: valuesRef.current },
+        { variables: valuesRef.current, connector_id: viewerConnectorId ?? undefined },
       )
       setOptionState(prev => ({ ...prev, [name]: { options: resp.options, loading: false, error: null, reload: () => { void loadOptions(name) } } }))
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to load options'
       setOptionState(prev => ({ ...prev, [name]: { options: [], loading: false, error: message, reload: () => { void loadOptions(name) } } }))
     }
-  }, [optionsBase])
+  }, [optionsBase, viewerConnectorId])
 
-  // Reload query-backed options on mount and whenever a dependency changes.
+  // Reload query-backed options on mount and whenever a dependency changes,
+  // including the viewer's connector selection (options must agree with the
+  // service that widget execution will use).
   const depSignature = JSON.stringify(variables.map(v => ({
     name: v.name,
     deps: (v.depends_on ?? []).map(d => [d, values[d]]),
@@ -133,7 +137,7 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     }, 300)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depSignature])
+  }, [depSignature, viewerConnectorId])
 
   // Seed static options so controls render immediately.
   const optionStateWithStatic = useMemo(() => {

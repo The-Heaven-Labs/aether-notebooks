@@ -12,19 +12,26 @@ export function useWidgetQuery(opts: {
   widget: Widget
   values: Record<string, unknown>
   enabled: boolean
+  /** Viewer's dashboard connector selection, forwarded to widget execution. */
+  viewerConnectorId?: string | null
   /** Overrides the execute endpoint base, e.g. `/api/v1/public/{token}` for public dashboards. */
   endpointBase?: string
 }) {
   const bypassRef = useRef(false)
   const endpointBase = opts.endpointBase ?? `/api/v1/dashboards/${opts.dashboardId}`
   const query = useQuery({
-    queryKey: ['widget-query', endpointBase, opts.widget.id, canonicalValues(opts.values)],
+    queryKey: ['widget-query', endpointBase, opts.widget.id, opts.viewerConnectorId ?? '', canonicalValues(opts.values)],
     queryFn: ({ signal }) => {
       const bypass = bypassRef.current
       bypassRef.current = false
       return api.post<WidgetQueryResult>(
         `${endpointBase}/execute`,
-        { widget_id: opts.widget.id, variables: opts.values, bypass_cache: bypass },
+        {
+          widget_id: opts.widget.id,
+          connector_id: opts.viewerConnectorId ?? undefined,
+          variables: opts.values,
+          bypass_cache: bypass,
+        },
         { signal },
       )
     },

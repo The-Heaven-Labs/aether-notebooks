@@ -11,7 +11,6 @@ import { AppShell } from '../components/AppShell'
 import { Skeleton } from '../components/Skeleton'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import { setPreference, serviceChoicesFromError, type ServiceChoicePrompt, type WarehouseServiceChoice } from '../api/warehouses'
 import type { Notebook, Cell, Output, Connector, Parameter, CellVersion, NotebookSnapshot, Dashboard, Widget, ExecuteRouting } from '../types'
 import type { ChartConfig } from '../charts'
 import { Cell as NotebookCell, focusCellEditorEnd, collabCache, updateCellScroll, type NotebookCollab } from '../components/Cell'
@@ -31,11 +30,9 @@ const NotebookHistoryPanel = lazy(() => import('../components/NotebookHistoryPan
 const PermissionsPanel = lazy(() => import('../components/PermissionsPanel').then(m => ({ default: m.PermissionsPanel })))
 const ShareModal = lazy(() => import('../components/ShareModal').then(m => ({ default: m.ShareModal })))
 const SessionViewer = lazy(() => import('../components/SessionViewer').then(m => ({ default: m.SessionViewer })))
-import { ServiceChoiceDialog } from '../components/RoutingPreference'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { useNotebookWs, shouldFlashExecutingCell } from '../hooks/useNotebookWs'
-import { useAuth } from '../hooks/useAuth'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { NotebookChats } from '../components/NotebookChats'
 import type { AgentSessionListItem } from '../types/agent'
@@ -66,14 +63,6 @@ function fmtTime(date: Date): string {
   if (diffHour < 24) return `${diffHour} hour${diffHour !== 1 ? 's' : ''} ago`
   if (diffDay < 7) return `${diffDay} day${diffDay !== 1 ? 's' : ''} ago`
   return date.toLocaleDateString([], { month: 'short', day: 'numeric', year: 'numeric' })
-}
-
-function readNotebookPin(storageKey: string): boolean {
-  try {
-    return localStorage.getItem(storageKey) === 'true'
-  } catch {
-    return false
-  }
 }
 
 function AddCellBar({ onAddCode, onAddText }: { onAddCode: () => void; onAddText: () => void }) {
@@ -216,25 +205,6 @@ export function NotebookPage() {
   const notebookConnectorIdRef = useRef(notebookConnectorId)
   notebookConnectorIdRef.current = notebookConnectorId
 
-  // Pin is a per-notebook, per-user preference: pinned runs that use the
-  // notebook connector dial it directly instead of routing through the user's
-  // service preference. Stored per user + notebook so switching notebooks (or
-  // users on a shared browser) re-reads the right value during render.
-  const { user: authUser } = useAuth()
-  const pinStorageKey = `aether_notebook_pin:${authUser?.user_id ?? 'anon'}:${id ?? ''}`
-  const [pinState, setPinState] = useState(() => ({
-    key: pinStorageKey,
-    pinned: readNotebookPin(pinStorageKey),
-  }))
-  if (pinState.key !== pinStorageKey) {
-    setPinState({ key: pinStorageKey, pinned: readNotebookPin(pinStorageKey) })
-  }
-  const notebookPinned = pinState.pinned
-  const toggleNotebookPin = useCallback((pinned: boolean) => {
-    setPinState({ key: pinStorageKey, pinned })
-    try { localStorage.setItem(pinStorageKey, String(pinned)) } catch { /* ignore */ }
-  }, [pinStorageKey])
-
   const [following, setFollowing] = useState<{ email: string; name: string } | null>(null)
   const [viewOpen, setViewOpen] = useState(false)
   const [shareOpen, setShareOpen] = useState(false)
@@ -255,10 +225,6 @@ export function NotebookPage() {
 
   const [cellRunAt, setCellRunAt] = useState<Record<string, Date>>({})
   const [cellRouting, setCellRouting] = useState<Record<string, ExecuteRouting>>({})
-  // 409 service_choice_required: warehouse services the user may pick from.
-  const [serviceChoice, setServiceChoice] = useState<{ cellId: string; prompt: ServiceChoicePrompt } | null>(null)
-  const [serviceChoiceError, setServiceChoiceError] = useState<string | null>(null)
-  const [serviceChoiceSaving, setServiceChoiceSaving] = useState(false)
   const [focusedCellId, setFocusedCellId] = useState<string | null>(null)
   const [allCollapsed, setAllCollapsed] = useState(false)
   const [allCodeHidden, setAllCodeHidden] = useState(false)
@@ -1036,14 +1002,6 @@ export function NotebookPage() {
         return false
       }
 
-      // The notebook pin only applies when this run uses the notebook's own
-      // ClickHouse connector; a cell with its own connector is unaffected.
-      const effectiveConnector = connectors.find((c) => c.id === effectiveConnectorId)
-      const pinApplies =
-        notebookPinned &&
-        effectiveConnectorId === nbConnectorId &&
-        effectiveConnector?.type === 'clickhouse'
-
       await api.put(`/api/v1/notebooks/${id}/cells/${cellId}`, { source: cell.source })
 
       setRunningCells((s) => ({ ...s, [cellId]: Date.now() }))
@@ -1055,7 +1013,7 @@ export function NotebookPage() {
           routing?: ExecuteRouting
         }>(
           `/api/v1/notebooks/${id}/cells/${cellId}/execute`,
-          { parameters: params, pinned: pinApplies || undefined },
+          { parameters: params },
         )
         setLocalCells((prev) =>
           prev.map((c) => (c.id === cellId ? { ...c, outputs: result.outputs, metrics: result.metrics } : c)),
@@ -1069,14 +1027,6 @@ export function NotebookPage() {
         setCellRunAt((prev) => ({ ...prev, [cellId]: new Date() }))
         return true
       } catch (err: unknown) {
-        const prompt = serviceChoicesFromError(err)
-        if (prompt) {
-          // Ambiguous warehouse routing: prompt for a service and save the
-          // choice as the user's preference before retrying the run.
-          setServiceChoiceError(null)
-          setServiceChoice({ cellId, prompt })
-          return false
-        }
         const msg = err instanceof Error ? err.message : 'Execution failed'
         setLocalCells((prev) =>
           prev.map((c) =>
@@ -1101,54 +1051,7 @@ export function NotebookPage() {
         })
       }
     },
-    [id, notebookPinned, connectors],
-  )
-
-  // Fallback warehouse lookup for a 409 body without a warehouse_id: all
-  // offered services share one warehouse, and the connectors list names it.
-  const warehouseIdForServiceChoice = useCallback(
-    (cellId: string, services: WarehouseServiceChoice[]): string | null => {
-      const cell = localCellsRef.current.find((c) => c.id === cellId)
-      const effectiveConnectorId = cell?.connector_id || notebookConnectorIdRef.current
-      const serviceIds = new Set(services.map((s) => s.connector_id))
-      const match = connectors.find((c) => c.id === effectiveConnectorId)
-        ?? connectors.find((c) => serviceIds.has(c.id))
-      return match?.warehouse_id ?? null
-    },
-    [connectors],
-  )
-
-  const chooseWarehouseService = useCallback(
-    async (connectorId: string) => {
-      const pending = serviceChoice
-      if (!pending) return
-      const warehouseId = pending.prompt.warehouseId
-        ?? warehouseIdForServiceChoice(pending.cellId, pending.prompt.services)
-      if (!warehouseId) {
-        setServiceChoiceError('Could not determine which warehouse this connector belongs to.')
-        return
-      }
-      setServiceChoiceSaving(true)
-      setServiceChoiceError(null)
-      try {
-        await setPreference(warehouseId, connectorId)
-        qc.invalidateQueries({ queryKey: ['warehouse-effective-access', warehouseId] })
-        qc.invalidateQueries({ queryKey: ['warehouse-grants', warehouseId] })
-        const ran = await saveAndRun(pending.cellId)
-        if (ran) {
-          // Close only once the re-run succeeded; otherwise the dialog stays
-          // open so the user can retry or cancel.
-          setServiceChoice(null)
-        } else {
-          setServiceChoiceError('Your preference was saved, but the query did not run. See the cell output for details.')
-        }
-      } catch (err) {
-        setServiceChoiceError(err instanceof Error ? err.message : 'Failed to save preference')
-      } finally {
-        setServiceChoiceSaving(false)
-      }
-    },
-    [serviceChoice, warehouseIdForServiceChoice, saveAndRun, qc],
+    [id],
   )
 
   const runAll = useCallback(async () => {
@@ -1458,8 +1361,6 @@ export function NotebookPage() {
             onChange={applyNotebookConnector}
             placeholder="Select a connector"
             allowClear
-            pinned={notebookPinned}
-            onTogglePin={toggleNotebookPin}
           />
           <div className="nbt-run">
             {/* Run All — standalone */}
@@ -1923,15 +1824,6 @@ export function NotebookPage() {
       destructive
       onConfirm={() => { if (deleteCellTarget) deleteCell.mutate(deleteCellTarget); setDeleteCellTarget(null) }}
       onCancel={() => setDeleteCellTarget(null)}
-    />
-    <ServiceChoiceDialog
-      open={!!serviceChoice}
-      services={serviceChoice?.prompt.services ?? []}
-      saving={serviceChoiceSaving}
-      error={serviceChoiceError}
-      onSelect={chooseWarehouseService}
-      onCancel={() => { setServiceChoice(null); setServiceChoiceError(null) }}
-      onDismissError={() => setServiceChoiceError(null)}
     />
     <ConfirmDialog
       open={deleteNotebookConfirm}

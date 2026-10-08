@@ -61,40 +61,12 @@ describe('ConnectorSelector', () => {
     expect(onChange).toHaveBeenCalledWith(null)
   })
 
-  test('renders a pin toggle and reports its new state', async () => {
+  test('types filter hides connectors of other types', async () => {
     server.use(
       http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
     )
-    const onTogglePin = vi.fn()
-    renderWithQuery(
-      <ConnectorSelector value="conn-1" onChange={() => {}} pinned={false} onTogglePin={onTogglePin} />,
-    )
-
-    const pin = await screen.findByRole('button', { name: 'Pin connector' })
-    fireEvent.click(pin)
-    expect(onTogglePin).toHaveBeenCalledWith(true)
-  })
-
-  test('shows the pinned state and unpins on click', async () => {
-    server.use(
-      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
-    )
-    const onTogglePin = vi.fn()
-    renderWithQuery(
-      <ConnectorSelector value="conn-1" onChange={() => {}} pinned onTogglePin={onTogglePin} />,
-    )
-
-    const pin = await screen.findByRole('button', { name: 'Unpin connector' })
-    expect(pin).toHaveAttribute('aria-pressed', 'true')
-    fireEvent.click(pin)
-    expect(onTogglePin).toHaveBeenCalledWith(false)
-  })
-
-  test('disables the pin toggle without a selected connector', () => {
-    server.use(
-      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
-    )
-    renderWithQuery(<ConnectorSelector value={null} onChange={() => {}} onTogglePin={vi.fn()} />)
-    expect(screen.getByRole('button', { name: 'Pin connector' })).toBeDisabled()
+    renderWithQuery(<ConnectorSelector value={null} onChange={() => {}} types={['clickhouse']} />)
+    expect(await screen.findByText('Analytics CH')).toBeInTheDocument()
+    expect(screen.queryByText('Production DB')).not.toBeInTheDocument()
   })
 })

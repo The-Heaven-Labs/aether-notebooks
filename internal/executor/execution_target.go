@@ -3,6 +3,7 @@ package executor
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -23,14 +24,10 @@ var (
 	// connector credential.
 	ErrProvisioningNotReady = errors.New("warehouse provisioning is not ready")
 
-	// ErrServiceAccessDenied reports that the user has no `use` grant on any
-	// eligible service in the warehouse, or on the explicitly pinned connector.
+	// ErrServiceAccessDenied reports that the user has no `use` grant on the
+	// requested (selected) connector. The enriched ServiceAccessDeniedError
+	// carries the services the user may use in that warehouse instead.
 	ErrServiceAccessDenied = errors.New("no permitted service in warehouse")
-
-	// ErrServiceChoiceRequired reports ambiguous routing: several services are
-	// allowed and no preference picked one. A ServiceChoiceError carries the
-	// allowed list for the "choose a service" prompt.
-	ErrServiceChoiceRequired = errors.New("multiple warehouse services available")
 
 	// ErrConnectorNotFound reports that the requested connector cannot be
 	// resolved: it is missing, soft-deleted, not a ClickHouse connector, or
@@ -46,26 +43,34 @@ var (
 	ErrProvisionerNotExecutable = errors.New("warehouse provisioner cannot execute user queries")
 )
 
-// ServiceChoice is one selectable service in a ServiceChoiceError, carrying
-// enough to render a picker without re-querying.
+// ServiceChoice is one permitted service carried by a ServiceAccessDeniedError,
+// so callers can render the alternatives without re-querying.
 type ServiceChoice struct {
 	ConnectorID uuid.UUID
 	Name        string
 }
 
-// ServiceChoiceError is returned when a user may use more than one service in
-// a warehouse and has not recorded a routing preference.
-type ServiceChoiceError struct {
+// ServiceAccessDeniedError reports that the requested connector cannot serve
+// the acting user: they hold no `use` grant on it. It carries the services
+// the user MAY use in the same warehouse so callers can render an actionable
+// message instead of a bare denial.
+type ServiceAccessDeniedError struct {
 	WarehouseID uuid.UUID
 	Allowed     []ServiceChoice
 }
 
-func (e *ServiceChoiceError) Error() string {
-	return fmt.Sprintf("warehouse %s has %d permitted services and no routing preference", e.WarehouseID, len(e.Allowed))
+func (e *ServiceAccessDeniedError) Error() string {
+	names := make([]string, 0, len(e.Allowed))
+	for _, svc := range e.Allowed {
+		names = append(names, svc.Name)
+	}
+	return fmt.Sprintf("no access to the requested service; permitted services in warehouse %s: %s",
+		e.WarehouseID, strings.Join(names, ", "))
 }
 
-// Unwrap makes errors.Is(err, ErrServiceChoiceRequired) succeed.
-func (e *ServiceChoiceError) Unwrap() error { return ErrServiceChoiceRequired }
+// Unwrap makes errors.Is(err, ErrServiceAccessDenied) true for every caller
+// that only needs the sentinel.
+func (e *ServiceAccessDeniedError) Unwrap() error { return ErrServiceAccessDenied }
 
 // ExecutionTarget is a fully resolved per-user ClickHouse execution endpoint:
 // the warehouse that governs access, the service connector to dial, and the
@@ -91,10 +96,9 @@ type ExecutionTarget struct {
 	// CHUser is the derived ClickHouse username, duplicated from Config.User
 	// only for audit fields that should not reach into Config.
 	CHUser string
-	// MaxRows and TimeoutSeconds are the routed service's execution limits.
-	// They can differ from the requested connector's values when a preference
-	// or sole-service fallback picks another service, and callers must apply
-	// the routed service's limits, not the requested connector's.
+	// MaxRows and TimeoutSeconds are the selected service's execution limits.
+	// Selection wins, so they are the requested connector's values; callers
+	// must apply them to the run.
 	MaxRows        int
 	TimeoutSeconds int
 }
@@ -110,10 +114,10 @@ func (t *ExecutionTarget) String() string {
 }
 
 // Compile-time guards: callers rely on Error for messages, Unwrap for
-// errors.Is(err, ErrServiceChoiceRequired) routing, and String for redacted
+// errors.Is routing (ErrServiceAccessDenied), and String for redacted
 // rendering.
 var (
-	_ error                       = (*ServiceChoiceError)(nil)
-	_ interface{ Unwrap() error } = (*ServiceChoiceError)(nil)
+	_ error                       = (*ServiceAccessDeniedError)(nil)
+	_ interface{ Unwrap() error } = (*ServiceAccessDeniedError)(nil)
 	_ fmt.Stringer                = (*ExecutionTarget)(nil)
 )

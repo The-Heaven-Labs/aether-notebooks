@@ -7,11 +7,11 @@ import { server } from '../test/server'
 import { DashboardVariablesProvider, useDashboardVariables } from './DashboardVariablesContext'
 import type { DashboardVariable } from '../types'
 
-function renderWithVariables(variables: DashboardVariable[], initialPath: string, dashboardId = 'd1') {
+function renderWithVariables(variables: DashboardVariable[], initialPath: string, dashboardId = 'd1', viewerConnectorId?: string | null) {
   return renderHook(() => useDashboardVariables(), {
     wrapper: ({ children }: { children: ReactNode }) => (
       <MemoryRouter initialEntries={[initialPath]}>
-        <DashboardVariablesProvider dashboardId={dashboardId} variables={variables}>
+        <DashboardVariablesProvider dashboardId={dashboardId} variables={variables} viewerConnectorId={viewerConnectorId}>
           {children}
         </DashboardVariablesProvider>
       </MemoryRouter>
@@ -78,6 +78,66 @@ describe('DashboardVariablesContext', () => {
       { timeout: 3000 },
     )
     expect(received.variables).toMatchObject({ country: 'US' })
+  })
+
+  test('options request carries the viewer connector selection', async () => {
+    const received: { connector_id?: string } = {}
+    server.use(
+      http.post('/api/v1/dashboards/d1/variables/city/options', async ({ request }) => {
+        Object.assign(received, (await request.json()) as { connector_id?: string })
+        return HttpResponse.json({ options: [{ label: 'Paris', value: 'paris' }] })
+      }),
+    )
+    const { result } = renderWithVariables([countryVar, cityVar], '/dash/d1', 'd1', 'conn-2')
+
+    await waitFor(
+      () => expect(result.current.optionState.city?.options).toEqual([{ label: 'Paris', value: 'paris' }]),
+      { timeout: 3000 },
+    )
+    expect(received.connector_id).toBe('conn-2')
+  })
+
+  test('options request omits connector_id without a viewer selection', async () => {
+    const received: { connector_id?: string } = {}
+    server.use(
+      http.post('/api/v1/dashboards/d1/variables/city/options', async ({ request }) => {
+        Object.assign(received, (await request.json()) as { connector_id?: string })
+        return HttpResponse.json({ options: [{ label: 'Paris', value: 'paris' }] })
+      }),
+    )
+    const { result } = renderWithVariables([countryVar, cityVar], '/dash/d1')
+
+    await waitFor(
+      () => expect(result.current.optionState.city?.options).toEqual([{ label: 'Paris', value: 'paris' }]),
+      { timeout: 3000 },
+    )
+    expect(received).not.toHaveProperty('connector_id')
+  })
+
+  test('reloads query-backed options when the viewer connector changes', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/variables/city/options', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({ options: [{ label: 'Paris', value: 'paris' }] })
+      }),
+    )
+    let connector: string | null = null
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <MemoryRouter initialEntries={['/dash/d1']}>
+        <DashboardVariablesProvider dashboardId="d1" variables={[countryVar, cityVar]} viewerConnectorId={connector}>
+          {children}
+        </DashboardVariablesProvider>
+      </MemoryRouter>
+    )
+    const { rerender } = renderHook(() => useDashboardVariables(), { wrapper })
+
+    await waitFor(() => expect(bodies.length).toBe(1), { timeout: 3000 })
+    expect(bodies[0]).not.toHaveProperty('connector_id')
+    connector = 'conn-2'
+    rerender()
+    await waitFor(() => expect(bodies.length).toBe(2), { timeout: 3000 })
+    expect(bodies[1].connector_id).toBe('conn-2')
   })
 
   test('exposes loading and error state for failed option queries', async () => {
