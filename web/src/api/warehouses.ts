@@ -2,7 +2,7 @@ import { api } from './client'
 
 export type WarehouseSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
 
-export type WarehouseSubjectType = 'user' | 'group' | 'everyone'
+export type WarehouseSubjectType = 'user' | 'group' | 'everyone' | 'pending_user'
 
 export interface WarehouseConnector {
   id: string

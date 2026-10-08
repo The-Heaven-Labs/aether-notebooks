@@ -445,3 +445,58 @@ describe('WarehouseTableGrants', () => {
     await waitFor(() => expect(schemaCalls).toBeGreaterThanOrEqual(2))
   })
 })
+
+const PENDING_GRANT: WarehouseGrant = {
+  id: 'gr-pending', org_id: 'org-1', warehouse_id: 'wh-1', subject_type: 'pending_user',
+  subject_id: 'future@example.com', subject_name: 'future@example.com', subject_email: 'future@example.com',
+  database: 'analytics', table: 'sessions', created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+}
+
+describe('pending grants', () => {
+  test('stages a pending grant from the email affordance', async () => {
+    let posted: Record<string, unknown> | null = null
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(
+          { ...PENDING_GRANT, database: 'analytics', table: 'users' },
+          { status: 201 },
+        )
+      }),
+    )
+    renderGrants()
+    await screen.findAllByText('Data Team')
+
+    fireEvent.change(screen.getByLabelText('Pending email'), { target: { value: 'Future@Example.COM' } })
+    await screen.findByRole('option', { name: 'analytics' })
+    fireEvent.change(screen.getByLabelText('Database'), { target: { value: 'analytics' } })
+    await waitFor(() => expect(screen.getByLabelText('users')).toBeInTheDocument())
+    fireEvent.click(screen.getByLabelText('users'))
+    fireEvent.click(screen.getByText('Add grant'))
+
+    await waitFor(() =>
+      expect(posted).toEqual({
+        subject_type: 'pending_user',
+        subject_id: 'future@example.com',
+        database: 'analytics',
+        table: 'users',
+      }),
+    )
+  })
+
+  test('renders staged rows with the pending badge and lets them be removed', async () => {
+    let deleted = ''
+    server.use(
+      http.get('/api/v1/warehouses/wh-1/grants', () => HttpResponse.json([...GRANTS, PENDING_GRANT])),
+      http.delete('/api/v1/warehouses/wh-1/grants/:gid', ({ params }) => {
+        deleted = String(params.gid)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderGrants()
+    expect(await screen.findByText('future@example.com')).toBeInTheDocument()
+    expect(screen.getAllByText('Pending — awaiting first login').length).toBeGreaterThan(0)
+    fireEvent.click(screen.getByLabelText('Remove grant analytics.sessions'))
+    await waitFor(() => expect(deleted).toBe('gr-pending'))
+  })
+})
