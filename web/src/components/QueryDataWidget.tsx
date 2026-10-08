@@ -58,10 +58,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
 }
 
-export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshNonce = 0, viewerConnectorId, endpointBase }: {
+export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, refreshNonce = 0, viewerConnectorId, endpointBase }: {
   dashboardId: string
   widget: Widget
   canViewWithData: boolean
+  /** Gates the query itself (e.g. while the viewer's connector default resolves). */
+  queryEnabled?: boolean
   refreshNonce?: number
   /** Viewer's dashboard connector selection; unset for public dashboards. */
   viewerConnectorId?: string | null
@@ -74,7 +76,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshN
     dashboardId,
     widget,
     values,
-    enabled: canViewWithData,
+    enabled: canViewWithData && queryEnabled,
     viewerConnectorId,
     endpointBase,
   })

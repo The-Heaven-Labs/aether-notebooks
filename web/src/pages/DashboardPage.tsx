@@ -215,7 +215,7 @@ const toGridItem = (w: Widget): LayoutItem => ({
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
   const { user } = useAuth()
-  const { selected, suggestion, select } = useDashboardConnector(id, user?.user_id ?? '')
+  const { selected, suggestion, select, resolving } = useDashboardConnector(id, user?.user_id ?? '')
   // The live default (viewer's sole warehouse preference) is preselected;
   // an explicit pick persists and overrides it.
   const viewerConnectorId = selected ?? suggestion
@@ -342,7 +342,7 @@ function DashboardContent({ id }: { id: string }) {
   const variables = dashboard.settings?.variables ?? []
 
   return (
-    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables}>
+    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId}>
     <AppShell noPadding>
       {/* Sub-header */}
       <header className="dash-header" style={styles.subHeader}>
@@ -357,7 +357,9 @@ function DashboardContent({ id }: { id: string }) {
         {/* Run all + auto-refresh */}
         <div className="dash-header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {/* Per-viewer connector selection: query widgets in the same
-              warehouse run on the selected service; others keep their own. */}
+              warehouse run on the selected service; others keep their own.
+              allowClear is off while a live default exists — clearing would
+              just re-select the suggestion on the next render. */}
           <ConnectorSelector
             value={viewerConnectorId}
             onChange={select}
@@ -526,6 +528,7 @@ function DashboardContent({ id }: { id: string }) {
                       dashboardId={dashboard.id}
                       widget={widget}
                       canViewWithData={dashboard.can_view_with_data !== false}
+                      queryEnabled={!resolving}
                       refreshNonce={refreshNonce}
                       viewerConnectorId={viewerConnectorId}
                     />
