@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,4 +177,79 @@ func TestConnectorHealthSuccessDebounced(t *testing.T) {
 	second := getConnectorJSON(t, srv, token, connID)["last_success_at"]
 
 	require.Equal(t, first, second, "success writes within the ~30s window must be debounced")
+}
+
+// updateConnectorConfig PUTs a replacement raw config onto a connector.
+func updateConnectorConfig(t *testing.T, srv *api.Server, token, connID string, config map[string]any) {
+	t.Helper()
+	body, _ := json.Marshal(map[string]any{"config": config})
+	req := httptest.NewRequest("PUT", "/api/v1/connectors/"+connID, bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func TestConnectorHealthRecoveryBeatsDebounce(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-recovery-%d@example.com", ts), "Conn Recovery Org")
+
+	goodConfig := map[string]any{
+		"host": "localhost", "port": 5432, "user": "aether", "password": "aether_dev", "database": "aether",
+	}
+	brokenConfig := map[string]any{
+		"host": "127.0.0.1", "port": 1, "user": "x", "password": "x", "database": "x",
+	}
+	connID := createConnectorWithConfig(t, srv, token, "Flaky DB", goodConfig)
+
+	// A healthy test stamps last_success_at.
+	require.Equal(t, true, testConnectorEndpoint(t, srv, token, connID)["ok"])
+	first := getConnectorJSON(t, srv, token, connID)["last_success_at"]
+	require.NotNil(t, first, "the first test must persist a success timestamp")
+
+	// Break the connector and test again: the failure lands immediately.
+	updateConnectorConfig(t, srv, token, connID, brokenConfig)
+	require.Equal(t, false, testConnectorEndpoint(t, srv, token, connID)["ok"])
+	failed := getConnectorJSON(t, srv, token, connID)["last_failure_at"]
+	require.NotNil(t, failed, "the failed test must persist a failure timestamp")
+
+	// Restore the connector and test again well inside the 30s success window.
+	// The recovery must be recorded even though last_success_at is fresh,
+	// otherwise the derived status would stay "failed".
+	updateConnectorConfig(t, srv, token, connID, goodConfig)
+	require.Equal(t, true, testConnectorEndpoint(t, srv, token, connID)["ok"])
+	second := getConnectorJSON(t, srv, token, connID)["last_success_at"]
+	require.NotNil(t, second)
+	require.NotEqual(t, first, second, "a success newer than the last failure must not be debounced away")
+
+	parsedSecond, err := time.Parse(time.RFC3339Nano, second.(string))
+	require.NoError(t, err)
+	parsedFailure, err := time.Parse(time.RFC3339Nano, failed.(string))
+	require.NoError(t, err)
+	require.True(t, parsedSecond.After(parsedFailure),
+		"recovery success (%v) must be newer than the failure (%v) so the derived status is connected", second, failed)
+}
+
+func TestConnectorHealthFailureErrorTruncated(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-truncate-%d@example.com", ts), "Conn Truncate Org")
+
+	// pgx embeds the database name in its connect error, so a long database
+	// name forces an over-limit error through the real test endpoint.
+	connID := createConnectorWithConfig(t, srv, token, "Long Error DB", map[string]any{
+		"host": "127.0.0.1", "port": 1, "user": "x", "password": "x",
+		"database": strings.Repeat("x", 600),
+	})
+	require.Equal(t, false, testConnectorEndpoint(t, srv, token, connID)["ok"])
+
+	got := getConnectorJSON(t, srv, token, connID)
+	lastErr, ok := got["last_error"].(string)
+	require.True(t, ok, "a failed test must persist the error text: %v", got)
+	require.Equal(t, 500, len([]rune(lastErr)),
+		"error text must be truncated to exactly 500 runes (source error was longer): %q", lastErr)
 }

@@ -16,15 +16,20 @@ const connectorHealthWriteTimeout = 2 * time.Second
 const maxConnectorErrorChars = 500
 
 // recordConnectorSuccess stamps last_success_at, debounced to at most one
-// write per 30 seconds per connector (D8). The write is detached from ctx so a
-// cancelled or timed-out execution context cannot skip it.
+// write per 30 seconds per connector (D8), with one exception: a success that
+// is newer than the most recent failure always lands, so a recovery (success →
+// failure → success within the debounce window) is never masked and the
+// derived status flips back to connected immediately. The write is detached
+// from ctx so a cancelled or timed-out execution context cannot skip it.
 func (s *Server) recordConnectorSuccess(ctx context.Context, orgID, connectorID string) {
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), connectorHealthWriteTimeout)
 	defer cancel()
 	if _, err := s.db.Pool.Exec(writeCtx,
 		`UPDATE connectors SET last_success_at = NOW()
 		 WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL
-		   AND (last_success_at IS NULL OR last_success_at < NOW() - INTERVAL '30 seconds')`,
+		   AND (last_success_at IS NULL
+		        OR last_success_at < NOW() - INTERVAL '30 seconds'
+		        OR (last_failure_at IS NOT NULL AND (last_success_at IS NULL OR last_failure_at > last_success_at)))`,
 		connectorID, orgID,
 	); err != nil {
 		slog.Warn("connector health: record success", "connector_id", connectorID, "error", err)
