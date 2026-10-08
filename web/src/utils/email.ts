@@ -1,8 +1,9 @@
 /** True when the value looks like an email address typed for a not-yet-registered user. */
 export function looksLikeEmail(value: string): boolean {
-  const v = value.trim()
-  const at = v.indexOf('@')
-  return at > 0 && at < v.length - 1 && !/\s/.test(v)
+  // Check format/control characters on the raw value: trim() strips U+FEFF
+  // (BOM), which the server's Cf check rejects, so trimming first would let it through.
+  if (/[\p{Cf}\p{Cc}]/u.test(value)) return false
+  return /^[^\s@]+@[^\s@]+$/.test(value.trim())
 }
 
 /** Canonical email spelling used by the pending-subject APIs (the server lowercases too). */
