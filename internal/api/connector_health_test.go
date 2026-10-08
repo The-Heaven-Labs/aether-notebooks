@@ -46,6 +46,15 @@ func TestConnectorHealthFieldsRoundTrip(t *testing.T) {
 	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-health-%d@example.com", ts), "Conn Health Org")
 	connID := createConnector(t, srv, token)
 
+	// A freshly created connector has no health timeline: the never-used state
+	// is represented by all three keys being omitted (and the NULL last_error
+	// must not break the scan).
+	fresh := getConnectorJSON(t, srv, token, connID)
+	for _, key := range []string{"last_success_at", "last_failure_at", "last_error"} {
+		_, present := fresh[key]
+		require.False(t, present, "never-used connector must omit %s: %v", key, fresh)
+	}
+
 	success := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Microsecond)
 	failure := time.Now().UTC().Truncate(time.Microsecond)
 	updateConnectorHealth(t, db, connID, &success, &failure, "dial tcp: connection refused")
@@ -57,6 +66,11 @@ func TestConnectorHealthFieldsRoundTrip(t *testing.T) {
 	parsedSuccess, err := time.Parse(time.RFC3339Nano, successStr)
 	require.NoError(t, err)
 	require.WithinDuration(t, success, parsedSuccess, time.Millisecond)
+	failureStr, ok := got["last_failure_at"].(string)
+	require.True(t, ok, "last_failure_at must be present: %v", got)
+	parsedFailure, err := time.Parse(time.RFC3339Nano, failureStr)
+	require.NoError(t, err)
+	require.WithinDuration(t, failure, parsedFailure, time.Millisecond)
 	require.Equal(t, "dial tcp: connection refused", got["last_error"])
 
 	// List returns the same fields.
@@ -76,9 +90,14 @@ func TestConnectorHealthFieldsRoundTrip(t *testing.T) {
 	}
 	require.NotNil(t, found, "connector %s missing from list", connID)
 	require.Equal(t, "dial tcp: connection refused", found["last_error"])
-	failureStr, ok := found["last_failure_at"].(string)
-	require.True(t, ok, "last_failure_at must be present: %v", found)
-	parsedFailure, err := time.Parse(time.RFC3339Nano, failureStr)
+	listSuccessStr, ok := found["last_success_at"].(string)
+	require.True(t, ok, "last_success_at must be present: %v", found)
+	parsedListSuccess, err := time.Parse(time.RFC3339Nano, listSuccessStr)
 	require.NoError(t, err)
-	require.WithinDuration(t, failure, parsedFailure, time.Millisecond)
+	require.WithinDuration(t, success, parsedListSuccess, time.Millisecond)
+	listFailureStr, ok := found["last_failure_at"].(string)
+	require.True(t, ok, "last_failure_at must be present: %v", found)
+	parsedListFailure, err := time.Parse(time.RFC3339Nano, listFailureStr)
+	require.NoError(t, err)
+	require.WithinDuration(t, failure, parsedListFailure, time.Millisecond)
 }
