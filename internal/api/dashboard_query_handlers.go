@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/dashboard"
@@ -753,6 +754,12 @@ func (s *Server) loadQueryWidget(ctx context.Context, dashID, widgetID string) (
 // by openQuery/resolveExecutionTarget, not here.
 func (s *Server) resolveWidgetConnector(ctx context.Context, orgID, widgetConnectorID, viewerConnectorID string) (string, error) {
 	if viewerConnectorID == "" || viewerConnectorID == widgetConnectorID {
+		return widgetConnectorID, nil
+	}
+	// A malformed viewer selection is stale UI state, not a DB error: it must
+	// never turn a working widget into a 404 (the lookup below would fail on
+	// the uuid cast before reaching the ErrNoRows fallback).
+	if _, err := uuid.Parse(viewerConnectorID); err != nil {
 		return widgetConnectorID, nil
 	}
 	var whW, whV *string

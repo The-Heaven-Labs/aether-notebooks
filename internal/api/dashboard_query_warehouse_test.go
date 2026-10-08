@@ -38,6 +38,35 @@ func TestResolveWidgetConnector(t *testing.T) {
 	})
 	otherConn := insertClickHouseService(t, fx.s, fx.orgID, fx.provisionerID, "Other Warehouse Service", &otherWH)
 
+	// A soft-deleted viewer selection must behave like an unknown one.
+	deletedConn := insertClickHouseService(t, fx.s, fx.orgID, fx.provisionerID, "Deleted Service", &fx.warehouseID)
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`UPDATE connectors SET deleted_at = now() WHERE id = $1`, deletedConn.String())
+	require.NoError(t, err)
+
+	// A viewer selection from another org must never resolve, regardless of
+	// either org's ACL entries.
+	foreignOrgID := uuid.New()
+	_, err = fx.s.db.Pool.Exec(ctx,
+		`INSERT INTO orgs (id, name, slug) VALUES ($1, $2, $3)`,
+		foreignOrgID.String(), "Foreign Org", "foreign-"+uuid.NewString())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if _, err := fx.s.db.Pool.Exec(cleanupCtx,
+			`DELETE FROM orgs WHERE id = $1`, foreignOrgID.String()); err != nil {
+			t.Logf("cleanup foreign org: %v", err)
+		}
+	})
+	foreignConn := uuid.New()
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted, warehouse_id)
+		VALUES ($1, $2, $3, 'clickhouse', $4, $5)`,
+		foreignConn.String(), foreignOrgID.String(), "Foreign Service",
+		[]byte("unused"), fx.warehouseID.String())
+	require.NoError(t, err)
+
 	cases := []struct {
 		name          string
 		widgetConn    string
@@ -48,6 +77,9 @@ func TestResolveWidgetConnector(t *testing.T) {
 		{"same warehouse serves the viewer selection", fx.connA.String(), fx.connB.String(), fx.connB.String(), false},
 		{"cross warehouse keeps the widget connector", fx.connA.String(), otherConn.String(), fx.connA.String(), false},
 		{"unknown viewer connector keeps the widget connector", fx.connA.String(), uuid.NewString(), fx.connA.String(), false},
+		{"soft-deleted viewer connector keeps the widget connector", fx.connA.String(), deletedConn.String(), fx.connA.String(), false},
+		{"malformed viewer connector keeps the widget connector", fx.connA.String(), "not-a-uuid", fx.connA.String(), false},
+		{"cross-org viewer connector keeps the widget connector", fx.connA.String(), foreignConn.String(), fx.connA.String(), false},
 		{"empty viewer keeps the widget connector", fx.connA.String(), "", fx.connA.String(), false},
 		{"viewer equal to widget keeps the widget connector", fx.connA.String(), fx.connA.String(), fx.connA.String(), false},
 		{"missing widget connector errors", uuid.NewString(), fx.connB.String(), "", true},
@@ -190,4 +222,31 @@ func TestDashboardQueryViewerConnectorCrossWarehouseIgnored(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 	require.Equal(t, fx.connA.String(), dashboardQueryAuditConnectorID(t, fx.s, fx.orgID, dashID),
 		"a cross-warehouse viewer selection must be ignored")
+}
+
+// A same-warehouse viewer selection the caller cannot use fails closed with
+// the enriched 403: the selector must never bypass the `use` gate.
+func TestDashboardQueryViewerConnectorSelectionDenied(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connA) // connB deliberately not granted
+
+	dashID, widgetID := seedDashboardQueryWidget(t, fx.s, fx.orgID, fx.userID, fx.connA)
+
+	rec := executeDashboardQueryWidget(t, fx.s, fx.userID, fx.orgID, dashID, map[string]any{
+		"widget_id":    widgetID.String(),
+		"connector_id": fx.connB.String(),
+	})
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	var body struct {
+		Error       string           `json:"error"`
+		WarehouseID string           `json:"warehouse_id"`
+		Services    []map[string]any `json:"services"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "service_access_denied", body.Error)
+	require.Equal(t, fx.warehouseID.String(), body.WarehouseID)
+	require.Len(t, body.Services, 1)
+	require.Equal(t, "Execute Service A", body.Services[0]["name"])
+	require.Equal(t, fx.connA.String(), body.Services[0]["connector_id"])
 }
