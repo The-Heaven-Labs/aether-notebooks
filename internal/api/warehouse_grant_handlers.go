@@ -321,6 +321,31 @@ func (s *Server) handleListWarehouseGrants(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Staged pending grants follow the real entries: the admin matrix and the
+	// new-tables inbox render them as pending_user subjects.
+	pendingRows, err := s.db.Pool.Query(ctx, pendingWarehouseGrantSelect+`
+		WHERE warehouse_id = $1 AND org_id = $2
+		ORDER BY lower(email) ASC, database_name ASC, table_name ASC
+		LIMIT $3`,
+		warehouseUUID.String(), claims.OrgID, maxWarehouseGrantRows)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	defer pendingRows.Close()
+	for pendingRows.Next() {
+		g, err := scanPendingWarehouseGrant(pendingRows)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "scan failed")
+			return
+		}
+		grants = append(grants, g)
+	}
+	if err := pendingRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, grants)
 }
 
@@ -558,6 +583,7 @@ func (s *Server) handleDeleteWarehouseGrant(w http.ResponseWriter, r *http.Reque
 	}
 
 	var subjectType, subjectID, database, table string
+	pending := false
 	err := s.db.Pool.QueryRow(ctx, `
 		DELETE FROM warehouse_table_grants
 		WHERE id = $1 AND warehouse_id = $2 AND org_id = $3
@@ -565,25 +591,44 @@ func (s *Server) handleDeleteWarehouseGrant(w http.ResponseWriter, r *http.Reque
 		grantUUID.String(), warehouseUUID.String(), claims.OrgID).
 		Scan(&subjectType, &subjectID, &database, &table)
 	if errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "grant not found")
-		return
+		// The ID may name a staged pending grant instead.
+		err = s.db.Pool.QueryRow(ctx, `
+			DELETE FROM pending_warehouse_table_grants
+			WHERE id = $1 AND warehouse_id = $2 AND org_id = $3
+			RETURNING email, database_name, table_name`,
+			grantUUID.String(), warehouseUUID.String(), claims.OrgID).
+			Scan(&subjectID, &database, &table)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "grant not found")
+			return
+		}
+		subjectType = "pending_user"
+		pending = true
 	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete grant")
 		return
 	}
 
-	s.enqueueWarehouseSync(warehouseUUID)
+	// A staged grant never shaped ClickHouse desired state, so deleting it
+	// does not schedule a reconcile.
+	if !pending {
+		s.enqueueWarehouseSync(warehouseUUID)
+	}
+	metadata := map[string]any{
+		"grant_id":     grantUUID.String(),
+		"subject_type": subjectType,
+		"subject_id":   subjectID,
+		"database":     database,
+		"table":        table,
+	}
+	if pending {
+		metadata["pending"] = true
+	}
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "warehouse.grant.delete", ResourceType: "warehouse", ResourceID: warehouseUUID.String(),
-		Metadata: map[string]any{
-			"grant_id":     grantUUID.String(),
-			"subject_type": subjectType,
-			"subject_id":   subjectID,
-			"database":     database,
-			"table":        table,
-		},
+		Metadata: metadata,
 	})
 
 	w.WriteHeader(http.StatusNoContent)

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -103,4 +104,70 @@ func TestPendingWarehouseGrantConvertsExistingMember(t *testing.T) {
 	meta := warehouseGrantAuditMeta(t, s, "warehouse.grant.create", created.ID)
 	require.Equal(t, "user", meta["subject_type"])
 	require.NotEqual(t, true, meta["pending"])
+}
+
+func TestPendingWarehouseGrantListAndDelete(t *testing.T) {
+	s, rec := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Pending List WH")
+
+	// A real grant (Everyone) plus a staged one; the list unions both, staged last.
+	realRec := createGrantViaAPI(t, s, admin, wh, grantBody("everyone", "everyone", "raw", "clicks"))
+	require.Equal(t, http.StatusCreated, realRec.Code, realRec.Body.String())
+	createRec := createGrantViaAPI(t, s, admin, wh, grantBody("pending_user", "future@example.com", "analytics", "events"))
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	rec.reset()
+
+	grants := listGrantsViaAPI(t, s, admin, wh)
+	require.Len(t, grants, 2)
+	require.Equal(t, "everyone", grants[0].SubjectType)
+	require.Equal(t, "pending_user", grants[1].SubjectType)
+	require.Equal(t, created.ID, grants[1].ID)
+	require.Equal(t, "future@example.com", grants[1].SubjectEmail)
+
+	// Delete removes the staged row from its table and 404s on replay.
+	require.Equal(t, http.StatusNoContent,
+		deleteGrantViaAPI(t, s, admin, wh, mustParseUUID(t, created.ID)).Code)
+	require.Equal(t, http.StatusNotFound,
+		deleteGrantViaAPI(t, s, admin, wh, mustParseUUID(t, created.ID)).Code)
+
+	grants = listGrantsViaAPI(t, s, admin, wh)
+	require.Len(t, grants, 1)
+
+	var pending int
+	require.NoError(t, s.db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM pending_warehouse_table_grants WHERE warehouse_id = $1`, wh.String()).Scan(&pending))
+	require.Zero(t, pending)
+	require.False(t, rec.contains(wh), "deleting a staged grant must not enqueue a warehouse sync")
+
+	// The delete audit carries the pending marker.
+	meta := warehouseGrantAuditMeta(t, s, "warehouse.grant.delete", created.ID)
+	require.Equal(t, true, meta["pending"])
+}
+
+func TestWarehouseValidationIgnoresPendingGrants(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Pending Validation WH")
+
+	createRec := createGrantViaAPI(t, s, admin, wh, grantBody("pending_user", "future@example.com", "analytics", "events"))
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+
+	valRec := warehouseAPIRequest(t, s, http.MethodGet,
+		"/api/v1/warehouses/"+wh.String()+"/validation", admin, nil)
+	require.Equal(t, http.StatusOK, valRec.Code, valRec.Body.String())
+	var v warehouseValidationJSON
+	require.NoError(t, json.Unmarshal(valRec.Body.Bytes(), &v))
+	require.Empty(t, v.TablesWithoutService, "staged grants must not produce validation warnings")
+	require.Empty(t, v.ServicesWithoutTables)
+}
+
+// mustParseUUID fails the test on an invalid grant ID returned by the API.
+func mustParseUUID(t *testing.T, raw string) uuid.UUID {
+	t.Helper()
+	parsed, err := uuid.Parse(raw)
+	require.NoError(t, err)
+	return parsed
 }
