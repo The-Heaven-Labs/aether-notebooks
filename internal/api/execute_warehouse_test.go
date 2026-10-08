@@ -622,3 +622,33 @@ func TestExecuteCellReusesPooledLease(t *testing.T) {
 			"run %d must reuse the lease pooled for this identity", run)
 	}
 }
+
+// Selecting a service the user cannot use fails closed with an enriched 403
+// naming the warehouse and the services they may use instead.
+func TestExecuteCellSelectedServiceDeniedPayload(t *testing.T) {
+	fx := setupExecuteWarehouseFixture(t)
+	fx.grantConnectorUse(t, fx.connA)
+
+	rec := fx.executeCellOn(t, fx.connB)
+
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	var body struct {
+		Error       string           `json:"error"`
+		WarehouseID string           `json:"warehouse_id"`
+		Services    []map[string]any `json:"services"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "service_access_denied", body.Error)
+	require.Equal(t, fx.warehouseID.String(), body.WarehouseID)
+	require.Len(t, body.Services, 1)
+	require.Equal(t, "Execute Service A", body.Services[0]["name"])
+}
+
+// executeCellOn seeds a cell wired to connectorID, grants the fixture user run
+// on its notebook, and posts the execute request.
+func (fx *executeWarehouseFixture) executeCellOn(t *testing.T, connectorID uuid.UUID) *httptest.ResponseRecorder {
+	t.Helper()
+	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, connectorID, "SELECT 1", nil)
+	fx.grantNotebookRun(t, nbID)
+	return executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+}

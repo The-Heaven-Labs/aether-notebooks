@@ -17,24 +17,23 @@ import (
 
 type executeRequest struct {
 	Parameters map[string]string `json:"parameters,omitempty"`
-	// Pinned runs the cell's connector directly, bypassing the user's routing
-	// preference. It still requires `use` on that exact service.
+	// Pinned is deprecated: it is accepted for compatibility with older clients
+	// and ignored. The selected connector always serves the run.
 	Pinned bool `json:"pinned,omitempty"`
 }
 
 // @Summary Execute a cell
-// @Description Execute a cell's SQL query and return results. Warehouse-routed runs also return a routing object naming the warehouse, service, and ClickHouse identity that served the query. When several services are permitted and no routing preference is set, the request fails with 409 service_choice_required listing the allowed services and their warehouse.
+// @Description Execute a cell's SQL query and return results. Warehouse-routed runs also return a routing object naming the warehouse, service, and ClickHouse identity that served the query. Selecting a service the caller cannot use fails with 403 service_access_denied listing the warehouse and the services they may use.
 // @Tags cells
 // @Accept json
 // @Produce json
 // @Param notebook_id path string true "Notebook ID"
 // @Param cell_id path string true "Cell ID"
-// @Param request body object false "Execution parameters; pinned=true dials the cell's connector directly"
+// @Param request body object false "Execution parameters; pinned is deprecated and ignored"
 // @Success 200 {object} map[string]interface{} "outputs, metrics, and routing (warehouse-routed runs only)"
 // @Failure 400 {object} map[string]string
-// @Failure 403 {object} map[string]string
+// @Failure 403 {object} map[string]interface{} "service_access_denied with warehouse_id and services"
 // @Failure 404 {object} map[string]string
-// @Failure 409 {object} map[string]interface{} "service_choice_required with warehouse_id and services"
 // @Security BearerAuth
 // @Router /notebooks/{notebook_id}/cells/{cell_id}/execute [post]
 func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
@@ -113,7 +112,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	connectStart := time.Now()
 	opened, err := s.openQuery(ctx, claims.OrgID, claims.UserID, claims.Role, cell.ConnectorID, req.Pinned)
 	if err != nil {
-		writeOpenQueryError(w, err, req.Pinned)
+		writeOpenQueryError(w, err)
 		return
 	}
 	exec := opened.Exec
@@ -322,8 +321,7 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 
 // auditMetadata builds the cell.execute audit payload. warehouse_id and ch_user
 // are present only when the run executed as a warehouse per-user identity;
-// connector_id is the service actually dialed, which can differ from the
-// cell's connector when warehouse routing picks a preferred service.
+// connector_id is the selected service that served the run (selection wins).
 // execution_id correlates the row with the query's ClickHouse log_comment.
 func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, durationMS int64, warehouseID, chUser, executionID string) map[string]any {
 	metadata := map[string]any{
@@ -342,21 +340,21 @@ func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, 
 	return metadata
 }
 
-// writeServiceChoiceRequired renders the 409 payload used to prompt for a
-// warehouse service. The caller has already matched the concrete error, so the
-// allowed list is always present. warehouse_id lets the client store the
-// chosen service as the user's preference without another lookup.
-func writeServiceChoiceRequired(w http.ResponseWriter, choice *executor.ServiceChoiceError) {
-	services := make([]map[string]string, 0, len(choice.Allowed))
-	for _, svc := range choice.Allowed {
+// writeServiceAccessDenied renders the 403 payload returned when the selected
+// service cannot serve the caller. The caller has already matched the concrete
+// error, so the allowed list is always present. warehouse_id lets the client
+// offer the services the user may use in that warehouse instead.
+func writeServiceAccessDenied(w http.ResponseWriter, e *executor.ServiceAccessDeniedError) {
+	services := make([]map[string]string, 0, len(e.Allowed))
+	for _, svc := range e.Allowed {
 		services = append(services, map[string]string{
 			"connector_id": svc.ConnectorID.String(),
 			"name":         svc.Name,
 		})
 	}
-	writeJSON(w, http.StatusConflict, map[string]any{
-		"error":        "service_choice_required",
-		"warehouse_id": choice.WarehouseID.String(),
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"error":        "service_access_denied",
+		"warehouse_id": e.WarehouseID.String(),
 		"services":     services,
 	})
 }

@@ -77,8 +77,7 @@ type dashboardQueryParams struct {
 // @Param request body object true "widget_id, variables, bypass_cache"
 // @Success 200 {object} map[string]interface{} "outputs, metrics, cached"
 // @Failure 400 {object} map[string]string
-// @Failure 403 {object} map[string]string
-// @Failure 409 {object} map[string]interface{} "service_choice_required with warehouse_id and services"
+// @Failure 403 {object} map[string]interface{} "service_access_denied with warehouse_id and services"
 // @Security BearerAuth
 // @Router /dashboards/{id}/execute [post]
 func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Request) {
@@ -812,15 +811,11 @@ func dashboardQueryResult(rs *executor.ResultSet, queryMS int64, cached bool, ex
 
 func writeDashboardQueryError(w http.ResponseWriter, err error) {
 	var httpErr *httpQueryError
-	var choice *queryServiceChoiceError
-	switch {
-	case errors.As(err, &httpErr):
+	if errors.As(err, &httpErr) {
 		writeError(w, httpErr.status, httpErr.message)
-	case errors.As(err, &choice):
-		writeServiceChoiceRequired(w, choice.Choice)
-	default:
-		writeOpenQueryError(w, err, false)
+		return
 	}
+	writeOpenQueryError(w, err)
 }
 
 func dashboardQueryCacheKey(p dashboardQueryParams) string {

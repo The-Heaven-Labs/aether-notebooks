@@ -25,10 +25,6 @@ var (
 	errQueryInternal          = errors.New("internal error")
 )
 
-type queryServiceChoiceError struct{ Choice *executor.ServiceChoiceError }
-
-func (e *queryServiceChoiceError) Error() string { return "service choice required" }
-
 // openedQuery is a connector resolved into a ready executor for one identity.
 // The caller owns Exec and must Close it.
 type openedQuery struct {
@@ -97,7 +93,6 @@ func (s *Server) openQuery(ctx context.Context, orgID, userID, orgRole, connecto
 			return nil, errQueryConnectorNotFound
 		}
 		target, targetErr := s.resolveExecutionTarget(ctx, userUUID, connUUID, pinned)
-		var choice *executor.ServiceChoiceError
 		switch {
 		case targetErr == nil:
 			conn, release, getErr := s.connPool.Get(target.Endpoint, target.CHUser, target.Config)
@@ -124,9 +119,9 @@ func (s *Server) openQuery(ctx context.Context, orgID, userID, orgRole, connecto
 		case errors.Is(targetErr, executor.ErrProvisioningNotReady):
 			return nil, errQueryNotReady
 		case errors.Is(targetErr, executor.ErrServiceAccessDenied):
-			return nil, errQueryServiceDenied
-		case errors.As(targetErr, &choice):
-			return nil, &queryServiceChoiceError{Choice: choice}
+			// Preserve the concrete *ServiceAccessDeniedError in the chain so
+			// writeOpenQueryError can render the allowed-services list.
+			return nil, fmt.Errorf("%w: %w", errQueryServiceDenied, targetErr)
 		default:
 			slog.Error("resolve execution target", "connector_id", connectorID, "error", targetErr)
 			return nil, errQueryInternal
@@ -142,8 +137,7 @@ func (s *Server) openQuery(ctx context.Context, orgID, userID, orgRole, connecto
 
 // writeOpenQueryError maps openQuery failures onto the responses shared by
 // cell execution and dashboard query execution.
-func writeOpenQueryError(w http.ResponseWriter, err error, pinned bool) {
-	var choice *queryServiceChoiceError
+func writeOpenQueryError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errQueryConnectorNotFound):
 		writeError(w, http.StatusNotFound, "connector not found")
@@ -153,8 +147,9 @@ func writeOpenQueryError(w http.ResponseWriter, err error, pinned bool) {
 		writeError(w, http.StatusForbidden,
 			"this connector is the warehouse provisioner and cannot run queries; choose another service or ask an admin to enable queries through the provisioner")
 	case errors.Is(err, errQueryServiceDenied):
-		if pinned {
-			writeError(w, http.StatusForbidden, "you don't have access to the pinned service")
+		var denied *executor.ServiceAccessDeniedError
+		if errors.As(err, &denied) {
+			writeServiceAccessDenied(w, denied)
 			return
 		}
 		writeError(w, http.StatusForbidden, "no permitted service in warehouse")
@@ -164,8 +159,6 @@ func writeOpenQueryError(w http.ResponseWriter, err error, pinned bool) {
 		writeError(w, http.StatusBadRequest, "unsupported connector type")
 	case errors.Is(err, errQueryConnectFailed):
 		writeError(w, http.StatusBadGateway, "failed to connect to database")
-	case errors.As(err, &choice):
-		writeServiceChoiceRequired(w, choice.Choice)
 	default:
 		slog.Error("open query", "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to resolve execution target")
