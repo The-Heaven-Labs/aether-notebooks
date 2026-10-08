@@ -242,7 +242,7 @@ func TestAgentExecuteSQLUsesUserIdentity(t *testing.T) {
 	require.NotEqual(t, "stored_user", capture.cfg.User, "the stored credential must never be dialed")
 	require.Equal(t, userID, gotUser.String(), "resolution must use the acting user from the tool context")
 	require.Equal(t, connID, gotConn.String())
-	require.False(t, gotPinned, "agent execution routes by preference like HTTP, it does not pin")
+	require.False(t, gotPinned, "agent execution does not pin; selection wins, the connector argument is the target")
 
 	// The ad-hoc SQL path must execute with a per-execution ID tagged as
 	// log_comment; the same ID also rides the tool result (asserted in the
@@ -307,13 +307,13 @@ func TestAgentExecuteSQLFailsClosedWithoutManagedRoute(t *testing.T) {
 			return nil, fmt.Errorf("warehouse: %w", executor.ErrServiceAccessDenied)
 		}
 		_, err := handler(args, tc)
-		require.ErrorContains(t, err, "do not have permission")
+		require.ErrorContains(t, err, "do not have permission to use connector "+connID)
 	})
 
-	t.Run("choice required lists services", func(t *testing.T) {
+	t.Run("denied selection lists permitted services", func(t *testing.T) {
 		tc := newCtx(&identityCapture{})
 		tc.ResolveTarget = func(context.Context, uuid.UUID, uuid.UUID, bool) (*executor.ExecutionTarget, error) {
-			return nil, &executor.ServiceChoiceError{
+			return nil, &executor.ServiceAccessDeniedError{
 				WarehouseID: uuid.New(),
 				Allowed:     []executor.ServiceChoice{{Name: "Service A"}, {Name: "Service B"}},
 			}
@@ -321,8 +321,29 @@ func TestAgentExecuteSQLFailsClosedWithoutManagedRoute(t *testing.T) {
 		_, err := handler(args, tc)
 		require.ErrorContains(t, err, "Service A")
 		require.ErrorContains(t, err, "Service B")
-		require.ErrorContains(t, err, "service preference")
+		require.ErrorContains(t, err, "permitted services")
 	})
+}
+
+// A selection-wins denial must name the requested connector and the services
+// the user may use in the warehouse instead.
+func TestAgentResolveSelectedConnectorDeniedListsServices(t *testing.T) {
+	connectorID := uuid.New().String()
+	tc := &ToolContext{
+		Context: context.Background(),
+		UserID:  uuid.New().String(),
+		ResolveTarget: func(_ context.Context, u, c uuid.UUID, _ bool) (*executor.ExecutionTarget, error) {
+			return nil, &executor.ServiceAccessDeniedError{
+				WarehouseID: uuid.New(),
+				Allowed:     []executor.ServiceChoice{{ConnectorID: uuid.New(), Name: "Service A"}},
+			}
+		},
+	}
+
+	_, err := resolveClickHouseTarget(tc, connectorID)
+	require.ErrorContains(t, err, "Service A")
+	require.ErrorContains(t, err, "permitted services in this warehouse")
+	require.ErrorContains(t, err, connectorID)
 }
 
 // Unmanaged ClickHouse connectors keep the legacy stored-credential path.

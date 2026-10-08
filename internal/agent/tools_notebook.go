@@ -890,8 +890,8 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 	defer exec.Close()
 
 	if target != nil {
-		// The routed service's limits win: a preference or sole-service
-		// fallback can dial a different connector than the cell requested.
+		// The selected service's limits win. Selection wins, so the target
+		// is always the cell's connector; these are its configured limits.
 		connectorTimeoutSeconds = target.TimeoutSeconds
 	}
 

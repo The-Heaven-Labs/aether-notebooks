@@ -45,17 +45,15 @@ func resolveClickHouseTarget(tc *ToolContext, connectorID string) (*executor.Exe
 	case errors.Is(err, executor.ErrProvisioningNotReady):
 		return nil, fmt.Errorf("warehouse for connector %s is not ready; retry once provisioning completes", connectorID)
 	case errors.Is(err, executor.ErrServiceAccessDenied):
-		return nil, fmt.Errorf("you do not have permission to use any service in the warehouse for connector %s", connectorID)
-	case errors.Is(err, executor.ErrServiceChoiceRequired):
-		var choice *executor.ServiceChoiceError
-		if errors.As(err, &choice) && len(choice.Allowed) > 0 {
-			names := make([]string, 0, len(choice.Allowed))
-			for _, svc := range choice.Allowed {
+		var denied *executor.ServiceAccessDeniedError
+		if errors.As(err, &denied) && len(denied.Allowed) > 0 {
+			names := make([]string, 0, len(denied.Allowed))
+			for _, svc := range denied.Allowed {
 				names = append(names, svc.Name)
 			}
-			return nil, fmt.Errorf("connector %s: multiple warehouse services are available (%s); set a service preference in the warehouse settings", connectorID, strings.Join(names, ", "))
+			return nil, fmt.Errorf("no access to connector %s; permitted services in this warehouse: %s", connectorID, strings.Join(names, ", "))
 		}
-		return nil, fmt.Errorf("connector %s: multiple warehouse services are available; set a service preference in the warehouse settings", connectorID)
+		return nil, fmt.Errorf("you do not have permission to use connector %s", connectorID)
 	case errors.Is(err, executor.ErrProvisionerNotExecutable):
 		return nil, fmt.Errorf("connector %s is the warehouse provisioner and cannot run queries; choose another connector or ask an admin to enable queries through the provisioner", connectorID)
 	default:
