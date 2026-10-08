@@ -996,7 +996,7 @@ func isJSONObject(raw json.RawMessage) bool {
 // decoder matches struct fields case-insensitively (a "Password" key is consumed
 // by the driver even though its tag is "password").
 func secretFieldSet(connType models.ConnectorType) map[string]bool {
-	keys := map[string]bool{"password": true, "token": true, "client_secret": true}
+	keys := map[string]bool{"password": true, "token": true, "client_secret": true, "cloud_key_secret": true}
 	if d, ok := executor.GetDriver(connType); ok {
 		for _, f := range d.ConfigSchema().Fields {
 			if f.Secret {
