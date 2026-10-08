@@ -89,6 +89,37 @@ const warehouseGrantSelect = `
 // render more anyway.
 const maxWarehouseGrantRows = 1000
 
+// warehouseGrantListSelect lists real and staged grants in one snapshot: real
+// rows first (kind_rank 0), then staged pending rows (kind_rank 1), under one
+// shared row cap. A single UNION ALL read avoids both the torn two-query view
+// (a grant being materialized can fall between the real and pending queries)
+// and a combined response larger than the cap. Staged columns are synthesized
+// exactly like scanPendingWarehouseGrant: subject_type pending_user, and the
+// email as subject_id, subject_name, and subject_email.
+const warehouseGrantListSelect = `
+	SELECT id, org_id, warehouse_id, subject_type, subject_id, subject_name, subject_email,
+	       database_name, table_name, created_by, created_at, kind_rank
+	FROM (
+		SELECT wtg.id, wtg.org_id, wtg.warehouse_id, wtg.subject_type, wtg.subject_id,
+		       COALESCE(u.name, g.name, '') AS subject_name,
+		       COALESCE(u.email, '') AS subject_email,
+		       wtg.database_name, wtg.table_name, wtg.created_by, wtg.created_at,
+		       0 AS kind_rank
+		FROM warehouse_table_grants wtg
+		LEFT JOIN users u ON wtg.subject_type = 'user' AND u.id::text = wtg.subject_id
+		LEFT JOIN groups g ON wtg.subject_type = 'group' AND g.id::text = wtg.subject_id
+		WHERE wtg.warehouse_id = $1 AND wtg.org_id = $2
+		UNION ALL
+		SELECT pgt.id, pgt.org_id, pgt.warehouse_id, 'pending_user', pgt.email,
+		       pgt.email, pgt.email, pgt.database_name, pgt.table_name,
+		       pgt.created_by, pgt.created_at, 1 AS kind_rank
+		FROM pending_warehouse_table_grants pgt
+		WHERE pgt.warehouse_id = $1 AND pgt.org_id = $2
+	) grants
+	ORDER BY kind_rank ASC, subject_type ASC, subject_id ASC,
+	         database_name ASC, table_name ASC
+	LIMIT $3`
+
 // grantValidationError marks a request that must be rejected with 400. Any
 // other error from the same helpers is a database failure and maps to 500.
 type grantValidationError struct{ msg string }
@@ -200,6 +231,19 @@ func isForeignKeyViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23503"
 }
 
+// labelWarehouseGrantSubject fills a real grant's denormalized subject label:
+// the fixed audience name for everyone, and the canonical ID when the subject
+// row was deleted.
+func labelWarehouseGrantSubject(g *warehouseGrantJSON) {
+	if g.SubjectType == "everyone" {
+		g.SubjectName = "Everyone"
+	} else if g.SubjectName == "" {
+		// The subject row may have been deleted; the canonical UUID is still
+		// the only accurate label.
+		g.SubjectName = g.SubjectID
+	}
+}
+
 func scanWarehouseGrant(row pgx.Row) (warehouseGrantJSON, error) {
 	var g warehouseGrantJSON
 	err := row.Scan(&g.ID, &g.OrgID, &g.WarehouseID, &g.SubjectType, &g.SubjectID,
@@ -207,12 +251,25 @@ func scanWarehouseGrant(row pgx.Row) (warehouseGrantJSON, error) {
 	if err != nil {
 		return g, err
 	}
-	if g.SubjectType == "everyone" {
-		g.SubjectName = "Everyone"
-	} else if g.SubjectName == "" {
-		// The subject row may have been deleted; the canonical UUID is still
-		// the only accurate label.
-		g.SubjectName = g.SubjectID
+	labelWarehouseGrantSubject(&g)
+	return g, nil
+}
+
+// scanWarehouseGrantListRow scans one warehouseGrantListSelect row. Staged rows
+// are already synthesized by the query; real rows get the same subject
+// labeling scanWarehouseGrant applies.
+func scanWarehouseGrantListRow(row pgx.Row) (warehouseGrantJSON, error) {
+	var (
+		g        warehouseGrantJSON
+		kindRank int
+	)
+	err := row.Scan(&g.ID, &g.OrgID, &g.WarehouseID, &g.SubjectType, &g.SubjectID,
+		&g.SubjectName, &g.SubjectEmail, &g.Database, &g.Table, &g.CreatedBy, &g.CreatedAt, &kindRank)
+	if err != nil {
+		return g, err
+	}
+	if kindRank == 0 {
+		labelWarehouseGrantSubject(&g)
 	}
 	return g, nil
 }
@@ -256,6 +313,48 @@ func (s *Server) loadPendingWarehouseGrant(ctx context.Context, orgID, grantID s
 		pendingWarehouseGrantSelect+` WHERE id = $1 AND org_id = $2`, grantID, orgID))
 }
 
+// errPendingGrantVanished reports a staged-insert conflict whose row vanished
+// before the fallback lookup — a concurrent join materialized it or an admin
+// deleted it. Callers retry the pending resolution once instead of 404ing.
+var errPendingGrantVanished = errors.New("pending grant conflict vanished")
+
+// stagePendingWarehouseGrant inserts one staged grant for email and returns the
+// staged row plus whether this call created it (an idempotent replay returns
+// the existing row with false). A conflict whose row vanished before the
+// fallback lookup reports errPendingGrantVanished so the caller can retry;
+// FK violations and other database errors are returned unwrapped for the
+// caller to map.
+func (s *Server) stagePendingWarehouseGrant(ctx context.Context, orgID, warehouseID, email, database, table, createdBy string) (warehouseGrantJSON, bool, error) {
+	var grantID string
+	err := s.db.Pool.QueryRow(ctx, `
+		INSERT INTO pending_warehouse_table_grants
+			(org_id, warehouse_id, email, database_name, table_name, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6)
+		ON CONFLICT (warehouse_id, lower(email), database_name, table_name) DO NOTHING
+		RETURNING id`,
+		orgID, warehouseID, email, database, table, createdBy).Scan(&grantID)
+	inserted := false
+	switch {
+	case err == nil:
+		inserted = true
+	case errors.Is(err, pgx.ErrNoRows):
+		// Idempotent replay: return the staged grant that already exists.
+		err = s.db.Pool.QueryRow(ctx, `
+			SELECT id FROM pending_warehouse_table_grants
+			WHERE warehouse_id = $1 AND org_id = $2 AND lower(email) = $3
+			  AND database_name = $4 AND table_name = $5`,
+			warehouseID, orgID, email, database, table).Scan(&grantID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return warehouseGrantJSON{}, false, errPendingGrantVanished
+		}
+	}
+	if err != nil {
+		return warehouseGrantJSON{}, false, err
+	}
+	grant, err := s.loadPendingWarehouseGrant(ctx, orgID, grantID)
+	return grant, inserted, err
+}
+
 // loadWarehouseFromPath parses the warehouse path value, loads it scoped
 // to the caller's org, and writes the matching error response. It reports
 // false when the handler must stop.
@@ -295,11 +394,7 @@ func (s *Server) handleListWarehouseGrants(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	rows, err := s.db.Pool.Query(ctx, warehouseGrantSelect+`
-		WHERE wtg.warehouse_id = $1 AND wtg.org_id = $2
-		ORDER BY wtg.subject_type ASC, wtg.subject_id ASC,
-		         wtg.database_name ASC, wtg.table_name ASC
-		LIMIT $3`,
+	rows, err := s.db.Pool.Query(ctx, warehouseGrantListSelect,
 		warehouseUUID.String(), claims.OrgID, maxWarehouseGrantRows)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
@@ -309,7 +404,7 @@ func (s *Server) handleListWarehouseGrants(w http.ResponseWriter, r *http.Reques
 
 	grants := []warehouseGrantJSON{}
 	for rows.Next() {
-		g, err := scanWarehouseGrant(rows)
+		g, err := scanWarehouseGrantListRow(rows)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
@@ -317,31 +412,6 @@ func (s *Server) handleListWarehouseGrants(w http.ResponseWriter, r *http.Reques
 		grants = append(grants, g)
 	}
 	if err := rows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
-	}
-
-	// Staged pending grants follow the real entries: the admin matrix and the
-	// new-tables inbox render them as pending_user subjects.
-	pendingRows, err := s.db.Pool.Query(ctx, pendingWarehouseGrantSelect+`
-		WHERE warehouse_id = $1 AND org_id = $2
-		ORDER BY lower(email) ASC, database_name ASC, table_name ASC
-		LIMIT $3`,
-		warehouseUUID.String(), claims.OrgID, maxWarehouseGrantRows)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
-	}
-	defer pendingRows.Close()
-	for pendingRows.Next() {
-		g, err := scanPendingWarehouseGrant(pendingRows)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		grants = append(grants, g)
-	}
-	if err := pendingRows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
@@ -358,8 +428,45 @@ type createWarehouseGrantRequest struct {
 	Table       string `json:"table"`
 }
 
+// grantInsertQuerier is the subset of *pgxpool.Pool and pgx.Tx that the real
+// grant insert needs, so the direct path and the conversion transaction share
+// one insert.
+type grantInsertQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// insertWarehouseGrant inserts a real grant idempotently. inserted reports
+// whether this call created the row; a replay conflict returns the existing
+// row's id with false. pgx.ErrNoRows is returned when a replay conflict's row
+// vanished (a concurrent delete), and FK violations are returned unwrapped,
+// so callers can map both to 404.
+func insertWarehouseGrant(ctx context.Context, q grantInsertQuerier, orgID, warehouseID, subjectType, subjectID, database, table, createdBy string) (string, bool, error) {
+	var grantID string
+	err := q.QueryRow(ctx, `
+		INSERT INTO warehouse_table_grants
+			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name, created_by)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (warehouse_id, subject_type, subject_id, database_name, table_name) DO NOTHING
+		RETURNING id`,
+		orgID, warehouseID, subjectType, subjectID, database, table, createdBy).Scan(&grantID)
+	switch {
+	case err == nil:
+		return grantID, true, nil
+	case errors.Is(err, pgx.ErrNoRows):
+		// Idempotent replay: return the grant that already exists. A missing
+		// row here means a concurrent delete won the race.
+		err = q.QueryRow(ctx, `
+			SELECT id FROM warehouse_table_grants
+			WHERE warehouse_id = $1 AND org_id = $2 AND subject_type = $3
+			  AND subject_id = $4 AND database_name = $5 AND table_name = $6`,
+			warehouseID, orgID, subjectType, subjectID, database, table).Scan(&grantID)
+		return grantID, false, err
+	}
+	return "", false, err
+}
+
 // @Summary Grant tables to a warehouse subject
-// @Description Create a table grant for a user, group, or everyone in a warehouse. Replayed duplicates are idempotent and return the existing grant.
+// @Description Create a table grant for a user, group, everyone, or pending_user in a warehouse. A pending_user subject is an email staged for a not-yet-registered person; an email that already belongs to an org member becomes a user grant. Replayed duplicates are idempotent and return the existing grant.
 // @Tags warehouses
 // @Accept json
 // @Produce json
@@ -395,72 +502,66 @@ func (s *Server) handleCreateWarehouseGrant(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	// Pending subjects are staged in their own table: they cannot connect yet
-	// by construction, so the service-access warning is suppressed, and the
-	// staging write changes no ClickHouse desired state, so no sync is
-	// enqueued. The insert is idempotent like the real-grant path.
+	// converted reports that a pending_user request resolved to an existing org
+	// member and must be created as a real user grant below.
+	converted := false
+	pendingEmail := ""
 	if req.SubjectType == "pending_user" {
+		pendingEmail = subjectID
+
+		// Pending subjects are staged in their own table: they cannot connect
+		// yet by construction, so the service-access warning is suppressed,
+		// and the staging write changes no ClickHouse desired state, so no
+		// sync is enqueued. The insert is idempotent like the real-grant path.
+		//
 		// An email that already belongs to an org member becomes a real user
-		// grant rather than a staged row that could never materialize (they
+		// grant instead of a staged row that could never materialize (they
 		// have already appeared in the org), mirroring
-		// handleAddPendingGroupMembers and the ACL pending path. The
+		// handleAddPendingGroupMembers and the ACL pending path; the
 		// conversion re-runs validateGrantSubject's user semantics on the
-		// resolved member.
-		var memberID string
-		memberErr := s.db.Pool.QueryRow(ctx, `
-			SELECT u.id FROM users u
-			JOIN org_members om ON om.user_id = u.id AND om.org_id = $1
-			WHERE lower(u.email) = $2
-			LIMIT 1`, claims.OrgID, subjectID).Scan(&memberID)
-		if memberErr != nil && !errors.Is(memberErr, pgx.ErrNoRows) {
-			writeError(w, http.StatusInternalServerError, "failed to resolve pending email")
-			return
-		}
-		if memberErr == nil {
-			req.SubjectType = "user"
-			subjectID, err = s.validateGrantSubject(ctx, claims.OrgID, "user", memberID)
-			if err != nil {
-				writeGrantValidationError(w, err)
+		// resolved member. The membership lookup and the staged insert race a
+		// concurrent join, so a staged conflict whose row vanished before the
+		// fallback lookup retries the resolution once — it then converts or
+		// stages anew instead of 404ing.
+		//
+		// Residual race class (deliberate trade-off): a staging write can
+		// still commit after a join's materializer snapshot; it stays visible
+		// as pending_user and self-heals the next time an admin converts a
+		// grant for that email (the conversion transaction re-runs the
+		// materializer).
+		for attempt := 0; attempt < 2; attempt++ {
+			var memberID string
+			memberErr := s.db.Pool.QueryRow(ctx, `
+				SELECT u.id FROM users u
+				JOIN org_members om ON om.user_id = u.id AND om.org_id = $1
+				WHERE lower(u.email) = $2
+				LIMIT 1`, claims.OrgID, pendingEmail).Scan(&memberID)
+			if memberErr != nil && !errors.Is(memberErr, pgx.ErrNoRows) {
+				writeError(w, http.StatusInternalServerError, "failed to resolve pending email")
 				return
 			}
-		} else {
-			inserted := false
-			var grantID string
-			err = s.db.Pool.QueryRow(ctx, `
-				INSERT INTO pending_warehouse_table_grants
-					(org_id, warehouse_id, email, database_name, table_name, created_by)
-				VALUES ($1, $2, $3, $4, $5, $6)
-				ON CONFLICT (warehouse_id, lower(email), database_name, table_name) DO NOTHING
-				RETURNING id`,
-				claims.OrgID, warehouseUUID.String(), subjectID,
-				req.Database, req.Table, claims.UserID).Scan(&grantID)
-			switch {
-			case err == nil:
-				inserted = true
-			case errors.Is(err, pgx.ErrNoRows):
-				// Idempotent replay: return the staged grant that already exists.
-				err = s.db.Pool.QueryRow(ctx, `
-					SELECT id FROM pending_warehouse_table_grants
-					WHERE warehouse_id = $1 AND org_id = $2 AND lower(email) = $3
-					  AND database_name = $4 AND table_name = $5`,
-					warehouseUUID.String(), claims.OrgID, subjectID,
-					req.Database, req.Table).Scan(&grantID)
-				if errors.Is(err, pgx.ErrNoRows) {
+			if memberErr == nil {
+				req.SubjectType = "user"
+				subjectID, err = s.validateGrantSubject(ctx, claims.OrgID, "user", memberID)
+				if err != nil {
+					writeGrantValidationError(w, err)
+					return
+				}
+				converted = true
+				break
+			}
+
+			grant, inserted, stageErr := s.stagePendingWarehouseGrant(ctx, claims.OrgID,
+				warehouseUUID.String(), pendingEmail, req.Database, req.Table, claims.UserID)
+			if errors.Is(stageErr, errPendingGrantVanished) && attempt == 0 {
+				continue
+			}
+			if stageErr != nil {
+				if isForeignKeyViolation(stageErr) {
 					writeError(w, http.StatusNotFound, "warehouse not found")
 					return
 				}
-			case isForeignKeyViolation(err):
-				writeError(w, http.StatusNotFound, "warehouse not found")
-				return
-			}
-			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to create grant")
-				return
-			}
-
-			grant, err := s.loadPendingWarehouseGrant(ctx, claims.OrgID, grantID)
-			if err != nil {
-				writeError(w, http.StatusInternalServerError, "failed to load grant")
 				return
 			}
 
@@ -471,9 +572,9 @@ func (s *Server) handleCreateWarehouseGrant(w http.ResponseWriter, r *http.Reque
 					OrgID: claims.OrgID, UserID: claims.UserID,
 					Action: "warehouse.grant.create", ResourceType: "warehouse", ResourceID: warehouseUUID.String(),
 					Metadata: map[string]any{
-						"grant_id":     grantID,
+						"grant_id":     grant.ID,
 						"subject_type": "pending_user",
-						"subject_id":   subjectID,
+						"subject_id":   pendingEmail,
 						"database":     req.Database,
 						"table":        req.Table,
 						"pending":      true,
@@ -487,31 +588,30 @@ func (s *Server) handleCreateWarehouseGrant(w http.ResponseWriter, r *http.Reque
 
 	inserted := false
 	var grantID string
-	err = s.db.Pool.QueryRow(ctx, `
-		INSERT INTO warehouse_table_grants
-			(org_id, warehouse_id, subject_type, subject_id, database_name, table_name, created_by)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (warehouse_id, subject_type, subject_id, database_name, table_name) DO NOTHING
-		RETURNING id`,
-		claims.OrgID, warehouseUUID.String(), req.SubjectType, subjectID,
-		req.Database, req.Table, claims.UserID).Scan(&grantID)
-	switch {
-	case err == nil:
-		inserted = true
-	case errors.Is(err, pgx.ErrNoRows):
-		// Idempotent replay: return the grant that already exists. A missing
-		// row here means a concurrent delete won the race.
-		err = s.db.Pool.QueryRow(ctx, `
-			SELECT id FROM warehouse_table_grants
-			WHERE warehouse_id = $1 AND org_id = $2 AND subject_type = $3
-			  AND subject_id = $4 AND database_name = $5 AND table_name = $6`,
-			warehouseUUID.String(), claims.OrgID, req.SubjectType, subjectID,
-			req.Database, req.Table).Scan(&grantID)
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "warehouse not found")
+	if converted {
+		// The conversion transaction re-runs the join-time materializer so any
+		// staged rows for the email — a staging write that raced the membership
+		// lookup above, or rows a concurrent join left behind — are consumed
+		// into real grants instead of staying stranded as pending_user. The
+		// real grant is written in the same transaction; the sync enqueue and
+		// audit below run only after it commits.
+		tx, txErr := s.db.Pool.Begin(ctx)
+		if txErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create grant")
 			return
 		}
-	case isForeignKeyViolation(err):
+		defer tx.Rollback(ctx)
+		s.applyPendingAccess(ctx, tx, claims.OrgID, subjectID, pendingEmail)
+		grantID, inserted, err = insertWarehouseGrant(ctx, tx, claims.OrgID, warehouseUUID.String(),
+			req.SubjectType, subjectID, req.Database, req.Table, claims.UserID)
+		if err == nil {
+			err = tx.Commit(ctx)
+		}
+	} else {
+		grantID, inserted, err = insertWarehouseGrant(ctx, s.db.Pool, claims.OrgID, warehouseUUID.String(),
+			req.SubjectType, subjectID, req.Database, req.Table, claims.UserID)
+	}
+	if isForeignKeyViolation(err) || errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
 	}

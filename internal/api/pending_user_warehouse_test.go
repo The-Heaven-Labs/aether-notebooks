@@ -171,3 +171,160 @@ func mustParseUUID(t *testing.T, raw string) uuid.UUID {
 	require.NoError(t, err)
 	return parsed
 }
+
+func TestPendingWarehouseGrantRecreateAfterDelete(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Pending Recreate WH")
+
+	createRec := createGrantViaAPI(t, s, admin, wh,
+		grantBody("pending_user", "recreate@example.com", "analytics", "events"))
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var first warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &first))
+
+	require.Equal(t, http.StatusNoContent,
+		deleteGrantViaAPI(t, s, admin, wh, mustParseUUID(t, first.ID)).Code)
+
+	recreateRec := createGrantViaAPI(t, s, admin, wh,
+		grantBody("pending_user", "recreate@example.com", "analytics", "events"))
+	require.Equal(t, http.StatusCreated, recreateRec.Code, recreateRec.Body.String())
+	var second warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(recreateRec.Body.Bytes(), &second))
+	require.NotEqual(t, first.ID, second.ID, "a recreated staged grant gets a new id")
+}
+
+func TestPendingWarehouseGrantConvertReplaysExistingRealGrant(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Pending Convert Replay WH")
+	memberID, _ := seedGrantOrgMember(t, s, orgID, "non-admin")
+
+	ctx := context.Background()
+	var memberEmail string
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT email FROM users WHERE id = $1`, memberID.String()).Scan(&memberEmail))
+
+	directRec := createGrantViaAPI(t, s, admin, wh,
+		grantBody("user", memberID.String(), "analytics", "events"))
+	require.Equal(t, http.StatusCreated, directRec.Code, directRec.Body.String())
+	var direct warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(directRec.Body.Bytes(), &direct))
+
+	convertRec := createGrantViaAPI(t, s, admin, wh,
+		grantBody("pending_user", memberEmail, "analytics", "events"))
+	require.Equal(t, http.StatusOK, convertRec.Code, convertRec.Body.String())
+	var replay warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(convertRec.Body.Bytes(), &replay))
+	require.Equal(t, direct.ID, replay.ID, "conversion replays the existing real grant")
+	require.Equal(t, "user", replay.SubjectType)
+
+	var pending, real int
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM pending_warehouse_table_grants WHERE warehouse_id = $1`, wh.String()).Scan(&pending))
+	require.Zero(t, pending, "conversion must not stage a row")
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM warehouse_table_grants
+		 WHERE warehouse_id = $1 AND subject_type = 'user' AND subject_id = $2`,
+		wh.String(), memberID.String()).Scan(&real))
+	require.Equal(t, 1, real, "no duplicate real row")
+}
+
+func TestPendingWarehouseGrantRegisteredNonMemberStaysStaged(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Pending Outsider WH")
+
+	// A registered user who never joined this org has no membership row, so
+	// the pending grant cannot materialize yet and must stay staged.
+	ctx := context.Background()
+	outsiderID := uuid.New()
+	outsiderEmail := "wh-outsider-" + uuid.NewString() + "@test.local"
+	_, err := s.db.Pool.Exec(ctx, `INSERT INTO users (id, email, name) VALUES ($1, $2, $3)`,
+		outsiderID.String(), outsiderEmail, "Warehouse Outsider")
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		if _, err := s.db.Pool.Exec(context.Background(),
+			`DELETE FROM users WHERE id = $1`, outsiderID.String()); err != nil {
+			t.Logf("cleanup outsider: %v", err)
+		}
+	})
+
+	createRec := createGrantViaAPI(t, s, admin, wh,
+		grantBody("pending_user", strings.ToUpper(outsiderEmail), "analytics", "events"))
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+	require.Equal(t, "pending_user", created.SubjectType)
+	require.Equal(t, outsiderEmail, created.SubjectID, "the staged email is lowercased")
+
+	var real int
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM warehouse_table_grants WHERE warehouse_id = $1`, wh.String()).Scan(&real))
+	require.Zero(t, real, "a non-member's grant stays staged")
+}
+
+// TestPendingWarehouseGrantConvertConsumesStagedRows pins the self-healing
+// conversion: a staged row for an email that has since become an org member
+// (the join/create race) is materialized by the conversion transaction instead
+// of staying stranded as pending_user forever.
+func TestPendingWarehouseGrantConvertConsumesStagedRows(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, _, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Pending Self Heal WH")
+	memberID, _ := seedGrantOrgMember(t, s, orgID, "non-admin")
+
+	ctx := context.Background()
+	var memberEmail string
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT email FROM users WHERE id = $1`, memberID.String()).Scan(&memberEmail))
+
+	// Stage the grant directly, simulating a staging write that landed after
+	// the join materializer's snapshot.
+	_, err := s.db.Pool.Exec(ctx, `
+		INSERT INTO pending_warehouse_table_grants
+			(org_id, warehouse_id, email, database_name, table_name)
+		VALUES ($1, $2, $3, 'analytics', 'events')`,
+		orgID.String(), wh.String(), memberEmail)
+	require.NoError(t, err)
+
+	convertRec := createGrantViaAPI(t, s, admin, wh,
+		grantBody("pending_user", memberEmail, "analytics", "events"))
+	require.Equal(t, http.StatusOK, convertRec.Code, convertRec.Body.String())
+	var converted warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(convertRec.Body.Bytes(), &converted))
+	require.Equal(t, "user", converted.SubjectType)
+	require.Equal(t, memberID.String(), converted.SubjectID)
+
+	var pending, real int
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM pending_warehouse_table_grants WHERE warehouse_id = $1`, wh.String()).Scan(&pending))
+	require.Zero(t, pending, "the staged row must be consumed by the conversion")
+	require.NoError(t, s.db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM warehouse_table_grants
+		 WHERE warehouse_id = $1 AND subject_type = 'user' AND subject_id = $2`,
+		wh.String(), memberID.String()).Scan(&real))
+	require.Equal(t, 1, real)
+}
+
+func TestPendingWarehouseGrantDeleteScopedToWarehouse(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	_, _, admin := seedWarehouseOrgAdmin(t, s)
+	whA := createWarehouseViaAPI(t, s, admin, "Pending Scoped A")
+	whB := createWarehouseViaAPI(t, s, admin, "Pending Scoped B")
+
+	createRec := createGrantViaAPI(t, s, admin, whA,
+		grantBody("pending_user", "scoped@example.com", "analytics", "events"))
+	require.Equal(t, http.StatusCreated, createRec.Code, createRec.Body.String())
+	var created warehouseGrantCreateJSON
+	require.NoError(t, json.Unmarshal(createRec.Body.Bytes(), &created))
+
+	require.Equal(t, http.StatusNotFound,
+		deleteGrantViaAPI(t, s, admin, whB, mustParseUUID(t, created.ID)).Code)
+
+	// The staged row survives the cross-warehouse delete attempt.
+	var pending int
+	require.NoError(t, s.db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM pending_warehouse_table_grants WHERE id = $1`, created.ID).Scan(&pending))
+	require.Equal(t, 1, pending)
+}
