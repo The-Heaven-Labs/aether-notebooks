@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/the-heaven-labs/aether/internal/audit"
 )
 
 // normalizePendingEmail canonicalizes an email staged for a not-yet-registered
@@ -103,4 +104,89 @@ func ApplyPendingAccess(ctx context.Context, tx pgx.Tx, orgID, userID, email str
 	}
 	_, err := applyPendingWarehouseGrants(ctx, tx, orgID, userID, email)
 	return err
+}
+
+// runPendingPhase executes fn inside a savepoint of the caller's transaction
+// and returns the phase's row count. On error it rolls back to the savepoint
+// so the failure cannot abort the outer transaction — without it a phase SQL
+// error would leave the transaction aborted, the caller's commit would roll
+// back (pgx.ErrTxCommitRollback), and first login would be blocked. pgx
+// implements Tx.Begin on a transaction as SAVEPOINT, Rollback as ROLLBACK TO
+// SAVEPOINT, and Commit as RELEASE SAVEPOINT.
+func runPendingPhase(ctx context.Context, tx pgx.Tx, fn func(pgx.Tx) (int64, error)) (int64, error) {
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("begin savepoint: %w", err)
+	}
+	count, err := fn(sp)
+	if err != nil {
+		if rbErr := sp.Rollback(ctx); rbErr != nil {
+			return 0, fmt.Errorf("%w (savepoint rollback failed: %v)", err, rbErr)
+		}
+		return 0, err
+	}
+	if err := sp.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("release savepoint: %w", err)
+	}
+	return count, nil
+}
+
+// applyPendingAccess runs the pending ACL and warehouse-grant materializers and
+// audits the outcome without failing — a materialization error must never
+// block first login, so call sites keep committing their transaction
+// regardless. Each phase runs in its own savepoint (see runPendingPhase), so a
+// failing phase is rolled back alone and the outer join transaction stays
+// committable. Success emits acl.pending_materialize /
+// warehouse.grant.pending_materialize with the materialized row count; each
+// phase's failure emits its own .error event.
+func (s *Server) applyPendingAccess(ctx context.Context, tx pgx.Tx, orgID, userID, email string) {
+	aclCount, aclErr := runPendingPhase(ctx, tx, func(phaseTx pgx.Tx) (int64, error) {
+		return applyPendingACL(ctx, phaseTx, orgID, userID, email)
+	})
+	if aclErr != nil {
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: orgID, UserID: userID,
+			Action: "acl.pending_materialize.error", ResourceType: "acl",
+			Metadata: map[string]any{
+				"email":   email,
+				"user_id": userID,
+				"error":   aclErr.Error(),
+			},
+		})
+	} else if aclCount > 0 {
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: orgID, UserID: userID,
+			Action: "acl.pending_materialize", ResourceType: "acl",
+			Metadata: map[string]any{
+				"email":   email,
+				"user_id": userID,
+				"count":   aclCount,
+			},
+		})
+	}
+
+	grantCount, grantErr := runPendingPhase(ctx, tx, func(phaseTx pgx.Tx) (int64, error) {
+		return applyPendingWarehouseGrants(ctx, phaseTx, orgID, userID, email)
+	})
+	if grantErr != nil {
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: orgID, UserID: userID,
+			Action: "warehouse.grant.pending_materialize.error", ResourceType: "warehouse",
+			Metadata: map[string]any{
+				"email":   email,
+				"user_id": userID,
+				"error":   grantErr.Error(),
+			},
+		})
+	} else if grantCount > 0 {
+		s.audit.Log(ctx, audit.Entry{
+			OrgID: orgID, UserID: userID,
+			Action: "warehouse.grant.pending_materialize", ResourceType: "warehouse",
+			Metadata: map[string]any{
+				"email":   email,
+				"user_id": userID,
+				"count":   grantCount,
+			},
+		})
+	}
 }

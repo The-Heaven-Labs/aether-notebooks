@@ -1,8 +1,13 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -287,4 +292,85 @@ func TestApplyPendingAccessWarehouseOrgIsolation(t *testing.T) {
 	require.NoError(t, s.DB().Pool.QueryRow(ctx, `
 		SELECT COUNT(*) FROM pending_warehouse_table_grants WHERE warehouse_id = $1`, whB).Scan(&pending))
 	require.Equal(t, 1, pending, "org B's staged grant must remain")
+}
+
+// registerOnly registers a user and returns the onboarding token without
+// creating an org, mirroring the first half of testhelpers.registerAndGetToken.
+func registerOnly(t *testing.T, srv *api.Server, email string) string {
+	t.Helper()
+	body, _ := json.Marshal(map[string]string{"email": email, "password": "pass123", "name": "Future Member"})
+	req := httptest.NewRequest("POST", "/api/v1/auth/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	token, _ := resp["onboarding_token"].(string)
+	require.NotEmpty(t, token)
+	return token
+}
+
+// TestOrgJoinMaterializesPendingAccess drives the real invite-redemption join
+// path end to end: the staged ACL must become a real entry inside the join
+// transaction, the staged row must be consumed, and the success audit must be
+// written.
+func TestOrgJoinMaterializesPendingAccess(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ctx := context.Background()
+
+	adminEmail := fmt.Sprintf("pending-join-admin-%d@example.com", time.Now().UnixNano())
+	memberEmail := fmt.Sprintf("pending-join-member-%d@example.com", time.Now().UnixNano())
+	adminToken := registerAndGetToken(t, srv, adminEmail, "Pending Join Org")
+	memberOnboarding := registerOnly(t, srv, memberEmail)
+
+	// Resolve the admin's user + org.
+	var adminID, orgID string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, adminEmail).Scan(&adminID))
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx, `SELECT org_id FROM org_members WHERE user_id = $1`, adminID).Scan(&orgID))
+
+	// Admin invites the future member by email (the invite endpoint only
+	// accepts role "admin").
+	inviteBody, _ := json.Marshal(map[string]string{"email": memberEmail, "role": "admin"})
+	inviteReq := httptest.NewRequest("POST", "/api/v1/members/invite", bytes.NewReader(inviteBody))
+	inviteReq.Header.Set("Content-Type", "application/json")
+	inviteReq.Header.Set("Authorization", "Bearer "+adminToken)
+	inviteRec := httptest.NewRecorder()
+	srv.ServeHTTP(inviteRec, inviteReq)
+	require.Equal(t, http.StatusCreated, inviteRec.Code, inviteRec.Body.String())
+	var inviteResp map[string]string
+	require.NoError(t, json.NewDecoder(inviteRec.Body).Decode(&inviteResp))
+	inviteToken := inviteResp["token"]
+	require.NotEmpty(t, inviteToken)
+
+	// Stage a pending ACL for the future member's email. Staged in a different
+	// case to exercise the lower(email) matching through the real join path.
+	// (The plan text staged "Member@Example.com", which can never match this
+	// test's generated member address.)
+	nbID := createNotebook(t, srv, adminToken, "Pending Join NB")
+	stagePendingACL(t, srv, orgID, "notebook", nbID, strings.ToUpper(memberEmail), []string{"view", "edit"})
+
+	// The member redeems the invite with their onboarding token.
+	joinBody, _ := json.Marshal(map[string]string{"invite_token": inviteToken})
+	joinReq := httptest.NewRequest("POST", "/api/v1/auth/org/join", bytes.NewReader(joinBody))
+	joinReq.Header.Set("Content-Type", "application/json")
+	joinReq.Header.Set("Authorization", "Bearer "+memberOnboarding)
+	joinRec := httptest.NewRecorder()
+	srv.ServeHTTP(joinRec, joinReq)
+	require.Equal(t, http.StatusOK, joinRec.Code, joinRec.Body.String())
+
+	// Materialized as a real user entry; the staged row is consumed.
+	var memberID string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT id FROM users WHERE lower(email) = lower($1)`, memberEmail).Scan(&memberID))
+	require.ElementsMatch(t, []string{"view", "edit"}, aclActionsFor(t, srv, "notebook", nbID, memberID))
+	require.Zero(t, countPendingACLRows(t, srv, orgID, memberEmail))
+
+	// Success audit carries the materialization.
+	var audits int
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM audit_logs WHERE org_id = $1 AND action = 'acl.pending_materialize'`,
+		orgID).Scan(&audits))
+	require.Equal(t, 1, audits)
 }

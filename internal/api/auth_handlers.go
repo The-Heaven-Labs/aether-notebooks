@@ -123,6 +123,7 @@ func (s *Server) handleRegister(w http.ResponseWriter, r *http.Request) {
 				tx.Exec(ctx, `INSERT INTO groups (org_id, name, source) VALUES ($1, 'Everyone', 'system') ON CONFLICT DO NOTHING`, targetOrgID)
 				tx.Exec(ctx, `INSERT INTO group_members (group_id, user_id) SELECT g.id, $1 FROM groups g WHERE g.org_id = $2 AND g.name = 'Everyone' ON CONFLICT (group_id, user_id) DO NOTHING`, userID, targetOrgID)
 				s.applyPendingGroups(ctx, tx, targetOrgID, userID, req.Email)
+				s.applyPendingAccess(ctx, tx, targetOrgID, userID, req.Email)
 				tx.Commit(ctx)
 				// Cover the new memberships (including any just materialized
 				// pending groups) once the join transaction has committed.
