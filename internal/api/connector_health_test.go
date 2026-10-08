@@ -318,3 +318,42 @@ func TestConnectorHealthRecordsDashboardExecutionSuccess(t *testing.T) {
 	got := getConnectorJSON(t, srv, token, connID)
 	require.NotNil(t, got["last_success_at"], "a completed dashboard run must persist last_success_at")
 }
+
+func TestConnectorHealthRecordsSchemaIntrospection(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-schema-%d@example.com", ts), "Conn Schema Org")
+	connID := createConnector(t, srv, token)
+
+	req := httptest.NewRequest("GET", "/api/v1/connectors/"+connID+"/schema", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	got := getConnectorJSON(t, srv, token, connID)
+	require.NotNil(t, got["last_success_at"], "successful introspection must persist last_success_at")
+}
+
+func TestConnectorHealthRecordsDatabasesConnectFailure(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-dbs-fail-%d@example.com", ts), "Conn DBs Fail Org")
+
+	// Empty config: buildExecutor cannot construct a postgres executor.
+	connID := createConnectorWithConfig(t, srv, token, "No Host", map[string]any{})
+
+	req := httptest.NewRequest("GET", "/api/v1/connectors/"+connID+"/databases", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+
+	got := getConnectorJSON(t, srv, token, connID)
+	require.NotNil(t, got["last_failure_at"], "a buildExecutor failure must persist last_failure_at")
+	require.NotEmpty(t, got["last_error"])
+}

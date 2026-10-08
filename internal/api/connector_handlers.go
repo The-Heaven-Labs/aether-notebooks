@@ -716,6 +716,7 @@ func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Req
 	}
 	exec, err := s.buildExecutor(connType, configEnc)
 	if err != nil {
+		s.recordConnectorFailure(ctx, claims.OrgID, connID, err)
 		writeError(w, http.StatusBadGateway, "failed to connect")
 		return
 	}
@@ -726,6 +727,7 @@ func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadGateway, "failed to list databases")
 		return
 	}
+	s.recordConnectorSuccess(ctx, claims.OrgID, connID)
 	if dbs == nil {
 		dbs = []string{}
 	}
@@ -832,6 +834,7 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 	}
 	exec, err := s.buildExecutor(connType, configEnc)
 	if err != nil {
+		s.recordConnectorFailure(ctx, claims.OrgID, connID, err)
 		writeError(w, http.StatusBadGateway, "failed to connect")
 		return
 	}
@@ -842,6 +845,9 @@ func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "schema fetch failed")
 		return
 	}
+	// A successful catalog read is a success signal (D7). Query errors above
+	// stay unrecorded.
+	s.recordConnectorSuccess(ctx, claims.OrgID, connID)
 
 	// Filter by database if specified
 	if db := r.URL.Query().Get("database"); db != "" {
