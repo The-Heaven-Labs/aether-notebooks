@@ -2,13 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Play, Loader2 } from 'lucide-react'
 import { api } from '../api/client'
-import { serviceChoicesFromError, setPreference } from '../api/warehouses'
-import type { ServiceChoicePrompt } from '../api/warehouses'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
 import { OutputRenderer } from './OutputRenderer'
-import { ServiceChoiceDialog } from './RoutingPreference'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 import type { ChartConfig } from '../charts/types'
 import { withWidgetOverride } from '../charts/widgetChartConfig'
@@ -159,9 +156,6 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const [runError, setRunError] = useState<string | null>(null)
   const [converting, setConverting] = useState(false)
   const [convertError, setConvertError] = useState<string | null>(null)
-  const [serviceChoice, setServiceChoice] = useState<ServiceChoicePrompt | null>(null)
-  const [serviceChoiceError, setServiceChoiceError] = useState<string | null>(null)
-  const [serviceChoiceSaving, setServiceChoiceSaving] = useState(false)
 
   const lastSaved = useRef({ connector: widget.connector_id ?? '', query: widget.query ?? '' })
 
@@ -222,9 +216,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
       })
       setRunResult(resp)
     } catch (e) {
-      const prompt = serviceChoicesFromError(e)
-      if (prompt) setServiceChoice(prompt)
-      else setRunError(e instanceof Error ? e.message : 'Run failed')
+      setRunError(e instanceof Error ? e.message : 'Run failed')
     } finally {
       setRunning(false)
     }
@@ -244,27 +236,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     }
   }
 
-  const chooseService = async (serviceConnectorId: string) => {
-    const warehouseId = serviceChoice?.warehouseId
-    if (!warehouseId) {
-      setServiceChoiceError('Could not determine which warehouse this connector belongs to.')
-      return
-    }
-    setServiceChoiceSaving(true)
-    setServiceChoiceError(null)
-    try {
-      await setPreference(warehouseId, serviceConnectorId)
-      setServiceChoice(null)
-      await runQuery()
-    } catch (e) {
-      setServiceChoiceError(e instanceof Error ? e.message : 'Failed to save preference')
-    } finally {
-      setServiceChoiceSaving(false)
-    }
-  }
-
-  // Yield Escape to the service-choice dialog when it is open (Modal closes it).
-  useEscapeToClose(onClose, closeOnEscape && !serviceChoice)
+  useEscapeToClose(onClose, closeOnEscape)
 
   return createPortal(
     <>
@@ -351,15 +323,6 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
 
           {saveError && <div style={styles.error} role="alert">{saveError}</div>}
         </div>
-        <ServiceChoiceDialog
-          open={!!serviceChoice}
-          services={serviceChoice?.services ?? []}
-          saving={serviceChoiceSaving}
-          error={serviceChoiceError}
-          onSelect={chooseService}
-          onCancel={() => { setServiceChoice(null); setServiceChoiceError(null) }}
-          onDismissError={() => setServiceChoiceError(null)}
-        />
       </div>
     </>,
     document.body,

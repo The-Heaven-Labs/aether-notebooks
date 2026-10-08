@@ -528,7 +528,7 @@ function DashboardContent({ id }: { id: string }) {
                       dashboardId={dashboard.id}
                       widget={widget}
                       canViewWithData={dashboard.can_view_with_data !== false}
-                      queryEnabled={!resolving}
+                      queryEnabled={selected != null || !resolving}
                       refreshNonce={refreshNonce}
                       viewerConnectorId={viewerConnectorId}
                     />

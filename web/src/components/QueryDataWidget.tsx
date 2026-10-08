@@ -1,12 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Play, Loader2, RefreshCw } from 'lucide-react'
 import { ApiError } from '../api/client'
-import { serviceChoicesFromError, setPreference } from '../api/warehouses'
-import type { ServiceChoicePrompt } from '../api/warehouses'
 import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
 import { useWidgetQuery } from '../hooks/useWidgetQuery'
 import { OutputRenderer } from './OutputRenderer'
-import { ServiceChoiceDialog } from './RoutingPreference'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import type { Widget } from '../types'
@@ -70,7 +67,6 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
   /** Overrides the execute endpoint base, e.g. `/api/v1/public/{token}` for public dashboards. */
   endpointBase?: string
 }) {
-  const isPublic = !!endpointBase
   const { values } = useDashboardVariables()
   const { data, error, isPending, isFetching, refresh } = useWidgetQuery({
     dashboardId,
@@ -81,9 +77,6 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     endpointBase,
   })
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
-  const [serviceChoice, setServiceChoice] = useState<ServiceChoicePrompt | null>(null)
-  const [serviceChoiceError, setServiceChoiceError] = useState<string | null>(null)
-  const [serviceChoiceSaving, setServiceChoiceSaving] = useState(false)
 
   useEffect(() => {
     if (data) setFetchedAt(new Date())
@@ -101,44 +94,6 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     }
   }, [refreshNonce])
 
-  useEffect(() => {
-    const prompt = serviceChoicesFromError(error)
-    // Public visitors cannot store a routing preference; surface an
-    // explanatory error instead of a dialog that would fail to save.
-    if (prompt && !isPublic) setServiceChoice(prompt)
-  }, [error, isPublic])
-
-  const chooseService = useCallback(async (connectorId: string) => {
-    const warehouseId = serviceChoice?.warehouseId
-    if (!warehouseId) {
-      setServiceChoiceError('Could not determine which warehouse this connector belongs to.')
-      return
-    }
-    setServiceChoiceSaving(true)
-    setServiceChoiceError(null)
-    try {
-      await setPreference(warehouseId, connectorId)
-      setServiceChoice(null)
-      refreshRef.current()
-    } catch (e) {
-      setServiceChoiceError(e instanceof Error ? e.message : 'Failed to save preference')
-    } finally {
-      setServiceChoiceSaving(false)
-    }
-  }, [serviceChoice])
-
-  const dialog = (
-    <ServiceChoiceDialog
-      open={!!serviceChoice}
-      services={serviceChoice?.services ?? []}
-      saving={serviceChoiceSaving}
-      error={serviceChoiceError}
-      onSelect={chooseService}
-      onCancel={() => { setServiceChoice(null); setServiceChoiceError(null) }}
-      onDismissError={() => setServiceChoiceError(null)}
-    />
-  )
-
   if (!canViewWithData) {
     return <div style={styles.muted}>You need view_with_data access to see data for this widget.</div>
   }
@@ -148,21 +103,6 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
   }
 
   if (error) {
-    if (serviceChoicesFromError(error)) {
-      if (isPublic) {
-        return (
-          <div style={styles.muted}>
-            This widget needs a warehouse service preference. Ask the dashboard owner to set one.
-          </div>
-        )
-      }
-      return (
-        <>
-          <div style={styles.muted}>Choose a warehouse service to run this widget.</div>
-          {dialog}
-        </>
-      )
-    }
     const forbidden = error instanceof ApiError && error.status === 403
     return (
       <div style={styles.error}>
@@ -170,7 +110,6 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
         {!forbidden && (
           <button style={styles.retry} onClick={() => refreshRef.current()}>Retry</button>
         )}
-        {dialog}
       </div>
     )
   }
@@ -215,7 +154,6 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
         chartConfig={normalizeChartConfig(widget.config)}
         footerExtra={footerExtra}
       />
-      {dialog}
     </div>
   )
 }

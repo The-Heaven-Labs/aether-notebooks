@@ -6,9 +6,8 @@ import { api, ApiError } from './client'
 describe('request error body', () => {
   test('populates ApiError.body with the parsed JSON error payload', async () => {
     const payload = {
-      error: 'service_choice_required',
-      warehouse_id: 'wh-1',
-      services: [{ connector_id: 'c-1', name: 'CH RO' }],
+      error: 'example_error',
+      detail: 'nope',
     }
     server.use(
       http.get('/api/v1/execute-error-probe', () =>
@@ -18,7 +17,7 @@ describe('request error body', () => {
 
     await expect(api.get('/api/v1/execute-error-probe')).rejects.toMatchObject({
       status: 409,
-      message: 'service_choice_required',
+      message: 'example_error',
       body: payload,
     })
   })

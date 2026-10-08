@@ -1,4 +1,4 @@
-import { api, ApiError } from './client'
+import { api } from './client'
 
 export type WarehouseSyncStatus = 'pending' | 'syncing' | 'ready' | 'error'
 
@@ -58,18 +58,12 @@ export interface WarehouseEffectiveService {
 }
 
 /**
- * One selectable service from an execution 409: the warehouse this user may
- * route to could not be narrowed to a single service without a preference.
+ * One service offered by the routing preference picker: a warehouse service
+ * the user may `use`, selectable as their default execution target.
  */
 export interface WarehouseServiceChoice {
   connector_id: string
   name: string
-}
-
-/** Parsed execute 409 service_choice_required payload. */
-export interface ServiceChoicePrompt {
-  warehouseId: string | null
-  services: WarehouseServiceChoice[]
 }
 
 export interface WarehouseEffectiveAccess {
@@ -218,31 +212,4 @@ export function listNewTables(warehouseId: string, since?: string): Promise<Ware
 
 export function getWarehouseValidation(warehouseId: string): Promise<WarehouseValidation> {
   return api.get<WarehouseValidation>(`/api/v1/warehouses/${warehouseId}/validation`)
-}
-
-function isServiceChoice(value: unknown): value is WarehouseServiceChoice {
-  if (typeof value !== 'object' || value === null) return false
-  const record = value as Record<string, unknown>
-  return typeof record.connector_id === 'string' && typeof record.name === 'string'
-}
-
-/**
- * Extracts the allowed services and warehouse from an execute 409
- * (`{"error":"service_choice_required","warehouse_id":"...","services":[...]}`).
- * Only that exact error is treated as a routing choice; any other 409 (or a
- * malformed body) returns null so callers fall through to normal error
- * handling.
- */
-export function serviceChoicesFromError(err: unknown): ServiceChoicePrompt | null {
-  if (!(err instanceof ApiError) || err.status !== 409) return null
-  if (typeof err.body !== 'object' || err.body === null) return null
-  const body = err.body as { error?: unknown; warehouse_id?: unknown; services?: unknown }
-  if (body.error !== 'service_choice_required') return null
-  if (!Array.isArray(body.services) || body.services.length === 0) return null
-  const choices = body.services.filter(isServiceChoice)
-  if (choices.length !== body.services.length) return null
-  return {
-    warehouseId: typeof body.warehouse_id === 'string' ? body.warehouse_id : null,
-    services: choices,
-  }
 }

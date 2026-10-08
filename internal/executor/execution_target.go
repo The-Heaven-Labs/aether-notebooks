@@ -29,11 +29,6 @@ var (
 	// carries the services the user may use in that warehouse instead.
 	ErrServiceAccessDenied = errors.New("no permitted service in warehouse")
 
-	// ErrServiceChoiceRequired reports ambiguous routing: several services are
-	// allowed and no preference picked one. A ServiceChoiceError carries the
-	// allowed list for the "choose a service" prompt.
-	ErrServiceChoiceRequired = errors.New("multiple warehouse services available")
-
 	// ErrConnectorNotFound reports that the requested connector cannot be
 	// resolved: it is missing, soft-deleted, not a ClickHouse connector, or
 	// linked across org boundaries. Where the underlying cause is a missing
@@ -48,26 +43,12 @@ var (
 	ErrProvisionerNotExecutable = errors.New("warehouse provisioner cannot execute user queries")
 )
 
-// ServiceChoice is one selectable service in a ServiceChoiceError, carrying
-// enough to render a picker without re-querying.
+// ServiceChoice is one permitted service carried by a ServiceAccessDeniedError,
+// so callers can render the alternatives without re-querying.
 type ServiceChoice struct {
 	ConnectorID uuid.UUID
 	Name        string
 }
-
-// ServiceChoiceError is returned when a user may use more than one service in
-// a warehouse and has not recorded a routing preference.
-type ServiceChoiceError struct {
-	WarehouseID uuid.UUID
-	Allowed     []ServiceChoice
-}
-
-func (e *ServiceChoiceError) Error() string {
-	return fmt.Sprintf("warehouse %s has %d permitted services and no routing preference", e.WarehouseID, len(e.Allowed))
-}
-
-// Unwrap makes errors.Is(err, ErrServiceChoiceRequired) succeed.
-func (e *ServiceChoiceError) Unwrap() error { return ErrServiceChoiceRequired }
 
 // ServiceAccessDeniedError reports that the requested connector cannot serve
 // the acting user: they hold no `use` grant on it. It carries the services
@@ -133,11 +114,9 @@ func (t *ExecutionTarget) String() string {
 }
 
 // Compile-time guards: callers rely on Error for messages, Unwrap for
-// errors.Is routing (ErrServiceChoiceRequired, ErrServiceAccessDenied), and
-// String for redacted rendering.
+// errors.Is routing (ErrServiceAccessDenied), and String for redacted
+// rendering.
 var (
-	_ error                       = (*ServiceChoiceError)(nil)
-	_ interface{ Unwrap() error } = (*ServiceChoiceError)(nil)
 	_ error                       = (*ServiceAccessDeniedError)(nil)
 	_ interface{ Unwrap() error } = (*ServiceAccessDeniedError)(nil)
 	_ fmt.Stringer                = (*ExecutionTarget)(nil)

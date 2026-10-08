@@ -39,8 +39,8 @@ type warehouseService struct {
 //     never re-routes a run (it is advisory only, seeding defaults elsewhere).
 //  3. Without `use` on the requested connector, resolution fails closed with
 //     executor.ServiceAccessDeniedError, which carries the services the user
-//     may use in the warehouse. executor.ErrServiceChoiceRequired is no
-//     longer returned.
+//     may use in the warehouse. Ambiguous-routing errors are no longer
+//     returned; the selected connector is always the target when permitted.
 //
 // The pinned parameter is ignored: the requested connector is always the
 // selection. It is kept only because callers still pass it.

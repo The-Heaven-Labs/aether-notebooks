@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { effectiveAccess, setPreference, type WarehouseServiceChoice } from '../api/warehouses'
+import { effectiveAccess, setPreference } from '../api/warehouses'
 import { ErrorBanner } from './ErrorBanner'
-import { Modal } from './Modal'
 
 interface RoutingPreferenceProps {
   warehouseId: string
@@ -87,61 +86,6 @@ export function RoutingPreference({ warehouseId, warehouseName }: RoutingPrefere
   )
 }
 
-interface ServiceChoiceDialogProps {
-  open: boolean
-  services: WarehouseServiceChoice[]
-  saving?: boolean
-  error?: string | null
-  onSelect: (connectorId: string) => void
-  onCancel: () => void
-  onDismissError?: () => void
-}
-
-/**
- * Prompt shown when an execution returns 409 service_choice_required: the
- * warehouse has several permitted services and no preference picked one.
- * Choosing a service stores it as the user's routing preference. The dialog
- * stays open while the preference saves and the cell re-runs; callers close it
- * only once the run has succeeded.
- */
-export function ServiceChoiceDialog({
-  open,
-  services,
-  saving = false,
-  error = null,
-  onSelect,
-  onCancel,
-  onDismissError,
-}: ServiceChoiceDialogProps) {
-  if (!open) return null
-
-  return (
-    <Modal title="Choose a warehouse service" onClose={onCancel} minWidth={360}>
-      <div style={styles.dialogBody}>
-        <p style={styles.dialogText}>
-          More than one service in this warehouse is available to you. Pick the service
-          this query should run on — the choice is saved as your routing preference.
-        </p>
-        {error && <ErrorBanner message={error} onDismiss={onDismissError} />}
-        <div style={styles.choiceList}>
-          {services.map((service) => (
-            <button
-              key={service.connector_id}
-              type="button"
-              style={styles.choiceBtn}
-              disabled={saving}
-              onClick={() => onSelect(service.connector_id)}
-            >
-              {service.name}
-            </button>
-          ))}
-        </div>
-        {saving && <span style={styles.muted}>Saving preference…</span>}
-      </div>
-    </Modal>
-  )
-}
-
 const styles: Record<string, React.CSSProperties> = {
   section: {
     display: 'flex',
@@ -183,33 +127,5 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     // Wide enough for long service names without clipping.
     maxWidth: 320,
-  },
-  dialogBody: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 12,
-    padding: 16,
-  },
-  dialogText: {
-    margin: 0,
-    fontSize: 13,
-    color: 'var(--text-secondary)',
-    lineHeight: 1.5,
-  },
-  choiceList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 8,
-  },
-  choiceBtn: {
-    padding: '8px 12px',
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
-    fontSize: 13,
-    fontWeight: 600,
-    color: 'var(--text-primary)',
-    cursor: 'pointer',
-    textAlign: 'left',
   },
 }
