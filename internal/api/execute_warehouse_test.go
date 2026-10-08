@@ -263,53 +263,43 @@ func TestExecuteCellUnmanagedClickHouseUsesLegacyCredential(t *testing.T) {
 	require.Nil(t, out.Routing, "legacy runs must not report warehouse routing")
 }
 
-// Services in a warehouse are interchangeable: a collaborator holding `use`
-// only on Service B must be able to run a cell wired to Service A, because
-// routing sends the query to B. The connector-level pre-check must not gate
-// managed connectors; resolveExecutionTarget enforces service access.
-func TestExecuteCellRoutesByServiceAccessNotCellConnector(t *testing.T) {
-	ctx := context.Background()
+// Selection wins: when the user holds `use` on the cell's connector, the run
+// serves on it. The cell's selection is always the execution target — never a
+// substituted service.
+func TestExecuteCellRunsOnCellConnector(t *testing.T) {
 	fx := setupExecuteWarehouseFixture(t)
-	fx.grantConnectorUse(t, fx.connB)
+	fx.grantConnectorUse(t, fx.connA)
 
-	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
-		"SELECT currentUser() AS ch_user", nil)
-	fx.grantNotebookRun(t, nbID)
-
-	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	rec := fx.executeCellOn(t, fx.connA)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	out := decodeExecuteOutputs(t, rec)
-	require.Equal(t, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID),
-		out.Outputs[0].Data.Rows[0][0], "the run must execute as the warehouse identity")
 	require.NotNil(t, out.Routing)
-	require.Equal(t, fx.connB.String(), out.Routing.ConnectorID,
-		"the run must route to the only service the user may use")
-
-	var metaJSON []byte
-	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
-		SELECT metadata FROM audit_logs
-		WHERE org_id = $1 AND action = 'cell.execute' AND resource_id = $2
-		ORDER BY id DESC LIMIT 1`,
-		fx.orgID.String(), cellID.String()).Scan(&metaJSON))
-	var meta map[string]any
-	require.NoError(t, json.Unmarshal(metaJSON, &meta))
-	require.Equal(t, fx.connB.String(), meta["connector_id"],
-		"audit must record the service actually dialed")
+	require.Equal(t, fx.connA.String(), out.Routing.ConnectorID,
+		"the run must serve on the connector the cell selected")
+	require.Equal(t, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID), out.Routing.CHUser,
+		"the run must execute as the warehouse identity")
 }
 
-// Without `use` on any service in the warehouse, managed routing fails closed
-// even though handleExecuteCell no longer gates on the cell's connector.
-func TestExecuteCellManagedNoServiceAccessDenied(t *testing.T) {
+// Without `use` on any service in the warehouse, selection fails closed with
+// the enriched 403: warehouse_id names the warehouse and services is an empty
+// array, since the caller may use nothing there.
+func TestExecuteCellNoPermittedServices(t *testing.T) {
 	fx := setupExecuteWarehouseFixture(t)
 
-	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
-		"SELECT 1", nil)
-	fx.grantNotebookRun(t, nbID)
-
-	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
+	rec := fx.executeCellOn(t, fx.connA)
 	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
-	require.Contains(t, rec.Body.String(), "no permitted service in warehouse")
+
+	var body struct {
+		Error       string           `json:"error"`
+		WarehouseID string           `json:"warehouse_id"`
+		Services    []map[string]any `json:"services"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "service_access_denied", body.Error)
+	require.Equal(t, fx.warehouseID.String(), body.WarehouseID)
+	require.NotNil(t, body.Services, "services must be an empty array, not null")
+	require.Len(t, body.Services, 0)
 }
 
 // Unmanaged connectors keep the connector-level `use` pre-check: access to a
@@ -385,41 +375,10 @@ func TestExecuteCellNonClickHouseConnectorKeepsLegacyPath(t *testing.T) {
 	require.Equal(t, float64(1), out.Outputs[0].Data.Rows[0][0])
 }
 
-func TestExecuteCellServiceChoiceRequired(t *testing.T) {
-	fx := setupExecuteWarehouseFixture(t)
-	fx.grantConnectorUse(t, fx.connA)
-	fx.grantConnectorUse(t, fx.connB)
-
-	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA, "SELECT 1", nil)
-	fx.grantNotebookRun(t, nbID)
-
-	rec := executeWarehouseCell(t, fx.s, fx.userID, fx.orgID, nbID, cellID)
-	require.Equal(t, http.StatusConflict, rec.Code, rec.Body.String())
-
-	var body struct {
-		Error       string `json:"error"`
-		WarehouseID string `json:"warehouse_id"`
-		Services    []struct {
-			ConnectorID string `json:"connector_id"`
-			Name        string `json:"name"`
-		} `json:"services"`
-	}
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
-	require.Equal(t, "service_choice_required", body.Error)
-	require.Equal(t, fx.warehouseID.String(), body.WarehouseID,
-		"the 409 must name the warehouse so the choice can be stored")
-	require.Len(t, body.Services, 2)
-	names := map[string]string{}
-	for _, svc := range body.Services {
-		names[svc.ConnectorID] = svc.Name
-	}
-	require.Equal(t, "Execute Service A", names[fx.connA.String()])
-	require.Equal(t, "Execute Service B", names[fx.connB.String()])
-}
-
-// A pinned run dials the cell's connector directly and ignores a stored
-// preference, so it never hits the ambiguous-routing 409.
-func TestExecuteCellPinnedConnectorBypassesPreference(t *testing.T) {
+// The deprecated `pinned` request flag is accepted and ignored: selection wins
+// regardless, so the run still serves on the cell's connector and the stored
+// preference never re-routes it.
+func TestExecuteCellPinnedFlagIgnored(t *testing.T) {
 	fx := setupExecuteWarehouseFixture(t)
 	fx.grantConnectorUse(t, fx.connA)
 	fx.grantConnectorUse(t, fx.connB)
@@ -435,7 +394,7 @@ func TestExecuteCellPinnedConnectorBypassesPreference(t *testing.T) {
 	out := decodeExecuteOutputs(t, rec)
 	require.NotNil(t, out.Routing)
 	require.Equal(t, fx.connA.String(), out.Routing.ConnectorID,
-		"a pinned run must dial the requested service, not the preferred one")
+		"the pinned flag must be ignored: the selected connector serves the run")
 	require.Equal(t, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID), out.Routing.CHUser)
 }
 
@@ -498,14 +457,17 @@ func TestExecuteCellSoftDeletedLegacyConnectorNotFound(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
 
-func TestExecuteCellPreferenceRoutesAndLogsRoutedService(t *testing.T) {
+// The stored service preference is advisory only: it must never re-route an
+// execution. The cell selects Service A while the user prefers Service B, so
+// the run, its routing metadata, the audit entry, and the execution log must
+// all record Service A.
+func TestExecuteCellPreferenceDoesNotRoute(t *testing.T) {
 	ctx := context.Background()
 	fx := setupExecuteWarehouseFixture(t)
 	fx.grantConnectorUse(t, fx.connA)
 	fx.grantConnectorUse(t, fx.connB)
 	preferWarehouseService(t, fx.s, fx.userID, fx.warehouseID, fx.connB)
 
-	// The cell requests Service A but the preference routes it to Service B.
 	nbID, cellID := seedExecuteWarehouseCell(t, fx.s, fx.orgID, fx.userID, fx.connA,
 		"SELECT currentUser() AS ch_user", nil)
 	fx.grantNotebookRun(t, nbID)
@@ -515,8 +477,8 @@ func TestExecuteCellPreferenceRoutesAndLogsRoutedService(t *testing.T) {
 
 	out := decodeExecuteOutputs(t, rec)
 	require.NotNil(t, out.Routing)
-	require.Equal(t, fx.connB.String(), out.Routing.ConnectorID,
-		"the response must report the routed service")
+	require.Equal(t, fx.connA.String(), out.Routing.ConnectorID,
+		"the response must report the selected service, not the preferred one")
 
 	var metaJSON []byte
 	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
@@ -526,29 +488,29 @@ func TestExecuteCellPreferenceRoutesAndLogsRoutedService(t *testing.T) {
 		fx.orgID.String(), cellID.String()).Scan(&metaJSON))
 	var meta map[string]any
 	require.NoError(t, json.Unmarshal(metaJSON, &meta))
-	require.Equal(t, fx.connB.String(), meta["connector_id"], "audit must record the routed service")
+	require.Equal(t, fx.connA.String(), meta["connector_id"], "audit must record the selected service")
 
-	// The execution log is written asynchronously; it must record the routed
-	// service, not the cell's requested connector.
+	// The execution log is written asynchronously; it must record the selected
+	// service, not the preferred one.
 	require.Eventually(t, func() bool {
 		var logged string
 		err := fx.s.db.Pool.QueryRow(ctx,
 			`SELECT connector_id::text FROM cell_execution_logs WHERE cell_id = $1`,
 			cellID.String()).Scan(&logged)
-		return err == nil && logged == fx.connB.String()
+		return err == nil && logged == fx.connA.String()
 	}, 5*time.Second, 50*time.Millisecond,
-		"cell_execution_logs must record the routed connector")
+		"cell_execution_logs must record the selected connector")
 }
 
-func TestExecuteCellAppliesRoutedServiceLimits(t *testing.T) {
+func TestExecuteCellAppliesSelectedServiceLimits(t *testing.T) {
 	ctx := context.Background()
 	fx := setupExecuteWarehouseFixture(t)
 	fx.grantConnectorUse(t, fx.connA)
 	fx.grantConnectorUse(t, fx.connB)
 	preferWarehouseService(t, fx.s, fx.userID, fx.warehouseID, fx.connB)
 
-	// The requested connector allows 1 row; the routed service allows 2. The
-	// routed service's cap must win.
+	// The selected connector allows 1 row; the preferred (unused) service
+	// allows 2. The selected connector's cap must win.
 	_, err := fx.s.db.Pool.Exec(ctx,
 		`UPDATE connectors SET max_rows = 1 WHERE id = $1`, fx.connA.String())
 	require.NoError(t, err)
@@ -564,7 +526,7 @@ func TestExecuteCellAppliesRoutedServiceLimits(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 
 	out := decodeExecuteOutputs(t, rec)
-	require.Len(t, out.Outputs[0].Data.Rows, 2, "the routed service's max_rows must apply")
+	require.Len(t, out.Outputs[0].Data.Rows, 1, "the selected service's max_rows must apply")
 }
 
 // MCP sessions build their own ToolContext: it must carry the warehouse
@@ -642,6 +604,7 @@ func TestExecuteCellSelectedServiceDeniedPayload(t *testing.T) {
 	require.Equal(t, fx.warehouseID.String(), body.WarehouseID)
 	require.Len(t, body.Services, 1)
 	require.Equal(t, "Execute Service A", body.Services[0]["name"])
+	require.Equal(t, fx.connA.String(), body.Services[0]["connector_id"])
 }
 
 // executeCellOn seeds a cell wired to connectorID, grants the fixture user run

@@ -342,8 +342,8 @@ func auditMetadata(notebookID, cellID, connectorID, query string, rowCount int, 
 
 // writeServiceAccessDenied renders the 403 payload returned when the selected
 // service cannot serve the caller. The caller has already matched the concrete
-// error, so the allowed list is always present. warehouse_id lets the client
-// offer the services the user may use in that warehouse instead.
+// error, so the allowed list is always populated (possibly empty). warehouse_id
+// lets the client offer the services the user may use in that warehouse instead.
 func writeServiceAccessDenied(w http.ResponseWriter, e *executor.ServiceAccessDeniedError) {
 	services := make([]map[string]string, 0, len(e.Allowed))
 	for _, svc := range e.Allowed {
