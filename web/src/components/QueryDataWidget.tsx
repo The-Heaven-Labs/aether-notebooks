@@ -58,11 +58,13 @@ const styles: Record<string, React.CSSProperties> = {
   },
 }
 
-export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshNonce = 0, endpointBase }: {
+export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshNonce = 0, viewerConnectorId, endpointBase }: {
   dashboardId: string
   widget: Widget
   canViewWithData: boolean
   refreshNonce?: number
+  /** Viewer's dashboard connector selection; unset for public dashboards. */
+  viewerConnectorId?: string | null
   /** Overrides the execute endpoint base, e.g. `/api/v1/public/{token}` for public dashboards. */
   endpointBase?: string
 }) {
@@ -73,6 +75,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, refreshN
     widget,
     values,
     enabled: canViewWithData,
+    viewerConnectorId,
     endpointBase,
   })
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null)

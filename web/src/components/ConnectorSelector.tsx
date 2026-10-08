@@ -15,6 +15,8 @@ interface ConnectorSelectorProps {
   placeholder?: string
   allowClear?: boolean
   style?: React.CSSProperties
+  /** When set, only connectors of these types render. */
+  types?: string[]
 }
 
 export function ConnectorSelector({
@@ -23,6 +25,7 @@ export function ConnectorSelector({
   placeholder = 'Select connector',
   allowClear = false,
   style,
+  types,
 }: ConnectorSelectorProps) {
   // Shares the ['connectors'] query with the sidebar and page queries so the
   // list is fetched once per cache window instead of once per consumer.
@@ -30,6 +33,7 @@ export function ConnectorSelector({
     queryKey: ['connectors'],
     queryFn: () => api.get<ConnectorItem[]>('/api/v1/connectors'),
   })
+  const visible = types ? connectors.filter(c => types.includes(c.type)) : connectors
 
   return (
     <span style={styles.wrap}>
@@ -50,7 +54,7 @@ export function ConnectorSelector({
         onChange={e => onChange(e.target.value || null)}
       >
         <option value="" disabled={!allowClear || !value}>{allowClear && value ? 'Clear selection' : placeholder}</option>
-        {connectors.map(c => (
+        {visible.map(c => (
           <option key={c.id} value={c.id} disabled={c.can_use === false}>
             {c.name}
             {c.is_provisioner

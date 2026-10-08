@@ -60,4 +60,13 @@ describe('ConnectorSelector', () => {
     fireEvent.change(select, { target: { value: '' } })
     expect(onChange).toHaveBeenCalledWith(null)
   })
+
+  test('types filter hides connectors of other types', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors))
+    )
+    renderWithQuery(<ConnectorSelector value={null} onChange={() => {}} types={['clickhouse']} />)
+    expect(await screen.findByText('Analytics CH')).toBeInTheDocument()
+    expect(screen.queryByText('Production DB')).not.toBeInTheDocument()
+  })
 })
