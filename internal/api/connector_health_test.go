@@ -253,3 +253,68 @@ func TestConnectorHealthFailureErrorTruncated(t *testing.T) {
 	require.Equal(t, 500, len([]rune(lastErr)),
 		"error text must be truncated to exactly 500 runes (source error was longer): %q", lastErr)
 }
+
+// executeCell runs a cell through the shared HTTP endpoint.
+func executeCell(t *testing.T, srv *api.Server, token, nbID, cellID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := httptest.NewRequest("POST", "/api/v1/notebooks/"+nbID+"/cells/"+cellID+"/execute", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("X-AETHER-Admin-Mode", "true")
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestConnectorHealthRecordsCellExecutionSuccess(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-cell-ok-%d@example.com", ts), "Conn Cell OK Org")
+	connID := createConnector(t, srv, token)
+	nbID := createNotebook(t, srv, token, "Health NB")
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT 1 AS result", connID)
+
+	rec := executeCell(t, srv, token, nbID, cellID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	got := getConnectorJSON(t, srv, token, connID)
+	require.NotNil(t, got["last_success_at"], "a completed run must persist last_success_at")
+	require.Nil(t, got["last_failure_at"], "a completed run must not set last_failure_at")
+}
+
+func TestConnectorHealthRecordsCellConnectFailure(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-cell-fail-%d@example.com", ts), "Conn Cell Fail Org")
+
+	// A postgres config without host/database can never construct an executor,
+	// exercising openQuery's driver.NewExecutor connect-failure branch.
+	connID := createConnectorWithConfig(t, srv, token, "No Host", map[string]any{})
+	nbID := createNotebook(t, srv, token, "Broken NB")
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT 1", connID)
+
+	rec := executeCell(t, srv, token, nbID, cellID)
+	require.Equal(t, http.StatusBadGateway, rec.Code, rec.Body.String())
+
+	got := getConnectorJSON(t, srv, token, connID)
+	require.NotNil(t, got["last_failure_at"], "a connect failure must persist last_failure_at")
+	require.NotEmpty(t, got["last_error"], "a connect failure must persist the error text")
+	require.Nil(t, got["last_success_at"], "a failed run must not set last_success_at")
+}
+
+func TestConnectorHealthRecordsDashboardExecutionSuccess(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("conn-dash-ok-%d@example.com", ts), "Conn Dash OK Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 1 AS one")
+
+	rec := executeDashboardWidget(t, srv, token, dashID, map[string]any{"widget_id": widgetID})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	got := getConnectorJSON(t, srv, token, connID)
+	require.NotNil(t, got["last_success_at"], "a completed dashboard run must persist last_success_at")
+}

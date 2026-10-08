@@ -829,6 +829,8 @@ func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) 
 	if err != nil {
 		return nil, mapDashboardExecError(err)
 	}
+	// Persisted connector health: a completed run is the success signal (D7).
+	s.recordConnectorSuccess(ctx, p.OrgID, p.ConnectorID)
 	if cacheKey != "" {
 		// Detach from the request context so an aborted response can still warm
 		// the cache; the write is best-effort.

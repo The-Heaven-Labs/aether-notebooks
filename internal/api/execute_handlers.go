@@ -261,6 +261,9 @@ func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 		writeError(w, status, errMsg)
 		return
 	}
+	// Persisted connector health: a completed run is the success signal (D7).
+	// SQL/semantic errors handled above never flip status.
+	s.recordConnectorSuccess(ctx, claims.OrgID, opened.DialedConnectorID)
 	queryTime := time.Since(queryStart).Milliseconds()
 
 	// Store table output

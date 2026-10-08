@@ -97,6 +97,7 @@ func (s *Server) openQuery(ctx context.Context, orgID, userID, orgRole, connecto
 		case targetErr == nil:
 			conn, release, getErr := s.connPool.Get(target.Endpoint, target.CHUser, target.Config)
 			if getErr != nil {
+				s.recordConnectorFailure(ctx, orgID, connectorID, getErr)
 				return nil, errQueryConnectFailed
 			}
 			out.Exec = executor.NewPooledClickHouseExecutor(conn, release)
@@ -112,6 +113,7 @@ func (s *Server) openQuery(ctx context.Context, orgID, userID, orgRole, connecto
 		case errors.Is(targetErr, executor.ErrUnmanagedConnector):
 			out.Exec, err = driver.NewExecutor(plain)
 			if err != nil {
+				s.recordConnectorFailure(ctx, orgID, connectorID, err)
 				return nil, errQueryConnectFailed
 			}
 		case errors.Is(targetErr, executor.ErrConnectorNotFound):
@@ -129,6 +131,7 @@ func (s *Server) openQuery(ctx context.Context, orgID, userID, orgRole, connecto
 	default:
 		out.Exec, err = driver.NewExecutor(plain)
 		if err != nil {
+			s.recordConnectorFailure(ctx, orgID, connectorID, err)
 			return nil, errQueryConnectFailed
 		}
 	}
