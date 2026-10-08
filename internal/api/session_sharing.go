@@ -54,6 +54,12 @@ func writeSessionShareError(w http.ResponseWriter, err error) {
 // Duplicate subjects collapse, and entries naming the owner are dropped because
 // the owner entry already carries full access.
 //
+// pending_user entries name someone who is not a member yet: the email is
+// validated and lowercased here (the same canonical form every pending table
+// uses) and staged in pending_acl_entries at insert time. The read-only rule
+// applies unchanged, so a staged session share can only ever materialize as
+// view.
+//
 // Invalid input wraps errInvalidSessionShare; database failures are wrapped
 // without it so writeSessionShareError can map them to 500.
 func (s *Server) normalizeSessionShareEntries(ctx context.Context, q shareQueryer, userID, orgID string, entries []aclEntryInput) ([]aclEntryInput, error) {
@@ -80,6 +86,14 @@ func (s *Server) normalizeSessionShareEntries(ctx context.Context, q shareQuerye
 				return nil, fmt.Errorf("%w: invalid share group", errInvalidSessionShare)
 			}
 			groupIDs = append(groupIDs, e.SubjectID)
+		case "pending_user":
+			// Not a member yet: validate the email here and stage the share in
+			// pending_acl_entries at insert time. Read-only applies unchanged.
+			email, ok := normalizePendingEmail(e.SubjectID)
+			if !ok {
+				return nil, fmt.Errorf("%w: invalid share email", errInvalidSessionShare)
+			}
+			e.SubjectID = email
 		case "org_role":
 			if e.SubjectID != "everyone" {
 				return nil, fmt.Errorf(`%w: org_role shares must use subject_id "everyone"`, errInvalidSessionShare)
