@@ -30,12 +30,17 @@ CREATE INDEX idx_pending_acl_org_email ON pending_acl_entries (org_id, lower(ema
 CREATE TABLE pending_warehouse_table_grants (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id        UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
-    warehouse_id  UUID NOT NULL REFERENCES warehouses(id) ON DELETE CASCADE,
+    warehouse_id  UUID NOT NULL,
     email         TEXT NOT NULL,
     database_name TEXT NOT NULL,
     table_name    TEXT NOT NULL,
     created_by    UUID REFERENCES users(id) ON DELETE SET NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    -- Composite FK instead of the single-column one, mirroring
+    -- warehouse_table_grants (V110): a staged row whose org and warehouse
+    -- disagree would silently never materialize, so it can never be created.
+    CONSTRAINT pending_warehouse_table_grants_warehouse_org_fkey
+        FOREIGN KEY (warehouse_id, org_id) REFERENCES warehouses(id, org_id) ON DELETE CASCADE
 );
 
 -- Also makes ON CONFLICT (warehouse_id, lower(email), database_name,
