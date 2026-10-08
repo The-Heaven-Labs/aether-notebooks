@@ -157,6 +157,7 @@ func executeAgentSQL(tc *ToolContext, pool *pgxpool.Pool, connectorID, query str
 	if err != nil {
 		return nil, fmt.Errorf("execute: %w", err)
 	}
+	tc.RecordConnectorSuccess(connectorID)
 
 	return &sqlExecutionResult{ResultSet: result, ExecutionID: executionID}, nil
 }

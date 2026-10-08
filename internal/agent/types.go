@@ -42,6 +42,14 @@ type ToolContext struct {
 	// ConnPool leases per-user ClickHouse connections for resolved targets. It
 	// is required whenever ResolveTarget returns a managed target.
 	ConnPool *executor.ConnPool
+	// RecordConnectorActivity reports a connection-level success or failure
+	// for connector health (the api.Server implementation is the same
+	// recorder HTTP uses; wired by the API server like ResolveTarget).
+	// ok=true debounces a success write, ok=false records an immediate
+	// failure with errMsg. Nil-safe via the helpers below so bare test
+	// contexts (tests, tool handlers invoked outside a server) simply skip
+	// recording.
+	RecordConnectorActivity func(ctx context.Context, orgID, connectorID string, ok bool, errMsg string)
 	// CheckPermissionFunc is the canonical ACL resolver (api.Server.checkPermission).
 	// When set, CheckPermission delegates to it, so agent and MCP executions get
 	// the same group-aware, admin-mode-aware authorization as HTTP. A nil
@@ -167,6 +175,26 @@ func (tc *ToolContext) CheckPermission(resourceType, resourceID, action string) 
 		return fmt.Errorf("permission denied: %s on %s/%s", action, resourceType, resourceID)
 	}
 	return nil
+}
+
+// RecordConnectorSuccess reports a completed execution against connectorID.
+func (tc *ToolContext) RecordConnectorSuccess(connectorID string) {
+	if tc.RecordConnectorActivity == nil {
+		return
+	}
+	tc.RecordConnectorActivity(tc.Context, tc.OrgID, connectorID, true, "")
+}
+
+// RecordConnectorFailure reports a connection-level failure for connectorID.
+func (tc *ToolContext) RecordConnectorFailure(connectorID string, failure error) {
+	if tc.RecordConnectorActivity == nil {
+		return
+	}
+	msg := ""
+	if failure != nil {
+		msg = failure.Error()
+	}
+	tc.RecordConnectorActivity(tc.Context, tc.OrgID, connectorID, false, msg)
 }
 
 func (tc *ToolContext) GetNotebookIDForCell(cellID string) (string, error) {

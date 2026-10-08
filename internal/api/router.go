@@ -123,6 +123,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.ResolveTarget = s.resolveExecutionTarget
 	s.agentEngine.ConnPool = s.connPool
 	s.agentEngine.CheckPermissionFunc = s.checkPermission
+	s.agentEngine.RecordConnectorActivity = s.recordConnectorActivity
 	// Running-state/cancel lifecycle for agent-driven cell runs (mirrors the
 	// user-triggered execute path so badges, refresh-safe sync, and the Cancel
 	// endpoint all work for agent runs).
