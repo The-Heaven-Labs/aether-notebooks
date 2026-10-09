@@ -538,6 +538,25 @@ Verified against the pinned build (`relay/node_modules/@hocuspocus/server` 4.4.0
 
 **Recommended enforcement for Task 15:** set `connectionConfig.readOnly = true` in `onAuthenticate`. It is read at `hocuspocus-server.cjs:851` for the scope the client sees (`"readonly"` vs `"read-write"` in the `authenticated` message) and at `:971` for the `Connection`, i.e. before any queued client message is replayed — race-free. Optionally re-assert `connection.readOnly = true` synchronously in `connected` as defense-in-depth (works empirically, but a client marked only there still sees `read-write` scope). No `beforeSync`/`beforeHandleMessage` fallback guard is required.
 
+### S2 findings
+
+**Outcome: PASS after bumping ygo v1.39.0 → v1.51.5.** The planned nested document shape round-trips Go (ygo) → JS (`yjs`) → Go, including a JS-added widget and a JS-appended nested `Y.Text`. The dependency bump turned out to be a prerequisite: the pinned library could not build the shape at all.
+
+**1. ygo v1.39.0 could not build (or type-reach) the planned doc.**
+- No public API to construct nested shared types: `NewMapPrelim` / `NewArrayPrelim` / `NewTextPrelim` / `YArray.PushType` are absent; `Doc.GetMap/GetArray/GetText` only return *root* types, and `contentForValue` special-cases only `*Doc`. The closest attempt (`meta.Set(txn, "settings", doc.GetMap("settings"))`) stores `ContentAny(*crdt.YMap)` and panics at encode: `encoding: unsupported type *crdt.YMap passed to WriteAny`.
+- Reading JS-authored nested state is also blocked for typed access: `ApplyUpdateV1` accepts the state and `Entries()`/`ToJSON()` expose the full tree as plain JSON, but `YMap.Get` returns `(nil, false)` for nested `ContentType` values (fixed in v1.43.0). The widget map and its `layout` map / `query` `Y.Text` are unreachable, so every backend write op (`Seed`, `UpsertWidget`, `DeleteWidget`, `UpdateLayout`, `SetQuery`, `UpdateMeta`) is impossible.
+
+**2. Decision: bump `github.com/reearth/ygo` to v1.51.5** (latest, approved). Minimum viable is **v1.43.0**, which added the prelim constructors, detached staging, and the nested-`YMap.Get` fix; v1.51.5 also carries the v1.47.1 guard that rejects staging one detached type onto two containers, later staging/wire fixes, and prelim↔yjs conformance fixtures. `go.mod`/`go.sum` diff is the ygo bump plus a transitive `golang.org/x/exp` version bump required by ygo's own `go.mod` (no package imports it). Existing usage is limited to `internal/agent/yjs.go` (`New`, `ApplyUpdateV1`, `GetText`, `ToString`, `Insert`, `Delete`, `Transact`, `EncodeStateAsUpdate`) — all unchanged in v1.51.5.
+
+**3. Verified round-trip** — permanent test `internal/dashboarddoc/compat_test.go` + driver `internal/dashboarddoc/testdata/compat-mutate.cjs`:
+- Go seeds `meta` (title + nested `settings` map + `variables` `Y.Array` of maps) and `widgets` (UUID-keyed map, each with nested `layout` map and `query` `Y.Text`); 784-byte state.
+- Node with `web/node_modules/yjs` (13.6.31; the relay's 13.6.30 was verified in the scratch equivalent) asserts every `Y.Map`/`Y.Array`/`Y.Text`, appends `\n-- mutated` to `w-1.query`, adds a complete `w-js-1` widget with nested layout + text, re-encodes.
+- Go projects the mutated state: the append is visible (`SELECT 1\n-- mutated`), `w-js-1` is present with `SELECT 3` and its nested layout, and all originals survived.
+- Commands run: `go get github.com/reearth/ygo@v1.51.5 && go mod tidy`; `go test ./internal/dashboarddoc -run TestCompat -v -timeout 3m` → PASS (0.096s); `go build ./...` → OK; `go test ./internal/agent -run 'Test' -timeout 3m` → ok 63.2s (includes the four `TestUpdateCellInYjs_*`); `go vet ./internal/dashboarddoc` → OK.
+- Skip behavior: the test skips with a clear message when `node` is not on PATH or `<repoRoot>/web/node_modules/yjs` is missing (Go-only CI), and fails loudly if the committed driver script is missing.
+
+Throwaway probe/verification modules from the investigation live in `/tmp/opencode/ygo-spike-1390` and `/tmp/opencode/ygo-spike-1515` (not committed).
+
 ## Notes / risks carried from design
 
 - Grant-lag window for the shared cache is accepted (documented in the design doc).
