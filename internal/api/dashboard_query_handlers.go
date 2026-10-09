@@ -63,6 +63,7 @@ type dashboardQueryParams struct {
 	OrgID           string
 	Identity        dashboardIdentity
 	ConnectorID     string
+	WarehouseID     *string
 	SQL             string
 	BypassCache     bool
 	CacheSeconds    *int
@@ -133,7 +134,7 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	servedConnector, err := s.resolveWidgetConnector(ctx, claims.OrgID, *widget.ConnectorID, req.ConnectorID)
+	servedConnector, warehouseID, err := s.resolveWidgetConnector(ctx, claims.OrgID, *widget.ConnectorID, req.ConnectorID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -153,6 +154,7 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		OrgID:        claims.OrgID,
 		Identity:     dashboardIdentity{UserID: claims.UserID, Role: claims.Role},
 		ConnectorID:  servedConnector,
+		WarehouseID:  warehouseID,
 		SQL:          sqlText,
 		BypassCache:  req.BypassCache,
 		CacheSeconds: dash.Settings.QueryCacheSeconds,
@@ -246,7 +248,7 @@ func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	servedConnector, err := s.resolveWidgetConnector(ctx, claims.OrgID, v.Options.Query.ConnectorID, req.ConnectorID)
+	servedConnector, warehouseID, err := s.resolveWidgetConnector(ctx, claims.OrgID, v.Options.Query.ConnectorID, req.ConnectorID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -256,6 +258,7 @@ func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.R
 		OrgID:           claims.OrgID,
 		Identity:        dashboardIdentity{UserID: claims.UserID, Role: claims.Role},
 		ConnectorID:     servedConnector,
+		WarehouseID:     warehouseID,
 		SQL:             sqlText,
 		CacheSeconds:    dash.Settings.QueryCacheSeconds,
 		MaxRowsOverride: dashboardOptionMaxRows,
@@ -752,36 +755,41 @@ func (s *Server) loadQueryWidget(ctx context.Context, dashID, widgetID string) (
 // do not exist on the selected service). An unknown or deleted viewer
 // selection falls back to the widget connector so stale per-viewer UI state
 // never breaks a widget; the served connector's `use` grant is enforced later
-// by openQuery/resolveExecutionTarget, not here.
-func (s *Server) resolveWidgetConnector(ctx context.Context, orgID, widgetConnectorID, viewerConnectorID string) (string, error) {
+// by openQuery/resolveExecutionTarget, not here. The returned warehouse id is
+// the served connector's (nil for unmanaged connectors), used by callers as
+// routing context for the shared query cache.
+func (s *Server) resolveWidgetConnector(ctx context.Context, orgID, widgetConnectorID, viewerConnectorID string) (servedConnectorID string, warehouseID *string, err error) {
+	// The widget connector is the fallback for every viewer selection that
+	// does not win, so its warehouse is needed on all paths.
+	var whW *string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT warehouse_id FROM connectors WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+		widgetConnectorID, orgID).Scan(&whW); err != nil {
+		return "", nil, err
+	}
 	if viewerConnectorID == "" || viewerConnectorID == widgetConnectorID {
-		return widgetConnectorID, nil
+		return widgetConnectorID, whW, nil
 	}
 	// A malformed viewer selection is stale UI state, not a DB error: it must
 	// never turn a working widget into a 404 (the lookup below would fail on
 	// the uuid cast before reaching the ErrNoRows fallback).
 	if _, err := uuid.Parse(viewerConnectorID); err != nil {
-		return widgetConnectorID, nil
+		return widgetConnectorID, whW, nil
 	}
-	var whW, whV *string
-	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT warehouse_id FROM connectors WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
-		widgetConnectorID, orgID).Scan(&whW); err != nil {
-		return "", err
-	}
-	err := s.db.Pool.QueryRow(ctx,
+	var whV *string
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT warehouse_id FROM connectors WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
 		viewerConnectorID, orgID).Scan(&whV)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return widgetConnectorID, nil // unknown viewer selection: the widget connector serves
+		return widgetConnectorID, whW, nil // unknown viewer selection: the widget connector serves
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if whW != nil && whV != nil && *whW == *whV {
-		return viewerConnectorID, nil
+		return viewerConnectorID, whV, nil
 	}
-	return widgetConnectorID, nil
+	return widgetConnectorID, whW, nil
 }
 
 func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) (*dashboardQueryResponse, error) {
