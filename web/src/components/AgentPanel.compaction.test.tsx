@@ -56,4 +56,16 @@ describe('CompactionDivider', () => {
     fireEvent.click(pill)
     expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
   })
+
+  it('expands a legacy row without counts to its summary only', () => {
+    render(
+      <CompactionDivider
+        msg={{ role: 'compaction', content: 'legacy summary', tokens_before: 1200 }}
+        fmtTime={() => ''}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    expect(screen.getByText('legacy summary')).toBeInTheDocument()
+    expect(screen.queryByText(/tokens \(actual\)/)).toBeNull()
+  })
 })

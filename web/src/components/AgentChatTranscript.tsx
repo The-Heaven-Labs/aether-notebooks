@@ -133,7 +133,8 @@ const compactionStyles: Record<string, React.CSSProperties> = {
 export function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime: (iso?: string) => string }) {
   const [open, setOpen] = useState(false)
   const detailsId = useId()
-  const hasCounts = msg.tokens_before !== undefined && msg.tokens_after !== undefined
+  const { tokens_before, tokens_after } = msg
+  const hasCounts = tokens_before !== undefined && tokens_after !== undefined
   return (
     <div style={compactionStyles.marker}>
       <span style={compactionStyles.rule} />
@@ -149,15 +150,15 @@ export function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime:
           <span>⚙ Context auto-compacted</span>
           {hasCounts && (
             <span style={compactionStyles.counts}>
-              {formatTokens(msg.tokens_before!)} → ~{formatTokens(msg.tokens_after!)}
+              {formatTokens(tokens_before)} → ~{formatTokens(tokens_after)}
             </span>
           )}
         </button>
-        {open && (
+        {open && (hasCounts || msg.content || msg.created_at) && (
           <div id={detailsId} style={compactionStyles.details}>
             {hasCounts && (
               <div style={compactionStyles.countsLine}>
-                {msg.tokens_before!.toLocaleString('en-US')} tokens (actual) → ~{msg.tokens_after!.toLocaleString('en-US')} tokens (estimated)
+                {tokens_before.toLocaleString('en-US')} tokens (actual) → ~{tokens_after.toLocaleString('en-US')} tokens (estimated)
               </div>
             )}
             {msg.content && <div style={compactionStyles.summary}>{msg.content}</div>}
