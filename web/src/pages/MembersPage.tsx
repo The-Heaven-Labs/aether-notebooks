@@ -260,8 +260,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   inviteBtn: {
     padding: '7px 18px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 13,

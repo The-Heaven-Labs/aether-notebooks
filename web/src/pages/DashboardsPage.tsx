@@ -177,7 +177,7 @@ const rowStyles: Record<string, React.CSSProperties> = {
 
 const styles: Record<string, React.CSSProperties> = {
   layoutBtn: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text-secondary)' },
-  newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  newBtn: { padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   body: { maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },

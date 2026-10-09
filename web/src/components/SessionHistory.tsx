@@ -282,11 +282,11 @@ const styles: Record<string, React.CSSProperties> = {
     gap: 4,
     fontSize: 12,
     padding: '4px 10px',
-    background: 'var(--accent)',
+    background: 'var(--button-primary-bg)',
     border: 'none',
     borderRadius: 4,
     cursor: 'pointer',
-    color: 'white',
+    color: 'var(--button-primary-text)',
     fontWeight: 500,
   },
   shareBtn: {
@@ -367,7 +367,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 12px', borderRadius: 6, fontSize: 13, lineHeight: 1.4,
     maxWidth: '85%', wordBreak: 'break-word' as const,
   },
-  userBubble: { background: 'var(--accent)', color: 'white', alignSelf: 'flex-end' },
+  userBubble: { background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', alignSelf: 'flex-end' },
   assistantBubble: { background: 'var(--bg-secondary)', color: 'var(--text-primary)', alignSelf: 'flex-start' },
   toolBubble: { background: 'rgba(var(--accent-rgb, 59, 130, 246), 0.1)', color: 'var(--text-secondary)', alignSelf: 'flex-start', fontSize: 11 },
   compactionBubble: {

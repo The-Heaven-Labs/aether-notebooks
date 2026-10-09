@@ -180,7 +180,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer',
   },
   saveBtn: {
-    padding: '9px 0', background: 'var(--accent)', color: '#fff', border: 'none',
+    padding: '9px 0', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none',
     borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
   error: { fontSize: 12, color: 'var(--danger, #d33)' },

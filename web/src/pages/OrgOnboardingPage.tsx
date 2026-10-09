@@ -239,7 +239,7 @@ const styles: Record<string, React.CSSProperties> = {
   },
   primaryBtn: {
     padding: '11px',
-    background: 'var(--accent)',
+    background: 'var(--button-primary-bg)',
     color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,

@@ -240,7 +240,7 @@ export function ProfilePage() {
               style={{
                 ...styles.saveBtn,
                 opacity: saveStatus === 'saving' ? 0.6 : 1,
-                background: saveStatus === 'saved' ? 'var(--success)' : 'var(--accent)',
+                background: saveStatus === 'saved' ? 'var(--success)' : 'var(--button-primary-bg)',
                 transition: 'background 0.3s',
               }}
               onClick={handleSave}
@@ -429,13 +429,13 @@ export function ProfilePage() {
 const styles: Record<string, React.CSSProperties> = {
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '8px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 14, color: 'var(--text-primary)', background: 'var(--bg-input)' },
-  saveBtn: { padding: '7px 18px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  saveBtn: { padding: '7px 18px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   themeBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  themeActive: { padding: '6px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, cursor: 'pointer' },
+  themeActive: { padding: '6px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, cursor: 'pointer' },
   groupTag: { padding: '3px 10px', background: 'var(--accent-light)', color: 'var(--accent)', borderRadius: 12, fontSize: 12, fontWeight: 500 },
-  tokenCreateBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: 11, fontWeight: 600, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer' },
+  tokenCreateBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', fontSize: 11, fontWeight: 600, background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, cursor: 'pointer' },
   tokenCancelBtn: { padding: '4px 10px', fontSize: 11, fontWeight: 600, background: 'none', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', color: 'var(--text-secondary)' },
-  tokenCopyBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 11, fontWeight: 600, background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap' as const },
+  tokenCopyBtn: { display: 'inline-flex', alignItems: 'center', gap: 4, padding: '6px 12px', fontSize: 11, fontWeight: 600, background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, cursor: 'pointer', whiteSpace: 'nowrap' as const },
   tokenAlert: { padding: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 12 },
   tokenForm: { display: 'flex', flexDirection: 'column' as const, gap: 8, padding: 12, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 4, marginBottom: 8 },
   tokenRow: { display: 'flex', alignItems: 'center', gap: 12, padding: '8px 0', borderBottom: '1px solid var(--border-light)' },

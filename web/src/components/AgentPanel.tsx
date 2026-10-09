@@ -1852,7 +1852,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: true, content: pendingConfirm.tool }))
                 setMessages((prev) => [...prev, { role: 'assistant', content: `✅ Approved: **${pendingConfirm.tool}**`, created_at: ts() }])
                 setPendingConfirm(null)
-              }} style={{ padding: '6px 14px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
+              }} style={{ padding: '6px 14px', border: '1px solid var(--border)', borderRadius: 4, background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
                 Approve Once
               </button>
               <button onClick={() => {
@@ -1860,7 +1860,7 @@ export function AgentPanel({ notebookId, pageContext, width, onResize, onClose, 
                 wsRef.current?.send(JSON.stringify({ type: 'tool_confirm', approved: true, content: pendingConfirm.tool }))
                 setMessages((prev) => [...prev, { role: 'assistant', content: `✅ Always allow **${pendingConfirm.tool}** for this session`, created_at: ts() }])
                 setPendingConfirm(null)
-              }} style={{ padding: '6px 14px', border: 'none', borderRadius: 4, background: 'var(--accent)', color: '#fff', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
+              }} style={{ padding: '6px 14px', border: 'none', borderRadius: 4, background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', cursor: 'pointer', fontWeight: 600, fontSize: 12 }}>
                 Always Allow in Session
               </button>
             </div>
@@ -2236,8 +2236,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   sendButton: {
     padding: '10px 12px',
-    background: 'var(--accent)',
-    color: 'white',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 6,
     cursor: 'pointer',
@@ -2251,8 +2251,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   cancelButton: {
     padding: '10px 12px',
-    background: 'var(--error, #ef4444)',
-    color: 'white',
+    background: 'var(--error-full)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 6,
     cursor: 'pointer',
@@ -2264,8 +2264,8 @@ const styles: Record<string, React.CSSProperties> = {
     position: 'absolute',
     right: 52,
     top: -4,
-    background: 'var(--accent)',
-    color: 'white',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     fontSize: 10,
     fontWeight: 600,
     minWidth: 16,

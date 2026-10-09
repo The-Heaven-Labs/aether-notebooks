@@ -190,7 +190,7 @@ const styles: Record<string, React.CSSProperties> = {
   saveBtn: {
     display: 'inline-flex', alignItems: 'center', gap: 4,
     fontSize: 12, padding: '5px 12px',
-    background: 'var(--accent)', color: '#fff',
+    background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)',
     border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 500,
   },
   resetBtn: {

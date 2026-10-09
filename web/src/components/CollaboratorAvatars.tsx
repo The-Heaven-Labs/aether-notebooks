@@ -1,6 +1,17 @@
 import { useEffect, useState, useRef } from 'react'
 import type { HocuspocusProvider } from '@hocuspocus/provider'
 
+/** Ink for initials over a user-provided avatar color. */
+function readableOn(color: string): string {
+  const hex = color.replace('#', '')
+  if (hex.length < 6) return '#ffffff'
+  const r = parseInt(hex.slice(0, 2), 16)
+  const g = parseInt(hex.slice(2, 4), 16)
+  const b = parseInt(hex.slice(4, 6), 16)
+  const lum = 0.2126 * r + 0.7152 * g + 0.0722 * b
+  return lum > 150 ? '#111111' : '#ffffff'
+}
+
 interface Collaborator {
   email: string
   name: string
@@ -134,7 +145,7 @@ export function CollaboratorAvatars({
               height: 28,
               borderRadius: '50%',
               background: c.color,
-              color: '#fff',
+              color: readableOn(c.color),
               border: following?.email === c.email ? '2px solid var(--accent)' : '2px solid transparent',
               fontSize: 11,
               fontWeight: 600,
@@ -299,7 +310,7 @@ export function CollaboratorAvatars({
                       height: 20,
                       borderRadius: '50%',
                       background: c.color,
-                      color: '#fff',
+                      color: readableOn(c.color),
                       fontSize: 9,
                       fontWeight: 600,
                       display: 'flex',
