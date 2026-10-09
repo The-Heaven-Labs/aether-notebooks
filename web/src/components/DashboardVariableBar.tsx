@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, SlidersHorizontal } from 'lucide-react'
 import { useDashboardVariables, isVariableDefault } from '../contexts/DashboardVariablesContext'
 import { VariableSelect } from './VariableSelect'
 import type { DashboardVariable } from '../types'
@@ -29,15 +29,13 @@ function quickRangePreset(range: string[]): number | null {
 
 const styles: Record<string, React.CSSProperties> = {
   card: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
-    borderRadius: 4,
+    // No card chrome inside the strip — nested cards would double the frame.
+    // Each cluster is just an engraved label over its control.
     minWidth: 170,
     flex: '0 1 auto',
     display: 'flex',
     flexDirection: 'column',
-    gap: 5,
-    padding: '8px 10px',
+    gap: 4,
   },
   cardTop: {
     display: 'flex',
@@ -54,11 +52,12 @@ const styles: Record<string, React.CSSProperties> = {
     flexShrink: 0,
   },
   label: {
-    fontSize: 11,
-    fontWeight: 600,
+    fontSize: 10,
+    fontWeight: 700,
+    fontFamily: 'var(--font-mono)',
     color: 'var(--text-secondary)',
     textTransform: 'uppercase',
-    letterSpacing: '0.05em',
+    letterSpacing: '0.08em',
   },
   input: {
     padding: '7px 10px',
@@ -126,8 +125,6 @@ const styles: Record<string, React.CSSProperties> = {
     textDecoration: 'underline',
   },
   resetAll: {
-    alignSelf: 'flex-start',
-    marginLeft: 'auto',
     display: 'inline-flex',
     alignItems: 'center',
     gap: 5,
@@ -328,46 +325,52 @@ export function DashboardVariableBar() {
   if (!variables.length) return null
   const anyActive = variables.some((v) => !isVariableDefault(v, values[v.name]))
   return (
-    <div className="dash-vars-bar">
-      {variables.map((variable) => {
-        const state = optionState[variable.name]
-        const value = values[variable.name]
-        const total = state?.options?.length ?? 0
-        const countHint = variable.type === 'multi_select' && total > 0
-          ? `${Array.isArray(value) ? value.length : 0} of ${total}`
-          : null
-        const wide = variable.type === 'multi_select' || variable.type === 'date_range'
-        return (
-          <div key={variable.name} className={wide ? 'dash-vars-card-wide' : undefined} style={styles.card}>
-            <div style={styles.cardTop}>
-              <label style={styles.label} htmlFor={`dash-var-${variable.name}`}>
-                {variable.label || variable.name}
-                {variable.required ? ' *' : ''}
-              </label>
-              {countHint && <span style={styles.topHint}>{countHint}</span>}
+    <section className="dash-vars-bar" aria-label="Dashboard filters">
+      <div className="dash-vars-bar-head">
+        <SlidersHorizontal size={12} style={{ color: 'var(--accent)', flexShrink: 0 }} aria-hidden="true" />
+        <span className="dash-vars-bar-label">Filters</span>
+        {anyActive && (
+          <button
+            type="button"
+            className="dash-vars-reset"
+            style={styles.resetAll}
+            onClick={resetAll}
+            title="Restore every filter to its default"
+          >
+            <RotateCcw size={11} /> Reset filters
+          </button>
+        )}
+      </div>
+      <div className="dash-vars-fields">
+        {variables.map((variable) => {
+          const state = optionState[variable.name]
+          const value = values[variable.name]
+          const total = state?.options?.length ?? 0
+          const countHint = variable.type === 'multi_select' && total > 0
+            ? `${Array.isArray(value) ? value.length : 0} of ${total}`
+            : null
+          const wide = variable.type === 'multi_select' || variable.type === 'date_range'
+          return (
+            <div key={variable.name} className={wide ? 'dash-vars-card-wide' : undefined} style={styles.card}>
+              <div style={styles.cardTop}>
+                <label style={styles.label} htmlFor={`dash-var-${variable.name}`}>
+                  {variable.label || variable.name}
+                  {variable.required ? ' *' : ''}
+                </label>
+                {countHint && <span style={styles.topHint}>{countHint}</span>}
+              </div>
+              <VariableControl variable={variable} />
+              {state?.loading && <span style={styles.hint}>Loading options…</span>}
+              {state?.error && (
+                <span style={styles.error} role="alert">
+                  {state.error}
+                  <button style={styles.retry} onClick={state.reload}>Retry</button>
+                </span>
+              )}
             </div>
-            <VariableControl variable={variable} />
-            {state?.loading && <span style={styles.hint}>Loading options…</span>}
-            {state?.error && (
-              <span style={styles.error} role="alert">
-                {state.error}
-                <button style={styles.retry} onClick={state.reload}>Retry</button>
-              </span>
-            )}
-          </div>
-        )
-      })}
-      {anyActive && (
-        <button
-          type="button"
-          className="dash-vars-reset"
-          style={styles.resetAll}
-          onClick={resetAll}
-          title="Restore every filter to its default"
-        >
-          <RotateCcw size={11} /> Reset filters
-        </button>
-      )}
-    </div>
+          )
+        })}
+      </div>
+    </section>
   )
 }

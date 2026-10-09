@@ -1039,31 +1039,56 @@ input[type="color"] {
 }
 
 /* ── Dashboard variable bar (DashboardVariableBar) ─────────────────────── */
-/* Compact instrument cards: a label row above the control keeps the bar
-   shallow on desktop. On narrow screens the bar becomes a two-column grid;
-   the multi-select and date-range cards span both columns. */
+/* The parameter strip: a recessed panel under the header that reads as the
+   board's filter rack — labeled, hairline-bordered, controls sitting on the
+   strip rather than in widget cards. On narrow screens the fields pack into
+   a two-column dense grid; wide controls span both columns. */
 .dash-vars-bar {
   display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.dash-vars-bar-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-vars-bar-label {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.dash-vars-bar-head .dash-vars-reset {
+  margin-left: auto;
+}
+
+.dash-vars-fields {
+  display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 10px 14px;
 }
 
 @media (max-width: 767px) {
-  .dash-vars-bar {
+  .dash-vars-fields {
     display: grid;
     grid-template-columns: 1fr 1fr;
     grid-auto-flow: dense;
     align-items: start;
+    gap: 10px;
   }
 
   .dash-vars-card-wide {
     grid-column: 1 / -1;
-  }
-
-  .dash-vars-bar > .dash-vars-reset {
-    grid-column: 1 / -1;
-    justify-self: end;
-    margin-left: 0;
   }
 }
 
