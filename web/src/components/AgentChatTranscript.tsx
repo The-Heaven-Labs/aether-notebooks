@@ -1,8 +1,9 @@
-import { useState, useEffect, memo } from 'react'
+import { useState, useEffect, memo, useId } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeHighlight from 'rehype-highlight'
 import { AgentMessageImages } from './AgentMessageImages'
+import { formatTokens } from '../utils/agentStats'
 
 const headingSizes: Record<number, number> = { 1: 16, 2: 15, 3: 14, 4: 13 }
 const headingStyle = (level: number): React.CSSProperties => ({
@@ -69,11 +70,6 @@ export function fmtTime(iso?: string): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })
 }
 
-function formatTokens(n: number): string {
-  if (n >= 1000) return (n / 1000).toFixed(1) + 'k'
-  return String(n)
-}
-
 export const chatStyles: Record<string, React.CSSProperties> = {
   message: {
     padding: '10px 14px',
@@ -88,11 +84,6 @@ export const chatStyles: Record<string, React.CSSProperties> = {
     color: 'white',
     alignSelf: 'flex-end',
     borderBottomRightRadius: 2,
-  },
-  compactionMessage: {
-    background: 'var(--bg-elevated)',
-    border: '1px dashed var(--border)',
-    borderRadius: 6,
   },
   assistantMessage: {
     background: 'var(--bg-secondary)',
@@ -118,20 +109,64 @@ export const chatStyles: Record<string, React.CSSProperties> = {
   },
 }
 
+const compactionStyles: Record<string, React.CSSProperties> = {
+  marker: { display: 'flex', alignItems: 'center', gap: 8, width: '100%', margin: '2px 0' },
+  rule: { flex: 1, height: 1, background: 'var(--border-light)' },
+  body: { display: 'flex', flexDirection: 'column', alignItems: 'center', maxWidth: '100%', minWidth: 0 },
+  pill: {
+    display: 'inline-flex', alignItems: 'center', gap: 6, maxWidth: '100%',
+    background: 'var(--accent-light)', border: '1px solid var(--border)', borderRadius: 10,
+    padding: '2px 10px', fontSize: 11, fontFamily: 'var(--font-mono)',
+    color: 'var(--text-primary)', cursor: 'pointer',
+  },
+  counts: { opacity: 0.7, whiteSpace: 'nowrap' as const },
+  details: {
+    marginTop: 6, fontSize: 11, color: 'var(--text-secondary)', background: 'var(--bg-elevated)',
+    border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', maxWidth: 520,
+    textAlign: 'left' as const,
+  },
+  countsLine: { opacity: 0.8, marginBottom: 4 },
+  summary: { whiteSpace: 'pre-wrap' as const, opacity: 0.9 },
+  time: { marginTop: 4, opacity: 0.5, fontSize: 10 },
+}
+
 export function CompactionDivider({ msg, fmtTime }: { msg: ChatMessage; fmtTime: (iso?: string) => string }) {
   const [open, setOpen] = useState(false)
+  const detailsId = useId()
+  const { tokens_before, tokens_after } = msg
+  const hasCounts = tokens_before !== undefined && tokens_after !== undefined
   return (
-    <div style={{ ...chatStyles.message, background: 'var(--bg-elevated)', border: '1px dashed var(--border)', borderRadius: 6, padding: '8px 10px', fontSize: 11 }}>
-      <div onClick={() => setOpen(o => !o)} style={{ cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, userSelect: 'none' }}>
-        <span>{open ? '▼' : '▶'} ⚙ Context compacted</span>
-        {msg.tokens_before !== undefined && msg.tokens_after !== undefined ? (
-          <span style={{ opacity: 0.6, fontSize: 10 }}>{formatTokens(msg.tokens_before)} → {formatTokens(msg.tokens_after)} (~)</span>
-        ) : null}
-        <span style={{ marginLeft: 'auto', opacity: 0.5, fontSize: 10 }}>{fmtTime(msg.created_at)}</span>
+    <div style={compactionStyles.marker}>
+      <span style={compactionStyles.rule} />
+      <div style={compactionStyles.body}>
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          aria-controls={detailsId}
+          style={compactionStyles.pill}
+        >
+          <span aria-hidden="true">{open ? '▾' : '▸'}</span>
+          <span>⚙ Context auto-compacted</span>
+          {hasCounts && (
+            <span style={compactionStyles.counts}>
+              {formatTokens(tokens_before)} → ~{formatTokens(tokens_after)}
+            </span>
+          )}
+        </button>
+        {open && (hasCounts || msg.content || msg.created_at) && (
+          <div id={detailsId} style={compactionStyles.details}>
+            {hasCounts && (
+              <div style={compactionStyles.countsLine}>
+                {tokens_before.toLocaleString('en-US')} tokens (actual) → ~{tokens_after.toLocaleString('en-US')} tokens (estimated)
+              </div>
+            )}
+            {msg.content && <div style={compactionStyles.summary}>{msg.content}</div>}
+            {msg.created_at && <div style={compactionStyles.time}>{fmtTime(msg.created_at)}</div>}
+          </div>
+        )}
       </div>
-      {open && msg.content && (
-        <div style={{ marginTop: 6, whiteSpace: 'pre-wrap', fontSize: 11, opacity: 0.9 }}>{msg.content}</div>
-      )}
+      <span style={compactionStyles.rule} />
     </div>
   )
 }
@@ -166,8 +201,10 @@ const MemoizedChatMessage = memo(function MemoizedChatMessageInner({ msg, subage
           )}
         </div>
       )}
-      {msg.role !== 'reasoning' && (
-        <div style={{ ...chatStyles.message, ...(msg.role === 'user' ? chatStyles.userMessage : msg.role === 'tool' ? chatStyles.toolMessage : msg.role === 'compaction' ? chatStyles.compactionMessage : chatStyles.assistantMessage) }}>
+      {msg.role === 'compaction' ? (
+        <CompactionDivider msg={msg} fmtTime={fmtTime} />
+      ) : msg.role !== 'reasoning' && (
+        <div style={{ ...chatStyles.message, ...(msg.role === 'user' ? chatStyles.userMessage : msg.role === 'tool' ? chatStyles.toolMessage : chatStyles.assistantMessage) }}>
           {msg.created_at && (
             <div style={{ fontSize: 9, color: msg.role === 'user' ? 'rgba(255,255,255,0.5)' : 'var(--text-muted)', marginBottom: 4, textAlign: msg.role === 'user' ? 'right' : 'left' }}>
               {fmtTime(msg.created_at)}
@@ -176,9 +213,7 @@ const MemoizedChatMessage = memo(function MemoizedChatMessageInner({ msg, subage
           {msg.images && msg.images.length > 0 && (
             <AgentMessageImages images={msg.images} />
           )}
-          {msg.role === 'compaction' ? (
-            <CompactionDivider msg={msg} fmtTime={fmtTime} />
-          ) : msg.role === 'tool' ? (
+          {msg.role === 'tool' ? (
             <>
               <div onClick={() => setToolOpen((o) => !o)} style={{ cursor: 'pointer', userSelect: 'none', display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span style={{ opacity: 0.6, fontSize: 11 }}>{toolOpen ? '▼' : '▶'} TOOL </span>

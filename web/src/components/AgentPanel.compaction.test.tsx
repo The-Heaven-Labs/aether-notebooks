@@ -1,36 +1,89 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { CompactionDivider } from './AgentPanel'
+import { AgentChatTranscript } from './AgentChatTranscript'
 
 describe('CompactionDivider', () => {
-  it('renders the formatted before → after counts with the estimate marker', () => {
+  it('renders a labeled marker with compact before → after counts', () => {
     render(
       <CompactionDivider
         msg={{ role: 'compaction', content: 'summary', tokens_before: 1200, tokens_after: 400 }}
         fmtTime={() => ''}
       />,
     )
-    expect(screen.getByText(/1\.2k → 400 \(~\)/)).toBeInTheDocument()
+    expect(screen.getByText(/Context auto-compacted/)).toBeInTheDocument()
+    expect(screen.getByText(/1\.2k → ~400/)).toBeInTheDocument()
   })
 
-  it('falls back to no counts when either side is missing', () => {
+  it('renders the label alone when counts are missing (legacy rows)', () => {
     render(
       <CompactionDivider
         msg={{ role: 'compaction', content: 'summary', tokens_before: 1200 }}
         fmtTime={() => ''}
       />,
     )
+    expect(screen.getByText(/Context auto-compacted/)).toBeInTheDocument()
     expect(screen.queryByText(/→/)).toBeNull()
   })
 
-  it('expands the summary on click', () => {
+  it('expands to the summary, exact counts, and timestamp', () => {
     render(
       <CompactionDivider
-        msg={{ role: 'compaction', content: 'earlier context', tokens_before: 1200, tokens_after: 400 }}
+        msg={{
+          role: 'compaction',
+          content: 'earlier context',
+          tokens_before: 1200,
+          tokens_after: 400,
+          created_at: '2026-09-14T00:01:00Z',
+        }}
+        fmtTime={(iso) => `t:${iso}`}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    expect(screen.getByText('earlier context')).toBeInTheDocument()
+    expect(screen.getByText(/1,200 tokens \(actual\) → ~400 tokens \(estimated\)/)).toBeInTheDocument()
+    expect(screen.getByText('t:2026-09-14T00:01:00Z')).toBeInTheDocument()
+  })
+
+  it('is toggleable and keyboard-operable through a native button', () => {
+    render(
+      <CompactionDivider
+        msg={{ role: 'compaction', content: 'summary', tokens_before: 1200, tokens_after: 400 }}
         fmtTime={() => ''}
       />,
     )
-    fireEvent.click(screen.getByText(/Context compacted/))
-    expect(screen.getByText('earlier context')).toBeInTheDocument()
+    const pill = screen.getByRole('button', { expanded: false })
+    expect(pill.tagName).toBe('BUTTON')
+    fireEvent.click(pill)
+    expect(screen.getByRole('button', { expanded: true })).toBeInTheDocument()
+  })
+
+  it('expands a legacy row without counts to its summary only', () => {
+    render(
+      <CompactionDivider
+        msg={{ role: 'compaction', content: 'legacy summary', tokens_before: 1200 }}
+        fmtTime={() => ''}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { expanded: false }))
+    expect(screen.getByText('legacy summary')).toBeInTheDocument()
+    expect(screen.queryByText(/tokens \(actual\)/)).toBeNull()
+  })
+
+  it('routes compaction rows through the transcript outside the chat bubble', () => {
+    const { container } = render(
+      <AgentChatTranscript
+        messages={[{ id: 'm1', role: 'compaction', content: 'summary', tokens_before: 1200, tokens_after: 400 }]}
+      />,
+    )
+    const pill = screen.getByRole('button', { expanded: false })
+    // The chat bubble style sets maxWidth 85% (chatStyles.message); the system
+    // marker must not sit inside it.
+    let el: HTMLElement | null = pill
+    while (el && el !== container) {
+      expect(el.style.maxWidth).not.toBe('85%')
+      el = el.parentElement
+    }
+    expect(screen.getByText(/Context auto-compacted/)).toBeInTheDocument()
   })
 })

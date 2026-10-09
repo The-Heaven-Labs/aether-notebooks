@@ -7,6 +7,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
 import type { Agent, AgentSession, AgentTaskItem, ModelConfig, SessionUsage, TokenBreakdown, WSMessage } from '../types/agent'
 import { mapServerMessagesToChat, applyToolResult, oldestPendingToolAgeMs, applySteeringMessage } from '../utils/agentTranscript'
+import { formatTokens } from '../utils/agentStats'
 import { AgentChatTranscript, chatMarkdownComponents, chatStyles, fmtTime } from './AgentChatTranscript'
 import type { ChatMessage } from './AgentChatTranscript'
 import { PanelHeader } from './PanelHeader'
@@ -119,6 +120,14 @@ export function TokenUsageMeter({ totalTokens, sessionUsage, contextWindow, hasC
   const currentContext = totalTokens?.context_current ?? sessionUsage?.context_tokens ?? 0
   const percent = Math.round(contextPercent(totalTokens, sessionUsage, contextWindow))
 
+  const compactionThreshold = (() => {
+    const mc = modelConfigs.find((m) => m.id === modelConfigId)
+    const t = mc?.default_params?.['compaction_threshold']
+    return typeof t === 'number' ? Math.trunc(t) : 70
+  })()
+  const compactions = messages.filter((m) => m.role === 'compaction')
+  const latestCompaction = compactions[compactions.length - 1]
+
   return (
     <span style={{ position: 'relative' }}>
       <span
@@ -156,7 +165,7 @@ export function TokenUsageMeter({ totalTokens, sessionUsage, contextWindow, hasC
               <div style={{ marginBottom: 4 }}>
                 <div style={{ color: 'var(--text-muted)', fontSize: 10, marginBottom: 4 }}>This session</div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, marginBottom: 4 }}>
-                  <span style={{ color: 'var(--text-secondary)' }}>Input</span>
+                  <span style={{ color: 'var(--text-secondary)' }} title="Total prompt tokens across every model call in this session">Input (cumulative)</span>
                   <span>{sessionUsage.input.toLocaleString()} <span style={{ fontSize: 10, opacity: 0.6 }}>{costFmt(mc => mc.price_per_input_token * sessionUsage.input / 1000000)}</span></span>
                 </div>
                 {sessionUsage.cache_read > 0 && (
@@ -211,15 +220,27 @@ export function TokenUsageMeter({ totalTokens, sessionUsage, contextWindow, hasC
             {windowSize > 0 && (
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 24, color: 'var(--text-muted)', fontSize: 11, marginTop: 4 }}>
                 <span>Current context</span>
-                <span>{currentContext.toLocaleString()} / {windowSize.toLocaleString()} ({percent}%)</span>
+                <span>
+                  {currentContext.toLocaleString()} / {windowSize.toLocaleString()} ({percent}%)
+                  {compactionThreshold > 0 ? ` · compacts at ${compactionThreshold}%` : ' · auto-compact off'}
+                </span>
               </div>
             )}
-            {hasCompacted && (
+            {compactions.length > 0 ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 10, color: 'var(--accent)' }}>
+                <span>
+                  ⚙ Compacted {compactions.length}×
+                  {latestCompaction && latestCompaction.tokens_before !== undefined && latestCompaction.tokens_after !== undefined
+                    ? ` · last: ${formatTokens(latestCompaction.tokens_before)} → ~${formatTokens(latestCompaction.tokens_after)}`
+                    : ''}
+                </span>
+              </div>
+            ) : hasCompacted ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginTop: 4, fontSize: 10, color: 'var(--accent)' }}>
                 <span>⚙ Compacted</span>
                 <span style={{ opacity: 0.6, fontSize: 9 }}>context was summarized</span>
               </div>
-            )}
+            ) : null}
 
             {totalTokens && (totalTokens.system_prompt > 0 || totalTokens.tool_definitions > 0 || totalTokens.history > 0) && (
               <div style={{ borderTop: '1px dashed var(--border)', margin: '6px 0', paddingTop: 6 }}>

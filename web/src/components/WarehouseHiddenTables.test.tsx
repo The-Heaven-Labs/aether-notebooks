@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor, render } from '@testing-library/react'
+import { screen, fireEvent, waitFor, render, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
@@ -148,9 +148,10 @@ describe('WarehouseHiddenTables', () => {
     renderWithProviders(
       <WarehouseHiddenTables warehouseId="wh-1" patterns={[]} connectors={CONNECTORS} />,
     )
-    fireEvent.change(await screen.findByLabelText('Pattern'), { target: { value: '(' } })
+    fireEvent.change(await screen.findByLabelText('Pattern'), { target: { value: '^ok\n(' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect(await screen.findByText(/invalid pattern/)).toBeInTheDocument()
+    expect(screen.getByLabelText('Pattern')).toHaveValue('^ok\n(')
   })
 
   test('merges the PUT response into the cached warehouse without dropping connectors', async () => {
@@ -182,5 +183,123 @@ describe('WarehouseHiddenTables', () => {
     expect(cached?.hidden_table_patterns).toEqual(['_tmp'])
     // ...and the connectors prove the merge kept the GET-only field.
     expect(cached?.connectors).toEqual(CONNECTORS)
+  })
+
+  test('adds all non-empty lines in one PUT on Enter', async () => {
+    let putBody: Record<string, unknown> | null = null
+    let puts = 0
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
+        puts++
+        putBody = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ ...WAREHOUSE, hidden_table_patterns: ['_tmp', '^raw\\.old', '^analytics\\.x'] })
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={WAREHOUSE.hidden_table_patterns} connectors={CONNECTORS} />,
+    )
+    await screen.findByText('_tmp')
+    const field = screen.getByLabelText('Pattern')
+    fireEvent.change(field, { target: { value: '^raw\\.old\n\n  ^analytics\\.x  ' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(putBody).toEqual({ hidden_table_patterns: ['_tmp', '^raw\\.old', '^analytics\\.x'] }))
+    expect(puts).toBe(1)
+    expect(field).toHaveValue('')
+  })
+
+  test('dedupes lines against existing patterns and within the batch', async () => {
+    let putBody: Record<string, unknown> | null = null
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
+        putBody = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ ...WAREHOUSE, hidden_table_patterns: ['_tmp', 'foo', 'bar'] })
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={WAREHOUSE.hidden_table_patterns} connectors={CONNECTORS} />,
+    )
+    await screen.findByText('_tmp')
+    fireEvent.change(screen.getByLabelText('Pattern'), { target: { value: '_tmp\nfoo\nfoo\n\nbar\n' } })
+    fireEvent.keyDown(screen.getByLabelText('Pattern'), { key: 'Enter' })
+    await waitFor(() => expect(putBody).toEqual({ hidden_table_patterns: ['_tmp', 'foo', 'bar'] }))
+  })
+
+  test('clears without a PUT when every line is already present', async () => {
+    let puts = 0
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', () => {
+        puts++
+        return HttpResponse.json(WAREHOUSE)
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={WAREHOUSE.hidden_table_patterns} connectors={CONNECTORS} />,
+    )
+    await screen.findByText('_tmp')
+    const field = screen.getByLabelText('Pattern')
+    fireEvent.change(field, { target: { value: '_tmp\n_tmp' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(puts).toBe(0)
+    expect(field).toHaveValue('')
+  })
+
+  test('Shift+Enter keeps the text and sends no request', async () => {
+    let puts = 0
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', () => {
+        puts++
+        return HttpResponse.json(WAREHOUSE)
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={WAREHOUSE.hidden_table_patterns} connectors={CONNECTORS} />,
+    )
+    await screen.findByText('_tmp')
+    const field = screen.getByLabelText('Pattern')
+    fireEvent.change(field, { target: { value: '^a' } })
+    fireEvent.keyDown(field, { key: 'Enter', shiftKey: true })
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
+    expect(puts).toBe(0)
+    expect(field).toHaveValue('^a')
+  })
+
+  test('does not intercept paste — lines stay editable until Enter', async () => {
+    let puts = 0
+    let putBody: Record<string, unknown> | null = null
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', async ({ request }) => {
+        puts++
+        putBody = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ ...WAREHOUSE, hidden_table_patterns: ['_tmp', '^a', '^b'] })
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={WAREHOUSE.hidden_table_patterns} connectors={CONNECTORS} />,
+    )
+    await screen.findByText('_tmp')
+    const field = screen.getByLabelText('Pattern')
+    // The component must not turn a paste into an immediate request.
+    fireEvent.paste(field, { clipboardData: { getData: () => '^a\n^b' } })
+    expect(puts).toBe(0)
+    // Simulate what the browser would then place in the textarea.
+    fireEvent.change(field, { target: { value: '^a\n^b' } })
+    fireEvent.keyDown(field, { key: 'Enter' })
+    await waitFor(() => expect(putBody).toEqual({ hidden_table_patterns: ['_tmp', '^a', '^b'] }))
+  })
+
+  test('pressing Enter in an empty field sends no request', async () => {
+    let puts = 0
+    server.use(
+      http.put('/api/v1/warehouses/wh-1', () => {
+        puts++
+        return HttpResponse.json(WAREHOUSE)
+      }),
+    )
+    renderWithProviders(
+      <WarehouseHiddenTables warehouseId="wh-1" patterns={[]} connectors={CONNECTORS} />,
+    )
+    const field = await screen.findByLabelText('Pattern')
+    fireEvent.keyDown(field, { key: 'Enter' })
+    expect(puts).toBe(0)
   })
 })

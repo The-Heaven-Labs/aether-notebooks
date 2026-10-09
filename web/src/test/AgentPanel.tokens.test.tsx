@@ -177,7 +177,7 @@ describe('AgentPanel context-first token meter', () => {
 
     fireEvent.click(await screen.findByText(/↑/))
     expect(screen.getByText('This session')).toBeInTheDocument()
-    expect(rowValue('Input')).toContain((1234).toLocaleString())
+    expect(rowValue('Input (cumulative)')).toContain((1234).toLocaleString())
     expect(rowValue('Cache read')).toContain('11')
     expect(rowValue('Output')).toContain('567')
     expect(rowValue('Reasoning')).toContain('89')
@@ -329,9 +329,109 @@ describe('AgentPanel context-first token meter', () => {
     })
 
     fireEvent.click(await screen.findByText(/↑/))
-    expect(rowValue('Input')).toContain((1111).toLocaleString())
+    expect(rowValue('Input (cumulative)')).toContain((1111).toLocaleString())
     expect(rowValue('Output')).toContain('222')
     expect(rowValue('Subagent Input')).toContain('66')
     expect(rowValue('Model calls')).toContain('5')
+  })
+
+  it('labels cumulative input and shows the compaction threshold', async () => {
+    server.use(
+      http.get('/api/v1/agents', () => HttpResponse.json([{ ...AGENT, model_config_id: 'mc-1' }])),
+      http.get('/api/v1/model-configs', () =>
+        HttpResponse.json([{
+          id: 'mc-1', org_id: 'org-1', name: 'Model', provider: 'openai', base_url: '',
+          model: 'gpt-4', default_params: { compaction_threshold: 70 }, context_window: 1000,
+          price_per_input_token: 0, price_per_output_token: 0, price_per_cache_read_token: 0,
+          created_by: 'u1', created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+        }]),
+      ),
+    )
+    seedSession({
+      ...savedStateWithTokens(baseTokens({ input: 3000000, output: 100, context_current: 480 }), 1000),
+      // The "This session" rows (including the cumulative input label) render
+      // from the session snapshot, not from totalTokens alone.
+      sessionUsage: { ...ZERO_USAGE, input: 3000000, output: 100, context_tokens: 480, context_window: 1000 },
+    })
+    await renderPanel()
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(screen.getByText('Input (cumulative)')).toBeInTheDocument()
+    expect(await screen.findByText(/compacts at 70%/)).toBeInTheDocument()
+  })
+
+  it('shows auto-compact off when the threshold is zero', async () => {
+    server.use(
+      http.get('/api/v1/agents', () => HttpResponse.json([{ ...AGENT, model_config_id: 'mc-1' }])),
+      http.get('/api/v1/model-configs', () =>
+        HttpResponse.json([{
+          id: 'mc-1', org_id: 'org-1', name: 'Model', provider: 'openai', base_url: '',
+          model: 'gpt-4', default_params: { compaction_threshold: 0 }, context_window: 1000,
+          price_per_input_token: 0, price_per_output_token: 0, price_per_cache_read_token: 0,
+          created_by: 'u1', created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+        }]),
+      ),
+    )
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    await renderPanel()
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(await screen.findByText(/auto-compact off/)).toBeInTheDocument()
+  })
+
+  it('shows the compaction count and latest recovery from synced messages', async () => {
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    const ws = await renderPanel()
+    emit(ws, {
+      type: 'reconnect_sync',
+      messages: [
+        { id: 'm1', role: 'user', content: 'hello', created_at: '2026-09-14T00:00:00Z' },
+        { id: 'm2', role: 'compaction', content: 's1', tokens_direct: 900, tokens_after: 300, created_at: '2026-09-14T00:01:00Z' },
+        { id: 'm3', role: 'compaction', content: 's2', tokens_direct: 1200, tokens_after: 400, created_at: '2026-09-14T00:02:00Z' },
+      ],
+    })
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(screen.getByText(/Compacted 2× · last: 1\.2k → ~400/)).toBeInTheDocument()
+  })
+
+  it('keeps the one-liner when only hasCompacted is known', async () => {
+    seedSession({
+      ...savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000),
+      hasCompacted: true,
+    })
+    await renderPanel()
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(await screen.findByText(/context was summarized/)).toBeInTheDocument()
+  })
+
+  it('shows the count without a last-range when the latest row has no counts', async () => {
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    const ws = await renderPanel()
+    emit(ws, {
+      type: 'reconnect_sync',
+      messages: [
+        { id: 'm1', role: 'compaction', content: 's1', tokens_direct: 1200, created_at: '2026-09-14T00:02:00Z' },
+      ],
+    })
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(await screen.findByText('⚙ Compacted 1×')).toBeInTheDocument()
+    expect(screen.queryByText(/· last:/)).toBeNull()
+  })
+
+  it('truncates fractional compaction thresholds to match the engine', async () => {
+    server.use(
+      http.get('/api/v1/agents', () => HttpResponse.json([{ ...AGENT, model_config_id: 'mc-1' }])),
+      http.get('/api/v1/model-configs', () =>
+        HttpResponse.json([{
+          id: 'mc-1', org_id: 'org-1', name: 'Model', provider: 'openai', base_url: '',
+          model: 'gpt-4', default_params: { compaction_threshold: 69.9 }, context_window: 1000,
+          price_per_input_token: 0, price_per_output_token: 0, price_per_cache_read_token: 0,
+          created_by: 'u1', created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+        }]),
+      ),
+    )
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    await renderPanel()
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(await screen.findByText(/compacts at 69%/)).toBeInTheDocument()
+    expect(screen.queryByText(/69\.9%/)).toBeNull()
   })
 })
