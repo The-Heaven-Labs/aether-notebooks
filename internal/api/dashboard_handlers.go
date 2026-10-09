@@ -292,6 +292,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	// Check view_with_data permission
 	viewWithData, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view_with_data")
 	shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "share")
+	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
 
 	widgets, err := s.loadWidgets(ctx, dashID)
 	if err != nil {
@@ -305,6 +306,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		WidgetsData     map[string]widgetCellData `json:"widgets_data,omitempty"`
 		CanViewWithData bool                      `json:"can_view_with_data"`
 		CanShare        bool                      `json:"can_share"`
+		CanEdit         bool                      `json:"can_edit"`
 	}
 
 	resp := dashboardWithWidgets{
@@ -312,6 +314,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		Widgets:         widgets,
 		CanViewWithData: viewWithData,
 		CanShare:        shareOK,
+		CanEdit:         editOK,
 	}
 
 	if viewWithData && len(widgets) > 0 {

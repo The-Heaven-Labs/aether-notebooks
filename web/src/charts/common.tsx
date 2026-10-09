@@ -577,12 +577,33 @@ export function getTooltipStyle(colors?: ReturnType<typeof getChartColors>) {
   }
 }
 
+// Axis labels keep their engraved mono voice but stop leaking raw ISO dates:
+// "2026-06-30T00:00:00Z" reads as "Jun 30 00:00" on the axis. Tooltips keep
+// the raw value.
+const ISO_LABEL_RE = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2})?)?/
+const MONTHS_SHORT = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+export function humanizeAxisLabel(value: unknown): string {
+  if (typeof value !== 'string') return String(value ?? '')
+  const m = ISO_LABEL_RE.exec(value)
+  if (!m) return value
+  const month = MONTHS_SHORT[Number(m[2]) - 1]
+  if (!month) return value
+  const base = `${month} ${Number(m[3])}`
+  return m[4] ? `${base} ${m[4]}:${m[5]}` : base
+}
+
 export function getAxisStyle(showGrid?: boolean) {
   const c = getChartColors()
   return {
     axisLine: { show: false },
     axisTick: { show: false },
-    axisLabel: { fontSize: 11, color: c.textMuted, fontFamily: CHART_FONT_MONO },
+    axisLabel: {
+      fontSize: 11,
+      color: c.textMuted,
+      fontFamily: CHART_FONT_MONO,
+      formatter: (value: string | number) => humanizeAxisLabel(value),
+    },
     splitLine: { show: showGrid !== false, lineStyle: { color: c.border, type: 'dashed' as const } },
   }
 }
@@ -961,9 +982,21 @@ export const EChartsContainer = memo(function EChartsContainer({ option, height,
     }
   }, [])
 
+  const chartAriaLabel = (() => {
+    const t = (option as any)?.title
+    const text = Array.isArray(t) ? t[0]?.text : t?.text
+    return text ? `${text} (chart)` : 'Chart'
+  })()
+
   return (
     <div ref={wrapperRef} style={{ position: 'relative', flex: 1, minHeight: 0, ...(height != null ? { height } : {}) }}>
-      <div data-testid="chart-container" ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
+      <div
+        data-testid="chart-container"
+        ref={containerRef}
+        role="img"
+        aria-label={chartAriaLabel}
+        style={{ position: 'absolute', inset: 0 }}
+      />
       {showReset && (
         <button
           onClick={handleReset}

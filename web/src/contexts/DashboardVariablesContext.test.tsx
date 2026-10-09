@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach } from 'vitest'
-import { renderHook, waitFor, act } from '@testing-library/react'
-import { MemoryRouter } from 'react-router-dom'
+import { render, renderHook, waitFor, act } from '@testing-library/react'
+import { MemoryRouter, useSearchParams } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import type { ReactNode } from 'react'
 import { server } from '../test/server'
@@ -169,5 +169,88 @@ describe('DashboardVariablesContext', () => {
     const { result } = renderWithVariables([regionVar], '/dash/d1')
     expect(result.current.optionState.region?.options).toHaveLength(2)
     expect(result.current.optionState.region?.loading).toBe(false)
+  })
+
+  test('empty multi_select reads as (none) from the URL', () => {
+    const selVar: DashboardVariable = { name: 'sel', type: 'multi_select', default: ['A', 'B'] }
+    const { result } = renderWithVariables([selVar], '/dash/d1?sel=')
+    // An explicit empty value means "no choices", not "fall back to default".
+    expect(result.current.values.sel).toEqual([])
+  })
+
+  test('empty multi_select serializes (none) into the URL', () => {
+    const selVar: DashboardVariable = { name: 'sel', type: 'multi_select', default: ['A', 'B'] }
+    const state: { setValue?: (name: string, value: unknown) => void; params?: URLSearchParams } = {}
+    function Probe() {
+      const { setValue } = useDashboardVariables()
+      const [sp] = useSearchParams()
+      state.setValue = setValue
+      state.params = sp
+      return null
+    }
+    render(
+      <MemoryRouter initialEntries={['/dash/d1']}>
+        <DashboardVariablesProvider dashboardId="d1" variables={[selVar]}>
+          <Probe />
+        </DashboardVariablesProvider>
+      </MemoryRouter>,
+    )
+    act(() => state.setValue!('sel', []))
+    expect(state.params!.get('sel')).toBe('')
+  })
+
+  test('multi_select default comparison ignores selection order', () => {
+    const selVar: DashboardVariable = { name: 'sel', type: 'multi_select', default: ['A', 'B'] }
+    const state: { setValue?: (name: string, value: unknown) => void; params?: URLSearchParams } = {}
+    function Probe() {
+      const { setValue } = useDashboardVariables()
+      const [sp] = useSearchParams()
+      state.setValue = setValue
+      state.params = sp
+      return null
+    }
+    render(
+      <MemoryRouter initialEntries={['/dash/d1']}>
+        <DashboardVariablesProvider dashboardId="d1" variables={[selVar]}>
+          <Probe />
+        </DashboardVariablesProvider>
+      </MemoryRouter>,
+    )
+    act(() => state.setValue!('sel', ['B', 'A']))
+    // Same set as the default → omitted from the URL entirely.
+    expect(state.params!.has('sel')).toBe(false)
+  })
+
+  test('resetAll restores every variable default and clears the URL', () => {
+    const vars: DashboardVariable[] = [
+      { name: 'region', type: 'text', default: 'EMEA' },
+      { name: 'sel', type: 'multi_select', default: ['A', 'B'] },
+    ]
+    const state: { resetAll?: () => void; values?: Record<string, unknown>; params?: URLSearchParams; setValue?: (name: string, value: unknown) => void } = {}
+    function Probe() {
+      const { values, setValue, resetAll } = useDashboardVariables()
+      const [sp] = useSearchParams()
+      state.values = values
+      state.setValue = setValue
+      state.resetAll = resetAll
+      state.params = sp
+      return null
+    }
+    render(
+      <MemoryRouter initialEntries={['/dash/d1']}>
+        <DashboardVariablesProvider dashboardId="d1" variables={vars}>
+          <Probe />
+        </DashboardVariablesProvider>
+      </MemoryRouter>,
+    )
+    act(() => {
+      state.setValue!('region', 'AMER')
+      state.setValue!('sel', ['C'])
+    })
+    expect(state.params!.get('region')).toBe('AMER')
+    act(() => state.resetAll!())
+    expect(state.values!.region).toBe('EMEA')
+    expect(state.values!.sel).toEqual(['A', 'B'])
+    expect(state.params!.toString()).toBe('')
   })
 })

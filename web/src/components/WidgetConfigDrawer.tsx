@@ -3,13 +3,15 @@ import { createPortal } from 'react-dom'
 import { X, Play, Loader2 } from 'lucide-react'
 import { api } from '../api/client'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
 import { OutputRenderer } from './OutputRenderer'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 import type { ChartConfig } from '../charts/types'
 import { withWidgetOverride } from '../charts/widgetChartConfig'
-import type { Dashboard, Widget, WidgetQueryResult } from '../types'
+import type { Dashboard, DashboardVariableType, Widget, WidgetQueryResult } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
   // The drawer covers the top bar (z-index 1550/1600), so it must sit above it:
@@ -99,8 +101,8 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '6px 12px',
     fontSize: 12,
     fontWeight: 600,
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     cursor: 'pointer',
@@ -110,7 +112,10 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     // A definite height as a flex column: chart views fill their flex parent,
     // and without it the chart collapsed to 0px in this non-flex preview box.
+    // flexShrink keeps it from collapsing again on short viewports.
     height: 320,
+    flexShrink: 0,
+    minHeight: 240,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'auto',
@@ -141,11 +146,12 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   widget: Widget
   onClose: () => void
   onSaved: () => void
-  onDefineVariable?: (name: string) => void
+  onDefineVariable?: (name: string, suggestedType?: DashboardVariableType) => void
   closeOnEscape?: boolean
 }) {
   const isQuery = !!widget.connector_id && !!widget.query
   const canRun = dashboard.can_view_with_data !== false
+  const { values } = useDashboardVariables()
   const [connectorId, setConnectorId] = useState<string | null>(widget.connector_id ?? null)
   const [query, setQuery] = useState(widget.query ?? '')
   const [widgetType, setWidgetType] = useState<Widget['type']>(widget.type)
@@ -156,6 +162,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const [runError, setRunError] = useState<string | null>(null)
   const [converting, setConverting] = useState(false)
   const [convertError, setConvertError] = useState<string | null>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
 
   const lastSaved = useRef({ connector: widget.connector_id ?? '', query: widget.query ?? '' })
 
@@ -177,10 +184,19 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     return () => clearTimeout(timer)
   }, [connectorId, query, dashboardId, widget.id, isQuery, onSaved])
 
-  const definedVariables = useMemo(
-    () => new Set((dashboard.settings?.variables ?? []).map(v => v.name)),
-    [dashboard.settings?.variables],
-  )
+  const definedVariables = useMemo(() => {
+    const names = new Set<string>()
+    for (const v of dashboard.settings?.variables ?? []) {
+      names.add(v.name)
+      // date_range variables expand server-side into {{name_start}}/{{name_end}},
+      // so the derived tokens are defined too — never offer to redefine them.
+      if (v.type === 'date_range') {
+        names.add(`${v.name}_start`)
+        names.add(`${v.name}_end`)
+      }
+    }
+    return names
+  }, [dashboard.settings?.variables])
   const references = useMemo(() => (isQuery ? detectedTokens(query) : []), [query, isQuery])
 
   const handleTypeChange = async (next: Widget['type']) => {
@@ -212,6 +228,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     try {
       const resp = await api.post<WidgetQueryResult>(`/api/v1/dashboards/${dashboardId}/execute`, {
         widget_id: widget.id,
+        variables: values,
         bypass_cache: true,
       })
       setRunResult(resp)
@@ -237,11 +254,12 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   }
 
   useEscapeToClose(onClose, closeOnEscape)
+  useFocusTrap(drawerRef)
 
   return createPortal(
     <>
       <div data-testid="widget-drawer-backdrop" style={styles.backdrop} onClick={onClose} aria-hidden="true" />
-      <div style={styles.drawer} role="dialog" aria-modal="true" aria-label="Widget configuration">
+      <div ref={drawerRef} style={styles.drawer} role="dialog" aria-modal="true" aria-label="Widget configuration" tabIndex={-1}>
         <div style={styles.header}>
           <span style={styles.title}>Widget configuration</span>
           <button type="button" style={styles.close} onClick={onClose} aria-label="Close widget configuration">
@@ -263,7 +281,13 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                         <button
                           type="button"
                           style={styles.defineBtn}
-                          onClick={() => onDefineVariable(name)}
+                          onClick={() => {
+                            // A *_start/*_end token almost always belongs to a
+                            // date_range variable; suggest the base name and type.
+                            const suffix = name.endsWith('_start') ? '_start' : name.endsWith('_end') ? '_end' : ''
+                            if (suffix) onDefineVariable(name.slice(0, -suffix.length), 'date_range')
+                            else onDefineVariable(name)
+                          }}
                         >
                           Define variable
                         </button>

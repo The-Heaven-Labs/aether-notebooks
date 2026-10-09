@@ -809,7 +809,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
     <div style={{ ...styles.tableSection, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       <div style={{ ...styles.outputBar, flexShrink: 0 }}>
         <span style={styles.rowCount}>
-          {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} columns
+          {rs.rows.length} row{rs.rows.length !== 1 ? 's' : ''} · {rs.columns.length} column{rs.columns.length !== 1 ? 's' : ''}
           {rs.truncated && (
             <span style={styles.truncatedBadge}>
               Truncated — {rs.rows_included ?? rs.rows.length} {rs.rows_total != null && rs.rows_total > 0 ? `of ${rs.rows_total} ` : ''}rows / {formatBytes(rs.bytes ?? 0)}
@@ -1091,7 +1091,7 @@ const styles: Record<string, React.CSSProperties> = {
     textDecoration: 'none',
   },
   rowCount: {
-    fontSize: 10,
+    fontSize: 11,
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-mono)',
   },

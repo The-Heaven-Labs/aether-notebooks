@@ -836,8 +836,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   addBtn: {
     padding: '7px 16px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 13,

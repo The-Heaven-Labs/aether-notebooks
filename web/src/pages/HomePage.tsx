@@ -979,11 +979,9 @@ export function HomePage() {
               </section>
             )}
 
-            {/* Toolbar */}
+            {/* Toolbar — content actions first (Notebook is the primary one),
+                folder creation last. */}
             <div style={s.toolbar}>
-              <button style={s.newBtn} onClick={() => { setCreating('folder'); setNewName('') }}>
-                + New Folder
-              </button>
               {folderID && (
                 <>
                   <button style={s.newBtn} onClick={() => { setCreating('notebook'); setNewName('') }}>
@@ -1025,6 +1023,9 @@ export function HomePage() {
                   </button>
                 </>
               )}
+              <button style={s.newBtn} onClick={() => { setCreating('folder'); setNewName('') }}>
+                + New Folder
+              </button>
             </div>
 
             {/* Inline create form */}
@@ -1411,10 +1412,10 @@ const s: Record<string, React.CSSProperties> = {
   crumbBtn: { display: 'flex', alignItems: 'center', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--accent)', fontSize: 13, fontWeight: 500, padding: '2px 6px', borderRadius: 3 },
   sep: { color: 'var(--text-muted)', margin: '0 2px', fontSize: 13 },
   toolbar: { display: 'flex', gap: 10, marginBottom: 20 },
-  newBtn: { padding: '7px 14px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  newBtn: { padding: '7px 14px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   createForm: { display: 'flex', gap: 10, marginBottom: 20, padding: 16, background: 'var(--bg-card)', borderRadius: 4, border: '1px solid var(--border)', alignItems: 'center' },
   input: { flex: 1, padding: '8px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 14, outline: 'none', background: 'var(--bg-input)', color: 'var(--text-primary)' },
-  createBtn: { padding: '7px 14px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  createBtn: { padding: '7px 14px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   cancelBtn: { padding: '7px 14px', border: '1px solid var(--border)', borderRadius: 4, background: 'none', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   section: { marginBottom: 28 },
   sectionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', marginBottom: 8 },
@@ -1496,5 +1497,5 @@ const ms: Record<string, React.CSSProperties> = {
   loadingText: { padding: '16px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' },
   emptyText: { padding: '16px', color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' },
   modalFooter: { display: 'flex', gap: 10, padding: '12px 16px', borderTop: '1px solid var(--border)', justifyContent: 'flex-end' },
-  moveHereBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  moveHereBtn: { padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
 }

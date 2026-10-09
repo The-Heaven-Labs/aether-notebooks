@@ -320,8 +320,8 @@ const formStyles: Record<string, React.CSSProperties> = {
   },
   btn: {
     padding: '7px 16px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 13,
@@ -751,7 +751,7 @@ function MOTDSection() {
           {formError && <div style={{ color: 'var(--error)', fontSize: 12, marginTop: 8 }}>{formError}</div>}
           <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
             <button style={{
-              padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+              padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer',
               opacity: (createMotd.isPending || updateMotd.isPending) ? 0.6 : 1,
             }} onClick={handleSubmit} disabled={createMotd.isPending || updateMotd.isPending}>
               {(createMotd.isPending || updateMotd.isPending) ? 'Saving…' : editingId ? 'Save Changes' : 'Create MOTD'}
@@ -1284,8 +1284,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   enableBtn: {
     padding: '5px 12px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 12,
@@ -1305,8 +1305,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   addBtn: {
     padding: '5px 12px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 12,
@@ -1351,8 +1351,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   saveBtn: {
     padding: '7px 16px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 13,

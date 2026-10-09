@@ -62,10 +62,11 @@ const TYPE_OPTIONS: { value: ToolType; label: string }[] = [
   { value: 'sql_query', label: 'SQL Query' },
 ]
 
+// Categorical dot colors from the sanctioned data palette.
 const TYPE_COLORS: Record<ToolType, string> = {
-  webhook: '#3b82f6',
-  sql_query: '#22c55e',
-  builtin: '#a855f7',
+  webhook: '#6366f1',
+  sql_query: '#10b981',
+  builtin: '#8b5cf6',
 }
 
 export function ToolsPage() {
@@ -292,7 +293,8 @@ export function ToolsPage() {
                 <tr key={t.id} style={rowStyle}>
                   <td style={cellStyle}><strong>{t.name}</strong></td>
                   <td style={cellStyle}>
-                    <span style={{ ...styles.typeBadge, background: TYPE_COLORS[t.type] + '20', color: TYPE_COLORS[t.type], borderColor: TYPE_COLORS[t.type] + '40' }}>
+                    <span style={styles.typeBadge}>
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', background: TYPE_COLORS[t.type], flexShrink: 0 }} aria-hidden="true" />
                       {t.type.replace('_', ' ')}
                     </span>
                   </td>
@@ -507,6 +509,6 @@ const styles: Record<string, React.CSSProperties> = {
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
   secondaryBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
-  newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
-  typeBadge: { display: 'inline-block', fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 4, border: '1px solid', textTransform: 'capitalize' as const },
+  newBtn: { padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  typeBadge: { display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 600, padding: '2px 10px', borderRadius: 4, border: '1px solid var(--border-light)', background: 'var(--bg-primary)', color: 'var(--text-secondary)', textTransform: 'capitalize' as const },
 }

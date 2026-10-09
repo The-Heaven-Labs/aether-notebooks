@@ -632,7 +632,7 @@ function SyncBadge({ status, title }: { status: WarehouseSyncStatus; title?: str
 const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1100, margin: '0 auto', padding: 'clamp(16px, 4vw, 32px)', width: '100%' },
   intro: { fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24, maxWidth: 720, lineHeight: 1.5 },
-  newBtn: { padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  newBtn: { padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
   card: { border: '1px solid var(--border)', borderRadius: 4, background: 'var(--bg-card)' },
   cardHeader: { display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px' },
@@ -656,7 +656,7 @@ const styles: Record<string, React.CSSProperties> = {
   provisionerBadge: { fontSize: 10, fontWeight: 700, color: 'var(--accent)', background: 'var(--accent-light)', border: '1px solid var(--border)', borderRadius: 10, padding: '1px 8px', textTransform: 'uppercase' as const, letterSpacing: '0.05em' },
   removeBtn: { marginLeft: 'auto', padding: '2px 8px', fontSize: 11, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--error)' },
   addConnectorRow: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 },
-  addBtn: { padding: '6px 14px', background: 'var(--accent)', color: '#fff', border: 'none', borderRadius: 4, fontSize: 12, fontWeight: 600 },
+  addBtn: { padding: '6px 14px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 12, fontWeight: 600 },
   emptyLine: { fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
   loading: { fontSize: 13, color: 'var(--text-muted)', padding: '4px 0' },
 }

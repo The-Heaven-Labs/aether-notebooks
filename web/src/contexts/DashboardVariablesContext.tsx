@@ -17,25 +17,44 @@ interface DashboardVariablesContextValue {
   values: Record<string, unknown>
   setValue: (name: string, value: unknown) => void
   setValues: (next: Record<string, unknown>) => void
+  /** Resets every variable to its configured default. */
+  resetAll: () => void
   optionState: Record<string, VariableOptionsState>
 }
 
 const Ctx = createContext<DashboardVariablesContextValue>({
-  variables: [], values: {}, setValue: () => {}, setValues: () => {}, optionState: {},
+  variables: [], values: {}, setValue: () => {}, setValues: () => {}, resetAll: () => {}, optionState: {},
 })
 
 function storageKey(dashboardId: string) { return `aether_dashvars_${dashboardId}` }
+
+// A multi_select with no choices is an explicit "(none)" filter, not the
+// absence of one: `IN (NULL)` matches no rows by design. It round-trips
+// through the URL as an empty value (`?country=`) so shared links keep the
+// exclusion instead of silently falling back to stored/default choices.
+const NONE_SENTINEL = ''
 
 function parseSearchValue(v: DashboardVariable, search: URLSearchParams): unknown {
   const all = search.getAll(v.name)
   if (!all.length) return undefined
   switch (v.type) {
-    case 'multi_select': return all
+    case 'multi_select':
+      return all.length === 1 && all[0] === NONE_SENTINEL ? [] : all
     case 'number': { const n = Number(all[0]); return Number.isFinite(n) ? n : undefined }
     case 'boolean': return all[0] === 'true' ? true : all[0] === 'false' ? false : undefined
     case 'date_range': return all[0].includes(',') ? all[0].split(',', 2) : undefined
     default: return all[0]
   }
+}
+
+/** True when the current value carries the same meaning as the variable's default. */
+export function isVariableDefault(v: DashboardVariable, value: unknown): boolean {
+  if (v.type === 'multi_select') {
+    const a = Array.isArray(value) ? value.map(String).sort() : []
+    const b = Array.isArray(v.default) ? (v.default as unknown[]).map(String).sort() : []
+    return a.length === b.length && a.every((item, i) => item === b[i])
+  }
+  return JSON.stringify(value ?? null) === JSON.stringify(v.default ?? null)
 }
 
 function loadInitial(dashboardId: string, variables: DashboardVariable[], search: URLSearchParams): Record<string, unknown> {
@@ -54,7 +73,9 @@ function loadInitial(dashboardId: string, variables: DashboardVariable[], search
 function serializeValue(v: DashboardVariable, value: unknown): string[] {
   if (value === undefined || value === null) return []
   switch (v.type) {
-    case 'multi_select': return Array.isArray(value) ? value.map(String) : []
+    case 'multi_select':
+      if (!Array.isArray(value)) return []
+      return value.length ? value.map(String) : [NONE_SENTINEL]
     case 'date_range': return Array.isArray(value) && value.length === 2 ? [`${value[0]},${value[1]}`] : []
     case 'boolean': return [String(value)]
     case 'number': return [String(value)]
@@ -86,8 +107,9 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     const params = new URLSearchParams()
     for (const v of variables) {
       const serialized = serializeValue(v, next[v.name])
-      const isDefault = JSON.stringify(next[v.name]) === JSON.stringify(v.default)
-      if (!isDefault) serialized.forEach(s => params.append(v.name, s))
+      // Defaults are omitted from the URL; anything else (including an
+      // explicit "(none)") is encoded so shared links reproduce this view.
+      if (!isVariableDefault(v, next[v.name])) serialized.forEach(s => params.append(v.name, s))
     }
     setSearchParams(params, { replace: true })
   }, [storageNamespace, variables, setSearchParams])
@@ -107,6 +129,14 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     setValuesState(next)
     persist(next)
   }, [persist])
+
+  const resetAll = useCallback(() => {
+    const next: Record<string, unknown> = {}
+    for (const v of variables) next[v.name] = v.default
+    valuesRef.current = next
+    setValuesState(next)
+    persist(next)
+  }, [variables, persist])
 
   const loadOptions = useCallback(async (name: string) => {
     setOptionState(prev => ({ ...prev, [name]: { ...(prev[name] ?? { options: [] }), loading: true, error: null } }))
@@ -151,8 +181,8 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
   }, [optionState, variables])
 
   const value = useMemo(
-    () => ({ variables, values, setValue, setValues, optionState: optionStateWithStatic }),
-    [variables, values, setValue, setValues, optionStateWithStatic],
+    () => ({ variables, values, setValue, setValues, resetAll, optionState: optionStateWithStatic }),
+    [variables, values, setValue, setValues, resetAll, optionStateWithStatic],
   )
 
   return (

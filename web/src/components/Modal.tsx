@@ -2,6 +2,7 @@ import type React from 'react'
 import { useEffect, useId, useRef } from 'react'
 import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 
 interface Props {
   title: string
@@ -24,19 +25,18 @@ export function Modal({ title, onClose, children, minWidth, initialFocusRef }: P
   }, [onClose])
 
   useEffect(() => {
-    const previouslyFocused = document.activeElement as HTMLElement | null
-    // Prefer the form's first field when the caller names one; otherwise give
-    // the dialog itself the focus so keyboard users start inside it.
-    ;(initialFocusRef?.current ?? dialogRef.current)?.focus()
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape') { e.preventDefault(); onCloseRef.current() }
     }
     window.addEventListener('keydown', handler)
     return () => {
       window.removeEventListener('keydown', handler)
-      previouslyFocused?.focus?.()
     }
-  }, [initialFocusRef])
+  }, [])
+
+  // Focus enters the dialog on open, stays inside while Tab cycles, and
+  // returns to the trigger on close.
+  useFocusTrap(dialogRef, true, initialFocusRef)
 
   // Portal to <body>: a transformed ancestor (e.g. a react-grid-layout
   // dashboard widget) would otherwise become the containing block for the

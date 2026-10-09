@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus, Trash2, X } from 'lucide-react'
 import { api } from '../api/client'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
 import type { Dashboard, DashboardVariable, DashboardVariableType } from '../types'
@@ -179,7 +180,7 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-secondary)', border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer',
   },
   saveBtn: {
-    padding: '9px 0', background: 'var(--accent)', color: '#fff', border: 'none',
+    padding: '9px 0', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none',
     borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer',
   },
   error: { fontSize: 12, color: 'var(--danger, #d33)' },
@@ -187,26 +188,30 @@ const styles: Record<string, React.CSSProperties> = {
   muted: { fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' },
 }
 
-export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSaved, initialNewName }: {
+export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSaved, initialNewName, initialNewType }: {
   dashboardId: string
   dashboard: Dashboard
   onClose: () => void
   onSaved: () => void
   initialNewName?: string | null
+  /** Pre-selected type for the prefilled row (e.g. date_range from a token). */
+  initialNewType?: DashboardVariableType | null
 }) {
   const initialRows = useMemo(() => {
     const rows = (dashboard.settings?.variables ?? []).map(toEditable)
-    if (initialNewName) rows.push({ ...emptyVariable(), name: initialNewName })
+    if (initialNewName) rows.push({ ...emptyVariable(), name: initialNewName, ...(initialNewType ? { type: initialNewType } : {}) })
     return rows
-  }, [dashboard.settings?.variables, initialNewName])
+  }, [dashboard.settings?.variables, initialNewName, initialNewType])
 
   const [rows, setRows] = useState<EditableVariable[]>(initialRows)
   const [publicLive, setPublicLive] = useState(!!dashboard.settings?.public_live)
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEscapeToClose(onClose)
+  useFocusTrap(panelRef)
 
   const updateRow = (index: number, patch: Partial<EditableVariable>) => {
     setSaved(false)
@@ -239,7 +244,7 @@ export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSav
   return createPortal(
     <>
       <div data-testid="variables-backdrop" style={styles.backdrop} onClick={onClose} aria-hidden="true" />
-      <div style={styles.panel} role="dialog" aria-modal="true" aria-label="Dashboard variables">
+      <div ref={panelRef} style={styles.panel} role="dialog" aria-modal="true" aria-label="Dashboard variables" tabIndex={-1}>
         <div style={styles.header}>
           <span style={styles.title}>Dashboard variables</span>
           <button type="button" style={styles.close} onClick={onClose} aria-label="Close variables panel">

@@ -107,6 +107,8 @@
   --nav-text: #e8e4dc;
   --nav-text-muted: #9e9690;
   --nav-border: #2e2a24;
+  /* Pale amethyst for brand marks on chrome (the frame is dark in both themes). */
+  --nav-accent: #9b8fc4;
   --font-sans: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
   --radius-xs: 3px;
@@ -757,7 +759,6 @@ input[type="color"] {
 
 .nbh-desc-placeholder {
   color: var(--text-muted);
-  opacity: 0.6;
   font-style: italic;
 }
 
@@ -1036,6 +1037,135 @@ input[type="color"] {
 
 .dash-cols {
   display: flex;
+}
+
+/* ── Dashboard variable bar (DashboardVariableBar) ─────────────────────── */
+/* The parameter strip: a recessed panel under the header that reads as the
+   board's filter rack — labeled, hairline-bordered, controls sitting on the
+   strip rather than in widget cards. On narrow screens the fields pack into
+   a two-column dense grid; wide controls span both columns. */
+.dash-vars-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-light);
+  border-radius: 4px;
+  padding: 8px 10px;
+}
+
+.dash-vars-bar-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dash-vars-bar-label {
+  font-size: 10px;
+  font-weight: 700;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-secondary);
+}
+
+.dash-vars-bar-head .dash-vars-reset {
+  margin-left: auto;
+}
+
+.dash-vars-fields {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+}
+
+@media (max-width: 767px) {
+  .dash-vars-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-auto-flow: dense;
+    align-items: start;
+    gap: 10px;
+  }
+
+  .dash-vars-card-wide {
+    grid-column: 1 / -1;
+  }
+}
+
+/* ── Dark chrome controls (top bar + dashboard sub-headers) ────────────── */
+/* Navigation chrome stays dark in BOTH themes, so controls that sit on it
+   must use the nav token family. Body tokens flip to dark ink in light mode
+   and vanish against the frame. */
+.nav-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--nav-text);
+  background: none;
+  border: 1px solid var(--nav-border);
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.nav-btn:hover {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.nav-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.nav-seg {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 4px;
+}
+
+.nav-seg button {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--nav-text-muted);
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.nav-seg button[aria-pressed="true"] {
+  background: rgba(255, 255, 255, 0.16);
+  color: var(--nav-text);
+}
+
+.nav-select {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--nav-text);
+  border: 1px solid var(--nav-border);
+  border-radius: 4px;
+}
+
+.nav-select:disabled {
+  opacity: 0.5;
+}
+
+.nav-input {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--nav-text);
+  border: 1px solid var(--nav-border);
+  border-radius: 4px;
+}
+
+.nav-status {
+  color: var(--nav-text-muted);
 }
 
 @media (max-width: 767px) {

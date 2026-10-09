@@ -95,7 +95,8 @@ export function Sidebar() {
     justifyContent: effectiveExpanded ? 'flex-start' : 'center',
     padding: effectiveExpanded ? '8px 12px' : '8px 0',
     background: isActive ? 'var(--accent-light)' : 'transparent',
-    color: isActive ? 'var(--accent)' : 'var(--nav-text-muted)',
+    // Deep amethyst in light mode (AA on the canvas chip); pale lavender in dark.
+    color: isActive ? 'var(--button-primary-bg)' : 'var(--nav-text-muted)',
   })
 
   // Shared nav content
@@ -309,6 +310,6 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     textTransform: 'uppercase',
     letterSpacing: '0.08em',
-    color: 'var(--text-muted)',
+    color: 'var(--nav-text-muted)',
   },
 }

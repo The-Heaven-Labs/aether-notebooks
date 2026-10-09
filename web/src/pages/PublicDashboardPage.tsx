@@ -146,7 +146,7 @@ export function PublicDashboardPage() {
                       fixedView={fixedView}
                       chartConfig={chartConfig}
                       footerExtra={cellData.updated_at ? (
-                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                           Executed at {formatExecutedAt(cellData.updated_at)}
                         </span>
                       ) : undefined}
@@ -204,7 +204,7 @@ const pageStyles: Record<string, React.CSSProperties> = {
   brandMark: {
     fontSize: 15,
     fontWeight: 800,
-    color: 'var(--accent)',
+    color: 'var(--nav-accent)',
     letterSpacing: '-0.02em',
     fontFamily: 'var(--font-mono)',
     flexShrink: 0,
@@ -222,9 +222,9 @@ const pageStyles: Record<string, React.CSSProperties> = {
   readOnlyBadge: {
     fontSize: 11,
     fontWeight: 600,
-    color: 'var(--text-muted)',
-    background: 'var(--bg-secondary)',
-    border: '1px solid var(--border)',
+    color: 'var(--nav-text-muted)',
+    background: 'rgba(255,255,255,0.06)',
+    border: '1px solid var(--nav-border)',
     padding: '2px 8px',
     borderRadius: 4,
     textTransform: 'uppercase',

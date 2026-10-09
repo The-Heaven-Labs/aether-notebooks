@@ -525,7 +525,7 @@ const styles: Record<string, React.CSSProperties> = {
   colorInput: { width: 24, height: 24, padding: 0, border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer', background: 'transparent' },
   colorText: { fontSize: 9, maxWidth: 40, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
   addBtn: {
-    fontSize: 11, padding: '2px 8px', background: 'var(--accent)', color: '#fff',
+    fontSize: 11, padding: '2px 8px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)',
     border: 'none', borderRadius: 4, cursor: 'pointer', fontWeight: 500, whiteSpace: 'nowrap',
   },
   removeBtn: {

@@ -128,8 +128,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
   },
   pageBtnActive: {
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     borderColor: 'var(--accent)',
   },
   ellipsis: {

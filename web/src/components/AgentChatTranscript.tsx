@@ -80,8 +80,8 @@ export const chatStyles: Record<string, React.CSSProperties> = {
     wordBreak: 'break-word',
   },
   userMessage: {
-    background: 'var(--accent)',
-    color: 'white',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     alignSelf: 'flex-end',
     borderBottomRightRadius: 2,
   },

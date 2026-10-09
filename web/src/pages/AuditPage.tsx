@@ -315,7 +315,7 @@ function AuditS3ConfigSection() {
 
           <div style={{ display: 'flex', gap: 8 }}>
             <button style={{
-              padding: '7px 16px', background: 'var(--accent)', color: '#fff',
+              padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)',
               border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer',
             }} onClick={handleSave} disabled={saving}>
               {saving ? 'Saving…' : 'Save'}

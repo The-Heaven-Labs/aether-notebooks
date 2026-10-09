@@ -47,7 +47,6 @@ export function ConnectorSelector({
           fontFamily: 'var(--font-mono)',
           background: 'var(--bg-input)',
           color: 'var(--text-primary)',
-          outline: 'none',
           ...style,
         }}
         value={value ?? ''}

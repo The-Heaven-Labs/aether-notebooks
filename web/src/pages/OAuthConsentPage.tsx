@@ -199,8 +199,8 @@ const styles: Record<string, React.CSSProperties> = {
   allow: {
     flex: 1,
     padding: '10px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 14,
