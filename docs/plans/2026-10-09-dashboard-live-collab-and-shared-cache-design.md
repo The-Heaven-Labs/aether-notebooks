@@ -68,7 +68,10 @@ for routing context.
 | Case | Fingerprint |
 |---|---|
 | Unmanaged connector / kill switch off | constant — all executions use the stored credential and return identical data |
-| Managed ClickHouse | hash of sorted effective `(database, table)` keys + constant salt |
+| Managed ClickHouse | hash of sorted, length-prefixed effective `(database, table)` keys |
+
+No salt: the cache key already discriminates org and connector, and the
+`"unmanaged"` constant cannot collide with a hex digest.
 
 - Managed grants reuse `loadEffectiveWarehouseGrants()` (`internal/api/schema_visibility.go`),
   the exact user + group + Everyone union (org-membership gated) that execution and the

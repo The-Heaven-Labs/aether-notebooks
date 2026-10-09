@@ -37,38 +37,61 @@ func insertFingerprintGrant(t *testing.T, s *Server, orgID, warehouseID uuid.UUI
 
 // TestDashboardAccessFingerprint pins the shared-cache access fingerprint: two
 // viewers share a fingerprint exactly when their effective warehouse grants
-// are equal, and connectors that never execute under a per-user warehouse
-// identity always report the constant "unmanaged" fingerprint.
+// are equal, regardless of which subject rows produced the set, and connectors
+// that never execute under a per-user warehouse identity always report the
+// constant "unmanaged" fingerprint.
 func TestDashboardAccessFingerprint(t *testing.T) {
 	fx := setupExecutionTargetFixture(t)
 	ctx := context.Background()
 	s := fx.s
 
 	// The fixture seeds a direct user grant for fx.userID ('analytics.events')
-	// and a group grant for fx.groupID ('analytics.daily_revenue'). The new
-	// members below join that group, so their access flows through the same
-	// grant row.
-	userA, _ := seedGrantOrgMember(t, s, fx.orgID, "editor")
-	userB, _ := seedGrantOrgMember(t, s, fx.orgID, "editor")
-	userC, _ := seedGrantOrgMember(t, s, fx.orgID, "editor")
-	userD, _ := seedGrantOrgMember(t, s, fx.orgID, "editor")
-	for _, user := range []uuid.UUID{userA, userB, userC} {
+	// and a group grant for fx.groupID ('analytics.daily_revenue'). userA is
+	// that fixture user (effective set: events + daily_revenue); every other
+	// user below pins one fingerprint property through its grant rows.
+	userA := fx.userID
+
+	userB, _ := seedGrantOrgMember(t, s, fx.orgID, "editor") // identical effective set
+	userC, _ := seedGrantOrgMember(t, s, fx.orgID, "editor") // one table more
+	userD, _ := seedGrantOrgMember(t, s, fx.orgID, "editor") // group grant must not reach
+	userE, _ := seedGrantOrgMember(t, s, fx.orgID, "editor") // same count, different tables
+	userF, _ := seedGrantOrgMember(t, s, fx.orgID, "editor") // same set, different subject rows
+
+	for _, user := range []uuid.UUID{userB, userC} {
 		_, err := s.db.Pool.Exec(ctx,
 			`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
 			fx.groupID.String(), user.String())
 		require.NoError(t, err)
 	}
-	// C is a group peer that additionally sees one more table.
+	// B mirrors A's effective set through the same group plus its own direct
+	// row, so both the group and direct branches must produce one fingerprint.
+	insertFingerprintGrant(t, s, fx.orgID, fx.warehouseID, "user", userB.String(), "analytics", "events")
+	// C sees one table more than A.
+	insertFingerprintGrant(t, s, fx.orgID, fx.warehouseID, "user", userC.String(), "analytics", "events")
 	insertFingerprintGrant(t, s, fx.orgID, fx.warehouseID, "user", userC.String(), "analytics", "extra")
+	// D gets A's direct table but none of the group's.
+	insertFingerprintGrant(t, s, fx.orgID, fx.warehouseID, "user", userD.String(), "analytics", "events")
+	// E has the same effective-set size as A with disjoint table names; a
+	// count-only hash would wrongly share its fingerprint.
+	insertFingerprintGrant(t, s, fx.orgID, fx.warehouseID, "user", userE.String(), "analytics", "other1")
+	insertFingerprintGrant(t, s, fx.orgID, fx.warehouseID, "user", userE.String(), "analytics", "other2")
+	// F reaches A's exact table set entirely through direct rows; a hash that
+	// mixes in subject identity would wrongly split the two.
+	insertFingerprintGrant(t, s, fx.orgID, fx.warehouseID, "user", userF.String(), "analytics", "events")
+	insertFingerprintGrant(t, s, fx.orgID, fx.warehouseID, "user", userF.String(), "analytics", "daily_revenue")
 
 	fpA := fingerprintFor(t, s, fx.orgID, userA, fx.connA)
 	fpB := fingerprintFor(t, s, fx.orgID, userB, fx.connA)
 	fpC := fingerprintFor(t, s, fx.orgID, userC, fx.connA)
 	fpD := fingerprintFor(t, s, fx.orgID, userD, fx.connA)
+	fpE := fingerprintFor(t, s, fx.orgID, userE, fx.connA)
+	fpF := fingerprintFor(t, s, fx.orgID, userF, fx.connA)
 
 	require.Equal(t, fpA, fpB, "identical effective grants must share a fingerprint")
-	require.NotEqual(t, fpA, fpC, "different grants must not share a fingerprint")
+	require.NotEqual(t, fpA, fpC, "an extra table must change the fingerprint")
 	require.NotEqual(t, fpA, fpD, "a group grant must not reach a non-member")
+	require.NotEqual(t, fpA, fpE, "same grant count with different tables must not share a fingerprint")
+	require.Equal(t, fpA, fpF, "the same effective set via different subject rows must share a fingerprint")
 
 	// Determinism: the same viewer with unchanged grants hashes identically.
 	require.Equal(t, fpA, fingerprintFor(t, s, fx.orgID, userA, fx.connA))
@@ -80,11 +103,12 @@ func TestDashboardAccessFingerprint(t *testing.T) {
 	// The shared test server is reached only by sequential tests in this
 	// package, and no background jobs run against it here, so toggling the
 	// process-start flag and restoring it is safe; the cleanup also restores
-	// it when an assertion fails inside the window.
+	// the prior value when an assertion fails inside the window.
+	prevManagement := s.warehouseManagementEnabled()
 	s.SetCHTablePermissions(false)
-	t.Cleanup(func() { s.SetCHTablePermissions(true) })
+	t.Cleanup(func() { s.SetCHTablePermissions(prevManagement) })
 	require.Equal(t, dashboardFingerprintUnmanaged, fingerprintFor(t, s, fx.orgID, userA, fx.connA))
-	s.SetCHTablePermissions(true)
+	s.SetCHTablePermissions(prevManagement)
 
 	// A malformed warehouse id is an error (never a panic): the caller's
 	// signal to fall back to a per-viewer cache key.
