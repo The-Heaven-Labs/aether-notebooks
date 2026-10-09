@@ -28,21 +28,30 @@ function quickRangePreset(range: string[]): number | null {
 }
 
 const styles: Record<string, React.CSSProperties> = {
-  bar: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: 12,
-  },
   card: {
     background: 'var(--bg-card)',
     border: '1px solid var(--border)',
     borderRadius: 4,
-    minWidth: 200,
+    minWidth: 170,
     flex: '0 1 auto',
     display: 'flex',
     flexDirection: 'column',
-    gap: 6,
-    padding: '14px 16px',
+    gap: 5,
+    padding: '8px 10px',
+  },
+  cardTop: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+    minWidth: 0,
+  },
+  topHint: {
+    fontSize: 10,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-muted)',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
   },
   label: {
     fontSize: 11,
@@ -65,7 +74,8 @@ const styles: Record<string, React.CSSProperties> = {
   rangeRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    flexWrap: 'wrap',
   },
   rangeSep: {
     fontSize: 12,
@@ -75,6 +85,7 @@ const styles: Record<string, React.CSSProperties> = {
   quickRow: {
     display: 'flex',
     gap: 4,
+    marginLeft: 'auto',
   },
   quickBtn: {
     padding: '2px 8px',
@@ -222,25 +233,23 @@ function VariableControl({ variable }: { variable: DashboardVariable }) {
       }
       const activePreset = quickRangePreset(range)
       return (
-        <>
-          <div style={styles.rangeRow}>
-            <input
-              id={id}
-              type="date"
-              aria-label={`${variable.label || variable.name} start`}
-              style={{ ...styles.input, flex: 1 }}
-              value={range[0] ?? ''}
-              onChange={(e) => setValue(variable.name, [e.target.value, range[1] ?? ''])}
-            />
-            <span style={styles.rangeSep}>to</span>
-            <input
-              type="date"
-              aria-label={`${variable.label || variable.name} end`}
-              style={{ ...styles.input, flex: 1 }}
-              value={range[1] ?? ''}
-              onChange={(e) => setValue(variable.name, [range[0] ?? '', e.target.value])}
-            />
-          </div>
+        <div style={styles.rangeRow}>
+          <input
+            id={id}
+            type="date"
+            aria-label={`${variable.label || variable.name} start`}
+            style={{ ...styles.input, flex: '1 1 88px', minWidth: 0 }}
+            value={range[0] ?? ''}
+            onChange={(e) => setValue(variable.name, [e.target.value, range[1] ?? ''])}
+          />
+          <span style={styles.rangeSep}>to</span>
+          <input
+            type="date"
+            aria-label={`${variable.label || variable.name} end`}
+            style={{ ...styles.input, flex: '1 1 88px', minWidth: 0 }}
+            value={range[1] ?? ''}
+            onChange={(e) => setValue(variable.name, [range[0] ?? '', e.target.value])}
+          />
           <div style={styles.quickRow}>
             {[7, 30, 90].map((days) => (
               <button
@@ -255,7 +264,7 @@ function VariableControl({ variable }: { variable: DashboardVariable }) {
               </button>
             ))}
           </div>
-        </>
+        </div>
       )
     }
     case 'single_select': {
@@ -319,15 +328,24 @@ export function DashboardVariableBar() {
   if (!variables.length) return null
   const anyActive = variables.some((v) => !isVariableDefault(v, values[v.name]))
   return (
-    <div style={styles.bar}>
+    <div className="dash-vars-bar">
       {variables.map((variable) => {
         const state = optionState[variable.name]
+        const value = values[variable.name]
+        const total = state?.options?.length ?? 0
+        const countHint = variable.type === 'multi_select' && total > 0
+          ? `${Array.isArray(value) ? value.length : 0} of ${total}`
+          : null
+        const wide = variable.type === 'multi_select' || variable.type === 'date_range'
         return (
-          <div key={variable.name} style={styles.card}>
-            <label style={styles.label} htmlFor={`dash-var-${variable.name}`}>
-              {variable.label || variable.name}
-              {variable.required ? ' *' : ''}
-            </label>
+          <div key={variable.name} className={wide ? 'dash-vars-card-wide' : undefined} style={styles.card}>
+            <div style={styles.cardTop}>
+              <label style={styles.label} htmlFor={`dash-var-${variable.name}`}>
+                {variable.label || variable.name}
+                {variable.required ? ' *' : ''}
+              </label>
+              {countHint && <span style={styles.topHint}>{countHint}</span>}
+            </div>
             <VariableControl variable={variable} />
             {state?.loading && <span style={styles.hint}>Loading options…</span>}
             {state?.error && (
@@ -342,6 +360,7 @@ export function DashboardVariableBar() {
       {anyActive && (
         <button
           type="button"
+          className="dash-vars-reset"
           style={styles.resetAll}
           onClick={resetAll}
           title="Restore every filter to its default"

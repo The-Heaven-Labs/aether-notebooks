@@ -188,18 +188,20 @@ const styles: Record<string, React.CSSProperties> = {
   muted: { fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' },
 }
 
-export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSaved, initialNewName }: {
+export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSaved, initialNewName, initialNewType }: {
   dashboardId: string
   dashboard: Dashboard
   onClose: () => void
   onSaved: () => void
   initialNewName?: string | null
+  /** Pre-selected type for the prefilled row (e.g. date_range from a token). */
+  initialNewType?: DashboardVariableType | null
 }) {
   const initialRows = useMemo(() => {
     const rows = (dashboard.settings?.variables ?? []).map(toEditable)
-    if (initialNewName) rows.push({ ...emptyVariable(), name: initialNewName })
+    if (initialNewName) rows.push({ ...emptyVariable(), name: initialNewName, ...(initialNewType ? { type: initialNewType } : {}) })
     return rows
-  }, [dashboard.settings?.variables, initialNewName])
+  }, [dashboard.settings?.variables, initialNewName, initialNewType])
 
   const [rows, setRows] = useState<EditableVariable[]>(initialRows)
   const [publicLive, setPublicLive] = useState(!!dashboard.settings?.public_live)

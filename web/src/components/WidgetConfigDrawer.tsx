@@ -11,7 +11,7 @@ import { OutputRenderer } from './OutputRenderer'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 import type { ChartConfig } from '../charts/types'
 import { withWidgetOverride } from '../charts/widgetChartConfig'
-import type { Dashboard, Widget, WidgetQueryResult } from '../types'
+import type { Dashboard, DashboardVariableType, Widget, WidgetQueryResult } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
   // The drawer covers the top bar (z-index 1550/1600), so it must sit above it:
@@ -146,7 +146,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   widget: Widget
   onClose: () => void
   onSaved: () => void
-  onDefineVariable?: (name: string) => void
+  onDefineVariable?: (name: string, suggestedType?: DashboardVariableType) => void
   closeOnEscape?: boolean
 }) {
   const isQuery = !!widget.connector_id && !!widget.query
@@ -184,10 +184,19 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     return () => clearTimeout(timer)
   }, [connectorId, query, dashboardId, widget.id, isQuery, onSaved])
 
-  const definedVariables = useMemo(
-    () => new Set((dashboard.settings?.variables ?? []).map(v => v.name)),
-    [dashboard.settings?.variables],
-  )
+  const definedVariables = useMemo(() => {
+    const names = new Set<string>()
+    for (const v of dashboard.settings?.variables ?? []) {
+      names.add(v.name)
+      // date_range variables expand server-side into {{name_start}}/{{name_end}},
+      // so the derived tokens are defined too — never offer to redefine them.
+      if (v.type === 'date_range') {
+        names.add(`${v.name}_start`)
+        names.add(`${v.name}_end`)
+      }
+    }
+    return names
+  }, [dashboard.settings?.variables])
   const references = useMemo(() => (isQuery ? detectedTokens(query) : []), [query, isQuery])
 
   const handleTypeChange = async (next: Widget['type']) => {
@@ -272,7 +281,13 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                         <button
                           type="button"
                           style={styles.defineBtn}
-                          onClick={() => onDefineVariable(name)}
+                          onClick={() => {
+                            // A *_start/*_end token almost always belongs to a
+                            // date_range variable; suggest the base name and type.
+                            const suffix = name.endsWith('_start') ? '_start' : name.endsWith('_end') ? '_end' : ''
+                            if (suffix) onDefineVariable(name.slice(0, -suffix.length), 'date_range')
+                            else onDefineVariable(name)
+                          }}
                         >
                           Define variable
                         </button>

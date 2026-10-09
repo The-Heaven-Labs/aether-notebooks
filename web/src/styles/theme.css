@@ -1038,6 +1038,35 @@ input[type="color"] {
   display: flex;
 }
 
+/* ── Dashboard variable bar (DashboardVariableBar) ─────────────────────── */
+/* Compact instrument cards: a label row above the control keeps the bar
+   shallow on desktop. On narrow screens the bar becomes a two-column grid;
+   the multi-select and date-range cards span both columns. */
+.dash-vars-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+@media (max-width: 767px) {
+  .dash-vars-bar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-auto-flow: dense;
+    align-items: start;
+  }
+
+  .dash-vars-card-wide {
+    grid-column: 1 / -1;
+  }
+
+  .dash-vars-bar > .dash-vars-reset {
+    grid-column: 1 / -1;
+    justify-self: end;
+    margin-left: 0;
+  }
+}
+
 @media (max-width: 767px) {
   .dash-header {
     flex-wrap: wrap;

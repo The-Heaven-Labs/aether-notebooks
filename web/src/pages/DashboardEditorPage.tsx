@@ -8,7 +8,7 @@ import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Dashboard, Notebook, Cell, Widget } from '../types'
+import type { Dashboard, DashboardVariableType, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { OutputRenderer } from '../components/OutputRenderer'
@@ -147,6 +147,7 @@ const markSaved = useCallback(() => {
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showVariables, setShowVariables] = useState(false)
   const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
+  const [variablePrefillType, setVariablePrefillType] = useState<DashboardVariableType | null>(null)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
@@ -718,8 +719,9 @@ const markSaved = useCallback(() => {
           closeOnEscape={!showVariables}
           onClose={() => setEditingWidget(null)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
-          onDefineVariable={(name) => {
+          onDefineVariable={(name, suggestedType) => {
             setVariablePrefill(name)
+            setVariablePrefillType(suggestedType ?? null)
             setShowVariables(true)
           }}
         />
@@ -730,7 +732,8 @@ const markSaved = useCallback(() => {
           dashboardId={id!}
           dashboard={dashboard}
           initialNewName={variablePrefill}
-          onClose={() => { setShowVariables(false); setVariablePrefill(null) }}
+          initialNewType={variablePrefillType}
+          onClose={() => { setShowVariables(false); setVariablePrefill(null); setVariablePrefillType(null) }}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
         />
       )}

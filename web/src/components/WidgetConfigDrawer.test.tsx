@@ -124,6 +124,40 @@ describe('WidgetConfigDrawer', () => {
     expect(onDefineVariable).toHaveBeenCalledWith('who')
   })
 
+  test('date_range variables make their _start/_end tokens defined', async () => {
+    const onDefineVariable = vi.fn()
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={{ ...dashboard, settings: { variables: [{ name: 'd', type: 'date_range', default: ['2026-01-01', '2026-01-31'] }] } }}
+        widget={queryWidget({ query: 'SELECT count() FROM t WHERE ts >= {{d_start}} AND ts < {{d_end}}' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+        onDefineVariable={onDefineVariable}
+      />,
+    )
+    expect(await screen.findByText('d_start')).toBeInTheDocument()
+    expect(screen.getByText('d_end')).toBeInTheDocument()
+    // The derived tokens belong to the date_range variable — nothing to define.
+    expect(screen.queryByRole('button', { name: 'Define variable' })).not.toBeInTheDocument()
+  })
+
+  test('defining an unknown _start token suggests the base date_range variable', async () => {
+    const onDefineVariable = vi.fn()
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ query: 'SELECT count() FROM t WHERE ts >= {{window_start}}' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+        onDefineVariable={onDefineVariable}
+      />,
+    )
+    fireEvent.click(await screen.findByRole('button', { name: 'Define variable' }))
+    expect(onDefineVariable).toHaveBeenCalledWith('window', 'date_range')
+  })
+
   test('saves a widget type change', async () => {
     const bodies: Array<Record<string, unknown>> = []
     server.use(
