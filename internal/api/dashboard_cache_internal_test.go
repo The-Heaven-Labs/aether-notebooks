@@ -117,3 +117,28 @@ func TestDashboardAccessFingerprint(t *testing.T) {
 	require.Error(t, err)
 	require.Empty(t, fp)
 }
+
+// TestDashboardQueryCacheKeyFingerprint pins that the shared-cache key is
+// derived from the access fingerprint rather than the viewer identity:
+// different viewers with the same fingerprint share a key, and changing only
+// the fingerprint changes the key. An empty SQL never produces a key.
+func TestDashboardQueryCacheKeyFingerprint(t *testing.T) {
+	base := dashboardQueryParams{
+		OrgID:             "org",
+		Identity:          dashboardIdentity{UserID: "user-a"},
+		ConnectorID:       "connector",
+		SQL:               "SELECT 1",
+		AccessFingerprint: "fp",
+	}
+	otherViewer := base
+	otherViewer.Identity.UserID = "user-b"
+	require.Equal(t, dashboardQueryCacheKey(base), dashboardQueryCacheKey(otherViewer),
+		"viewer identity must not affect the key")
+
+	otherAccess := base
+	otherAccess.AccessFingerprint = "fp2"
+	require.NotEqual(t, dashboardQueryCacheKey(base), dashboardQueryCacheKey(otherAccess),
+		"the access fingerprint must affect the key")
+
+	require.Empty(t, dashboardQueryCacheKey(dashboardQueryParams{}), "empty SQL must not produce a key")
+}

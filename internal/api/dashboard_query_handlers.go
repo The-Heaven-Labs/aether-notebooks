@@ -70,6 +70,10 @@ type dashboardQueryParams struct {
 	MaxRowsOverride int
 	Timeout         time.Duration
 	CacheScope      string // public token; empty for authenticated runs
+	// AccessFingerprint discriminates cache entries by the viewer's effective
+	// data access, not their identity. runDashboardQuery computes it before
+	// the cache lookup; callers must leave it empty.
+	AccessFingerprint string
 }
 
 // @Summary Execute a dashboard query widget
@@ -793,6 +797,25 @@ func (s *Server) resolveWidgetConnector(ctx context.Context, orgID, widgetConnec
 }
 
 func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) (*dashboardQueryResponse, error) {
+	// The cache key carries the viewer's effective-access fingerprint instead
+	// of their identity, so viewers whose runs return identical data share
+	// entries. Public runs execute as the dashboard creator under a token
+	// scope, which already discriminates them.
+	p.AccessFingerprint = "public"
+	if p.CacheScope == "" { // authenticated runs only
+		p.AccessFingerprint = "user:" + p.Identity.UserID // fail closed
+		// A viewer without `use` on the served connector is denied by
+		// openQuery on the miss path; letting them share a key with
+		// authorized viewers would let a cache hit return data ahead of
+		// that denial. Only viewers who may execute at all are eligible.
+		if useOK, err := s.checkPermission(ctx, p.Identity.UserID, p.OrgID, p.Identity.Role, "connector", p.ConnectorID, "use"); err == nil && useOK {
+			p.AccessFingerprint = dashboardFingerprintUnmanaged
+			if computed, err := s.dashboardAccessFingerprint(ctx, p.OrgID, p.Identity.UserID, p.WarehouseID); err == nil {
+				p.AccessFingerprint = computed
+			}
+		}
+	}
+
 	ttl := defaultDashboardQueryCacheSeconds
 	if p.CacheSeconds != nil {
 		ttl = *p.CacheSeconds
@@ -890,7 +913,7 @@ func dashboardQueryCacheKey(p dashboardQueryParams) string {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		p.OrgID, p.Identity.UserID, p.CacheScope, p.ConnectorID, p.SQL,
+		p.OrgID, p.AccessFingerprint, p.CacheScope, p.ConnectorID, p.SQL,
 		fmt.Sprintf("%d", p.MaxRowsOverride),
 	}, "\x00")))
 	return dashboardCachePrefix + hex.EncodeToString(sum[:])

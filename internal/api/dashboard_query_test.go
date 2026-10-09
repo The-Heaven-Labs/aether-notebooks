@@ -155,6 +155,125 @@ func TestDashboardQueryExecuteRequiresViewWithData(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
+// TestDashboardQueryCacheSharedAcrossIdenticalAccess pins the shared-cache
+// contract: authenticated viewers with identical effective data access share a
+// cache entry (the key carries an access fingerprint, not the viewer id),
+// while different interpolated filters produce distinct entries.
+func TestDashboardQueryCacheSharedAcrossIdenticalAccess(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	email := fmt.Sprintf("dash-cache-owner-%d@example.com", time.Now().UnixNano())
+	tokenA := registerAndGetToken(t, srv, email, "Dash Cache Org")
+	connID := createConnector(t, srv, tokenA)
+
+	settings := map[string]any{
+		"variables": []map[string]any{
+			{"name": "who", "label": "Who", "type": "text", "default": "world"},
+		},
+	}
+	dashID := createDashWithSettings(t, srv, tokenA, settings)
+	widgetID := addQueryWidget(t, srv, tokenA, dashID, connID, "SELECT {{who}} AS greeting")
+
+	var orgID string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+
+	// Two more org members with view_with_data on the dashboard and use on the
+	// unmanaged connector: the same execution identity as A, so all three must
+	// share cache entries.
+	grantViewer := func(label string) string {
+		t.Helper()
+		userID := insertUser(t, srv,
+			fmt.Sprintf("dash-cache-%s-%d@example.com", label, time.Now().UnixNano()), "Cache Viewer")
+		addOrgMember(t, srv, orgID, userID, "non-admin")
+		grantACL(t, srv, orgID, "dashboard", dashID, "user", userID, "view", "view_with_data")
+		grantACL(t, srv, orgID, "connector", connID, "user", userID, "view", "use")
+		return issueToken(t, userID, orgID, "non-admin")
+	}
+	tokenB := grantViewer("b")
+	tokenC := grantViewer("c")
+
+	execute := func(token string, body map[string]any) map[string]any {
+		t.Helper()
+		rec := executeDashboardWidget(t, srv, token, dashID, body)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		return resp
+	}
+	cachedFlag := func(resp map[string]any) bool {
+		t.Helper()
+		cached, ok := resp["cached"].(bool)
+		require.True(t, ok, "cached flag missing from response: %v", resp)
+		return cached
+	}
+	rowsOf := func(resp map[string]any) []any {
+		t.Helper()
+		outputs, ok := resp["outputs"].([]any)
+		require.True(t, ok && len(outputs) > 0, "expected outputs, got %v", resp)
+		data, ok := outputs[0].(map[string]any)["data"].(map[string]any)
+		require.True(t, ok, "expected table data, got %v", outputs[0])
+		rows, ok := data["rows"].([]any)
+		require.True(t, ok, "expected rows, got %v", data)
+		return rows
+	}
+
+	body := map[string]any{"widget_id": widgetID, "variables": map[string]any{"who": "shared"}}
+	respA := execute(tokenA, body)
+	require.False(t, cachedFlag(respA), "the first run must be a cache miss")
+
+	respB := execute(tokenB, body)
+	require.True(t, cachedFlag(respB), "identical access + identical filters must share the entry")
+	require.Equal(t, rowsOf(respA), rowsOf(respB), "the shared entry must return the first runner's rows")
+
+	// Different filter values interpolate into different SQL, so they must not
+	// share the entry; a repeat of C's own values then hits C's entry.
+	bodyC := map[string]any{"widget_id": widgetID, "variables": map[string]any{"who": "different"}}
+	respC := execute(tokenC, bodyC)
+	require.False(t, cachedFlag(respC), "different filters must not hit the shared entry")
+	respC2 := execute(tokenC, bodyC)
+	require.True(t, cachedFlag(respC2), "a repeated run of the same filters must hit the cache")
+	require.Equal(t, rowsOf(respC), rowsOf(respC2))
+}
+
+// TestDashboardQueryCacheHitStillRequiresConnectorUse pins that a shared cache
+// hit cannot bypass the connector `use` gate: a viewer with view_with_data on
+// the dashboard but no `use` on the connector is denied even after another
+// user has warmed the shared entry.
+func TestDashboardQueryCacheHitStillRequiresConnectorUse(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	email := fmt.Sprintf("dash-cache-use-%d@example.com", time.Now().UnixNano())
+	tokenA := registerAndGetToken(t, srv, email, "Dash Cache Use Org")
+	connID := createConnector(t, srv, tokenA)
+
+	dashID := createDashWithSettings(t, srv, tokenA, nil)
+	widgetID := addQueryWidget(t, srv, tokenA, dashID, connID, "SELECT 1 AS x")
+
+	var orgID string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+
+	body := map[string]any{"widget_id": widgetID}
+	recA := executeDashboardWidget(t, srv, tokenA, dashID, body)
+	require.Equal(t, http.StatusOK, recA.Code, recA.Body.String())
+
+	// B may view dashboard data but holds no `use` on the connector, so a
+	// live run would be denied by openQuery.
+	viewerID := insertUser(t, srv,
+		fmt.Sprintf("dash-cache-nouse-%d@example.com", time.Now().UnixNano()), "No Use Viewer")
+	addOrgMember(t, srv, orgID, viewerID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", viewerID, "view", "view_with_data")
+	tokenB := issueToken(t, viewerID, orgID, "non-admin")
+
+	recB := executeDashboardWidget(t, srv, tokenB, dashID, body)
+	require.Equal(t, http.StatusForbidden, recB.Code, recB.Body.String())
+}
+
 func dashboardVariableOptions(t *testing.T, srv *api.Server, token, dashID, name string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	raw, _ := json.Marshal(body)
