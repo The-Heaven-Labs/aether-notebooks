@@ -1091,7 +1091,7 @@ const styles: Record<string, React.CSSProperties> = {
     textDecoration: 'none',
   },
   rowCount: {
-    fontSize: 10,
+    fontSize: 11,
     color: 'var(--text-muted)',
     fontFamily: 'var(--font-mono)',
   },

@@ -1,8 +1,9 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Plus, Trash2, X } from 'lucide-react'
 import { api } from '../api/client'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
 import type { Dashboard, DashboardVariable, DashboardVariableType } from '../types'
@@ -205,8 +206,10 @@ export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSav
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const panelRef = useRef<HTMLDivElement>(null)
 
   useEscapeToClose(onClose)
+  useFocusTrap(panelRef)
 
   const updateRow = (index: number, patch: Partial<EditableVariable>) => {
     setSaved(false)
@@ -239,7 +242,7 @@ export function DashboardVariablesPanel({ dashboardId, dashboard, onClose, onSav
   return createPortal(
     <>
       <div data-testid="variables-backdrop" style={styles.backdrop} onClick={onClose} aria-hidden="true" />
-      <div style={styles.panel} role="dialog" aria-modal="true" aria-label="Dashboard variables">
+      <div ref={panelRef} style={styles.panel} role="dialog" aria-modal="true" aria-label="Dashboard variables" tabIndex={-1}>
         <div style={styles.header}>
           <span style={styles.title}>Dashboard variables</span>
           <button type="button" style={styles.close} onClick={onClose} aria-label="Close variables panel">

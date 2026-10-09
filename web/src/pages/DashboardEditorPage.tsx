@@ -761,7 +761,6 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'transparent',
     border: 'none',
     borderBottom: '1px solid var(--accent)',
-    outline: 'none',
     maxWidth: 400,
     fontFamily: 'var(--font-sans)',
     padding: '1px 2px',

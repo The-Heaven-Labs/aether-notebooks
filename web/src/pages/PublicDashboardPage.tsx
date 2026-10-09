@@ -146,7 +146,7 @@ export function PublicDashboardPage() {
                       fixedView={fixedView}
                       chartConfig={chartConfig}
                       footerExtra={cellData.updated_at ? (
-                        <span style={{ fontSize: 10, color: 'var(--text-muted)' }}>
+                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
                           Executed at {formatExecutedAt(cellData.updated_at)}
                         </span>
                       ) : undefined}

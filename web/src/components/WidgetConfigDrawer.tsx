@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { X, Play, Loader2 } from 'lucide-react'
 import { api } from '../api/client'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { useFocusTrap } from '../hooks/useFocusTrap'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
 import { OutputRenderer } from './OutputRenderer'
@@ -156,6 +157,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const [runError, setRunError] = useState<string | null>(null)
   const [converting, setConverting] = useState(false)
   const [convertError, setConvertError] = useState<string | null>(null)
+  const drawerRef = useRef<HTMLDivElement>(null)
 
   const lastSaved = useRef({ connector: widget.connector_id ?? '', query: widget.query ?? '' })
 
@@ -237,11 +239,12 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   }
 
   useEscapeToClose(onClose, closeOnEscape)
+  useFocusTrap(drawerRef)
 
   return createPortal(
     <>
       <div data-testid="widget-drawer-backdrop" style={styles.backdrop} onClick={onClose} aria-hidden="true" />
-      <div style={styles.drawer} role="dialog" aria-modal="true" aria-label="Widget configuration">
+      <div ref={drawerRef} style={styles.drawer} role="dialog" aria-modal="true" aria-label="Widget configuration" tabIndex={-1}>
         <div style={styles.header}>
           <span style={styles.title}>Widget configuration</span>
           <button type="button" style={styles.close} onClick={onClose} aria-label="Close widget configuration">

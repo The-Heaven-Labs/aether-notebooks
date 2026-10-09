@@ -49,9 +49,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   footerText: {
     marginLeft: 'auto',
-    fontSize: 10,
+    fontSize: 11,
     color: 'var(--text-muted)',
-    opacity: 0.6,
     whiteSpace: 'nowrap',
   },
   // Compact version of the product's empty-state pattern for widget-sized space.
@@ -259,13 +258,20 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     )
   }
 
+  const widgetTitle = (() => {
+    const cfg = widget.config as Record<string, unknown> | undefined
+    const t = typeof cfg?.title === 'string' ? cfg.title : typeof cfg?.label === 'string' ? cfg.label : ''
+    return t || null
+  })()
+
   const footerExtra = (
     <div style={styles.footer}>
       <button
         style={styles.footerBtn}
         onClick={() => refreshRef.current()}
         disabled={isFetching}
-        title="Refresh widget data"
+        title={widgetTitle ? `Refresh ${widgetTitle}` : 'Refresh widget data'}
+        aria-label={widgetTitle ? `Refresh ${widgetTitle}` : 'Refresh widget data'}
       >
         {isFetching ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={10} />}
       </button>

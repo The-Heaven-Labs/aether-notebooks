@@ -116,6 +116,11 @@ function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, 
   const chartOverridden = hasWidgetOverride(widget.config)
   const updatedAt = (cell as any).updated_at
   const durationMs = (cell as any).duration_ms
+  const widgetLabel = (() => {
+    const cfg = widget.config as Record<string, unknown> | undefined
+    const t = typeof cfg?.title === 'string' ? cfg.title : typeof cfg?.label === 'string' ? cfg.label : ''
+    return t || null
+  })()
   const footerExtra = (
     <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
       {onRun && (
@@ -128,7 +133,8 @@ function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, 
           }}
           onClick={onRun}
           disabled={loading}
-          title="Refresh widget data"
+          title={widgetLabel ? `Refresh ${widgetLabel}` : 'Refresh widget data'}
+          aria-label={widgetLabel ? `Refresh ${widgetLabel}` : 'Refresh widget data'}
         >
           {loading ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={10} />}
         </button>
@@ -142,13 +148,14 @@ function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, 
             color: 'var(--text-muted)', cursor: 'pointer', padding: 0,
           }}
           onClick={onEdit}
-          title="Edit widget"
+          title={widgetLabel ? `Edit ${widgetLabel}` : 'Edit widget'}
+          aria-label={widgetLabel ? `Edit ${widgetLabel}` : 'Edit widget'}
         >
           <Pencil size={9} />
         </button>
       )}
       {updatedAt && (
-        <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--text-muted)', opacity: 0.6, whiteSpace: 'nowrap' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
           Executed at {formatExecutedAt(updatedAt)}
           {durationMs != null && <span> · {durationMs}ms</span>}
         </span>
