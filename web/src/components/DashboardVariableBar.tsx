@@ -1,6 +1,10 @@
 import { useEffect, useState } from 'react'
-import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
+import { RotateCcw } from 'lucide-react'
+import { useDashboardVariables, isVariableDefault } from '../contexts/DashboardVariablesContext'
 import type { DashboardVariable } from '../types'
+
+// Touch devices have no Ctrl/Cmd key; the modifier hint is a desktop idiom.
+const HOVER_CAPABLE = typeof window !== 'undefined' && !!window.matchMedia?.('(hover: hover)').matches
 
 const styles: Record<string, React.CSSProperties> = {
   bar: {
@@ -36,7 +40,6 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     width: '100%',
     boxSizing: 'border-box',
-    outline: 'none',
   },
   rangeRow: {
     display: 'flex',
@@ -52,6 +55,39 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: 'var(--text-muted)',
     fontStyle: 'italic',
+  },
+  warn: {
+    fontSize: 11,
+    color: 'var(--warning-text)',
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    flexWrap: 'wrap',
+  },
+  actionLink: {
+    background: 'none',
+    border: 'none',
+    color: 'var(--accent)',
+    cursor: 'pointer',
+    fontSize: 11,
+    fontWeight: 600,
+    padding: 0,
+    textDecoration: 'underline',
+  },
+  resetAll: {
+    alignSelf: 'flex-start',
+    marginLeft: 'auto',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 5,
+    padding: '6px 10px',
+    fontSize: 12,
+    fontWeight: 600,
+    color: 'var(--text-secondary)',
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    cursor: 'pointer',
   },
   error: {
     fontSize: 12,
@@ -75,21 +111,26 @@ function TextControl({ variable, value, onChange }: {
   value: unknown
   onChange: (value: unknown) => void
 }) {
-  const [draft, setDraft] = useState(typeof value === 'string' ? value : '')
+  const committed = typeof value === 'string' ? value : ''
+  const [draft, setDraft] = useState(committed)
   useEffect(() => {
-    setDraft(typeof value === 'string' ? value : '')
-  }, [value])
-  const commit = () => onChange(draft)
+    setDraft(committed)
+  }, [committed])
+  const dirty = draft !== committed
+  const commit = () => { if (dirty) onChange(draft) }
   return (
-    <input
-      id={`dash-var-${variable.name}`}
-      type="text"
-      style={styles.input}
-      value={draft}
-      onChange={(e) => setDraft(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => { if (e.key === 'Enter') commit() }}
-    />
+    <>
+      <input
+        id={`dash-var-${variable.name}`}
+        type="text"
+        style={styles.input}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => { if (e.key === 'Enter') commit() }}
+      />
+      {dirty && <span style={styles.hint}>Press Enter to apply</span>}
+    </>
   )
 }
 
@@ -172,6 +213,8 @@ function VariableControl({ variable }: { variable: DashboardVariable }) {
       )
     case 'multi_select': {
       const selected = Array.isArray(value) ? value.map(String) : []
+      const options = state?.options ?? []
+      const isEmpty = selected.length === 0
       return (
         <>
           <select
@@ -181,11 +224,31 @@ function VariableControl({ variable }: { variable: DashboardVariable }) {
             value={selected}
             onChange={(e) => setValue(variable.name, Array.from(e.target.selectedOptions).map((o) => o.value))}
           >
-            {(state?.options ?? []).map((opt) => (
+            {options.map((opt) => (
               <option key={opt.value} value={opt.value}>{opt.label}</option>
             ))}
           </select>
-          <span style={styles.hint}>Hold Ctrl / Cmd to select multiple</span>
+          {isEmpty && !state?.loading ? (
+            // An empty selection is an explicit "no rows" filter server-side;
+            // say so at the source instead of letting widgets show silent zeros.
+            <span style={styles.warn} role="status">
+              Nothing selected — this hides all rows.
+              {options.length > 0 && (
+                <button
+                  type="button"
+                  style={styles.actionLink}
+                  onClick={() => setValue(variable.name, options.map((o) => o.value))}
+                >
+                  Select all
+                </button>
+              )}
+            </span>
+          ) : (
+            <span style={styles.hint}>
+              {options.length > 0 ? `${selected.length} of ${options.length} selected` : 'Loading…'}
+              {HOVER_CAPABLE && options.length > 0 ? ' · Ctrl/Cmd+click' : ''}
+            </span>
+          )}
         </>
       )
     }
@@ -195,8 +258,9 @@ function VariableControl({ variable }: { variable: DashboardVariable }) {
 }
 
 export function DashboardVariableBar() {
-  const { variables, optionState } = useDashboardVariables()
+  const { variables, values, resetAll, optionState } = useDashboardVariables()
   if (!variables.length) return null
+  const anyActive = variables.some((v) => !isVariableDefault(v, values[v.name]))
   return (
     <div style={styles.bar}>
       {variables.map((variable) => {
@@ -218,6 +282,16 @@ export function DashboardVariableBar() {
           </div>
         )
       })}
+      {anyActive && (
+        <button
+          type="button"
+          style={styles.resetAll}
+          onClick={resetAll}
+          title="Restore every filter to its default"
+        >
+          <RotateCcw size={11} /> Reset filters
+        </button>
+      )}
     </div>
   )
 }

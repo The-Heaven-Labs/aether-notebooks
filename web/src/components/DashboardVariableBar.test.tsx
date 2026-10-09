@@ -116,4 +116,23 @@ describe('DashboardVariableBar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     await waitFor(() => expect(screen.getByRole('option', { name: 'Paris' })).toBeInTheDocument(), { timeout: 3000 })
   })
+
+  test('empty multi_select warns and can select all', () => {
+    renderBar([{ name: 'regions', label: 'Regions', type: 'multi_select', options: staticOptions }])
+    expect(screen.getByText(/Nothing selected/i)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Select all' }))
+    expect(screen.getByTestId('probe-regions')).toHaveTextContent('["EMEA","AMER"]')
+  })
+
+  test('Reset filters appears for non-default values and restores defaults', () => {
+    renderBar([{ name: 'region', label: 'Region', type: 'text', default: 'EMEA' }])
+    expect(screen.queryByRole('button', { name: /Reset filters/ })).not.toBeInTheDocument()
+    const input = screen.getByLabelText('Region')
+    fireEvent.change(input, { target: { value: 'AMER' } })
+    fireEvent.blur(input)
+    expect(screen.getByTestId('probe-region')).toHaveTextContent('"AMER"')
+    fireEvent.click(screen.getByRole('button', { name: /Reset filters/ }))
+    expect(screen.getByTestId('probe-region')).toHaveTextContent('"EMEA"')
+    expect(screen.queryByRole('button', { name: /Reset filters/ })).not.toBeInTheDocument()
+  })
 })

@@ -1,6 +1,6 @@
-import { useEffect, useRef, useState, useCallback, useLayoutEffect } from 'react'
+import { useEffect, useRef, useState, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Play, Loader2, Pencil, Settings, Globe } from 'lucide-react'
+import { ArrowLeft, Play, Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
 import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -168,8 +168,14 @@ const queryWidgetStyles: Record<string, React.CSSProperties> = {
   markdown: { padding: '16px', fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' },
 }
 
-function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onEdit?: () => void }) {
+function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit, onFetchingChange }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; onEdit?: () => void; onFetchingChange?: (fetching: boolean) => void }) {
   const [loading, setLoading] = useState(false)
+
+  // Report cell-widget runs so the header can show a single progress signal.
+  const onFetchingRef = useRef(onFetchingChange)
+  onFetchingRef.current = onFetchingChange
+  useEffect(() => { onFetchingRef.current?.(loading) }, [loading])
+  useEffect(() => () => onFetchingRef.current?.(false), [])
 
   const handleRun = useCallback(async () => {
     if (loading || !widget.notebook_id || !widget.cell_id) return
@@ -219,12 +225,11 @@ function DashboardContent({ id }: { id: string }) {
   // The live default (viewer's sole warehouse preference) is preselected;
   // an explicit pick persists and overrides it.
   const viewerConnectorId = selected ?? suggestion
-  const [isRefreshing, setIsRefreshing] = useState(false)
   const [containerWidth, setContainerWidth] = useState(0)
   const [refreshSeconds, setRefreshSeconds] = useState<number>(0)
   const [refreshCustom, setRefreshCustom] = useState(false)
-  const [refreshNonce, setRefreshNonce] = useState(0)
   const [showShare, setShowShare] = useState(false)
+  const [isRunningAll, setIsRunningAll] = useState(false)
   const gridContainerRef = useRef<HTMLDivElement | null>(null)
 
   // Observe the grid as soon as it mounts (a mount-time effect would run
@@ -260,6 +265,37 @@ function DashboardContent({ id }: { id: string }) {
     enabled: !!id,
   })
 
+  // Per-widget fetch state, reported by the widgets themselves, so the header
+  // can show one honest "Refreshing n/m" signal instead of a button that goes
+  // idle before the widgets actually finish.
+  const [fetchingWidgets, setFetchingWidgets] = useState<Record<string, boolean>>({})
+  const [justUpdated, setJustUpdated] = useState(false)
+  const refreshersRef = useRef(new Map<string, () => Promise<unknown>>())
+  const wasRefreshing = useRef(false)
+
+  const reportFetching = useCallback((widgetId: string, fetching: boolean) => {
+    setFetchingWidgets(prev => (!!prev[widgetId] === fetching ? prev : { ...prev, [widgetId]: fetching }))
+  }, [])
+  const registerWidgetRefresh = useCallback((widgetId: string, fn: () => Promise<unknown>) => {
+    refreshersRef.current.set(widgetId, fn)
+    return () => { refreshersRef.current.delete(widgetId) }
+  }, [])
+
+  const refreshingCount = useMemo(
+    () => Object.values(fetchingWidgets).filter(Boolean).length,
+    [fetchingWidgets],
+  )
+
+  useEffect(() => {
+    const was = wasRefreshing.current
+    wasRefreshing.current = refreshingCount > 0
+    if (was && refreshingCount === 0) {
+      setJustUpdated(true)
+      const t = setTimeout(() => setJustUpdated(false), 2500)
+      return () => clearTimeout(t)
+    }
+  }, [refreshingCount])
+
   useEffect(() => {
     if (dashboard) {
       document.title = `${dashboard.title} — Aether Notebooks`
@@ -270,19 +306,21 @@ function DashboardContent({ id }: { id: string }) {
   }, [dashboard])
 
   async function executeAllWidgets(widgetList: AnyWidget[]) {
+    if (isRunningAll) return
     const token = localStorage.getItem('aether_token')
     const cellWidgets = widgetList.filter(w => !isQueryWidget(w) && w.notebook_id && w.cell_id)
     const queryWidgets = widgetList.filter(isQueryWidget)
     if (!cellWidgets.length && !queryWidgets.length) return
-    setIsRefreshing(true)
+    setIsRunningAll(true)
     try {
-      if (queryWidgets.length) {
-        // Query widgets refresh themselves through their own hooks; bumping
-        // the nonce asks every QueryDataWidget to refetch.
-        setRefreshNonce(n => n + 1)
-      }
-      await Promise.all(
-        cellWidgets.map(w =>
+      // Query widgets refresh through their registered (cache-bypassing)
+      // refreshers; awaiting them means the batch is actually done when the
+      // button resets, instead of a nonce bump that finishes before the data.
+      const queryRuns = queryWidgets
+        .map(w => refreshersRef.current.get(w.id)?.())
+        .filter((p): p is Promise<unknown> => !!p)
+      await Promise.allSettled([
+        ...cellWidgets.map(w =>
           fetch(`/api/v1/notebooks/${w.notebook_id}/cells/${w.cell_id}/execute`, {
             method: 'POST',
             headers: {
@@ -290,9 +328,10 @@ function DashboardContent({ id }: { id: string }) {
               ...(token ? { Authorization: `Bearer ${token}` } : {}),
             },
             body: JSON.stringify({ parameters: {} }),
-          })
-        )
-      )
+          }),
+        ),
+        ...queryRuns,
+      ])
       if (dashboard?.can_view_with_data) {
         qc.invalidateQueries({ queryKey: ['dashboard', id] })
       } else {
@@ -300,7 +339,7 @@ function DashboardContent({ id }: { id: string }) {
         notebookIds.forEach(nbId => qc.invalidateQueries({ queryKey: ['notebook', nbId] }))
       }
     } finally {
-      setIsRefreshing(false)
+      setIsRunningAll(false)
     }
   }
 
@@ -360,26 +399,47 @@ function DashboardContent({ id }: { id: string }) {
               warehouse run on the selected service; others keep their own.
               allowClear is off while a live default exists — clearing would
               just re-select the suggestion on the next render. */}
-          <ConnectorSelector
-            value={viewerConnectorId}
-            onChange={select}
-            types={['clickhouse']}
-            allowClear={!suggestion}
-            placeholder="Widget's connector"
-            style={{ fontSize: 12, maxWidth: 220 }}
-          />
+          <span
+            title="Choose which connector this dashboard's queries run on for you"
+            style={{ display: 'inline-flex' }}
+          >
+            <ConnectorSelector
+              value={viewerConnectorId}
+              onChange={select}
+              types={['clickhouse']}
+              allowClear={!suggestion}
+              placeholder="Run widgets on…"
+              style={{ fontSize: 12, maxWidth: 220 }}
+            />
+          </span>
+          {/* One honest progress signal for every widget refresh: counts while
+              work is in flight, then a brief confirmation. */}
+          <span
+            role="status"
+            aria-live="polite"
+            style={{
+              fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)',
+              minWidth: 96, textAlign: 'right', whiteSpace: 'nowrap',
+            }}
+          >
+            {refreshingCount > 0
+              ? `Refreshing ${refreshingCount}/${widgets.length}…`
+              : justUpdated ? 'Updated' : ''}
+          </span>
           <button
             style={{
               padding: '5px 12px', fontSize: 12, fontWeight: 600,
               background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)',
               border: 'none', borderRadius: 4, cursor: 'pointer',
-              opacity: isRefreshing ? 0.6 : 1,
+              display: 'inline-flex', alignItems: 'center', gap: 5,
+              opacity: isRunningAll || refreshingCount > 0 ? 0.6 : 1,
             }}
-            disabled={isRefreshing}
+            disabled={isRunningAll || refreshingCount > 0}
             onClick={() => executeAllWidgets(widgets)}
-            title="Execute all widget cells"
+            title="Re-run every widget's query with the current filters"
           >
-            {isRefreshing ? 'Running…' : 'Run all'}
+            <RefreshCw size={12} style={isRunningAll || refreshingCount > 0 ? { animation: 'spin 1s linear infinite' } : undefined} />
+            {isRunningAll || refreshingCount > 0 ? 'Refreshing…' : 'Refresh'}
           </button>
           <Link
             to={`/dashboards/${id}`}
@@ -529,11 +589,18 @@ function DashboardContent({ id }: { id: string }) {
                       widget={widget}
                       canViewWithData={dashboard.can_view_with_data !== false}
                       queryEnabled={selected != null || !resolving}
-                      refreshNonce={refreshNonce}
                       viewerConnectorId={viewerConnectorId}
+                      onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
+                      registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
                     />
                   ) : (
-                    <WidgetCard widget={widget} qc={qc} widgetsData={dashboard.widgets_data} dashboardId={id} />
+                    <WidgetCard
+                      widget={widget}
+                      qc={qc}
+                      widgetsData={dashboard.widgets_data}
+                      dashboardId={id}
+                      onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
+                    />
                   )}
                 </div>
               ))}

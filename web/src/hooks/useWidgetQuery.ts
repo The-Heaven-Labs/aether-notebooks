@@ -1,5 +1,5 @@
-import { useRef } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useCallback, useRef } from 'react'
+import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Widget, WidgetQueryResult } from '../types'
 
@@ -39,7 +39,14 @@ export function useWidgetQuery(opts: {
     retry: false,
     staleTime: 0,
     refetchOnWindowFocus: false,
+    // Keep the previous frame on screen while a new filter combination loads:
+    // the widget dims instead of collapsing into a "Loading…" jump.
+    placeholderData: keepPreviousData,
   })
-  const refresh = () => { bypassRef.current = true; void query.refetch() }
+  const refetch = query.refetch
+  const refresh = useCallback(async () => {
+    bypassRef.current = true
+    return refetch()
+  }, [refetch])
   return { ...query, refresh }
 }
