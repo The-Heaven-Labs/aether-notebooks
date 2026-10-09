@@ -82,11 +82,11 @@ describe('DashboardVariableBar', () => {
     fireEvent.click(screen.getByLabelText('Active'))
     expect(screen.getByTestId('probe-active')).toHaveTextContent('true')
 
-    const multi = screen.getByLabelText('Regions') as HTMLSelectElement
-    const option = Array.from(multi.options).find((o) => o.value === 'AMER')!
-    option.selected = true
-    fireEvent.change(multi)
+    // The dropdown opens on the trigger and toggles checkboxes without closing.
+    fireEvent.click(screen.getByLabelText('Regions'))
+    fireEvent.click(screen.getByRole('option', { name: 'AMER' }))
     expect(screen.getByTestId('probe-regions')).toHaveTextContent('["AMER"]')
+    expect(screen.getByRole('option', { name: 'AMER' })).toHaveAttribute('aria-selected', 'true')
   })
 
   test('shows query option errors with a working retry', async () => {
@@ -114,6 +114,10 @@ describe('DashboardVariableBar', () => {
 
     expect(await screen.findByRole('alert', {}, { timeout: 3000 })).toHaveTextContent('boom')
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
+    // The trigger disables while options reload; open it once they arrive.
+    const trigger = screen.getByLabelText('City')
+    await waitFor(() => expect(trigger).not.toBeDisabled(), { timeout: 3000 })
+    fireEvent.click(trigger)
     await waitFor(() => expect(screen.getByRole('option', { name: 'Paris' })).toBeInTheDocument(), { timeout: 3000 })
   })
 

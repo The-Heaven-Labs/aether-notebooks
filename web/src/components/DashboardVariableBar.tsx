@@ -1,10 +1,31 @@
 import { useEffect, useState } from 'react'
 import { RotateCcw } from 'lucide-react'
 import { useDashboardVariables, isVariableDefault } from '../contexts/DashboardVariablesContext'
+import { VariableSelect } from './VariableSelect'
 import type { DashboardVariable } from '../types'
 
-// Touch devices have no Ctrl/Cmd key; the modifier hint is a desktop idiom.
-const HOVER_CAPABLE = typeof window !== 'undefined' && !!window.matchMedia?.('(hover: hover)').matches
+/** Local (not UTC) YYYY-MM-DD, so quick ranges don't shift at day boundaries. */
+function localISODate(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** Returns the preset length when the range is "last N days ending today". */
+function quickRangePreset(range: string[]): number | null {
+  if (range.length !== 2 || !range[0] || !range[1]) return null
+  const [sy, sm, sd] = range[0].split('-').map(Number)
+  const [ey, em, ed] = range[1].split('-').map(Number)
+  if (!sy || !sm || !sd || !ey || !em || !ed) return null
+  const start = new Date(sy, sm - 1, sd)
+  const end = new Date(ey, em - 1, ed)
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  if (end.getTime() !== today.getTime()) return null
+  const days = Math.round((end.getTime() - start.getTime()) / 86400000) + 1
+  return days === 7 || days === 30 || days === 90 ? days : null
+}
 
 const styles: Record<string, React.CSSProperties> = {
   bar: {
@@ -50,6 +71,25 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     color: 'var(--text-muted)',
     flexShrink: 0,
+  },
+  quickRow: {
+    display: 'flex',
+    gap: 4,
+  },
+  quickBtn: {
+    padding: '2px 8px',
+    fontSize: 11,
+    fontFamily: 'var(--font-mono)',
+    color: 'var(--text-secondary)',
+    background: 'none',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    cursor: 'pointer',
+  },
+  quickBtnActive: {
+    background: 'var(--accent-light)',
+    borderColor: 'var(--accent)',
+    color: 'var(--accent)',
   },
   hint: {
     fontSize: 11,
@@ -175,60 +215,82 @@ function VariableControl({ variable }: { variable: DashboardVariable }) {
       )
     case 'date_range': {
       const range = Array.isArray(value) ? value.map(String) : ['', '']
+      const setQuickRange = (days: number) => {
+        const end = new Date()
+        const start = new Date(end.getFullYear(), end.getMonth(), end.getDate() - (days - 1))
+        setValue(variable.name, [localISODate(start), localISODate(end)])
+      }
+      const activePreset = quickRangePreset(range)
       return (
-        <div style={styles.rangeRow}>
-          <input
-            id={id}
-            type="date"
-            aria-label={`${variable.label || variable.name} start`}
-            style={{ ...styles.input, flex: 1 }}
-            value={range[0] ?? ''}
-            onChange={(e) => setValue(variable.name, [e.target.value, range[1] ?? ''])}
-          />
-          <span style={styles.rangeSep}>to</span>
-          <input
-            type="date"
-            aria-label={`${variable.label || variable.name} end`}
-            style={{ ...styles.input, flex: 1 }}
-            value={range[1] ?? ''}
-            onChange={(e) => setValue(variable.name, [range[0] ?? '', e.target.value])}
-          />
-        </div>
+        <>
+          <div style={styles.rangeRow}>
+            <input
+              id={id}
+              type="date"
+              aria-label={`${variable.label || variable.name} start`}
+              style={{ ...styles.input, flex: 1 }}
+              value={range[0] ?? ''}
+              onChange={(e) => setValue(variable.name, [e.target.value, range[1] ?? ''])}
+            />
+            <span style={styles.rangeSep}>to</span>
+            <input
+              type="date"
+              aria-label={`${variable.label || variable.name} end`}
+              style={{ ...styles.input, flex: 1 }}
+              value={range[1] ?? ''}
+              onChange={(e) => setValue(variable.name, [range[0] ?? '', e.target.value])}
+            />
+          </div>
+          <div style={styles.quickRow}>
+            {[7, 30, 90].map((days) => (
+              <button
+                key={days}
+                type="button"
+                style={{ ...styles.quickBtn, ...(activePreset === days ? styles.quickBtnActive : {}) }}
+                title={`Last ${days} days`}
+                aria-pressed={activePreset === days}
+                onClick={() => setQuickRange(days)}
+              >
+                {days}d
+              </button>
+            ))}
+          </div>
+        </>
       )
     }
-    case 'single_select':
+    case 'single_select': {
+      const options = state?.options ?? []
+      // "All" is a first-class choice, like Grafana's include-all option; it
+      // maps back to "no value set" for the query builder.
+      const withAll = variable.required ? options : [{ label: 'All', value: '' }, ...options]
       return (
-        <select
+        <VariableSelect
           id={id}
-          style={styles.input}
+          options={withAll}
           value={typeof value === 'string' ? value : ''}
+          onChange={(v) => setValue(variable.name, v === '' ? undefined : v)}
+          emptyLabel={variable.required ? 'Select…' : 'All'}
           disabled={state?.loading}
-          onChange={(e) => setValue(variable.name, e.target.value === '' ? undefined : e.target.value)}
-        >
-          {!variable.required && <option value="">All</option>}
-          {(state?.options ?? []).map((opt) => (
-            <option key={opt.value} value={opt.value}>{opt.label}</option>
-          ))}
-        </select>
+          ariaLabel={variable.label || variable.name}
+        />
       )
+    }
     case 'multi_select': {
       const selected = Array.isArray(value) ? value.map(String) : []
       const options = state?.options ?? []
       const isEmpty = selected.length === 0
       return (
         <>
-          <select
+          <VariableSelect
             id={id}
             multiple
-            style={{ ...styles.input, height: 'auto', minHeight: 80 }}
+            options={options}
             value={selected}
-            onChange={(e) => setValue(variable.name, Array.from(e.target.selectedOptions).map((o) => o.value))}
-          >
-            {options.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-          {isEmpty && !state?.loading ? (
+            onChange={(v) => setValue(variable.name, Array.isArray(v) ? v : [v])}
+            disabled={state?.loading}
+            ariaLabel={variable.label || variable.name}
+          />
+          {isEmpty && !state?.loading && (
             // An empty selection is an explicit "no rows" filter server-side;
             // say so at the source instead of letting widgets show silent zeros.
             <span style={styles.warn} role="status">
@@ -242,11 +304,6 @@ function VariableControl({ variable }: { variable: DashboardVariable }) {
                   Select all
                 </button>
               )}
-            </span>
-          ) : (
-            <span style={styles.hint}>
-              {options.length > 0 ? `${selected.length} of ${options.length} selected` : 'Loading…'}
-              {HOVER_CAPABLE && options.length > 0 ? ' · Ctrl/Cmd+click' : ''}
             </span>
           )}
         </>
