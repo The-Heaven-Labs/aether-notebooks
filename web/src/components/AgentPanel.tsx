@@ -123,7 +123,7 @@ export function TokenUsageMeter({ totalTokens, sessionUsage, contextWindow, hasC
   const compactionThreshold = (() => {
     const mc = modelConfigs.find((m) => m.id === modelConfigId)
     const t = mc?.default_params?.['compaction_threshold']
-    return typeof t === 'number' ? t : 70
+    return typeof t === 'number' ? Math.trunc(t) : 70
   })()
   const compactions = messages.filter((m) => m.role === 'compaction')
   const latestCompaction = compactions[compactions.length - 1]
