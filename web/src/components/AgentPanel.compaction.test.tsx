@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { CompactionDivider } from './AgentPanel'
+import { AgentChatTranscript } from './AgentChatTranscript'
 
 describe('CompactionDivider', () => {
   it('renders a labeled marker with compact before → after counts', () => {
@@ -67,5 +68,22 @@ describe('CompactionDivider', () => {
     fireEvent.click(screen.getByRole('button', { expanded: false }))
     expect(screen.getByText('legacy summary')).toBeInTheDocument()
     expect(screen.queryByText(/tokens \(actual\)/)).toBeNull()
+  })
+
+  it('routes compaction rows through the transcript outside the chat bubble', () => {
+    const { container } = render(
+      <AgentChatTranscript
+        messages={[{ id: 'm1', role: 'compaction', content: 'summary', tokens_before: 1200, tokens_after: 400 }]}
+      />,
+    )
+    const pill = screen.getByRole('button', { expanded: false })
+    // The chat bubble style sets maxWidth 85% (chatStyles.message); the system
+    // marker must not sit inside it.
+    let el: HTMLElement | null = pill
+    while (el && el !== container) {
+      expect(el.style.maxWidth).not.toBe('85%')
+      el = el.parentElement
+    }
+    expect(screen.getByText(/Context auto-compacted/)).toBeInTheDocument()
   })
 })

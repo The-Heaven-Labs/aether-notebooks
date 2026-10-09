@@ -415,4 +415,23 @@ describe('AgentPanel context-first token meter', () => {
     expect(await screen.findByText('⚙ Compacted 1×')).toBeInTheDocument()
     expect(screen.queryByText(/· last:/)).toBeNull()
   })
+
+  it('truncates fractional compaction thresholds to match the engine', async () => {
+    server.use(
+      http.get('/api/v1/agents', () => HttpResponse.json([{ ...AGENT, model_config_id: 'mc-1' }])),
+      http.get('/api/v1/model-configs', () =>
+        HttpResponse.json([{
+          id: 'mc-1', org_id: 'org-1', name: 'Model', provider: 'openai', base_url: '',
+          model: 'gpt-4', default_params: { compaction_threshold: 69.9 }, context_window: 1000,
+          price_per_input_token: 0, price_per_output_token: 0, price_per_cache_read_token: 0,
+          created_by: 'u1', created_at: '2026-09-01T00:00:00Z', updated_at: '2026-09-01T00:00:00Z',
+        }]),
+      ),
+    )
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    await renderPanel()
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(await screen.findByText(/compacts at 69%/)).toBeInTheDocument()
+    expect(screen.queryByText(/69\.9%/)).toBeNull()
+  })
 })
