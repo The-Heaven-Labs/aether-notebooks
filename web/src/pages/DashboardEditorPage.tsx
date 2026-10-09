@@ -370,8 +370,8 @@ const markSaved = useCallback(() => {
         </div>
         <div style={styles.headerRight}>
           {!isMobileLayout && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }} role="group" aria-label="Grid columns">
-              <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Cols</span>
+            <div className="nav-seg" role="group" aria-label="Grid columns">
+              <span style={{ fontSize: 10, color: 'var(--nav-text-muted)', fontWeight: 700, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '0 4px' }}>Cols</span>
               {[6, 8, 12, 16, 24].map(c => (
                 <button
                   key={c}
@@ -379,16 +379,6 @@ const markSaved = useCallback(() => {
                   title={`${c} grid columns — ${c <= 8 ? 'compact' : c <= 12 ? 'standard' : 'wide'} layout`}
                   aria-label={`${c} columns`}
                   aria-pressed={gridCols === c}
-                  style={{
-                    padding: '3px 8px',
-                    fontSize: 12,
-                    fontWeight: 600,
-                    border: '1px solid var(--border)',
-                    borderRadius: 4,
-                    cursor: 'pointer',
-                    background: gridCols === c ? 'var(--button-primary-bg)' : 'var(--bg-input)',
-                    color: gridCols === c ? 'var(--button-primary-text)' : 'var(--text-secondary)',
-                  }}
                   onClick={async () => {
                     markSaving()
                     const oldCols = dashboard?.settings?.grid_cols ?? 12
@@ -414,12 +404,7 @@ const markSaved = useCallback(() => {
           )}
           <button
             type="button"
-            style={{
-              padding: '5px 12px', fontSize: 12, fontWeight: 600,
-              background: 'none', color: 'var(--text-secondary)',
-              border: '1px solid var(--border)', borderRadius: 4,
-              cursor: 'pointer',
-            }}
+            className="nav-btn"
             onClick={() => setShowVariables(true)}
             title="Manage dashboard variables and filters"
           >
@@ -427,33 +412,18 @@ const markSaved = useCallback(() => {
           </button>
           {saveStatus && (
             <span style={{
-              fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--text-muted)' : 'var(--success)',
+              fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--nav-text-muted)' : 'var(--nav-text)',
               textTransform: 'uppercase', letterSpacing: '0.04em',
             }}>
               {saveStatus === 'saving' ? 'Saving…' : 'Saved'}
             </span>
           )}
-          <Link
-            to={`/dashboards/${id}/view`}
-            style={{
-              padding: '5px 12px', fontSize: 12, fontWeight: 600,
-              background: 'none', color: 'var(--text-secondary)',
-              border: '1px solid var(--border)', borderRadius: 4,
-              textDecoration: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 4,
-            }}
-            title="View dashboard"
-          >
+          <Link to={`/dashboards/${id}/view`} className="nav-btn" title="View dashboard">
             <Eye size={12} /> View
           </Link>
           <button
             type="button"
-            style={{
-              padding: '5px 12px', fontSize: 12, fontWeight: 600,
-              background: 'none', color: 'var(--text-secondary)',
-              border: '1px solid var(--border)', borderRadius: 4,
-              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-            }}
+            className="nav-btn"
             onClick={() => setShowPermissions(true)}
             title="Manage permissions"
           >
@@ -778,21 +748,23 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     alignItems: 'center',
     gap: 5,
-    color: 'var(--text-secondary)',
+    color: 'var(--nav-text)',
     textDecoration: 'none',
     fontSize: 13,
     fontWeight: 500,
     flexShrink: 0,
+    opacity: 0.8,
   },
   breadcrumbSep: {
-    color: 'var(--text-muted)',
+    color: 'var(--nav-text)',
     fontSize: 14,
     flexShrink: 0,
+    opacity: 0.5,
   },
   dashboardTitle: {
     fontSize: 14,
     fontWeight: 600,
-    color: 'var(--text-primary)',
+    color: 'var(--nav-text)',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -802,7 +774,7 @@ const styles: Record<string, React.CSSProperties> = {
   titleInput: {
     fontSize: 14,
     fontWeight: 600,
-    color: 'var(--text-primary)',
+    color: 'var(--nav-text)',
     background: 'transparent',
     border: 'none',
     borderBottom: '1px solid var(--accent)',
@@ -818,8 +790,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   addWidgetBtn: {
     padding: '5px 12px',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 12,
@@ -894,8 +866,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pickerAddBtn: {
     padding: '9px 0',
-    background: 'var(--accent)',
-    color: '#fff',
+    background: 'var(--button-primary-bg)',
+    color: 'var(--button-primary-text)',
     border: 'none',
     borderRadius: 4,
     fontSize: 13,

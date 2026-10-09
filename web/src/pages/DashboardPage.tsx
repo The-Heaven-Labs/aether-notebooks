@@ -421,7 +421,12 @@ function DashboardContent({ id }: { id: string }) {
               types={['clickhouse']}
               allowClear={!suggestion}
               placeholder="Run widgets on…"
-              style={{ fontSize: 12, maxWidth: 220 }}
+              style={{
+                fontSize: 12, maxWidth: 220,
+                background: 'rgba(255,255,255,0.06)',
+                color: 'var(--nav-text)',
+                borderColor: 'var(--nav-border)',
+              }}
             />
           </span>
           {/* One honest progress signal for every widget refresh: counts while
@@ -429,8 +434,9 @@ function DashboardContent({ id }: { id: string }) {
           <span
             role="status"
             aria-live="polite"
+            className="nav-status"
             style={{
-              fontSize: 10, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)',
+              fontSize: 10, fontFamily: 'var(--font-mono)',
               minWidth: 96, textAlign: 'right', whiteSpace: 'nowrap',
             }}
           >
@@ -453,28 +459,14 @@ function DashboardContent({ id }: { id: string }) {
             <RefreshCw size={12} style={isRunningAll || refreshingCount > 0 ? { animation: 'spin 1s linear infinite' } : undefined} />
             {isRunningAll || refreshingCount > 0 ? 'Refreshing…' : 'Refresh'}
           </button>
-          <Link
-            to={`/dashboards/${id}`}
-            style={{
-              padding: '5px 12px', fontSize: 12, fontWeight: 600,
-              background: 'none', color: 'var(--text-secondary)',
-              border: '1px solid var(--border)', borderRadius: 4,
-              textDecoration: 'none', cursor: 'pointer',
-              display: 'flex', alignItems: 'center', gap: 4,
-            }}
-            title="Edit dashboard layout"
-          >
+          <Link to={`/dashboards/${id}`} className="nav-btn" title="Edit dashboard layout">
             <Settings size={12} /> Edit
           </Link>
 
           {dashboard?.can_share !== false && (
             <button
-              style={{
-                padding: '5px 12px', fontSize: 12, fontWeight: 600,
-                background: 'none', color: 'var(--text-secondary)',
-                border: '1px solid var(--border)', borderRadius: 4,
-                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4,
-              }}
+              type="button"
+              className="nav-btn"
               onClick={() => setShowShare(true)}
               title="Share dashboard"
             >
@@ -483,17 +475,12 @@ function DashboardContent({ id }: { id: string }) {
           )}
 
           {/* Column count selector (edit-permission only: it persists settings) */}
-          {canEdit && <div className="dash-cols" style={{ gap: 2, background: 'var(--border-light)', padding: 2, borderRadius: 4 }}>
+          {canEdit && <div className="dash-cols nav-seg">
             {[6, 8, 12, 16, 24].map(cols => (
               <button
                 key={cols}
-                style={{
-                  padding: '3px 8px', fontSize: 11, fontWeight: 500,
-                  border: '1px solid transparent', borderRadius: 4,
-                  background: (dashboard?.settings?.grid_cols ?? 12) === cols ? 'var(--bg-card)' : 'none',
-                  color: (dashboard?.settings?.grid_cols ?? 12) === cols ? 'var(--text-primary)' : 'var(--text-secondary)',
-                  cursor: 'pointer',
-                }}
+                type="button"
+                aria-pressed={(dashboard?.settings?.grid_cols ?? 12) === cols}
                 onClick={async () => {
                   const oldCols = dashboard?.settings?.grid_cols ?? 12
                   await api.put(`/api/v1/dashboards/${id}`, {
@@ -518,9 +505,9 @@ function DashboardContent({ id }: { id: string }) {
 
           {canEdit && <div style={{ position: 'relative' }}>
             <select
+              className="nav-select"
               style={{
-                fontSize: 12, padding: '4px 24px 4px 8px', border: '1px solid var(--border)',
-                borderRadius: 4, background: 'var(--bg-input)', color: 'var(--text-secondary)',
+                fontSize: 12, padding: '4px 24px 4px 8px',
                 cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
               }}
               value={refreshCustom ? 'custom' : String(refreshSeconds)}
@@ -556,10 +543,8 @@ function DashboardContent({ id }: { id: string }) {
                 type="text"
                
                
-                style={{
-                  width: 72, fontSize: 12, padding: '4px 6px', border: '1px solid var(--border)',
-                  borderRadius: 4, background: 'var(--bg-input)', color: 'var(--text-secondary)',
-                }}
+                className="nav-input"
+                style={{ width: 72, fontSize: 12, padding: '4px 6px' }}
                 value={refreshSeconds}
                 onChange={e => {
                   const val = parseInt(e.target.value)
