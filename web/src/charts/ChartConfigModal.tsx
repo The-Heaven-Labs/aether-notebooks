@@ -5,6 +5,7 @@ import { X, Save } from 'lucide-react'
 import type { ChartConfig } from './types'
 import { CHART_MODULES } from './registry'
 import { ConfirmModal } from '../components/ConfirmModal'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 interface ChartConfigModalProps {
   config: ChartConfig
@@ -86,16 +87,9 @@ export function ChartConfigModal({ config, columns, data, groupValues, onSave, o
     setShowConfirm(false)
   }, [])
 
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        handleCancel()
-      }
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [handleCancel])
+  // Escape closes only the topmost overlay: pressing it here must not also
+  // close the widget drawer underneath.
+  useEscapeToClose(handleCancel)
 
   return createPortal(
     <>
@@ -172,7 +166,7 @@ function deepCloneConfig(cfg: ChartConfig): ChartConfig {
 const styles: Record<string, React.CSSProperties> = {
   overlay: {
     position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)',
-    zIndex: 1600, display: 'flex', alignItems: 'center', justifyContent: 'center',
+    zIndex: 1720, display: 'flex', alignItems: 'center', justifyContent: 'center',
     padding: 24,
   },
   modal: {

@@ -287,6 +287,8 @@ export interface Dashboard {
   updated_at: string
   widgets?: Widget[]
   can_view_with_data?: boolean
+  can_edit?: boolean
+  can_share?: boolean
   widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[]; metadata?: Record<string, unknown>; updated_at?: string }>
 }
 

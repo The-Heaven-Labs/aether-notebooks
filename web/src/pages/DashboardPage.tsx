@@ -30,6 +30,7 @@ interface NotebookWithCells extends Notebook {
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
   can_share?: boolean
+  can_edit?: boolean
 }
 
 // Widget type extended with input widget variants (config is typed loosely)
@@ -351,6 +352,9 @@ function DashboardContent({ id }: { id: string }) {
   }
 
   const widgets = (dashboard?.widgets ?? []) as AnyWidget[]
+  // Grid density and the refresh cadence are persisted dashboard settings, so
+  // they are edit actions — viewers don't get to restyle the shared board.
+  const canEdit = dashboard?.can_edit === true
   const autoRefreshSecs = dashboard?.settings?.auto_refresh_seconds ?? 0
   const PRESET_REFRESH = [0, 30, 60, 300, 600]
   const customRefreshText = refreshCustom && refreshSeconds > 0 ? ` — ${refreshSeconds}s` : ''
@@ -477,8 +481,8 @@ function DashboardContent({ id }: { id: string }) {
             </button>
           )}
 
-          {/* Column count selector */}
-          <div className="dash-cols" style={{ gap: 2, background: 'var(--border-light)', padding: 2, borderRadius: 4 }}>
+          {/* Column count selector (edit-permission only: it persists settings) */}
+          {canEdit && <div className="dash-cols" style={{ gap: 2, background: 'var(--border-light)', padding: 2, borderRadius: 4 }}>
             {[6, 8, 12, 16, 24].map(cols => (
               <button
                 key={cols}
@@ -500,9 +504,9 @@ function DashboardContent({ id }: { id: string }) {
                 {cols}
               </button>
             ))}
-          </div>
+          </div>}
 
-          <div style={{ position: 'relative' }}>
+          {canEdit && <div style={{ position: 'relative' }}>
             <select
               style={{
                 fontSize: 12, padding: '4px 24px 4px 8px', border: '1px solid var(--border)',
@@ -535,8 +539,8 @@ function DashboardContent({ id }: { id: string }) {
             <svg viewBox="0 0 10 6" width="10" height="6" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }}>
               <polyline points="1,1 5,5 9,1" />
             </svg>
-          </div>
-          {refreshCustom && (
+          </div>}
+          {canEdit && refreshCustom && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 4 }}>
               <input
                 type="text"

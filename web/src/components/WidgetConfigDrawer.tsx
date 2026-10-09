@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { X, Play, Loader2 } from 'lucide-react'
 import { api } from '../api/client'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
+import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
@@ -111,7 +112,10 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     // A definite height as a flex column: chart views fill their flex parent,
     // and without it the chart collapsed to 0px in this non-flex preview box.
+    // flexShrink keeps it from collapsing again on short viewports.
     height: 320,
+    flexShrink: 0,
+    minHeight: 240,
     display: 'flex',
     flexDirection: 'column',
     overflow: 'auto',
@@ -147,6 +151,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
 }) {
   const isQuery = !!widget.connector_id && !!widget.query
   const canRun = dashboard.can_view_with_data !== false
+  const { values } = useDashboardVariables()
   const [connectorId, setConnectorId] = useState<string | null>(widget.connector_id ?? null)
   const [query, setQuery] = useState(widget.query ?? '')
   const [widgetType, setWidgetType] = useState<Widget['type']>(widget.type)
@@ -214,6 +219,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     try {
       const resp = await api.post<WidgetQueryResult>(`/api/v1/dashboards/${dashboardId}/execute`, {
         widget_id: widget.id,
+        variables: values,
         bypass_cache: true,
       })
       setRunResult(resp)

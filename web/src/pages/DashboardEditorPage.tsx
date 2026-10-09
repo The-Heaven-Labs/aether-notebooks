@@ -2,6 +2,8 @@ import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
+import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
+import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -53,6 +55,13 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
 
 function isQueryWidget(w: Widget): boolean {
   return !!w.connector_id && !!w.query
+}
+
+/** Human name for a widget's controls; falls back to a generic label. */
+function widgetDisplayName(widget: Widget): string {
+  const cfg = widget.config as Record<string, unknown> | undefined
+  const t = typeof cfg?.title === 'string' ? cfg.title : typeof cfg?.label === 'string' ? cfg.label : ''
+  return t || 'widget'
 }
 
 function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
@@ -317,7 +326,10 @@ const markSaved = useCallback(() => {
   const widgets = dashboard.widgets ?? []
   const pickerCells = pickerNotebook?.cells ?? []
 
+  const variables = dashboard.settings?.variables ?? []
+
   return (
+    <DashboardVariablesProvider dashboardId={id!} variables={variables}>
     <AppShell noPadding>
       {/* Sub-header */}
       <header style={{ ...styles.subHeader, ...(isMobileLayout ? styles.subHeaderMobile : {}) }}>
@@ -562,58 +574,23 @@ const markSaved = useCallback(() => {
 
       {/* Main body */}
       <div style={styles.body}>
+        {variables.length > 0 && <DashboardVariableBar />}
         {widgets.length === 0 ? (
           <EmptyState
             title="No widgets yet"
             text="Add widgets to display notebook cell outputs in this dashboard."
             action={{ label: '+ Add Widget', onClick: () => setShowPicker(true) }}
           />
-        ) : isMobileLayout ? (
-          <div ref={gridRef} style={styles.mobileGrid}>
-            {dashboard.widgets?.map((widget: Widget) => (
-              <div key={widget.id} style={styles.mobileWidgetCard}>
-                <div className="dash-widget-head">
-                  <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
-                  <div className="dash-widget-head-actions">
-                    <button
-                      type="button"
-                      className="dash-widget-ctl"
-                      title="Remove widget"
-                      onClick={() => setDeleteWidgetTarget(widget.id)}
-                    >
-                      <X size={12} />
-                    </button>
-                  </div>
-                </div>
-                <div className="dash-widget-data">
-                  {isQueryWidget(widget) ? (
-                    <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
-                  ) : (
-                    <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
-                  )}
-                </div>
-              </div>
-            ))}
-          </div>
         ) : (
+          // One persistent measured wrapper: the mobile/desktop branch is
+          // chosen only after the width is known, otherwise the first render
+          // (width 0) mounts the mobile branch and the flip to desktop
+          // remounts every widget — doubling its query fetches.
           <div ref={gridRef} style={{ minHeight: 240 }}>
-            <GridLayout
-              layout={dashboard.widgets?.map(toGridItem) ?? []}
-              width={containerWidth}
-              gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
-              // Whole-card drag: any non-interactive part of the widget moves
-              // it. Buttons/links/fields and the chart canvas (tooltips,
-              // dataZoom) are excluded.
-              dragConfig={{ enabled: true, cancel: 'button, a, input, select, textarea, canvas, .react-resizable-handle' }}
-              resizeConfig={{ enabled: true }}
-              onResizeStop={onResizeStop}
-              onDragStop={onDragStop}
-              style={{ minHeight: 240 }}
-            >
-              {dashboard.widgets?.map((widget: Widget) => (
-                <div key={widget.id} style={{ position: 'relative' }}>
-                  <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
-                  <div className="dash-widget-card" style={styles.widgetCard}>
+            {containerWidth === 0 ? null : isMobileLayout ? (
+              <div style={styles.mobileGrid}>
+                {dashboard.widgets?.map((widget: Widget) => (
+                  <div key={widget.id} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
                       <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
                       <div className="dash-widget-head-actions">
@@ -621,6 +598,7 @@ const markSaved = useCallback(() => {
                           type="button"
                           className="dash-widget-ctl"
                           title="Edit widget"
+                          aria-label={`Edit ${widgetDisplayName(widget)}`}
                           onClick={() => setEditingWidget(widget)}
                         >
                           <Pencil size={11} />
@@ -629,6 +607,7 @@ const markSaved = useCallback(() => {
                           type="button"
                           className="dash-widget-ctl"
                           title="Remove widget"
+                          aria-label={`Remove ${widgetDisplayName(widget)}`}
                           onClick={() => setDeleteWidgetTarget(widget.id)}
                         >
                           <X size={12} />
@@ -643,9 +622,61 @@ const markSaved = useCallback(() => {
                       )}
                     </div>
                   </div>
-                </div>
-              ))}
-            </GridLayout>
+                ))}
+              </div>
+            ) : (
+              <GridLayout
+                layout={dashboard.widgets?.map(toGridItem) ?? []}
+                width={containerWidth}
+                gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
+                // Whole-card drag: any non-interactive part of the widget moves
+                // it. Buttons/links/fields and the chart canvas (tooltips,
+                // dataZoom) are excluded.
+                dragConfig={{ enabled: true, cancel: 'button, a, input, select, textarea, canvas, .react-resizable-handle' }}
+                resizeConfig={{ enabled: true }}
+                onResizeStop={onResizeStop}
+                onDragStop={onDragStop}
+                style={{ minHeight: 240 }}
+              >
+                {dashboard.widgets?.map((widget: Widget) => (
+                  <div key={widget.id} style={{ position: 'relative' }}>
+                    <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
+                    <div className="dash-widget-card" style={styles.widgetCard}>
+                      <div className="dash-widget-head">
+                        <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
+                        <div className="dash-widget-head-actions">
+                          <button
+                            type="button"
+                            className="dash-widget-ctl"
+                            title="Edit widget"
+                            aria-label={`Edit ${widgetDisplayName(widget)}`}
+                            onClick={() => setEditingWidget(widget)}
+                          >
+                            <Pencil size={11} />
+                          </button>
+                          <button
+                            type="button"
+                            className="dash-widget-ctl"
+                            title="Remove widget"
+                            aria-label={`Remove ${widgetDisplayName(widget)}`}
+                            onClick={() => setDeleteWidgetTarget(widget.id)}
+                          >
+                            <X size={12} />
+                          </button>
+                        </div>
+                      </div>
+                      <div className="dash-widget-data">
+                        {isQueryWidget(widget) ? (
+                          <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
+                        ) : (
+                          <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </GridLayout>
+            )}
           </div>
         )}
       </div>
@@ -694,6 +725,7 @@ const markSaved = useCallback(() => {
         />
       )}
     </AppShell>
+    </DashboardVariablesProvider>
   )
 }
 
