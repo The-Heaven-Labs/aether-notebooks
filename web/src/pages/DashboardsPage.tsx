@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard } from '../types'
@@ -9,7 +9,7 @@ import { Skeleton } from '../components/Skeleton'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormModal } from '../components/FormModal'
 import { RowAction } from '../components/RowActions'
-import { LayoutGrid, List, LayoutDashboard, Trash2 } from 'lucide-react'
+import { LayoutGrid, List, LayoutDashboard, Pencil, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 
 const fmtDate = (d: string) => {
@@ -24,6 +24,7 @@ const fmtDate = (d: string) => {
 export function DashboardsPage() {
   useEffect(() => { document.title = "Dashboards — Aether Notebooks" }, [])
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -116,13 +117,14 @@ export function DashboardsPage() {
               layout === 'grid'
                 ? (
                   <div key={d.id} style={styles.card} className="card-hover">
-                    <Link to={`/dashboards/${d.id}`} style={styles.cardLink}>
+                    <Link to={`/dashboards/${d.id}/view`} style={styles.cardLink}>
                       <div style={styles.cardIcon}><LayoutDashboard size={24} style={{ opacity: 0.4 }} /></div>
                       <div style={styles.cardTitle}>{d.title}</div>
                       <div style={styles.cardMeta}>Updated {fmtDate(d.updated_at)}</div>
                       {d.public_token && <div style={styles.publicBadge}>Public</div>}
                     </Link>
-                    <span style={styles.cardDelete}>
+                    <span style={styles.cardActions}>
+                      <RowAction label="Edit dashboard" title="Edit layout and widgets" accent icon={<Pencil size={13} />} onClick={() => navigate(`/dashboards/${d.id}`)} />
                       <RowAction label="Delete dashboard" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget(d)} />
                     </span>
                   </div>
@@ -146,9 +148,10 @@ export function DashboardsPage() {
 }
 
 function DashboardRow({ dashboard, onRequestDelete }: { dashboard: Dashboard; onRequestDelete: () => void }) {
+  const navigate = useNavigate()
   return (
     <div style={rowStyles.row} className="card-hover">
-      <Link to={`/dashboards/${dashboard.id}`} style={rowStyles.link}>
+      <Link to={`/dashboards/${dashboard.id}/view`} style={rowStyles.link}>
         <LayoutDashboard size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
         <div style={rowStyles.info}>
           <span style={rowStyles.title}>{dashboard.title}</span>
@@ -156,6 +159,7 @@ function DashboardRow({ dashboard, onRequestDelete }: { dashboard: Dashboard; on
         </div>
         <span style={rowStyles.date}>{fmtDate(dashboard.updated_at)}</span>
       </Link>
+      <RowAction label="Edit dashboard" title="Edit layout and widgets" accent icon={<Pencil size={13} />} onClick={() => navigate(`/dashboards/${dashboard.id}`)} />
       <RowAction label="Delete dashboard" icon={<Trash2 size={13} />} danger onClick={onRequestDelete} />
     </div>
   )
@@ -192,9 +196,11 @@ const styles: Record<string, React.CSSProperties> = {
   cardTitle: { fontSize: 15, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 },
   cardMeta: { fontSize: 12, color: 'var(--text-secondary)' },
   publicBadge: { marginTop: 8, display: 'inline-block', fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--text-secondary)', background: 'var(--accent-light)', padding: '2px 7px', borderRadius: 3 },
-  cardDelete: {
+  cardActions: {
     position: 'absolute',
     top: 10,
     right: 10,
+    display: 'flex',
+    gap: 4,
   },
 }

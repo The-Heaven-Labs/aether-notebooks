@@ -4,6 +4,7 @@ import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
+import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -389,9 +390,18 @@ const markSaved = useCallback(() => {
                   }}
                   onClick={async () => {
                     markSaving()
+                    const oldCols = dashboard?.settings?.grid_cols ?? 12
                     await api.put(`/api/v1/dashboards/${id}`, {
                       settings: { ...dashboard?.settings, grid_cols: c },
                     })
+                    if (oldCols !== c) {
+                      // Reflow layouts with the new column count so widgets
+                      // stay inside the grid instead of overflowing the canvas.
+                      const updates = rescaleWidgetLayouts(dashboard?.widgets ?? [], oldCols, c)
+                      await Promise.allSettled(
+                        updates.map(u => api.put(`/api/v1/dashboards/${id}/widgets/${u.id}`, { layout: u.layout })),
+                      )
+                    }
                     qc.invalidateQueries({ queryKey: ['dashboard', id] })
                     markSaved()
                   }}

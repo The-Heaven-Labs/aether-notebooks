@@ -16,6 +16,7 @@ const widget: Widget = {
   type: 'table',
   layout: { row: 0, col: 0, width: 6, height: 6 },
   config: {},
+  created_at: '2026-01-01T00:00:00Z',
 }
 
 function mockExecute(rows: unknown[][]) {

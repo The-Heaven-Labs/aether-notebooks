@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Play, Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
+import { ArrowLeft, Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
 import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -13,6 +13,7 @@ import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
+import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { useDashboardConnector } from '../hooks/useDashboardConnector'
@@ -123,7 +124,7 @@ function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, 
     return t || null
   })()
   const footerExtra = (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1 }}>
+    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flex: 1, minWidth: 0 }}>
       {onRun && (
         <button
           style={{
@@ -137,7 +138,7 @@ function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, 
           title={widgetLabel ? `Refresh ${widgetLabel}` : 'Refresh widget data'}
           aria-label={widgetLabel ? `Refresh ${widgetLabel}` : 'Refresh widget data'}
         >
-          {loading ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={10} />}
+          {loading ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={10} />}
         </button>
       )}
       {onEdit && (
@@ -156,7 +157,7 @@ function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, 
         </button>
       )}
       {updatedAt && (
-        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>
+        <span style={{ marginLeft: 'auto', fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>
           Executed at {formatExecutedAt(updatedAt)}
           {durationMs != null && <span> · {durationMs}ms</span>}
         </span>
@@ -494,9 +495,18 @@ function DashboardContent({ id }: { id: string }) {
                   cursor: 'pointer',
                 }}
                 onClick={async () => {
+                  const oldCols = dashboard?.settings?.grid_cols ?? 12
                   await api.put(`/api/v1/dashboards/${id}`, {
                     settings: { ...dashboard?.settings, grid_cols: cols },
                   })
+                  if (oldCols !== cols) {
+                    // Reflow widget layouts so nothing falls outside the new
+                    // grid (a bare column change used to push widgets off-view).
+                    const updates = rescaleWidgetLayouts(widgets as unknown as Widget[], oldCols, cols)
+                    await Promise.allSettled(
+                      updates.map(u => api.put(`/api/v1/dashboards/${id}/widgets/${u.id}`, { layout: u.layout })),
+                    )
+                  }
                   qc.invalidateQueries({ queryKey: ['dashboard', id] })
                 }}
                 title={`${cols} columns`}

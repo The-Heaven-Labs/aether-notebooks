@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Play, Loader2, RefreshCw, FilterX, BarChart3 } from 'lucide-react'
+import { Loader2, RefreshCw, FilterX, BarChart3 } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useDashboardVariables, isVariableDefault } from '../contexts/DashboardVariablesContext'
 import { useWidgetQuery } from '../hooks/useWidgetQuery'
@@ -33,6 +33,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 6,
     flex: 1,
+    minWidth: 0,
   },
   footerBtn: {
     display: 'inline-flex',
@@ -52,6 +53,9 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 11,
     color: 'var(--text-muted)',
     whiteSpace: 'nowrap',
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
   },
   // Compact version of the product's empty-state pattern for widget-sized space.
   zero: {
@@ -273,7 +277,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
         title={widgetTitle ? `Refresh ${widgetTitle}` : 'Refresh widget data'}
         aria-label={widgetTitle ? `Refresh ${widgetTitle}` : 'Refresh widget data'}
       >
-        {isFetching ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={10} />}
+        {isFetching ? <Loader2 size={10} style={{ animation: 'spin 1s linear infinite' }} /> : <RefreshCw size={10} />}
       </button>
       {fetchedAt && (
         <span style={styles.footerText}>
