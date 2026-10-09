@@ -356,7 +356,7 @@ describe('AgentPanel context-first token meter', () => {
     await renderPanel()
     fireEvent.click(await screen.findByText(/↑/))
     expect(screen.getByText('Input (cumulative)')).toBeInTheDocument()
-    expect(screen.getByText(/compacts at 70%/)).toBeInTheDocument()
+    expect(await screen.findByText(/compacts at 70%/)).toBeInTheDocument()
   })
 
   it('shows auto-compact off when the threshold is zero', async () => {
@@ -374,7 +374,7 @@ describe('AgentPanel context-first token meter', () => {
     seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
     await renderPanel()
     fireEvent.click(await screen.findByText(/↑/))
-    expect(screen.getByText(/auto-compact off/)).toBeInTheDocument()
+    expect(await screen.findByText(/auto-compact off/)).toBeInTheDocument()
   })
 
   it('shows the compaction count and latest recovery from synced messages', async () => {
@@ -390,5 +390,29 @@ describe('AgentPanel context-first token meter', () => {
     })
     fireEvent.click(await screen.findByText(/↑/))
     expect(screen.getByText(/Compacted 2× · last: 1\.2k → ~400/)).toBeInTheDocument()
+  })
+
+  it('keeps the one-liner when only hasCompacted is known', async () => {
+    seedSession({
+      ...savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000),
+      hasCompacted: true,
+    })
+    await renderPanel()
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(await screen.findByText(/context was summarized/)).toBeInTheDocument()
+  })
+
+  it('shows the count without a last-range when the latest row has no counts', async () => {
+    seedSession(savedStateWithTokens(baseTokens({ input: 100, output: 10, context_current: 500 }), 1000))
+    const ws = await renderPanel()
+    emit(ws, {
+      type: 'reconnect_sync',
+      messages: [
+        { id: 'm1', role: 'compaction', content: 's1', tokens_direct: 1200, created_at: '2026-09-14T00:02:00Z' },
+      ],
+    })
+    fireEvent.click(await screen.findByText(/↑/))
+    expect(await screen.findByText('⚙ Compacted 1×')).toBeInTheDocument()
+    expect(screen.queryByText(/· last:/)).toBeNull()
   })
 })
