@@ -390,6 +390,16 @@ definitions:
         type: string
       is_default:
         type: boolean
+      last_error:
+        type: string
+      last_failure_at:
+        type: string
+      last_success_at:
+        description: |-
+          Connector health timeline (D6): status is derived by comparing
+          last_failure_at with last_success_at; last_error carries the most recent
+          connection-level failure message.
+        type: string
       max_rows:
         type: integer
       name:
@@ -2441,6 +2451,43 @@ paths:
       security:
       - BearerAuth: []
       summary: Update a connector
+      tags:
+      - connectors
+  /connectors/{id}/cloud-state:
+    get:
+      description: 'Returns the ClickHouse Cloud control-plane state for a ClickHouse
+        connector with Cloud API credentials. Non-ClickHouse connectors and connectors
+        without credentials return 200 with {"configured": false}; upstream failures
+        return 200 with an error field. Reading state never wakes an idle service.'
+      parameters:
+      - description: Connector ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Get ClickHouse Cloud service state
       tags:
       - connectors
   /connectors/{id}/databases:
@@ -6833,7 +6880,9 @@ paths:
     post:
       consumes:
       - application/json
-      description: Create a table grant for a user, group, or everyone in a warehouse.
+      description: Create a table grant for a user, group, everyone, or pending_user
+        in a warehouse. A pending_user subject is an email staged for a not-yet-registered
+        person; an email that already belongs to an org member becomes a user grant.
         Replayed duplicates are idempotent and return the existing grant.
       parameters:
       - description: Warehouse ID

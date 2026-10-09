@@ -395,14 +395,15 @@ func (s *Server) mcpToolContext(claims *auth.Claims, r *http.Request) *agent.Too
 		BroadcastFunc: func(notebookID string, msg interface{}) {
 			s.hub.Broadcast(notebookID, msg)
 		},
-		SetRunningFunc:      s.hub.SetRunning,
-		UnsetRunningFunc:    s.hub.UnsetRunning,
-		SetCancelFunc:       s.hub.SetCancelFunc,
-		DeleteCancelFunc:    s.hub.DeleteCancelFunc,
-		ResolveTarget:       s.resolveExecutionTarget,
-		ConnPool:            s.connPool,
-		CheckPermissionFunc: s.checkPermission,
-		QueryTimeoutCeiling: s.mcpSQLTimeout,
+		SetRunningFunc:          s.hub.SetRunning,
+		UnsetRunningFunc:        s.hub.UnsetRunning,
+		SetCancelFunc:           s.hub.SetCancelFunc,
+		DeleteCancelFunc:        s.hub.DeleteCancelFunc,
+		ResolveTarget:           s.resolveExecutionTarget,
+		ConnPool:                s.connPool,
+		CheckPermissionFunc:     s.checkPermission,
+		RecordConnectorActivity: s.recordConnectorActivity,
+		QueryTimeoutCeiling:     s.mcpSQLTimeout,
 	}
 }
 

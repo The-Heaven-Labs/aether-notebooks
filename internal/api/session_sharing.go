@@ -54,11 +54,40 @@ func writeSessionShareError(w http.ResponseWriter, err error) {
 // Duplicate subjects collapse, and entries naming the owner are dropped because
 // the owner entry already carries full access.
 //
+// pending_user entries name someone who is not a member yet: the email is
+// validated and lowercased here (the same canonical form every pending table
+// uses) and staged in pending_acl_entries at insert time. An email that already
+// belongs to an org member is converted to a real user share instead — a
+// staged row for a member could never materialize (they have already joined),
+// mirroring handlePutACL's conversion. The read-only rule applies unchanged, so
+// a staged session share can only ever materialize as view.
+//
 // Invalid input wraps errInvalidSessionShare; database failures are wrapped
 // without it so writeSessionShareError can map them to 500.
 func (s *Server) normalizeSessionShareEntries(ctx context.Context, q shareQueryer, userID, orgID string, entries []aclEntryInput) ([]aclEntryInput, error) {
 	if len(entries) > maxSessionShares {
 		return nil, fmt.Errorf("%w: at most %d shares are allowed", errInvalidSessionShare, maxSessionShares)
+	}
+
+	// Resolve pending emails that already belong to org members up front so the
+	// conversion below participates in the main pass's owner-drop and
+	// duplicate-collapse logic. Invalid emails are skipped here and rejected by
+	// the main pass.
+	pendingEmails := make([]string, 0, len(entries))
+	for _, e := range entries {
+		if e.SubjectType == "pending_user" {
+			if email, ok := normalizePendingEmail(e.SubjectID); ok {
+				pendingEmails = append(pendingEmails, email)
+			}
+		}
+	}
+	var memberByEmail map[string]string
+	if len(pendingEmails) > 0 {
+		var err error
+		memberByEmail, err = s.lookupPendingShareMembers(ctx, q, orgID, pendingEmails)
+		if err != nil {
+			return nil, fmt.Errorf("validate pending share emails: %w", err)
+		}
 	}
 
 	normalized := make([]aclEntryInput, 0, len(entries))
@@ -80,6 +109,25 @@ func (s *Server) normalizeSessionShareEntries(ctx context.Context, q shareQuerye
 				return nil, fmt.Errorf("%w: invalid share group", errInvalidSessionShare)
 			}
 			groupIDs = append(groupIDs, e.SubjectID)
+		case "pending_user":
+			// Not a member yet: validate the email here and stage the share in
+			// pending_acl_entries at insert time. Read-only applies unchanged.
+			// An email that already belongs to an org member converts to a real
+			// user share: a staged row for a member could never materialize.
+			email, ok := normalizePendingEmail(e.SubjectID)
+			if !ok {
+				return nil, fmt.Errorf("%w: invalid share email", errInvalidSessionShare)
+			}
+			if memberID, isMember := memberByEmail[email]; isMember {
+				if memberID == userID {
+					continue
+				}
+				e.SubjectType = "user"
+				e.SubjectID = memberID
+				userIDs = append(userIDs, memberID)
+			} else {
+				e.SubjectID = email
+			}
 		case "org_role":
 			if e.SubjectID != "everyone" {
 				return nil, fmt.Errorf(`%w: org_role shares must use subject_id "everyone"`, errInvalidSessionShare)
@@ -161,12 +209,53 @@ func (s *Server) lookupShareSubjectIDs(ctx context.Context, q shareQueryer, quer
 	return found, rows.Err()
 }
 
-// insertSessionACLEntries inserts one agent_session ACL row per normalized share
-// through tx. ON CONFLICT DO NOTHING preserves any pre-existing row — in
-// particular the owner's full-access entry, so a share naming the owner can
-// never downgrade it.
-func insertSessionACLEntries(ctx context.Context, tx pgx.Tx, orgID, sessionID string, shares []aclEntryInput) error {
+// lookupPendingShareMembers resolves pending share emails that already belong
+// to org members to their user IDs, keyed by lowercased email. Emails without
+// an account in this org are absent from the result and stay staged, mirroring
+// the design's cross-org rule (they materialize only if and when they join).
+// Query errors are returned unwrapped so callers can classify them.
+func (s *Server) lookupPendingShareMembers(ctx context.Context, q shareQueryer, orgID string, emails []string) (map[string]string, error) {
+	rows, err := q.Query(ctx, `
+		SELECT lower(u.email), u.id
+		FROM users u
+		JOIN org_members om ON om.user_id = u.id AND om.org_id = $1
+		WHERE lower(u.email) = ANY($2::text[])
+	`, orgID, emails)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	found := make(map[string]string, len(emails))
+	for rows.Next() {
+		var email, id string
+		if err := rows.Scan(&email, &id); err != nil {
+			return nil, err
+		}
+		found[email] = id
+	}
+	return found, rows.Err()
+}
+
+// insertSessionACLEntries inserts one agent_session ACL row per normalized
+// share through tx. pending_user shares are staged in pending_acl_entries
+// instead, keyed by lowercased email, and materialize as view-only rows when
+// the person first joins. ON CONFLICT DO NOTHING preserves any pre-existing
+// real row — in particular the owner's full-access entry, so a share naming
+// the owner can never downgrade it.
+func insertSessionACLEntries(ctx context.Context, tx pgx.Tx, orgID, sessionID, createdBy string, shares []aclEntryInput) error {
 	for _, share := range shares {
+		if share.SubjectType == "pending_user" {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO pending_acl_entries (org_id, resource_type, resource_id, email, actions, created_by)
+				VALUES ($1, 'agent_session', $2::uuid, $3, $4, $5)
+				ON CONFLICT (resource_type, resource_id, lower(email)) DO UPDATE
+				SET actions = (SELECT ARRAY(SELECT DISTINCT unnest(pending_acl_entries.actions || EXCLUDED.actions)))
+			`, orgID, sessionID, share.SubjectID, share.Actions, createdBy); err != nil {
+				return fmt.Errorf("insert pending session share: %w", err)
+			}
+			continue
+		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 			VALUES ($1, 'agent_session', $2::uuid, $3, $4, $5)

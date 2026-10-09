@@ -306,3 +306,106 @@ describe('NewTablesInbox', () => {
     await waitFor(() => expect(validationCalls).toBeGreaterThanOrEqual(2))
   })
 })
+
+describe('pending grants', () => {
+  test('stages a pending grant from the inbox email input', async () => {
+    let posted: Record<string, unknown> | null = null
+    server.use(
+      http.post('/api/v1/warehouses/wh-1/grants', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(
+          {
+            id: 'gr-pending', org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: 'pending_user', subject_id: 'future@example.com',
+            subject_email: 'future@example.com', database: 'analytics', table: 'events',
+            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+          },
+          { status: 201 },
+        )
+      }),
+    )
+    renderInbox()
+    await screen.findByText('analytics.events')
+
+    fireEvent.change(screen.getByLabelText('Pending email for analytics.events'), {
+      target: { value: 'Future@Example.com' },
+    })
+    fireEvent.click(screen.getByLabelText('Add grant for future@example.com'))
+
+    await waitFor(() =>
+      expect(posted).toEqual({
+        subject_type: 'pending_user',
+        subject_id: 'future@example.com',
+        database: 'analytics',
+        table: 'events',
+      }),
+    )
+    await waitFor(() =>
+      expect(screen.getByLabelText('Pending email for analytics.events')).toHaveValue(''),
+    )
+  })
+
+  test('marks a table with only a staged grant as pending, not granted', async () => {
+    server.use(
+      http.get('/api/v1/warehouses/wh-1/grants', () =>
+        HttpResponse.json([
+          {
+            id: 'gr-pending', org_id: 'org-1', warehouse_id: 'wh-1',
+            subject_type: 'pending_user', subject_id: 'future@example.com',
+            subject_email: 'future@example.com', database: 'analytics', table: 'events',
+            created_by: 'user-1', created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+    )
+    renderInbox()
+    expect(await screen.findByText('analytics.events')).toBeInTheDocument()
+    expect(screen.getAllByText(/pending — awaiting first login/i).length).toBeGreaterThan(0)
+    expect(screen.queryByText('already granted')).toBeNull()
+  })
+
+  test('disables the subject select and names the recipient when a pending email is set', async () => {
+    renderInbox()
+    await screen.findByText('analytics.events')
+
+    fireEvent.change(screen.getByLabelText('Subject for analytics.events'), {
+      target: { value: 'group:g-1' },
+    })
+    fireEvent.change(screen.getByLabelText('Pending email for analytics.events'), {
+      target: { value: 'Future@Example.com' },
+    })
+
+    const select = screen.getByLabelText('Subject for analytics.events')
+    expect(select).toBeDisabled()
+    expect(select).toHaveAttribute('title', 'Granting to future@example.com')
+    expect(screen.getByLabelText('Add grant for future@example.com')).toHaveAttribute(
+      'title',
+      'Granting to future@example.com',
+    )
+    // Other rows keep their subject select.
+    expect(screen.getByLabelText('Subject for raw.clicks')).not.toBeDisabled()
+
+    // Clearing the email restores subject mode.
+    fireEvent.change(screen.getByLabelText('Pending email for analytics.events'), {
+      target: { value: '' },
+    })
+    expect(screen.getByLabelText('Subject for analytics.events')).not.toBeDisabled()
+    expect(screen.getByLabelText('Add grant for analytics.events')).toBeInTheDocument()
+  })
+
+  test('disables add and warns when the pending email is invalid', async () => {
+    renderInbox()
+    await screen.findByText('analytics.events')
+
+    fireEvent.change(screen.getByLabelText('Subject for analytics.events'), {
+      target: { value: 'everyone:everyone' },
+    })
+    fireEvent.change(screen.getByLabelText('Pending email for analytics.events'), {
+      target: { value: 'not-an-email' },
+    })
+
+    expect(screen.getByText('Not a valid email')).toBeInTheDocument()
+    expect(screen.getByLabelText('Add grant for analytics.events')).toBeDisabled()
+    expect(screen.getByLabelText('Subject for analytics.events')).not.toBeDisabled()
+  })
+})

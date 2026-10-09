@@ -7,6 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { storybookTest } from '@storybook/addon-vitest/vitest-plugin';
 import { playwright } from '@vitest/browser-playwright';
 const dirname = typeof __dirname !== 'undefined' ? __dirname : path.dirname(fileURLToPath(import.meta.url));
+// The dev proxy follows API_URL so a worktree-local API (or any non-default
+// target) can be used; the default stays the docker dev API on :8088.
+const apiTarget = process.env.API_URL ?? 'http://localhost:8088';
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -27,10 +30,10 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      '/api': { target: 'http://localhost:8088', changeOrigin: true, ws: true },
-      '/internal': { target: 'http://localhost:8088', changeOrigin: true },
-      '/docs': { target: 'http://localhost:8088', changeOrigin: true },
-      '/swagger.json': { target: 'http://localhost:8088', changeOrigin: true },
+      '/api': { target: apiTarget, changeOrigin: true, ws: true },
+      '/internal': { target: apiTarget, changeOrigin: true },
+      '/docs': { target: apiTarget, changeOrigin: true },
+      '/swagger.json': { target: apiTarget, changeOrigin: true },
     }
   },
   optimizeDeps: {

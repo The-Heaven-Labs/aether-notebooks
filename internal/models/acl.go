@@ -13,4 +13,7 @@ type ACLEntry struct {
 	SubjectID    string    `json:"subject_id"`
 	Actions      []string  `json:"actions"`
 	CreatedAt    time.Time `json:"created_at"`
+	// Pending is true on synthesized rows returned for staged pending_user
+	// subjects; it is never stored on acl_entries.
+	Pending bool `json:"pending,omitempty"`
 }

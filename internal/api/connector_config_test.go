@@ -118,3 +118,29 @@ func TestSecretFieldSetIncludesFallbackAlongsideDeclared(t *testing.T) {
 		t.Fatalf("expected union of declared and fallback secrets, got %v", keys)
 	}
 }
+
+func TestSecretFieldSetIncludesClickHouseCloudKey(t *testing.T) {
+	keys := secretFieldSet(models.ConnectorClickHouse)
+	if !keys["cloud_key_secret"] {
+		t.Fatalf("expected cloud_key_secret in secret field set, got %v", keys)
+	}
+}
+
+func TestMaskedConnectorConfigClickHouseCloudSecret(t *testing.T) {
+	s := &Server{masterKey: []byte("0123456789abcdef0123456789abcdef")}
+	enc, err := crypto.Encrypt([]byte(`{"host":"abc.clickhouse.cloud","cloud_org_id":"org-1","cloud_service_id":"svc-1","cloud_key_id":"key-1","cloud_key_secret":"super-secret"}`), s.masterKey)
+	if err != nil {
+		t.Fatalf("encrypt: %v", err)
+	}
+	out := s.maskedConnectorConfig(models.ConnectorClickHouse, enc)
+	var cfg map[string]any
+	if err := json.Unmarshal(out, &cfg); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if cfg["cloud_key_secret"] != "***" {
+		t.Fatalf("expected masked cloud_key_secret, got %v", cfg["cloud_key_secret"])
+	}
+	if cfg["cloud_org_id"] != "org-1" || cfg["cloud_key_id"] != "key-1" {
+		t.Fatalf("expected non-secret Cloud fields preserved, got %v", cfg)
+	}
+}

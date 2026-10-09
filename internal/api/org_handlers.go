@@ -300,6 +300,7 @@ func (s *Server) handleOrgJoin(w http.ResponseWriter, r *http.Request) {
 	var joinUserEmail string
 	joinTx.QueryRow(ctx, `SELECT email FROM users WHERE id = $1`, claims.UserID).Scan(&joinUserEmail)
 	s.applyPendingGroups(ctx, joinTx, orgID, claims.UserID, joinUserEmail)
+	s.applyPendingAccess(ctx, joinTx, orgID, claims.UserID, joinUserEmail)
 
 	if err := joinTx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit")

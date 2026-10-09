@@ -82,6 +82,7 @@ func openAgentExecutor(tc *ToolContext, connType models.ConnectorType, connector
 			}
 			conn, release, err := tc.ConnPool.Get(target.Endpoint, target.CHUser, target.Config)
 			if err != nil {
+				tc.RecordConnectorFailure(connectorID, err)
 				return nil, nil, fmt.Errorf("connect to warehouse for connector %s: %w", connectorID, err)
 			}
 			return executor.NewPooledClickHouseExecutor(conn, release), target, nil
@@ -111,6 +112,7 @@ func openAgentExecutor(tc *ToolContext, connType models.ConnectorType, connector
 	}
 	exec, err := driver.NewExecutor(plain)
 	if err != nil {
+		tc.RecordConnectorFailure(connectorID, err)
 		return nil, nil, fmt.Errorf("connect: %w", err)
 	}
 	return exec, nil, nil

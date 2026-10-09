@@ -714,14 +714,18 @@ func (h *agentHandlers) handleCreateSession(w http.ResponseWriter, r *http.Reque
 		Action: "agent_session.create", ResourceType: "agent_session", ResourceID: sessionID,
 	})
 	for _, share := range shares {
+		metadata := map[string]any{
+			"subject_type": share.SubjectType,
+			"subject_id":   share.SubjectID,
+			"actions":      share.Actions,
+		}
+		if share.SubjectType == "pending_user" {
+			metadata["pending"] = true
+		}
 		h.server.audit.Log(ctx, audit.Entry{
 			OrgID: claims.OrgID, UserID: claims.UserID,
 			Action: "acl.granted", ResourceType: "agent_session", ResourceID: sessionID,
-			Metadata: map[string]any{
-				"subject_type": share.SubjectType,
-				"subject_id":   share.SubjectID,
-				"actions":      share.Actions,
-			},
+			Metadata: metadata,
 		})
 	}
 
@@ -750,9 +754,11 @@ type createSessionParams struct {
 
 // createSessionWithSharing persists the session, its owner ACL entry, and the
 // share entries in one transaction. The caller's empty sessions for the same
-// agent and notebook — and their agent_session ACL rows — are swept first, so
-// deleting sessions never leaves orphaned ACLs behind. agent_sessions is
-// locked before acl_entries to match the V124 migration's lock order.
+// agent and notebook — and their agent_session ACL rows, staged pending rows
+// included — are swept first, so deleting sessions never leaves orphaned ACLs
+// behind. agent_sessions is locked before the ACL tables, and staged rows are
+// deleted before real ones, matching the V124 migration's and materialization's
+// lock order.
 func (h *agentHandlers) createSessionWithSharing(ctx context.Context, sessionID string, p createSessionParams) error {
 	tx, err := h.server.db.Pool.Begin(ctx)
 	if err != nil {
@@ -786,6 +792,17 @@ func (h *agentHandlers) createSessionWithSharing(ctx context.Context, sessionID 
 	sweptRows.Close()
 
 	if len(sweptIDs) > 0 {
+		// Delete staged rows before real ones: materialization
+		// (applyPendingACL's single statement) locks pending_acl_entries before
+		// acl_entries, and the sweep above already holds the agent_sessions
+		// locks, so this path takes locks in the same order
+		// (agent_sessions -> pending -> real) and cannot deadlock with a
+		// concurrent join materializing a swept email.
+		if _, err := tx.Exec(ctx,
+			`DELETE FROM pending_acl_entries WHERE resource_type = 'agent_session' AND resource_id = ANY($1)`,
+			sweptIDs); err != nil {
+			return fmt.Errorf("delete swept session pending ACLs: %w", err)
+		}
 		if _, err := tx.Exec(ctx,
 			`DELETE FROM acl_entries WHERE resource_type = 'agent_session' AND resource_id = ANY($1)`,
 			sweptIDs); err != nil {
@@ -810,7 +827,7 @@ func (h *agentHandlers) createSessionWithSharing(ctx context.Context, sessionID 
 		return fmt.Errorf("seed session owner ACL: %w", err)
 	}
 
-	if err := insertSessionACLEntries(ctx, tx, p.OrgID, sessionID, p.Shares); err != nil {
+	if err := insertSessionACLEntries(ctx, tx, p.OrgID, sessionID, p.UserID, p.Shares); err != nil {
 		return err
 	}
 

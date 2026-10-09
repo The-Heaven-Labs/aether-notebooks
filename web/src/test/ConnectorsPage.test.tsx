@@ -346,4 +346,371 @@ describe('ConnectorsPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(newButton).toHaveFocus()
   })
+
+  test('does not probe connectors on mount (zero /test requests)', async () => {
+    const testSpy = vi.fn()
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(mockConnectors)),
+      http.post('/api/v1/connectors/:id/test', () => {
+        testSpy()
+        return HttpResponse.json({ ok: true })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('Prod DB')
+    await screen.findByText('Staging DB')
+    // Give any buggy effect a beat to fire before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(testSpy).not.toHaveBeenCalled()
+  })
+
+  test('renders the persisted health status without probing', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-failed', name: 'Broken DB', type: 'postgres', config: {}, created_at: '2026-10-08T08:00:00Z',
+            last_success_at: '2026-10-08T08:00:00Z',
+            last_failure_at: '2026-10-08T09:00:00Z',
+            last_error: 'dial tcp 10.0.0.5:5432: connection refused',
+          },
+          {
+            id: 'c-recovered', name: 'Recovered DB', type: 'postgres', config: {}, created_at: '2026-10-08T08:00:00Z',
+            last_success_at: '2026-10-08T10:00:00Z',
+            last_failure_at: '2026-10-08T09:00:00Z',
+          },
+          {
+            id: 'c-new', name: 'Fresh DB', type: 'postgres', config: {}, created_at: '2026-10-08T08:00:00Z',
+          },
+        ]),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+
+    const failed = await screen.findByText(/^Failed · /)
+    expect(failed).toHaveAttribute('title', 'dial tcp 10.0.0.5:5432: connection refused')
+    expect(await screen.findByText(/^Connected · used /)).toBeInTheDocument()
+    expect(screen.getByText('Never used — click Test')).toBeInTheDocument()
+  })
+
+  test('manual Test refreshes the persisted status', async () => {
+    let connectors: Record<string, unknown>[] = [
+      { id: 'c-1', name: 'Prod DB', type: 'postgres', config: {}, created_at: '2026-10-08T08:00:00Z' },
+    ]
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(connectors)),
+      http.post('/api/v1/connectors/c-1/test', () => {
+        connectors = [{ ...connectors[0], last_success_at: new Date().toISOString() }]
+        return HttpResponse.json({ ok: true })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('Never used — click Test')
+
+    fireEvent.click(screen.getByLabelText('Test connection'))
+    expect(screen.getByText('Testing…')).toBeInTheDocument()
+    expect(await screen.findByText(/^Connected · used /)).toBeInTheDocument()
+  })
+
+  test('creates a ClickHouse connector with idle timeout and Cloud API config (CH-CLOUD-1)', async () => {
+    let postBody: { config?: Record<string, unknown> } | null = null
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([])),
+      http.post('/api/v1/connectors', async ({ request }) => {
+        postBody = (await request.json()) as { config?: Record<string, unknown> }
+        return HttpResponse.json(
+          { id: 'c-ch', name: 'CH', type: 'clickhouse', config: {}, created_at: '2026-01-01T00:00:00Z' },
+          { status: 201 },
+        )
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByText('+ New Connector'))
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'CH' } })
+    fireEvent.change(screen.getByLabelText('Type'), { target: { value: 'clickhouse' } })
+    fireEvent.change(screen.getByLabelText('Host'), { target: { value: 'abc.clickhouse.cloud' } })
+    fireEvent.change(screen.getByLabelText('Idle timeout (minutes)'), { target: { value: '30' } })
+    fireEvent.change(screen.getByLabelText('Organization ID'), { target: { value: 'org-1' } })
+    fireEvent.change(screen.getByLabelText('Service ID'), { target: { value: 'svc-1' } })
+    fireEvent.change(screen.getByLabelText('Key ID'), { target: { value: 'key-1' } })
+    fireEvent.change(screen.getByLabelText('Key Secret'), { target: { value: 'super-secret' } })
+    fireEvent.click(screen.getByText('Create'))
+
+    await waitFor(() =>
+      expect(postBody?.config).toEqual({
+        host: 'abc.clickhouse.cloud',
+        port: 9000,
+        database: '',
+        user: '',
+        ssl_mode: 'disable',
+        idle_timeout_minutes: 30,
+        cloud_org_id: 'org-1',
+        cloud_service_id: 'svc-1',
+        cloud_key_id: 'key-1',
+        cloud_key_secret: 'super-secret',
+        password: '',
+      }),
+    )
+  })
+
+  test('editing ClickHouse keeps the stored Cloud key secret when left blank (CH-CLOUD-2)', async () => {
+    let putBody: { config?: Record<string, unknown> } | null = null
+    const stored = {
+      id: 'c-ch-edit', name: 'CH Edit', type: 'clickhouse', is_default: false,
+      config: {
+        host: 'abc.clickhouse.cloud', port: 8443, database: '', user: 'default',
+        ssl_mode: 'require', idle_timeout_minutes: 15,
+        cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+        cloud_key_id: 'key-1', cloud_key_secret: '***',
+      },
+      created_at: '2026-01-01T00:00:00Z',
+    }
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([stored])),
+      http.get('/api/v1/connectors/:id/cloud-state', () =>
+        HttpResponse.json({ configured: true, state: 'running', checked_at: new Date().toISOString() }),
+      ),
+      http.put('/api/v1/connectors/c-ch-edit', async ({ request }) => {
+        putBody = (await request.json()) as { config?: Record<string, unknown> }
+        return HttpResponse.json({ ...stored, config: { ...stored.config, idle_timeout_minutes: 45 } })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    fireEvent.click(await screen.findByLabelText('Edit connector'))
+    // The stored secret comes back masked and must never be pre-filled.
+    expect((screen.getByLabelText(/Key Secret/) as HTMLInputElement).value).toBe('')
+    fireEvent.change(screen.getByLabelText('Idle timeout (minutes)'), { target: { value: '45' } })
+    fireEvent.click(screen.getByText('Save'))
+
+    await waitFor(() => expect(putBody).not.toBeNull())
+    expect(putBody!.config).toMatchObject({
+      idle_timeout_minutes: 45,
+      cloud_org_id: 'org-1',
+      cloud_service_id: 'svc-1',
+      cloud_key_id: 'key-1',
+    })
+    expect(putBody!.config).not.toHaveProperty('cloud_key_secret')
+  })
+
+  test('renders the exact Cloud state chip for a configured ClickHouse connector (CH-CLOUD-3)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-idle', name: 'CH Idle', type: 'clickhouse', is_default: false,
+            config: {
+              host: 'abc.clickhouse.cloud',
+              cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+              cloud_key_id: 'key-1', cloud_key_secret: '***',
+            },
+            last_success_at: '2026-01-01T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () =>
+        HttpResponse.json({
+          configured: true, state: 'idle', idle_scaling: true,
+          idle_timeout_minutes: 15, checked_at: new Date().toISOString(),
+        }),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    expect(await screen.findByText('Idle — wakes on next query')).toBeInTheDocument()
+    // The exact chip wins over inference: no "likely idle" copy.
+    expect(screen.queryByText(/Likely idle/)).toBeNull()
+  })
+
+  test('shows a muted unavailable chip when Cloud state fails (CH-CLOUD-4)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-err', name: 'CH Err', type: 'clickhouse', is_default: false,
+            config: {
+              host: 'abc.clickhouse.cloud',
+              cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+              cloud_key_id: 'key-1', cloud_key_secret: '***',
+            },
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () =>
+        HttpResponse.json({ configured: true, error: 'clickhouse cloud API returned HTTP 403' }),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    const chip = await screen.findByText('Cloud state unavailable')
+    expect(chip).toHaveAttribute('title', 'clickhouse cloud API returned HTTP 403')
+  })
+
+  test('infers likely idle for an unconfigured ClickHouse Cloud host (CH-CLOUD-5)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-infer', name: 'CH Infer', type: 'clickhouse', is_default: false,
+            config: { host: 'abc.clickhouse.cloud', idle_timeout_minutes: 15 },
+            last_success_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => HttpResponse.json({ configured: false })),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    expect(await screen.findByText(/Likely idle — last activity .* ago \(idle timeout 15m\)/)).toBeInTheDocument()
+  })
+
+  test('shows idle state unknown for a never-used unconfigured ClickHouse Cloud host (CH-CLOUD-6)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-new', name: 'CH New', type: 'clickhouse', is_default: false,
+            config: { host: 'abc.clickhouse.cloud' },
+            last_success_at: null,
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => HttpResponse.json({ configured: false })),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    expect(await screen.findByText('Idle state unknown')).toBeInTheDocument()
+  })
+
+  test('renders no idle inference for non-Cloud ClickHouse hosts (CH-CLOUD-7)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-self', name: 'CH Self-hosted', type: 'clickhouse', is_default: false,
+            config: { host: 'ch.internal.example.com' },
+            last_success_at: '2020-01-01T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => HttpResponse.json({ configured: false })),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('CH Self-hosted')
+    expect(screen.queryByText(/Likely idle|Idle state unknown|Active recently/)).toBeNull()
+  })
+
+  test('shows neither chip nor inference while a configured Cloud state is pending (CH-CLOUD-8)', async () => {
+    let release: () => void = () => {}
+    const parked = new Promise<void>((resolve) => { release = resolve })
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-pending', name: 'CH Pending', type: 'clickhouse', is_default: false,
+            config: {
+              host: 'abc.clickhouse.cloud',
+              cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+              cloud_key_id: 'key-1', cloud_key_secret: '***',
+            },
+            // Ancient activity: an inference line would say "Likely idle" if the
+            // pending exact state did not suppress it.
+            last_success_at: '2020-01-01T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', async () => {
+        await parked
+        return HttpResponse.json({
+          configured: true, state: 'running', checked_at: new Date().toISOString(),
+        })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('CH Pending')
+    // Give a buggy inference render a beat to appear before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(screen.queryByText(/Likely idle|Idle state unknown|Active recently/)).toBeNull()
+    expect(screen.queryByText('Running')).toBeNull()
+
+    // Releasing the parked response lets the exact chip replace the blank line.
+    release()
+    expect(await screen.findByText('Running')).toBeInTheDocument()
+  })
+
+  test('shows the unavailable chip when the Cloud state request itself fails (CH-CLOUD-9)', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-reject', name: 'CH Reject', type: 'clickhouse', is_default: false,
+            config: {
+              host: 'abc.clickhouse.cloud',
+              cloud_org_id: 'org-1', cloud_service_id: 'svc-1',
+              cloud_key_id: 'key-1', cloud_key_secret: '***',
+            },
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () =>
+        HttpResponse.json({ error: 'boom' }, { status: 500 }),
+      ),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    const chip = await screen.findByText('Cloud state unavailable')
+    expect(chip).toHaveAttribute('title', 'Could not load Cloud state from Aether')
+  })
+
+  test('makes no Cloud state request for a self-hosted ClickHouse connector (CH-CLOUD-10)', async () => {
+    const cloudStateSpy = vi.fn()
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-self', name: 'CH Self-hosted', type: 'clickhouse', is_default: false,
+            config: { host: 'ch.internal.example.com' },
+            last_success_at: '2020-01-01T00:00:00Z',
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => {
+        cloudStateSpy()
+        return HttpResponse.json({ configured: false })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    await screen.findByText('CH Self-hosted')
+    // Give a buggy enabled query a beat to fire before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(cloudStateSpy).not.toHaveBeenCalled()
+  })
+
+  test('makes no Cloud state request for an uncredentialed ClickHouse Cloud host (CH-CLOUD-11)', async () => {
+    const cloudStateSpy = vi.fn()
+    server.use(
+      http.get('/api/v1/connectors', () =>
+        HttpResponse.json([
+          {
+            id: 'c-ch-infer-noreq', name: 'CH Infer No Request', type: 'clickhouse', is_default: false,
+            config: { host: 'abc.clickhouse.cloud', idle_timeout_minutes: 15 },
+            last_success_at: new Date(Date.now() - 40 * 60_000).toISOString(),
+            created_at: '2026-01-01T00:00:00Z',
+          },
+        ]),
+      ),
+      http.get('/api/v1/connectors/:id/cloud-state', () => {
+        cloudStateSpy()
+        return HttpResponse.json({ configured: false })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+    // Inference is computed locally, so the line renders without a request.
+    expect(await screen.findByText(/Likely idle — last activity .* ago \(idle timeout 15m\)/)).toBeInTheDocument()
+    // Give a buggy enabled query a beat to fire before asserting.
+    await new Promise((resolve) => setTimeout(resolve, 100))
+    expect(cloudStateSpy).not.toHaveBeenCalled()
+  })
 })

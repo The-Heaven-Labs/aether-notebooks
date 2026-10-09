@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Connector } from '../types'
+import type { Connector, ConnectorCloudState } from '../types'
 import { AppShell } from '../components/AppShell'
 import { Check, X, Star, Database, Pencil, ShieldCheck, Link2, Unlink, Trash2, Zap } from 'lucide-react'
 import { StyledTable, rowStyle, cellStyle } from '../components/StyledTable'
@@ -17,6 +17,14 @@ import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '..
 import { useAuth } from '../hooks/useAuth'
 import { useWarehouseTablePermissions } from '../hooks/useWarehouseTablePermissions'
 import { listWarehouses, setConnectorWarehouse } from '../api/warehouses'
+import { formatRelativeTime } from '../utils/formatRelativeTime'
+import {
+  cloudStateView,
+  connectorIdleTimeoutMinutes,
+  formatRelativeAgo,
+  inferIdleState,
+  parseIdleTimeoutMinutes,
+} from '../utils/cloudState'
 
 type ConnectorType = 'postgres' | 'clickhouse' | 'opensearch' | 'databricks'
 type DatabricksAuthType = 'pat' | 'oauth_m2m'
@@ -45,6 +53,11 @@ interface ConnectorForm {
   timeout_seconds: string
   table_allowlist: string
   table_denylist: string
+  idle_timeout_minutes: string
+  cloud_org_id: string
+  cloud_service_id: string
+  cloud_key_id: string
+  cloud_key_secret: string
 }
 
 const defaultForm = (): ConnectorForm => ({
@@ -54,6 +67,7 @@ const defaultForm = (): ConnectorForm => ({
   client_id: '', client_secret: '', catalog: '', schema: '', stored_auth_type: '',
   is_default: false, timeout_seconds: '0',
   table_allowlist: '', table_denylist: '',
+  idle_timeout_minutes: '', cloud_org_id: '', cloud_service_id: '', cloud_key_id: '', cloud_key_secret: '',
 })
 
 /** Builds the per-type config object for create (forUpdate=false) and edit
@@ -82,6 +96,16 @@ function buildConnectorConfig(f: ConnectorForm, forUpdate: boolean): Record<stri
     user: f.user,
     ssl_mode: f.ssl_mode,
     ...(f.type === 'opensearch' ? { use_tls: f.use_tls } : {}),
+  }
+  if (f.type === 'clickhouse') {
+    // The manual idle threshold always round-trips (empty = the 15m default).
+    cfg.idle_timeout_minutes = parseIdleTimeoutMinutes(f.idle_timeout_minutes)
+    // Non-secret Cloud API fields round-trip verbatim (blank clears access);
+    // the secret is omitted on edit when blank so the server keeps the stored one.
+    cfg.cloud_org_id = f.cloud_org_id.trim()
+    cfg.cloud_service_id = f.cloud_service_id.trim()
+    cfg.cloud_key_id = f.cloud_key_id.trim()
+    if (!forUpdate || f.cloud_key_secret !== '') cfg.cloud_key_secret = f.cloud_key_secret
   }
   if (!forUpdate || f.password !== '') cfg.password = f.password
   return cfg
@@ -148,7 +172,28 @@ function formFromConnector(c: Connector): ConnectorForm {
     timeout_seconds: String(c.timeout_seconds ?? 0),
     table_allowlist: (c.table_allowlist ?? []).join('\n'),
     table_denylist: (c.table_denylist ?? []).join('\n'),
+    idle_timeout_minutes: c.config?.idle_timeout_minutes != null ? String(c.config.idle_timeout_minutes) : '',
+    cloud_org_id: c.config?.cloud_org_id ?? '',
+    cloud_service_id: c.config?.cloud_service_id ?? '',
+    cloud_key_id: c.config?.cloud_key_id ?? '',
+    cloud_key_secret: '',
   }
+}
+
+/** Derives the persisted health badge from the connector's outcome timeline
+ * (D6): a failure newer than the last success wins; otherwise a success means
+ * Connected; otherwise the connector has never been exercised. */
+function connectorHealth(c: Connector): { status: 'success' | 'error' | 'neutral'; label: string; title?: string } {
+  const failed = !!c.last_failure_at && (!c.last_success_at || new Date(c.last_failure_at) > new Date(c.last_success_at))
+  if (failed) {
+    const when = formatRelativeTime(c.last_failure_at)
+    return { status: 'error', label: when ? `Failed · ${when}` : 'Failed', title: c.last_error || undefined }
+  }
+  if (c.last_success_at) {
+    const when = formatRelativeTime(c.last_success_at)
+    return { status: 'success', label: when ? `Connected · used ${when}` : 'Connected' }
+  }
+  return { status: 'neutral', label: 'Never used — click Test' }
 }
 
 function DatabricksFields({ form, setForm, isEdit }: {
@@ -193,6 +238,140 @@ function DatabricksFields({ form, setForm, isEdit }: {
   )
 }
 
+function ClickHouseCloudFields({ form, setForm, isEdit }: {
+  form: ConnectorForm
+  setForm: React.Dispatch<React.SetStateAction<ConnectorForm>>
+  isEdit?: boolean
+}) {
+  const set = (field: keyof ConnectorForm) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [field]: e.target.value }))
+  return (
+    <>
+      <label style={styles.label}>Idle timeout (minutes)
+        <input
+          style={styles.input}
+          type="number"
+          min="1"
+          value={form.idle_timeout_minutes}
+          onChange={set('idle_timeout_minutes')}
+          placeholder="15"
+        />
+      </label>
+      <details style={{ gridColumn: '1 / -1', fontSize: 13 }}>
+        <summary style={{ cursor: 'pointer', fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' }}>
+          ClickHouse Cloud API (optional)
+        </summary>
+        <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: '8px 0', lineHeight: 1.5 }}>
+          Add an API key to show the service's exact state (running, idle, stopped). Aether reads
+          the control plane, which never wakes an idle service. Without a key, idle state is
+          inferred from recorded query activity using the timeout above.
+        </p>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <label style={styles.label}>Organization ID
+            <input style={styles.input} value={form.cloud_org_id} onChange={set('cloud_org_id')} />
+          </label>
+          <label style={styles.label}>Service ID
+            <input style={styles.input} value={form.cloud_service_id} onChange={set('cloud_service_id')} />
+          </label>
+          <label style={styles.label}>Key ID
+            <input style={styles.input} value={form.cloud_key_id} onChange={set('cloud_key_id')} />
+          </label>
+          <label style={styles.label}>
+            Key Secret{isEdit ? ' (leave blank to keep current)' : ''}
+            <input style={styles.input} type="password" value={form.cloud_key_secret} onChange={set('cloud_key_secret')} />
+          </label>
+        </div>
+      </details>
+    </>
+  )
+}
+
+/** Second status line for ClickHouse connectors: exact Cloud control-plane
+ * state when credentials are configured, probabilistic activity inference
+ * otherwise. Control-plane reads never wake the service; the query polls one
+ * connector at a time while the page stays open. */
+function ClickHouseCloudStatus({ connector }: { connector: Connector }) {
+  const configuredHint = Boolean(
+    connector.config?.cloud_org_id &&
+    connector.config?.cloud_service_id &&
+    connector.config?.cloud_key_id &&
+    connector.config?.cloud_key_secret,
+  )
+  // Query only when the answer can change what the row renders: the exact
+  // state requires credentials, and inference is computed locally from the
+  // connector list data. Rows without credentials must make no request — the
+  // server would deterministically answer {"configured": false} — and a
+  // transient fetch error can never paint a misleading chip on them.
+  const enabled = configuredHint
+
+  const { data, isError } = useQuery({
+    queryKey: ['connector-cloud-state', connector.id],
+    queryFn: () => api.get<ConnectorCloudState>(`/api/v1/connectors/${connector.id}/cloud-state`),
+    enabled,
+    staleTime: 30_000,
+    refetchInterval: 60_000,
+    retry: false,
+  })
+
+  const lineStyle: React.CSSProperties = {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    marginTop: 4,
+    fontStyle: 'italic',
+  }
+
+  if (data?.configured && data.error) {
+    return (
+      <div style={lineStyle}>
+        <StatusBadge status="neutral" label="Cloud state unavailable" title={data.error} />
+      </div>
+    )
+  }
+  if (isError) {
+    return (
+      <div style={lineStyle}>
+        <StatusBadge status="neutral" label="Cloud state unavailable" title="Could not load Cloud state from Aether" />
+      </div>
+    )
+  }
+  if (data?.configured && data.state) {
+    const view = cloudStateView(data.state)
+    const scaling = data.idle_scaling ? 'Idle scaling on' : 'Idle scaling off'
+    const timeout = data.idle_timeout_minutes ? `, timeout ${data.idle_timeout_minutes}m` : ''
+    const checked = data.checked_at
+      ? ` · checked ${formatRelativeAgo(Date.now() - new Date(data.checked_at).getTime())}`
+      : ''
+    return (
+      <div style={lineStyle}>
+        <StatusBadge status={view.status} label={view.label} title={`${scaling}${timeout}${checked}`} />
+      </div>
+    )
+  }
+  if (!data && configuredHint) {
+    // Credentials exist but the first response has not arrived: don't flash an
+    // inference line the exact state is about to replace.
+    return null
+  }
+
+  const inference = inferIdleState({
+    host: connector.config?.host,
+    lastSuccessAt: connector.last_success_at,
+    idleTimeoutMinutes: connectorIdleTimeoutMinutes(connector),
+  })
+  if (!inference) return null
+  if (inference.kind === 'likely_idle') {
+    return (
+      <div style={lineStyle}>
+        {`Likely idle — last activity ${formatRelativeAgo(inference.lastActivityAgeMs ?? 0)} (idle timeout ${inference.idleTimeoutMinutes}m)`}
+      </div>
+    )
+  }
+  if (inference.kind === 'active') {
+    return <div style={lineStyle}>Active recently</div>
+  }
+  return <div style={lineStyle}>Idle state unknown</div>
+}
+
 export function ConnectorsPage() {
   useEffect(() => { document.title = "Connectors — Aether Notebooks" }, [])
   const qc = useQueryClient()
@@ -204,7 +383,6 @@ export function ConnectorsPage() {
   const [editing, setEditing] = useState<string | null>(null)
   const [editForm, setEditForm] = useState<ConnectorForm>(defaultForm())
   const [form, setForm] = useState<ConnectorForm>(defaultForm())
-  const [testResults, setTestResults] = useState<Record<string, { ok: boolean; error?: string }>>({})
   const [testingIds, setTestingIds] = useState<Record<string, boolean>>({})
   const [createError, setCreateError] = useState<string | null>(null)
   const [editError, setEditError] = useState<string | null>(null)
@@ -264,33 +442,6 @@ export function ConnectorsPage() {
     onError: (err: Error) => setLinkError(err.message),
   })
 
-  const [autoTested, setAutoTested] = useState(false)
-  const autoTestCancelled = useRef(false)
-
-  useEffect(() => {
-    return () => { autoTestCancelled.current = true }
-  }, [])
-
-  // Probe connections in small waves. Firing one request per connector at once
-  // made large lists compete with the page's own load and hammer the server;
-  // every connector still gets tested, just spread across a few workers.
-  useEffect(() => {
-    if (connectors.length === 0 || autoTested) return
-    setAutoTested(true)
-    const queue = connectors.map((c) => c.id)
-    let next = 0
-    const worker = async () => {
-      while (!autoTestCancelled.current) {
-        const id = queue[next++]
-        if (!id) return
-        await testConnector(id)
-        await new Promise((resolve) => setTimeout(resolve, 150))
-      }
-    }
-    void Promise.all(Array.from({ length: Math.min(3, queue.length) }, worker))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [connectors, autoTested])
-
   useEffect(() => {
     const editId = searchParams.get('edit')
     if (editId && connectors.length > 0) {
@@ -327,6 +478,7 @@ export function ConnectorsPage() {
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
+      qc.invalidateQueries({ queryKey: ['connector-cloud-state'] })
       closeEdit()
     },
     onError: (e: Error) => setEditError(e.message),
@@ -340,9 +492,8 @@ export function ConnectorsPage() {
       timeout_seconds: parseInt(form.timeout_seconds) || 0,
       config: buildConnectorConfig(form, false),
     }),
-    onSuccess: (connector) => {
+    onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['connectors'] })
-      if (formTest) setTestResults((prev) => ({ ...prev, [connector.id]: formTest }))
       closeCreate()
     },
     onError: (err: Error) => setCreateError(err.message),
@@ -360,14 +511,14 @@ export function ConnectorsPage() {
   })
 
   const testConnector = async (id: string) => {
-    setTestResults((prev) => ({ ...prev, [id]: undefined as unknown as { ok: boolean; error?: string } }))
     setTestingIds((prev) => ({ ...prev, [id]: true }))
     try {
-      const result = await api.post<{ ok: boolean; error?: string }>(`/api/v1/connectors/${id}/test`, {})
-      setTestResults((prev) => ({ ...prev, [id]: result }))
-    } catch (e) {
-      setTestResults((prev) => ({ ...prev, [id]: { ok: false, error: String(e) } }))
+      await api.post<{ ok: boolean; error?: string }>(`/api/v1/connectors/${id}/test`, {})
+    } catch {
+      // The outcome is persisted server-side; the refetch below surfaces it.
+      // A network failure leaves the last known persisted state in place.
     } finally {
+      await qc.invalidateQueries({ queryKey: ['connectors'] })
       setTestingIds((prev) => { const n = { ...prev }; delete n[id]; return n })
     }
   }
@@ -487,6 +638,7 @@ export function ConnectorsPage() {
                 </>
               )}
               {form.type === 'databricks' && <DatabricksFields form={form} setForm={setForm} />}
+              {form.type === 'clickhouse' && <ClickHouseCloudFields form={form} setForm={setForm} />}
               <label style={styles.label}>Query Timeout (s)
                 <input style={styles.input} type="text" value={form.timeout_seconds}
                   onChange={(e) => setForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
@@ -564,6 +716,7 @@ export function ConnectorsPage() {
                 </>
               )}
               {editForm.type === 'databricks' && <DatabricksFields form={editForm} setForm={setEditForm} isEdit />}
+              {editForm.type === 'clickhouse' && <ClickHouseCloudFields form={editForm} setForm={setEditForm} isEdit />}
               <label style={styles.label}>Query Timeout (s)
                 <input style={styles.input} type="text" value={editForm.timeout_seconds}
                   onChange={(e) => setEditForm(f => ({ ...f, timeout_seconds: e.target.value }))} placeholder="0 = unlimited" />
@@ -609,7 +762,7 @@ export function ConnectorsPage() {
             headerClassNames={[undefined, undefined, undefined, undefined, undefined, undefined, 'row-actions-header']}
           >
             {connectors.map((c) => {
-              const test = testResults[c.id]
+              const health = connectorHealth(c)
               return (
                 <tr key={c.id} style={rowStyle}>
                   <td style={cellStyle}>
@@ -690,17 +843,19 @@ export function ConnectorsPage() {
                   <td style={cellStyle}>
                     {testingIds[c.id] ? (
                       <StatusBadge status="neutral" label="Testing…" />
-                    ) : test ? (
-                      <StatusBadge
-                        status={test.ok ? 'success' : 'error'}
-                        label={test.ok ? 'Connected' : (test.error ?? 'Failed')}
-                        icon={test.ok ? <Check size={12} /> : <X size={12} />}
-                      />
-                    ) : (
+                    ) : health.status === 'neutral' ? (
                       <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                        Unknown — click Test
+                        {health.label}
                       </span>
+                    ) : (
+                      <StatusBadge
+                        status={health.status}
+                        label={health.label}
+                        title={health.title}
+                        icon={health.status === 'success' ? <Check size={12} /> : <X size={12} />}
+                      />
                     )}
+                    {c.type === 'clickhouse' && <ClickHouseCloudStatus connector={c} />}
                   </td>
                   <RowActionsCell>
                     <RowAction label="Test connection" icon={<Zap size={13} />} spinning={!!testingIds[c.id]} disabled={!!testingIds[c.id]} onClick={() => testConnector(c.id)} />

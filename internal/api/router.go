@@ -56,18 +56,21 @@ type Server struct {
 	mcpSQLTimeout                time.Duration  // execute_sql ceiling for MCP callers (0 = agent default)
 	mcpOAuthEnabled              bool           // serves the OAuth 2.1 authorization-server endpoints
 	oauth                        *oauth.Service // OAuth AS storage/logic
-	agentEngine                  *agent.Engine
-	upgrader                     websocket.Upgrader
-	toolAllowedDomains           []string
-	sessionCancels               sync.Map                        // sessionID -> context.CancelFunc
-	subdomainMW                  func(http.Handler) http.Handler // host → org resolution
-	oidcRewriteFrom              string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
-	oidcRewriteTo                string                          // target host rewrite (e.g. "host.docker.internal:5557")
-	frontendHandler              http.Handler                    // embedded web frontend SPA (nil in tests)
-	version                      string                          // build version (set via ldflags)
-	commit                       string                          // git commit (set via ldflags)
-	buildDate                    string                          // build date (set via ldflags)
-	warehouseSync                warehouseSyncer                 // debounced ClickHouse access sync (nil disables triggers)
+	// cloudStateCache holds short-lived ClickHouse Cloud control-plane reads
+	// keyed by connector ID (connector_cloud_state.go).
+	cloudStateCache    *cloudStateCache
+	agentEngine        *agent.Engine
+	upgrader           websocket.Upgrader
+	toolAllowedDomains []string
+	sessionCancels     sync.Map                        // sessionID -> context.CancelFunc
+	subdomainMW        func(http.Handler) http.Handler // host → org resolution
+	oidcRewriteFrom    string                          // host rewrite for OIDC discovery inside Docker (e.g. "localhost:5557")
+	oidcRewriteTo      string                          // target host rewrite (e.g. "host.docker.internal:5557")
+	frontendHandler    http.Handler                    // embedded web frontend SPA (nil in tests)
+	version            string                          // build version (set via ldflags)
+	commit             string                          // git commit (set via ldflags)
+	buildDate          string                          // build date (set via ldflags)
+	warehouseSync      warehouseSyncer                 // debounced ClickHouse access sync (nil disables triggers)
 	// chTablePermissions is the AETHER_CH_TABLE_PERMISSIONS kill switch. When
 	// false (default), managed connectors execute through the legacy
 	// stored-credential path and the warehouse sync worker stays dormant;
@@ -108,6 +111,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		Cache:                        redisCache,
 		upgrader:                     websocket.Upgrader{CheckOrigin: func(r *http.Request) bool { return true }},
 		warehouseReconcileInterval:   config.DefaultWarehouseReconcileInterval,
+		cloudStateCache:              newCloudStateCache(cloudStateCacheTTL),
 	}
 	s.connPool = executor.NewConnPool(executor.PoolConfig{
 		MaxPools: connPoolMaxPools,
@@ -123,6 +127,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.ResolveTarget = s.resolveExecutionTarget
 	s.agentEngine.ConnPool = s.connPool
 	s.agentEngine.CheckPermissionFunc = s.checkPermission
+	s.agentEngine.RecordConnectorActivity = s.recordConnectorActivity
 	// Running-state/cancel lifecycle for agent-driven cell runs (mirrors the
 	// user-triggered execute path so badges, refresh-safe sync, and the Cancel
 	// endpoint all work for agent runs).
@@ -538,6 +543,7 @@ func (s *Server) routes() {
 	s.mux.Handle("DELETE /api/v1/connectors/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteConnector))))
 	s.mux.Handle("PUT /api/v1/connectors/{id}/default", authMW(RequireRole("admin")(http.HandlerFunc(s.handleSetDefaultConnector))))
 	s.mux.Handle("POST /api/v1/connectors/{id}/test", authMW(http.HandlerFunc(s.handleTestConnector)))
+	s.mux.Handle("GET /api/v1/connectors/{id}/cloud-state", authMW(s.requirePermission("connector", "id", "view")(http.HandlerFunc(s.handleConnectorCloudState))))
 	s.mux.Handle("GET /api/v1/connectors/{id}/schema", authMW(http.HandlerFunc(s.handleConnectorSchema)))
 	s.mux.Handle("GET /api/v1/connectors/{id}/databases", authMW(http.HandlerFunc(s.handleListConnectorDatabases)))
 	s.mux.Handle("PUT /api/v1/connectors/{id}/warehouse", authMW(RequireRole("admin")(http.HandlerFunc(s.handleSetConnectorWarehouse))))

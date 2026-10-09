@@ -142,35 +142,89 @@ func (s *Scheduler) rollupStats() {
 }
 
 func (s *Scheduler) purgeTrash(ctx context.Context) {
-	// The notebook purge must also clear the agent_session ACL rows of the
-	// sessions that the notebook FK cascade removes: acl_entries has no FK to
-	// agent_sessions, so those rows would leak. One data-modifying CTE keeps
-	// the notebook delete and the ACL cleanup atomic.
+	// The notebook purge must also clear the agent_session ACL rows and pending
+	// ACL rows of the sessions that the notebook FK cascade removes: neither
+	// table has an FK to agent_sessions, so those rows would leak. Notebook
+	// pending rows are cleaned in the same statement. Data-modifying CTEs keep
+	// the notebook delete and both cleanups atomic.
+	//
+	// The pending-cleanup CTEs are written AFTER the real-ACL CTE so that,
+	// under PostgreSQL's reverse-textual execution order for unreferenced
+	// data-modifying CTEs, they run first — preserving the codebase's
+	// pending → real lock order. Do not reorder without verifying that
+	// invariant.
 	if _, err := s.db.Pool.Exec(ctx, `
 		WITH purged AS (
 			DELETE FROM notebooks
 			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
 			RETURNING id
-		), cleanup AS (
+		), session_acl_cleanup AS (
 			DELETE FROM acl_entries
 			WHERE resource_type = 'agent_session'
 			  AND resource_id IN (
 				  SELECT s.id FROM agent_sessions s
 				  WHERE s.notebook_id IN (SELECT id FROM purged)
 			  )
+		), session_pending_cleanup AS (
+			DELETE FROM pending_acl_entries
+			WHERE resource_type = 'agent_session'
+			  AND resource_id IN (
+				  SELECT s.id FROM agent_sessions s
+				  WHERE s.notebook_id IN (SELECT id FROM purged)
+			  )
+		), notebook_pending_cleanup AS (
+			DELETE FROM pending_acl_entries
+			WHERE resource_type = 'notebook'
+			  AND resource_id IN (SELECT id FROM purged)
 		)
 		SELECT COUNT(*) FROM purged
 	`); err != nil {
 		slog.Warn("scheduler: purge trash", "table", "notebooks", "error", err)
 	}
 
-	for _, table := range []string{"connectors", "dashboards", "folders"} {
-		_, err := s.db.Pool.Exec(ctx,
-			fmt.Sprintf(`DELETE FROM %s WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'`, table),
-		)
+	// Each table purge also consumes the pending ACL rows staged for the
+	// deleted resources; pending_acl_entries has no FK to clean up via cascade.
+	// Connectors and dashboards have no cascade children, so RETURNING id is
+	// the complete delete set.
+	for _, r := range []struct {
+		table        string
+		resourceType string
+	}{
+		{"connectors", "connector"},
+		{"dashboards", "dashboard"},
+	} {
+		_, err := s.db.Pool.Exec(ctx, fmt.Sprintf(`
+			WITH purged AS (
+				DELETE FROM %s
+				WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
+				RETURNING id
+			)
+			DELETE FROM pending_acl_entries
+			WHERE resource_type = '%s' AND resource_id IN (SELECT id FROM purged)`,
+			r.table, r.resourceType))
 		if err != nil {
-			slog.Warn("scheduler: purge trash", "table", table, "error", err)
+			slog.Warn("scheduler: purge trash", "table", r.table, "error", err)
 		}
+	}
+
+	// Folders are the exception: deleting a past-retention folder cascades to
+	// its whole subtree (folders.parent_id ON DELETE CASCADE), including live
+	// children, so a RETURNING id from the purge predicate alone would miss
+	// their pending rows. The recursive CTE collects every folder the cascade
+	// removes and the delete consumes pending rows for all of them.
+	if _, err := s.db.Pool.Exec(ctx, `
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM folders
+			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
+			UNION ALL
+			SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+		), purged AS (
+			DELETE FROM folders WHERE id IN (SELECT id FROM subtree) RETURNING id
+		)
+		DELETE FROM pending_acl_entries
+		WHERE resource_type = 'folder' AND resource_id IN (SELECT id FROM purged)
+	`); err != nil {
+		slog.Warn("scheduler: purge trash", "table", "folders", "error", err)
 	}
 }
 

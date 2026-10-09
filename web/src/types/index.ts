@@ -169,6 +169,11 @@ export interface Connector {
   timeout_seconds?: number
   table_allowlist?: string[]
   table_denylist?: string[]
+  /** Persisted connector health (V128): failure newer than success => Failed. */
+  last_success_at?: string | null
+  last_failure_at?: string | null
+  /** Most recent connection-level failure message. */
+  last_error?: string
   config?: {
     host?: string
     port?: number
@@ -185,7 +190,24 @@ export interface Connector {
     client_secret?: string
     catalog?: string
     schema?: string
+    /** Manual idle threshold (minutes) for ClickHouse Cloud inference; absent = 15. */
+    idle_timeout_minutes?: number
+    cloud_org_id?: string
+    cloud_service_id?: string
+    cloud_key_id?: string
+    /** Returned as "***" once stored; never a real secret. */
+    cloud_key_secret?: string
   }
+}
+
+/** GET /api/v1/connectors/{id}/cloud-state response. */
+export interface ConnectorCloudState {
+  configured: boolean
+  state?: string
+  idle_scaling?: boolean
+  idle_timeout_minutes?: number
+  checked_at?: string
+  error?: string
 }
 
 export interface SchemaColumn {
@@ -379,10 +401,11 @@ export interface ACLEntry {
   org_id: string
   resource_type: string
   resource_id: string
-  subject_type: 'user' | 'group' | 'org_role'
+  subject_type: 'user' | 'group' | 'org_role' | 'pending_user'
   subject_id: string
   actions: string[]
   created_at: string
+  pending?: boolean
 }
 
 export interface SSOProvider {

@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/the-heaven-labs/aether/internal/crypto"
 )
 
 func TestHandleListConnectorDatabases(t *testing.T) {
@@ -438,5 +441,76 @@ func TestDatabricksConnectorCRUDMasksSecrets(t *testing.T) {
 	}
 	if ucfg["token"] != "***" {
 		t.Fatalf("token must stay masked: %v", ucfg["token"])
+	}
+}
+
+// The Cloud API key secret must be masked in every response and survive an
+// update that leaves the edit form's secret field blank — proven by decrypting
+// the stored config, since the API never returns the real value.
+func TestClickHouseCloudSecretMaskedAndPreservedOnUpdate(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("ch-cloud-%d@example.com", ts), "CH Cloud Org")
+
+	body, _ := json.Marshal(map[string]interface{}{
+		"name": "CH Cloud", "type": "clickhouse",
+		"config": map[string]interface{}{
+			"host": "abc.clickhouse.cloud", "port": 8443, "user": "default", "password": "pw",
+			"cloud_org_id": "org-1", "cloud_service_id": "svc-1",
+			"cloud_key_id": "key-1", "cloud_key_secret": "super-secret",
+		},
+	})
+	req := httptest.NewRequest("POST", "/api/v1/connectors", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]interface{}
+	json.NewDecoder(rec.Body).Decode(&created)
+	connID := created["id"].(string)
+	cfg := created["config"].(map[string]interface{})
+	if cfg["cloud_key_secret"] != "***" {
+		t.Fatalf("expected cloud_key_secret masked, got %v", cfg["cloud_key_secret"])
+	}
+	if cfg["cloud_org_id"] != "org-1" {
+		t.Fatalf("expected cloud_org_id preserved, got %v", cfg["cloud_org_id"])
+	}
+
+	// Save with a blank secret and a changed non-secret field: the stored
+	// secret must survive while the org id updates.
+	upd, _ := json.Marshal(map[string]interface{}{
+		"config": map[string]interface{}{"cloud_key_secret": "", "cloud_org_id": "org-2"},
+	})
+	req = httptest.NewRequest("PUT", "/api/v1/connectors/"+connID, bytes.NewReader(upd))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("update: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var encrypted []byte
+	if err := srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT config_encrypted FROM connectors WHERE id = $1`, connID).Scan(&encrypted); err != nil {
+		t.Fatalf("load stored config: %v", err)
+	}
+	plain, err := crypto.Decrypt(encrypted, srv.MasterKey())
+	if err != nil {
+		t.Fatalf("decrypt stored config: %v", err)
+	}
+	var stored map[string]interface{}
+	if err := json.Unmarshal(plain, &stored); err != nil {
+		t.Fatalf("parse stored config: %v", err)
+	}
+	if stored["cloud_key_secret"] != "super-secret" {
+		t.Fatalf("stored cloud secret was clobbered: %v", stored["cloud_key_secret"])
+	}
+	if stored["cloud_org_id"] != "org-2" {
+		t.Fatalf("stored cloud_org_id not updated: %v", stored["cloud_org_id"])
 	}
 }

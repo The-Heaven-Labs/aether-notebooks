@@ -8,6 +8,7 @@ import { useAuth } from '../hooks/useAuth'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { groupLabel } from '../utils/groupLabel'
+import { looksLikeEmail } from '../utils/email'
 
 // ─── MemberDropdown ──────────────────────────────────────────────────────────
 
@@ -18,12 +19,6 @@ interface MemberDropdownProps {
   placeholder?: string
   /** Offer an "add as pending member" action when the query looks like an email that matches no user. */
   onAddPending?: (email: string) => void
-}
-
-function looksLikeEmail(value: string): boolean {
-  const v = value.trim()
-  const at = v.indexOf('@')
-  return at > 0 && at < v.length - 1 && !/\s/.test(v)
 }
 
 function formatPendingNotice(result: PendingGroupMemberResult): string {

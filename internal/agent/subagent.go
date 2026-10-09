@@ -126,18 +126,19 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 			}
 
 			result, err := toolDef.Execute(json.RawMessage(tc.Function.Arguments), &ToolContext{
-				Context:              executor.WithAdminMode(ctx, e.session.GetAdminMode(parentSessionID)),
-				UserID:               parentUserID,
-				OrgID:                parentOrgID,
-				OrgRole:              parentOrgRole,
-				NotebookID:           taskID,
-				SessionID:            parentSessionID,
-				DB:                   e.pool,
-				MasterKey:            masterKey,
-				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
-				ResolveTarget:        e.ResolveTarget,
-				ConnPool:             e.ConnPool,
-				CheckPermissionFunc:  e.CheckPermissionFunc,
+				Context:                 executor.WithAdminMode(ctx, e.session.GetAdminMode(parentSessionID)),
+				UserID:                  parentUserID,
+				OrgID:                   parentOrgID,
+				OrgRole:                 parentOrgRole,
+				NotebookID:              taskID,
+				SessionID:               parentSessionID,
+				DB:                      e.pool,
+				MasterKey:               masterKey,
+				OutputLimitsMaxBytes:    e.outputLimitsMaxBytes,
+				ResolveTarget:           e.ResolveTarget,
+				ConnPool:                e.ConnPool,
+				CheckPermissionFunc:     e.CheckPermissionFunc,
+				RecordConnectorActivity: e.RecordConnectorActivity,
 			})
 
 			if err != nil {
@@ -427,18 +428,19 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 
 			toolStart := time.Now()
 			result, err := toolDef.Execute(json.RawMessage(tc.Function.Arguments), &ToolContext{
-				Context:              executor.WithAdminMode(ctx, e.session.GetAdminMode(parentSessionID)),
-				UserID:               parentUserID,
-				OrgID:                parentOrgID,
-				OrgRole:              parentOrgRole,
-				NotebookID:           taskID,
-				SessionID:            parentSessionID,
-				DB:                   e.pool,
-				MasterKey:            masterKey,
-				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
-				ResolveTarget:        e.ResolveTarget,
-				ConnPool:             e.ConnPool,
-				CheckPermissionFunc:  e.CheckPermissionFunc,
+				Context:                 executor.WithAdminMode(ctx, e.session.GetAdminMode(parentSessionID)),
+				UserID:                  parentUserID,
+				OrgID:                   parentOrgID,
+				OrgRole:                 parentOrgRole,
+				NotebookID:              taskID,
+				SessionID:               parentSessionID,
+				DB:                      e.pool,
+				MasterKey:               masterKey,
+				OutputLimitsMaxBytes:    e.outputLimitsMaxBytes,
+				ResolveTarget:           e.ResolveTarget,
+				ConnPool:                e.ConnPool,
+				CheckPermissionFunc:     e.CheckPermissionFunc,
+				RecordConnectorActivity: e.RecordConnectorActivity,
 			})
 			toolDuration := int(time.Since(toolStart).Milliseconds())
 

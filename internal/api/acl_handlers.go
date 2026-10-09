@@ -4,6 +4,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 
@@ -28,6 +29,34 @@ func slicesEqual(a, b []string) bool {
 		}
 	}
 	return true
+}
+
+// unionActions merges two action lists preserving first-seen order.
+func unionActions(a, b []string) []string {
+	seen := make(map[string]bool, len(a)+len(b))
+	out := make([]string, 0, len(a)+len(b))
+	for _, list := range [][]string{a, b} {
+		for _, action := range list {
+			if !seen[action] {
+				seen[action] = true
+				out = append(out, action)
+			}
+		}
+	}
+	return out
+}
+
+// aclAuditMetadata labels one audit subject; staged pending subjects carry
+// pending: true so consumers can tell them from real entries.
+func aclAuditMetadata(subjectType, subjectID string) map[string]any {
+	meta := map[string]any{
+		"subject_type": subjectType,
+		"subject_id":   subjectID,
+	}
+	if subjectType == "pending_user" {
+		meta["pending"] = true
+	}
+	return meta
 }
 
 // @Summary Get ACL
@@ -91,6 +120,16 @@ func (s *Server) handleGetACL(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "scan failed")
 		return
 	}
+
+	// Staged rows follow the real entries: same visibility rules, additional
+	// pending_user subject type.
+	pendingEntries, err := queryPendingACLEntries(ctx, s.db.Pool, scanOrgID, resourceType, resourceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	entries = append(entries, pendingEntries...)
+
 	if entries == nil {
 		entries = []models.ACLEntry{}
 	}
@@ -112,9 +151,47 @@ func scanACLEntries(rows pgx.Rows) ([]models.ACLEntry, error) {
 	return entries, rows.Err()
 }
 
+// pendingQueryer is the query surface staged-row loading needs; both
+// *pgxpool.Pool and pgx.Tx satisfy it.
+type pendingQueryer interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+}
+
+// pendingACLSelect loads staged rows for a resource. Emails are stored
+// lowercased by every writer and are synthesized as the subject_id.
+const pendingACLSelect = `
+	SELECT id, org_id, resource_type, resource_id::text, email, actions, created_at
+	FROM pending_acl_entries
+	WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3
+	ORDER BY lower(email)`
+
+// queryPendingACLEntries returns the staged rows for a resource through q as
+// models.ACLEntry rows with subject_type "pending_user" and pending: true. The
+// row ID is the pending row's UUID so clients can key and remove it.
+func queryPendingACLEntries(ctx context.Context, q pendingQueryer, orgID, resourceType, resourceID string) ([]models.ACLEntry, error) {
+	rows, err := q.Query(ctx, pendingACLSelect, resourceType, resourceID, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []models.ACLEntry
+	for rows.Next() {
+		var e models.ACLEntry
+		if err := rows.Scan(&e.ID, &e.OrgID, &e.ResourceType, &e.ResourceID,
+			&e.SubjectID, &e.Actions, &e.CreatedAt); err != nil {
+			return nil, err
+		}
+		e.SubjectType = "pending_user"
+		e.Pending = true
+		entries = append(entries, e)
+	}
+	return entries, rows.Err()
+}
+
 // aclAuditDiff compares previous and replacement ACL entries by subject and
 // returns the acl.revoked / acl.updated / acl.granted events describing the
-// change.
+// change. Pending subjects are compared like any other subject so replacing a
+// staged row audits a revoke/grant pair.
 func aclAuditDiff(userID, orgID, resourceType, resourceID string, oldEntries, newEntries []models.ACLEntry) []audit.Entry {
 	var auditEvents []audit.Entry
 	for _, old := range oldEntries {
@@ -123,35 +200,31 @@ func aclAuditDiff(userID, orgID, resourceType, resourceID string, oldEntries, ne
 			if old.SubjectType == newEntry.SubjectType && old.SubjectID == newEntry.SubjectID {
 				found = true
 				if !slicesEqual(old.Actions, newEntry.Actions) {
+					meta := aclAuditMetadata(newEntry.SubjectType, newEntry.SubjectID)
+					meta["old_actions"] = old.Actions
+					meta["new_actions"] = newEntry.Actions
 					auditEvents = append(auditEvents, audit.Entry{
 						OrgID:        orgID,
 						UserID:       userID,
 						Action:       "acl.updated",
 						ResourceType: resourceType,
 						ResourceID:   resourceID,
-						Metadata: map[string]any{
-							"subject_type": newEntry.SubjectType,
-							"subject_id":   newEntry.SubjectID,
-							"old_actions":  old.Actions,
-							"new_actions":  newEntry.Actions,
-						},
+						Metadata:     meta,
 					})
 				}
 				break
 			}
 		}
 		if !found {
+			meta := aclAuditMetadata(old.SubjectType, old.SubjectID)
+			meta["actions"] = old.Actions
 			auditEvents = append(auditEvents, audit.Entry{
 				OrgID:        orgID,
 				UserID:       userID,
 				Action:       "acl.revoked",
 				ResourceType: resourceType,
 				ResourceID:   resourceID,
-				Metadata: map[string]any{
-					"subject_type": old.SubjectType,
-					"subject_id":   old.SubjectID,
-					"actions":      old.Actions,
-				},
+				Metadata:     meta,
 			})
 		}
 	}
@@ -164,17 +237,15 @@ func aclAuditDiff(userID, orgID, resourceType, resourceID string, oldEntries, ne
 			}
 		}
 		if !found {
+			meta := aclAuditMetadata(newEntry.SubjectType, newEntry.SubjectID)
+			meta["actions"] = newEntry.Actions
 			auditEvents = append(auditEvents, audit.Entry{
 				OrgID:        orgID,
 				UserID:       userID,
 				Action:       "acl.granted",
 				ResourceType: resourceType,
 				ResourceID:   resourceID,
-				Metadata: map[string]any{
-					"subject_type": newEntry.SubjectType,
-					"subject_id":   newEntry.SubjectID,
-					"actions":      newEntry.Actions,
-				},
+				Metadata:     meta,
 			})
 		}
 	}
@@ -234,7 +305,8 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback(ctx)
 
-	// Capture existing entries before deleting (for audit comparison)
+	// Capture existing entries before deleting (for audit comparison). Staged
+	// pending rows participate so a replace that drops them audits a revoke.
 	existingRows, err := tx.Query(ctx,
 		`SELECT subject_type, subject_id, actions FROM acl_entries
          WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
@@ -260,7 +332,26 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 	}
 	existingRows.Close()
 
-	// Delete all existing entries for this resource in this org
+	pendingOld, err := queryPendingACLEntries(ctx, tx, claims.OrgID, resourceType, resourceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to query existing ACL")
+		return
+	}
+	oldEntries = append(oldEntries, pendingOld...)
+
+	// Replace semantics apply to both sources: a PUT that omits staged rows
+	// removes them, exactly like omitting a real entry.
+	//
+	// Delete staged rows first. Materialization (applyPendingACL's single
+	// statement) locks pending_acl_entries before acl_entries; taking the
+	// locks in the same order here prevents a lock-order deadlock with a
+	// concurrent join materializing the same email.
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM pending_acl_entries WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
+		resourceType, resourceID, claims.OrgID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear pending ACL")
+		return
+	}
 	if _, err := tx.Exec(ctx,
 		`DELETE FROM acl_entries WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
 		resourceType, resourceID, claims.OrgID); err != nil {
@@ -268,10 +359,100 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Insert new entries, skipping invalid ones
+	// Insert new entries, skipping invalid ones. pending_user entries are
+	// validated, lowercased, deduped, and routed to pending_acl_entries; an
+	// email that already belongs to an org member becomes a real user entry
+	// instead (a staged row for a member could never materialize).
+	type pendingInsert struct {
+		email   string
+		actions []string
+	}
 	var inserted []models.ACLEntry
+	var pendingInserts []pendingInsert
+	pendingIndex := map[string]int{}
+	// userIndex tracks inserted user entries so an explicit entry and a
+	// converted pending email naming the same member merge into one entry
+	// (the acl_entries unique constraint forbids two).
+	userIndex := map[string]int{}
+	insertUserEntry := func(userID string, actions []string) error {
+		if idx, seen := userIndex[userID]; seen {
+			merged := unionActions(inserted[idx].Actions, actions)
+			if !slicesEqual(merged, inserted[idx].Actions) {
+				if _, err := tx.Exec(ctx, `UPDATE acl_entries SET actions = $1 WHERE id = $2`, merged, inserted[idx].ID); err != nil {
+					return err
+				}
+				inserted[idx].Actions = merged
+			}
+			return nil
+		}
+		var entry models.ACLEntry
+		err := tx.QueryRow(ctx,
+			`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+             VALUES ($1, $2, $3::uuid, $4, $5, $6)
+             ON CONFLICT (resource_type, resource_id, subject_type, subject_id)
+             DO UPDATE SET actions = (SELECT ARRAY(SELECT DISTINCT unnest(acl_entries.actions || EXCLUDED.actions) ORDER BY 1))
+             RETURNING id, org_id, resource_type, resource_id::text, subject_type, subject_id, actions, created_at`,
+			claims.OrgID, resourceType, resourceID, "user", userID, actions,
+		).Scan(&entry.ID, &entry.OrgID, &entry.ResourceType, &entry.ResourceID,
+			&entry.SubjectType, &entry.SubjectID, &entry.Actions, &entry.CreatedAt)
+		if err != nil {
+			return err
+		}
+		userIndex[userID] = len(inserted)
+		inserted = append(inserted, entry)
+		return nil
+	}
+
 	for _, e := range req.Entries {
 		if e.SubjectType == "" || e.SubjectID == "" || len(e.Actions) == 0 {
+			continue
+		}
+		// Unknown subject types would violate acl_entries' check constraint
+		// and turn into a 500; skip them like any other invalid entry.
+		switch e.SubjectType {
+		case "user", "group", "org_role", "pending_user":
+		default:
+			continue
+		}
+		if e.SubjectType == "pending_user" {
+			email, ok := normalizePendingEmail(e.SubjectID)
+			if !ok {
+				continue
+			}
+			// Existing org member? Add them as a real user entry rather than
+			// staging a row that would never be materialized (they have
+			// already appeared in the org), mirroring
+			// handleAddPendingGroupMembers.
+			var memberID string
+			err := tx.QueryRow(ctx, `
+				SELECT u.id FROM users u
+				JOIN org_members om ON om.user_id = u.id AND om.org_id = $1
+				WHERE lower(u.email) = $2
+				LIMIT 1`, claims.OrgID, email).Scan(&memberID)
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusInternalServerError, "failed to resolve pending email")
+				return
+			}
+			if err == nil {
+				if err := insertUserEntry(memberID, e.Actions); err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to insert ACL entry")
+					return
+				}
+				continue
+			}
+			if idx, seen := pendingIndex[email]; seen {
+				pendingInserts[idx].actions = unionActions(pendingInserts[idx].actions, e.Actions)
+				continue
+			}
+			pendingIndex[email] = len(pendingInserts)
+			pendingInserts = append(pendingInserts, pendingInsert{email: email, actions: unionActions(nil, e.Actions)})
+			continue
+		}
+		if e.SubjectType == "user" {
+			if err := insertUserEntry(e.SubjectID, e.Actions); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to insert ACL entry")
+				return
+			}
 			continue
 		}
 		var entry models.ACLEntry
@@ -286,6 +467,25 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to insert ACL entry")
 			return
 		}
+		inserted = append(inserted, entry)
+	}
+	for _, p := range pendingInserts {
+		var entry models.ACLEntry
+		err := tx.QueryRow(ctx, `
+			INSERT INTO pending_acl_entries (org_id, resource_type, resource_id, email, actions, created_by)
+			VALUES ($1, $2, $3::uuid, $4, $5, $6)
+			ON CONFLICT (resource_type, resource_id, lower(email)) DO UPDATE
+			SET actions = (SELECT ARRAY(SELECT DISTINCT unnest(pending_acl_entries.actions || EXCLUDED.actions)))
+			RETURNING id, org_id, resource_type, resource_id::text, email, actions, created_at`,
+			claims.OrgID, resourceType, resourceID, p.email, p.actions, claims.UserID,
+		).Scan(&entry.ID, &entry.OrgID, &entry.ResourceType, &entry.ResourceID,
+			&entry.SubjectID, &entry.Actions, &entry.CreatedAt)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to insert pending ACL entry")
+			return
+		}
+		entry.SubjectType = "pending_user"
+		entry.Pending = true
 		inserted = append(inserted, entry)
 	}
 
@@ -314,13 +514,14 @@ func (s *Server) handlePutACL(w http.ResponseWriter, r *http.Request) {
 // handlePutSessionACL implements ACL writes for agent_session resources. Only
 // the owner or an org admin in admin mode may write; org admins without admin
 // mode are ordinary members here. The session row is locked before any
-// acl_entries work (agent_sessions -> acl_entries, matching create/delete), so
-// concurrent PUTs serialize and a session delete cannot interleave to leave
-// orphan ACL rows. The owner and org used to validate and mutate come from that
-// locked row, and a missing session is a 404. Entries are validated as same-org
-// read-only shares and replace the previous non-owner entries; the owner's
-// full-access entry is upserted last, so a replace-style PUT can never lock the
-// owner out.
+// acl_entries or pending_acl_entries work (agent_sessions -> pending -> real,
+// matching create/delete and materialization), so concurrent PUTs serialize
+// and a session delete cannot interleave to leave orphan ACL rows. The owner
+// and org used to validate and mutate come from that locked row, and a missing
+// session is a 404. Entries are validated as same-org read-only shares —
+// pending_user emails included — and replace the previous non-owner entries in
+// both tables; the owner's full-access entry is upserted last, so a
+// replace-style PUT can never lock the owner out.
 func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, sessionID string) {
 	claims := ClaimsFromContext(r.Context())
 	ctx := r.Context()
@@ -408,7 +609,29 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 	}
 	oldRows.Close()
 
+	// Staged pending shares are part of the replace set too; they are always
+	// non-owner rows.
+	pendingOld, err := queryPendingACLEntries(ctx, tx, sessionOrgID, "agent_session", sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to query existing ACL")
+		return
+	}
+	oldEntries = append(oldEntries, pendingOld...)
+
 	// Replace only the non-owner entries; the owner row is untouched here.
+	//
+	// Delete staged rows first. Materialization (applyPendingACL's single
+	// statement) locks pending_acl_entries before acl_entries, and the session
+	// row is already locked above, so this path takes locks in the same order
+	// (agent_sessions -> pending -> real) and cannot deadlock with a
+	// concurrent join materializing the same email.
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM pending_acl_entries
+		WHERE resource_type = 'agent_session' AND resource_id = $1::uuid AND org_id = $2
+	`, sessionID, sessionOrgID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear pending ACL")
+		return
+	}
 	if _, err := tx.Exec(ctx, `
 		DELETE FROM acl_entries
 		WHERE resource_type = 'agent_session' AND resource_id = $1::uuid AND org_id = $2
@@ -418,7 +641,7 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 		return
 	}
 
-	if err := insertSessionACLEntries(ctx, tx, sessionOrgID, sessionID, shares); err != nil {
+	if err := insertSessionACLEntries(ctx, tx, sessionOrgID, sessionID, claims.UserID, shares); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to insert ACL entry")
 		return
 	}
@@ -437,11 +660,15 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 
 	newEntries := make([]models.ACLEntry, 0, len(shares))
 	for _, share := range shares {
-		newEntries = append(newEntries, models.ACLEntry{
+		entry := models.ACLEntry{
 			SubjectType: share.SubjectType,
 			SubjectID:   share.SubjectID,
 			Actions:     share.Actions,
-		})
+		}
+		if share.SubjectType == "pending_user" {
+			entry.Pending = true
+		}
+		newEntries = append(newEntries, entry)
 	}
 	// Attribute the audit to the session's org: that is where the ACL rows
 	// live even when the owner writes with a token for another org.
@@ -463,6 +690,12 @@ func (s *Server) handlePutSessionACL(w http.ResponseWriter, r *http.Request, ses
 		writeError(w, http.StatusInternalServerError, "failed to load ACL")
 		return
 	}
+	pendingEntries, err := queryPendingACLEntries(ctx, tx, sessionOrgID, "agent_session", sessionID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load ACL")
+		return
+	}
+	entries = append(entries, pendingEntries...)
 
 	if err := tx.Commit(ctx); err != nil {
 		writeError(w, http.StatusInternalServerError, "commit failed")

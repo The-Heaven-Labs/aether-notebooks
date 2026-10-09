@@ -323,6 +323,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 			// Materialize memberships pre-provisioned for this email.
 			s.applyPendingGroups(ctx, tx, orgID, userID, claims.Email)
+			s.applyPendingAccess(ctx, tx, orgID, userID, claims.Email)
 
 			if txErr = tx.Commit(ctx); txErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to commit")
@@ -401,6 +402,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 
 			// Materialize memberships pre-provisioned for this email.
 			s.applyPendingGroups(ctx, tx, orgID, userID, claims.Email)
+			s.applyPendingAccess(ctx, tx, orgID, userID, claims.Email)
 
 			if txErr = tx.Commit(ctx); txErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to commit")
@@ -448,6 +450,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 					}
 					if txErr == nil {
 						s.applyPendingGroups(ctx, tx, targetOrgID, userID, claims.Email)
+						s.applyPendingAccess(ctx, tx, targetOrgID, userID, claims.Email)
 					}
 					if txErr != nil {
 						tx.Rollback(ctx)
@@ -508,6 +511,7 @@ func (s *Server) handleOIDCCallback(w http.ResponseWriter, r *http.Request) {
 					}
 					if txErr == nil {
 						s.applyPendingGroups(ctx, tx, subdomainOrgID, userID, userEmail)
+						s.applyPendingAccess(ctx, tx, subdomainOrgID, userID, userEmail)
 					}
 					if txErr != nil {
 						tx.Rollback(ctx)

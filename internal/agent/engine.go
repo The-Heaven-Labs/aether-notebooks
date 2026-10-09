@@ -37,23 +37,26 @@ type Engine struct {
 	// execute ClickHouse queries as the acting user's warehouse identity and to
 	// enforce ACLs with the canonical resolver. See ToolContext for semantics.
 	// pinned is deprecated and ignored; the requested connector is always the target.
-	ResolveTarget        func(ctx context.Context, userID, connectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error)
-	ConnPool             *executor.ConnPool
-	CheckPermissionFunc  func(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error)
-	toolAllowedDomains   []string
-	toolTimeoutDefault   time.Duration
-	outputLimitsMaxBytes int64 // platform ceiling for org output byte caps
-	tokenCounter         *TokenCounter
-	store                storage.Storage
-	reasoningEffort      sync.Map // sessionID -> string
-	toolConfirmPending   sync.Map // sessionID -> chan ToolConfirmResult
-	questionPending      sync.Map // sessionID -> chan string
-	pageContextMap       sync.Map // sessionID -> map[string]string
-	sessionModelConfig   sync.Map // sessionID -> modelConfigID string
-	steeringChans        sync.Map // sessionID -> chan string (follow-ups sent mid-turn)
-	frontendURL          string
-	publicURL            string
-	streams              *StreamManager
+	ResolveTarget       func(ctx context.Context, userID, connectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error)
+	ConnPool            *executor.ConnPool
+	CheckPermissionFunc func(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error)
+	// RecordConnectorActivity reports per-connector health from agent-driven
+	// runs; wired by the API server like the resolvers above.
+	RecordConnectorActivity func(ctx context.Context, orgID, connectorID string, ok bool, errMsg string)
+	toolAllowedDomains      []string
+	toolTimeoutDefault      time.Duration
+	outputLimitsMaxBytes    int64 // platform ceiling for org output byte caps
+	tokenCounter            *TokenCounter
+	store                   storage.Storage
+	reasoningEffort         sync.Map // sessionID -> string
+	toolConfirmPending      sync.Map // sessionID -> chan ToolConfirmResult
+	questionPending         sync.Map // sessionID -> chan string
+	pageContextMap          sync.Map // sessionID -> map[string]string
+	sessionModelConfig      sync.Map // sessionID -> modelConfigID string
+	steeringChans           sync.Map // sessionID -> chan string (follow-ups sent mid-turn)
+	frontendURL             string
+	publicURL               string
+	streams                 *StreamManager
 }
 
 type ToolConfirmResult struct {
@@ -1220,14 +1223,15 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				OnEvent:       onEvent,
 				BroadcastFunc: e.BroadcastFunc,
 				// Running-state/cancel hooks propagate like BroadcastFunc.
-				SetRunningFunc:       e.SetRunningFunc,
-				UnsetRunningFunc:     e.UnsetRunningFunc,
-				SetCancelFunc:        e.SetCancelFunc,
-				DeleteCancelFunc:     e.DeleteCancelFunc,
-				OutputLimitsMaxBytes: e.outputLimitsMaxBytes,
-				ResolveTarget:        e.ResolveTarget,
-				ConnPool:             e.ConnPool,
-				CheckPermissionFunc:  e.CheckPermissionFunc,
+				SetRunningFunc:          e.SetRunningFunc,
+				UnsetRunningFunc:        e.UnsetRunningFunc,
+				SetCancelFunc:           e.SetCancelFunc,
+				DeleteCancelFunc:        e.DeleteCancelFunc,
+				OutputLimitsMaxBytes:    e.outputLimitsMaxBytes,
+				ResolveTarget:           e.ResolveTarget,
+				ConnPool:                e.ConnPool,
+				CheckPermissionFunc:     e.CheckPermissionFunc,
+				RecordConnectorActivity: e.RecordConnectorActivity,
 				QuestionFunc: func(question string, options any, allowCustom bool) (string, error) {
 					ch := make(chan string, 1)
 					e.SetQuestionPending(sessionID, ch)

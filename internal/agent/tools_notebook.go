@@ -1029,6 +1029,8 @@ func executeCell(ctx *ToolContext, db *pgxpool.Pool, notebookID, cellID string, 
 		return res, nil
 	}
 
+	ctx.RecordConnectorSuccess(*cell.ConnectorID)
+
 	totalTimeMs := time.Since(startTime).Milliseconds()
 
 	tableOutput := models.Output{Type: "table", Data: result}
