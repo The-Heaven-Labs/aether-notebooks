@@ -979,11 +979,9 @@ export function HomePage() {
               </section>
             )}
 
-            {/* Toolbar */}
+            {/* Toolbar — content actions first (Notebook is the primary one),
+                folder creation last. */}
             <div style={s.toolbar}>
-              <button style={s.newBtn} onClick={() => { setCreating('folder'); setNewName('') }}>
-                + New Folder
-              </button>
               {folderID && (
                 <>
                   <button style={s.newBtn} onClick={() => { setCreating('notebook'); setNewName('') }}>
@@ -1025,6 +1023,9 @@ export function HomePage() {
                   </button>
                 </>
               )}
+              <button style={s.newBtn} onClick={() => { setCreating('folder'); setNewName('') }}>
+                + New Folder
+              </button>
             </div>
 
             {/* Inline create form */}
