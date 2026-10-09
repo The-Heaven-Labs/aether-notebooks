@@ -514,7 +514,29 @@ Run: `npx playwright test e2e/dashboard-live.spec.ts` (dev stack up per AGENTS.m
 
 ## Spike results
 
-(Record S1/S2 findings here during execution.)
+### S1 findings
+
+Verified against the pinned build (`relay/node_modules/@hocuspocus/server` 4.4.0) by reading `dist/index.d.ts` + `dist/hocuspocus-server.cjs` and by running throwaway tests in `/tmp/opencode/` (`spike-readonly.cjs` in-process `MessageReceiver` test; `spike-readonly-e2e.cjs` full Server + real `@hocuspocus/provider`; `spike-direct.cjs` server-API exercise). Not committed.
+
+**1. `readOnly` enforcement — complete; no fallback guard needed.**
+- Enforced in `MessageReceiver.readSyncMessage`: SyncStep2 at `hocuspocus-server.cjs:296-308`, YjsUpdate at `:315-319`. A read-only connection's SyncStep2/Update is not applied to the server document, is not broadcast, and gets a `SyncStatus(false)` reply (`:304`, `:317`). SyncStep1, Awareness, QueryAwareness and Stateless are unaffected, so viewers still sync down and see presence.
+- `Connection.readOnly` is public and mutable (`index.d.ts:815`) and is read at message-handling time, so setting it in a hook after construction works. `ConnectionConfiguration.readOnly` (`index.d.ts:372-375`) is copied into the `Connection` at `hocuspocus-server.cjs:971`.
+- Nuance: rejection is server-side only. The provider applies local edits optimistically and does not revert on `SyncStatus(false)` (`web/node_modules/@hocuspocus/provider/dist/hocuspocus-provider.cjs:504-506`); `hasUnsyncedChanges` stays true. Keep viewer mutators disabled in the UI — `readOnly` is the security boundary, not a UI guarantee.
+- Fallback if ever needed: use `beforeSync`, whose payload `type` is the inner y-protocols sync type (`0` SyncStep1 / `1` SyncStep2 / `2` YjsUpdate — `index.d.ts:675-695`) — not outer `MessageType.Sync` (`index.d.ts:352-366`, which also covers read-only SyncStep1) and not `beforeHandleMessage` (payload carries raw `update` bytes with no discriminator — `index.d.ts:614-625`). Throwing from either hook closes the connection (`hocuspocus-server.cjs:500-506`); it does not silently drop.
+- Empirically: editor updates applied; SyncStep2/Update from read-only connections (set at construction or mutated afterwards) never reached the server doc; the E2E provider test rejected viewer edits under both `onAuthenticate` and `connected` wiring while viewers still received later editor edits; a raw Auth+Update burst queued during auth was also rejected.
+
+**2. `onAuthenticate` payload** — includes `documentName`, `token`, and `requestHeaders` (`Headers`), plus `context`, `instance`, `request`, `requestParameters`, `socketId`, `connectionConfig`, `providerVersion` (`index.d.ts:525-536`; invoked at `hocuspocus-server.cjs:839-848`).
+
+**3. Server APIs needed later** (signatures from `index.d.ts`; behavior confirmed empirically):
+- Backend write: `const dc = await server.hocuspocus.openDirectConnection(documentName, context?)` (`:325`). `DirectConnection` = `{ document, instance, context, transact(cb): Promise<void>, disconnect({unloadImmediately?}?): Promise<void> }` (`:197-207`, `:793-796`; impl `hocuspocus-server.cjs:1042-1093`, `:1514-1519`). `transact` applies the update, broadcasts it to live clients, and schedules `onStoreDocument` (local origin does not skip store hooks). `disconnect()` defaults to `unloadImmediately: true` (immediate store + unload when no other connections); `{unloadImmediately:false}` keeps the doc warm.
+- Enumerate: `server.hocuspocus.documents: Map<string, Document>` (`:263`); `document.getConnections(): Connection[]` (`:79`); also `document.connections`, `document.directConnectionsCount`, and per-connection `context`, `socketId`, `webSocket`.
+- Disconnect: `server.hocuspocus.closeConnections(documentName?)` (`:293`; impl `hocuspocus-server.cjs:1272-1279`) closes all connections for a document (all docs when omitted). Per connection, `connection.close(event?)` sends a protocol CLOSE and removes it from the doc but does not close the socket (impl `:450-457`); `connection.webSocket.close(code, reason)` closes the actual socket (`webSocket` is public, `:800`). No `destroyConnection` API exists in 4.4.
+- Unload: `server.hocuspocus.unloadDocument(document)` (`:324`; impl `hocuspocus-server.cjs:1486-1513`) — takes the Document instance (not the name), no-op while connections exist. Pattern: `closeConnections(name)` then an explicit unload if still loaded (the default close path often auto-unloads; observed).
+- Re-validation timer: `connected` provides `instance`, `connection`, `context`, `documentName`, `socketId`, `requestHeaders`; create a per-connection `setInterval` there. `onDisconnect` (`:739-748`) has `socketId` but no `connection` — key a `Map` by `socketId+documentName` (or WeakMap/expando) to clear timers. On failure: `connection.close(ResetConnection)` (client reconnects and re-runs auth) or `connection.webSocket.close(...)` for hard termination; `instance.closeConnections(documentName)` drops all.
+
+**4. `connected` hook payload** — `{ context, documentName, instance, request, requestHeaders, requestParameters, socketId, connectionConfig, connection, providerVersion }` (`index.d.ts:569-580`; invoked at `hocuspocus-server.cjs:794-799`, after the connection is created and pre-auth queued messages are replayed).
+
+**Recommended enforcement for Task 15:** set `connectionConfig.readOnly = true` in `onAuthenticate`. It is read at `hocuspocus-server.cjs:851` for the scope the client sees (`"readonly"` vs `"read-write"` in the `authenticated` message) and at `:971` for the `Connection`, i.e. before any queued client message is replayed — race-free. Optionally re-assert `connection.readOnly = true` synchronously in `connected` as defense-in-depth (works empirically, but a client marked only there still sees `read-write` scope). No `beforeSync`/`beforeHandleMessage` fallback guard is required.
 
 ## Notes / risks carried from design
 
