@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useId, useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { connectorSchemaQueryKey, getConnectorSchema } from '../api/schema'
 import {
@@ -18,6 +18,7 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
   const qc = useQueryClient()
   const [input, setInput] = useState('')
   const [error, setError] = useState<string | null>(null)
+  const hintId = useId()
 
   const sourceConnectorId = useMemo(() => {
     const provisioner = connectors.find((c) => c.is_provisioner)
@@ -117,7 +118,7 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
       <div style={styles.addRow}>
         <textarea
           aria-label="Pattern"
-          aria-describedby="hidden-table-pattern-hint"
+          aria-describedby={hintId}
           style={styles.textarea}
           placeholder={'e.g. ^analytics\\._tmp\n       ^raw\\.old$'}
           value={input}
@@ -139,7 +140,7 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
           {save.isPending ? 'Saving…' : 'Add'}
         </button>
       </div>
-      <p id="hidden-table-pattern-hint" style={styles.keyHint}>
+      <p id={hintId} style={styles.keyHint}>
         One pattern per line · <kbd style={styles.kbd}>Enter</kbd> adds ·{' '}
         <kbd style={styles.kbd}>Shift+Enter</kbd> for a new line
       </p>
