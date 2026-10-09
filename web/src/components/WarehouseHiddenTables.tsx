@@ -57,15 +57,22 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
     onError: (err: Error) => setError(err.message),
   })
 
-  const addPattern = () => {
+  // Enter/Add commits every non-empty line as one batch. Lines are trimmed,
+  // empties dropped, and duplicates (against existing patterns and within the
+  // batch) ignored — first occurrence wins. All-duplicate input clears the
+  // field without a request, matching the single-pattern behavior.
+  const addPatterns = () => {
     if (save.isPending) return
-    const trimmed = input.trim()
-    if (!trimmed) return
-    if (patterns.includes(trimmed)) {
+    const next = [...patterns]
+    for (const line of input.split(/\r?\n/)) {
+      const trimmed = line.trim()
+      if (trimmed && !next.includes(trimmed)) next.push(trimmed)
+    }
+    if (next.length === patterns.length) {
       setInput('')
       return
     }
-    save.mutate([...patterns, trimmed])
+    save.mutate(next)
   }
 
   const removePattern = (pattern: string) => {
@@ -108,26 +115,34 @@ export function WarehouseHiddenTables({ warehouseId, patterns, connectors = [] }
       )}
 
       <div style={styles.addRow}>
-        <input
+        <textarea
           aria-label="Pattern"
-          style={styles.input}
-          placeholder="e.g. ^analytics\._tmp"
+          aria-describedby="hidden-table-pattern-hint"
+          style={styles.textarea}
+          placeholder={'e.g. ^analytics\\._tmp\n       ^raw\\.old$'}
           value={input}
           disabled={save.isPending}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === 'Enter') addPattern()
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault()
+              addPatterns()
+            }
           }}
         />
         <button
           type="button"
           style={{ ...styles.addBtn, opacity: input.trim() && !save.isPending ? 1 : 0.5 }}
           disabled={!input.trim() || save.isPending}
-          onClick={addPattern}
+          onClick={addPatterns}
         >
           {save.isPending ? 'Saving…' : 'Add'}
         </button>
       </div>
+      <p id="hidden-table-pattern-hint" style={styles.keyHint}>
+        One pattern per line · <kbd style={styles.kbd}>Enter</kbd> adds ·{' '}
+        <kbd style={styles.kbd}>Shift+Enter</kbd> for a new line
+      </p>
 
       {patterns.length > 0 && schema && (
         <p style={styles.hint}>
@@ -164,10 +179,20 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)',
     fontSize: 14, lineHeight: 1, padding: '0 3px',
   },
-  addRow: { display: 'flex', gap: 8, alignItems: 'center', maxWidth: 460 },
-  input: {
-    flex: 1, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4,
-    fontSize: 13, background: 'var(--bg-input)', color: 'var(--text-primary)', minWidth: 0,
+  addRow: { display: 'flex', gap: 8, alignItems: 'flex-end', maxWidth: 460 },
+  textarea: {
+    flex: 1, minHeight: 60, padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 6,
+    fontSize: 12, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)',
+    color: 'var(--text-primary)', resize: 'vertical', minWidth: 0,
+  },
+  keyHint: {
+    fontSize: 11, color: 'var(--text-muted)', margin: 0, display: 'flex',
+    alignItems: 'center', gap: 4, flexWrap: 'wrap',
+  },
+  kbd: {
+    fontFamily: 'var(--font-mono)', fontSize: 10, background: 'var(--bg-secondary)',
+    border: '1px solid var(--border)', borderRadius: 3, padding: '1px 5px',
+    color: 'var(--text-primary)',
   },
   addBtn: {
     padding: '7px 16px', background: 'var(--accent)', color: '#fff', border: 'none',
