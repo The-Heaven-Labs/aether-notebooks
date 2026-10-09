@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor, render } from '@testing-library/react'
+import { screen, fireEvent, waitFor, render, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
@@ -148,10 +148,10 @@ describe('WarehouseHiddenTables', () => {
     renderWithProviders(
       <WarehouseHiddenTables warehouseId="wh-1" patterns={[]} connectors={CONNECTORS} />,
     )
-    fireEvent.change(await screen.findByLabelText('Pattern'), { target: { value: '(' } })
+    fireEvent.change(await screen.findByLabelText('Pattern'), { target: { value: '^ok\n(' } })
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
     expect(await screen.findByText(/invalid pattern/)).toBeInTheDocument()
-    expect(screen.getByLabelText('Pattern')).toHaveValue('(')
+    expect(screen.getByLabelText('Pattern')).toHaveValue('^ok\n(')
   })
 
   test('merges the PUT response into the cached warehouse without dropping connectors', async () => {
@@ -258,6 +258,7 @@ describe('WarehouseHiddenTables', () => {
     const field = screen.getByLabelText('Pattern')
     fireEvent.change(field, { target: { value: '^a' } })
     fireEvent.keyDown(field, { key: 'Enter', shiftKey: true })
+    await act(async () => { await new Promise((r) => setTimeout(r, 0)) })
     expect(puts).toBe(0)
     expect(field).toHaveValue('^a')
   })
