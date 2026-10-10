@@ -85,18 +85,23 @@ task build:relay       # TypeScript relay → relay/dist/
 task build:all         # Everything
 
 # Testing
-task test              # All Go tests (starts infra first)
+task test              # All Go tests (starts infra first; resets the disposable test DB)
 task test:v            # Verbose
 task test:api          # Only internal/api/... tests
 task test:race         # With race detector
 task test:smoke        # Smoke test against live server
 task test:e2e          # Playwright E2E tests (requires dev stack on :5173)
 
-All Go test commands pass an explicit `-timeout 3m` (Taskfile and CI).
-A package that exceeds 3 minutes here is pathological (the shared local dev DB
-accumulates data; CI is faster). Do not raise the timeout — narrow the run with
-`-run` or split/speed up the test. Agent-run test commands must include
-`-timeout 3m` too.
+The Go test targets run through `scripts/go-test.sh`, which resets a **disposable
+per-worktree database** (`aether_test_<worktree>`, Redis DB 1) before the run, so
+tests keep hitting a real Postgres with real migrations while the shared dev
+database (and its accumulated rows) stays untouched and out of the way. Parallel
+worktrees get separate databases. `task test:watch` reuses the database without
+resetting; `AETHER_TEST_DB`/`AETHER_TEST_DB_RESET` override the defaults.
+
+All Go test commands pass an explicit `-timeout 3m` (Taskfile and CI). Do not
+raise the timeout — narrow the run with `-run` or split/speed up the test.
+Agent-run test commands must include `-timeout 3m` too.
 
 # Code quality
 task fmt               # gofmt
@@ -306,7 +311,9 @@ In dev, `Taskfile.yml` sets `AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com`
 
 **Warehouse runbook**: *Restore*: after restoring Postgres, enable `AETHER_CH_TABLE_PERMISSIONS`; the startup enqueue reconciles every warehouse, re-creating missing users/roles/grants and re-keying passwords if the master key changed (`warehouses.applied_master_fp`). *Provisioner rotation*: update the provisioner connector's credential; the next reconcile uses it. Rotating `AETHER_MASTER_KEY` re-keys every identity on the next reconcile (no per-user secrets are stored), but it also breaks decryption of every stored connector credential: re-enter the provisioner credential before reconcile can run. *Drift*: reconcile and the drift check emit `warehouse.drift` audit events; a wildcard or unexpected grant sets `sync_status='error'` and blocks managed execution until manually revoked (no auto-heal). *Deleting with the kill switch off* leaves ClickHouse identities behind: a `warehouse.identities.cleanup` audit with `deferred: true` is written; drop them manually (`DROP USER`/`DROP ROLE` matching `aether_<wh8>_%`).
 
-**Dashboard query widgets**: widgets may own SQL + a connector (`widgets.connector_id/query/language`) instead of referencing a notebook cell. Dashboard variables live in `dashboards.settings.variables` and are interpolated server-side with type-aware escaping (`internal/dashboard`), never client-side. `POST /dashboards/{id}/execute` runs one widget as the viewer via the shared `openQuery` helper and caches successful results in Redis for `settings.query_cache_seconds` (default 30, 0 disables). Public dashboards run embedded queries only when `settings.public_live` is true, as the dashboard creator, rate-limited per token+IP.
+**Dashboard query widgets**: widgets may own SQL + a connector (`widgets.connector_id/query/language`) instead of referencing a notebook cell. Dashboard variables live in `dashboards.settings.variables` and are interpolated server-side with type-aware escaping (`internal/dashboard`), never client-side. `POST /dashboards/{id}/execute` runs one widget as the viewer via the shared `openQuery` helper and caches successful results in Redis for `settings.query_cache_seconds` (default 30, 0 disables). The cache key is `sha256(org | accessFingerprint | cacheScope | connector | SQL | maxRows)`: the fingerprint is the viewer's effective warehouse table-grant union (user + groups + Everyone, length-prefixed canonical hash) for managed ClickHouse connectors and the constant `"unmanaged"` for connectors that execute with a shared stored credential. Fingerprint or permission errors fall back to a per-user key (`user:<id>`) — caching continues, entries are never shared on uncertainty — and a connector `use` pre-check runs before the cache read so a shared entry can never bypass authorization. `bypass_cache` (manual refresh/Run all/auto-refresh) skips the read but still writes the fresh result back to the shared entry, freshening it for everyone within the TTL. Concurrent identical misses are deduped by an in-process single flight (`Server.dashboardCacheSF`) per cache key; the shared computation is detached from caller cancellation (`context.WithoutCancel`) and bounded by the connector `timeout_seconds` with a 5-minute default (`dashboardQueryDefaultTimeout`; HTTP cell execution treats 0 as unlimited — deliberate divergence). Public dashboards run embedded queries only when `settings.public_live` is true, as the dashboard creator, rate-limited per token+IP (they keep the `token:<token>` scope and the `"public"` fingerprint).
+
+**Live dashboards (Yjs)**: dashboards are live co-editing documents like notebooks. The relay document name is `dashboard:{uuid}`; the relay routes it to `GET/PUT /internal/dashboard-yjs/{id}` on the Go backend and calls `POST /internal/collab/authorize` at connect (dashboard `edit` ACL → read-write; `view`/`view_with_data` → read-only via `connectionConfig.readOnly`; **every non-200 rejects the connection — 403 is never mapped to read-only**, since a 403 means no access at all). A ~60s per-connection revalidation downgrades demoted editors to read-only, closes on 401/403/404, and retries transient failures so an API blip cannot evict live viewers. Store (`PUT`) merges the incoming update (`Y.applyUpdate`, idempotent) onto the stored state and materializes the derived `dashboards`/`widgets` rows in one transaction; guards refuse warning-tainted or empty projections over populated dashboards so a corrupt document cannot wipe one, and widgets with dangling connector/notebook/cell references are skipped per-widget. Backend-originated writes (REST widget add/delete, convert-to-query, settings/variables, agent tools) go through `internal/dashboarddoc` (seed → transaction → store → materialize) and publish `aether:dashboard-doc:{id}` for relay replicas to apply to loaded docs, with `aether:dashboard-doc-invalidate:{id}` on trash/purge/agent hard-delete (relays disconnect viewers and unload). Write-path split: layout drag/resize, SQL text, chart config, and title are direct browser→relay Yjs writes; widget add/delete, convert-to-query, and settings/variables stay REST (validated, audited) but are stored through the document. Viewers auto re-run affected query widgets on run-signature changes (per-widget ~2s debounce, through the shared cache above) and untouched viewers adopt changed variable defaults; public dashboards remain snapshot-based (no relay). Org admins without an explicit `edit` ACL entry cannot connect (internal relay routes carry no admin mode; REST editing still works through admin mode). The relay sends Bearer auth on load/store for notebook *and* dashboard docs (fixing a pre-existing notebook-Yjs 401 bug), and `github.com/reearth/ygo` is pinned at v1.51.5 (the prelim API is required for nested documents).
 
 **Hocuspocus relay** fetches/stores Yjs document state via `/internal/yjs/{notebook_id}` on the Go backend (binary `application/octet-stream`). JWT auth is passed inside the Hocuspocus auth message, not as a URL param.
 
@@ -332,6 +339,7 @@ OIDC providers are loaded dynamically from the database. SSO routes are disabled
 - Cell sources auto-save with 1.5s debounce after keystroke (suppressed for 5s after agent updates via `agent_updated_at` check)
 - Markdown cells persist on blur via `PUT /cells/:id`
 - Real-time collaboration: `HocuspocusProvider` in `Cell` connects to relay on `:3001`
+- Dev config injection: the Vite dev server does not inject `window.__AETHER_CONFIG__` (so `relayUrl` is missing), meaning browser collab in a bare `npm run dev` session requires injecting the config yourself or using the API-served build; the e2e specs inject it via `context.addInitScript`.
 - Yjs document key convention: `cell:{cellID}` for each cell's text content
 - **Resource catalog pages follow one pattern** (Connectors is the reference): create/edit opens the shared `FormModal` (`web/src/components/FormModal.tsx`) instead of an inline `FormCard`; row actions are icon buttons from `web/src/components/RowActions.tsx` (Test + Edit above Permissions + Delete, danger hover on delete); delete goes through `ConfirmDialog`; permissions through `PermissionsPanel`. Keep Models, Tools, Skills, MCP Servers, Agents, Warehouses, and Dashboards aligned with it.
 

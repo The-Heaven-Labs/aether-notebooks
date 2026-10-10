@@ -580,3 +580,12 @@ persistence probe: edit via a provider, then assert the `yjs_documents` /
 - Grant-lag window for the shared cache is accepted (documented in the design doc).
 - In-process single-flight only in v1; distributed lock noted as future work.
 - Public dashboards stay snapshot-based; no live channel in v1.
+
+## Execution notes
+
+Known follow-ups carried out of execution (none blocking the merge):
+
+- **Editor widget preview does not auto re-run on doc changes.** The viewer page re-runs affected query widgets live; the editor's widget preview runs manually. Wiring the editor preview to the same debounced run-diff was out of T26's scope.
+- **Dev relay-URL injection gap.** The Vite dev server does not inject `window.__AETHER_CONFIG__` (no `relayUrl`), so browser collab in a bare `npm run dev` session requires injecting the config or using the API-served build; the e2e specs inject it. Documented in AGENTS.md.
+- **Distributed (cross-replica) single flight** for the dashboard query cache is still future work (v1 dedupes in-process only).
+- **Per-viewer variable values persisted by older versions** don't pick up defaults changed while the viewer was away until an in-session change occurs (the "touched" tracking treats previously persisted values as explicit choices; a fresh visit or Reset all adopts the new defaults).

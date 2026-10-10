@@ -1,6 +1,6 @@
 # Design: Live Dashboards & Shared Dashboard Query Cache
 
-**Status:** Approved (design)
+**Status:** Implemented on `feat/dashboard-live-collab` (not yet merged)
 **Date:** 2026-10-09
 **Base:** `origin/main` @ `efb6be8d` (PR #244, dashboard UX overhaul)
 **Branch:** `feat/dashboard-live-collab`
@@ -301,3 +301,28 @@ client-side and the materializer rejects/clamps invalid entries.
 - **Grant-lag window** for shared cache is accepted and documented above.
 - **Yjs doc size**: widget config JSON is small; no concern expected, but the
   materializer should cap config size.
+
+---
+
+# Implementation notes
+
+Deltas from this design as implemented on `feat/dashboard-live-collab`:
+
+- **`created_at` is not in the document.** The plan had the doc carry widget
+  `created_at` and materialization preserve it; the implementation keeps it a
+  Postgres-owned column instead. `Materialize` never writes it (existing rows
+  keep their value via the upsert's conflict path, new rows default `NOW()`),
+  and the frontend projection returns empty timestamps with pages merging the
+  REST values. The doc is the source of truth only for co-edited fields.
+- **Fail-closed fallback naming + `use` pre-check.** The per-user fallback
+  fingerprint is the literal `"user:<id>"` (public runs use `"public"`), and
+  `runDashboardQuery` checks connector `use` *before* computing any fingerprint
+  or consulting the cache: a viewer denied `use` gets the per-user key, so a
+  shared entry can never return data ahead of the authorization failure
+  `openQuery` would raise on a miss.
+- **Single-flight bounds and seam.** The shared flight is bounded by the
+  connector `timeout_seconds`, or `dashboardQueryDefaultTimeout` (5 minutes)
+  when the connector sets none — HTTP cell execution treats `0` as unlimited,
+  the deliberate divergence described above. The test seam is a `Server` field
+  (`dashboardQueryCompute`), not a package-level hook, and the dedupe group is
+  `Server.dashboardCacheSF`.
