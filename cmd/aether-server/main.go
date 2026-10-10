@@ -231,20 +231,24 @@ func main() {
 
 	auditLogger := audit.NewLogger(db)
 
-	// Start scheduler (runs due notebook schedules every minute)
-	sched := scheduler.New(db, func(ctx context.Context, notebookID string, params map[string]string) error {
-		slog.Info("scheduler: running notebook", "notebook_id", notebookID)
-		return nil
-	})
-	sched.SetStatsRollupInterval(cfg.StatsRollupInterval)
-	sched.Start()
-	defer sched.Stop()
-
 	// Build HTTP server
 	srv := api.NewServer(db, jwtIssuer, auditLogger, masterKey, redisCache)
 	// Registered after db.Close and redisCache.Close, so it runs before them:
 	// in-flight reconciles still have their dependencies while they drain.
 	defer srv.Close()
+
+	// Start scheduler (runs due notebook schedules every minute). Built after
+	// the server because the midnight trash purge reports purged dashboards
+	// through the server's Redis-backed invalidation publisher, so relay
+	// replicas drop their live documents.
+	sched := scheduler.New(db, func(ctx context.Context, notebookID string, params map[string]string) error {
+		slog.Info("scheduler: running notebook", "notebook_id", notebookID)
+		return nil
+	})
+	sched.SetStatsRollupInterval(cfg.StatsRollupInterval)
+	sched.SetTrashInvalidator(srv.PublishDashboardDocInvalidate)
+	sched.Start()
+	defer sched.Stop()
 
 	// Configure storage backend
 	var store storage.Storage

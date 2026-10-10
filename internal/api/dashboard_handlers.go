@@ -491,6 +491,11 @@ func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 		Action: "dashboard.delete", ResourceType: "dashboard", ResourceID: dashID,
 	})
 
+	// The dashboard is trashed: relay replicas must disconnect viewers and
+	// drop any in-memory copy so a stale document cannot outlive the row.
+	// Best-effort fan-out; a Redis outage never fails the delete.
+	s.publishDashboardDocInvalidate(ctx, dashID, "trashed")
+
 	w.WriteHeader(http.StatusNoContent)
 }
 

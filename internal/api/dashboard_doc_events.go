@@ -89,3 +89,12 @@ func (s *Server) publishDashboardDocInvalidate(ctx context.Context, dashboardID,
 			"error", err, "dashboard_id", dashboardID, "reason", reason)
 	}
 }
+
+// PublishDashboardDocInvalidate broadcasts a "purged" invalidation notice for a
+// dashboard that was hard-deleted outside a request path — the scheduler's
+// trash purge. Exported for the cmd/aether-server wiring (the scheduler is
+// constructed before the Server, so it is set through
+// Scheduler.SetTrashInvalidator). Best-effort like the unexported publisher.
+func (s *Server) PublishDashboardDocInvalidate(ctx context.Context, dashboardID string) {
+	s.publishDashboardDocInvalidate(ctx, dashboardID, "purged")
+}

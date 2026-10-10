@@ -4,7 +4,6 @@ package scheduler
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log/slog"
 	"time"
 
@@ -21,10 +20,23 @@ type Scheduler struct {
 	runFunc       RunFunc
 	stop          chan struct{}
 	statsInterval time.Duration
+	// trashInvalidator, when set, is called once for every dashboard id that
+	// purgeTrash hard-deletes. The API server wires its Redis-backed
+	// invalidation publisher here so relay replicas drop live documents.
+	// Nil disables the fan-out (tests, single-node setups).
+	trashInvalidator func(ctx context.Context, dashboardID string)
 }
 
 func New(db *database.DB, runFunc RunFunc) *Scheduler {
 	return &Scheduler{db: db, runFunc: runFunc, stop: make(chan struct{})}
+}
+
+// SetTrashInvalidator wires the callback invoked once per dashboard purged by
+// purgeTrash. The scheduler is constructed before the API server in
+// cmd/aether-server, so the wiring happens through this setter after both
+// exist.
+func (s *Scheduler) SetTrashInvalidator(fn func(ctx context.Context, dashboardID string)) {
+	s.trashInvalidator = fn
 }
 
 // SetStatsRollupInterval configures how often agent usage is rolled up into
@@ -184,26 +196,44 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 
 	// Each table purge also consumes the pending ACL rows staged for the
 	// deleted resources; pending_acl_entries has no FK to clean up via cascade.
-	// Connectors and dashboards have no cascade children, so RETURNING id is
-	// the complete delete set.
-	for _, r := range []struct {
-		table        string
-		resourceType string
-	}{
-		{"connectors", "connector"},
-		{"dashboards", "dashboard"},
-	} {
-		_, err := s.db.Pool.Exec(ctx, fmt.Sprintf(`
-			WITH purged AS (
-				DELETE FROM %s
-				WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
-				RETURNING id
-			)
+	// Connectors have no cascade children, so RETURNING id is the complete
+	// delete set.
+	if _, err := s.db.Pool.Exec(ctx, `
+		WITH purged AS (
+			DELETE FROM connectors
+			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
+			RETURNING id
+		)
+		DELETE FROM pending_acl_entries
+		WHERE resource_type = 'connector' AND resource_id IN (SELECT id FROM purged)`); err != nil {
+		slog.Warn("scheduler: purge trash", "table", "connectors", "error", err)
+	}
+
+	// Dashboards take the same purge, but every purged id is also reported to
+	// the trash invalidator so relay replicas drop their live documents: the
+	// row cascade removes dashboard_yjs_documents, and an in-memory relay copy
+	// would otherwise outlive the row. The pending-cleanup CTE is written after
+	// the real delete so that, under PostgreSQL's reverse-textual execution
+	// order for unreferenced data-modifying CTEs, it runs first — preserving
+	// the codebase's pending → real lock order (same shape as the notebook
+	// purge above).
+	var purgedDashboards []string
+	if err := s.db.Pool.QueryRow(ctx, `
+		WITH purged AS (
+			DELETE FROM dashboards
+			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
+			RETURNING id
+		), dashboard_pending_cleanup AS (
 			DELETE FROM pending_acl_entries
-			WHERE resource_type = '%s' AND resource_id IN (SELECT id FROM purged)`,
-			r.table, r.resourceType))
-		if err != nil {
-			slog.Warn("scheduler: purge trash", "table", r.table, "error", err)
+			WHERE resource_type = 'dashboard' AND resource_id IN (SELECT id FROM purged)
+		)
+		SELECT COALESCE(array_agg(id::text), ARRAY[]::text[]) FROM purged
+	`).Scan(&purgedDashboards); err != nil {
+		slog.Warn("scheduler: purge trash", "table", "dashboards", "error", err)
+	}
+	for _, id := range purgedDashboards {
+		if s.trashInvalidator != nil {
+			s.trashInvalidator(ctx, id)
 		}
 	}
 
