@@ -1,8 +1,9 @@
-import { useEffect, useRef } from 'react'
-import { EditorState } from '@codemirror/state'
+import { useEffect, useRef, useState } from 'react'
+import { Compartment, EditorState } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { sql, MySQL, PostgreSQL, StandardSQL } from '@codemirror/lang-sql'
 import { sqlHighlight, syntaxHighlighting } from './sqlHighlight'
+import type { DashboardCollab } from './dashboardCollabRuntime'
 
 function languageExtension(connectorType?: string) {
   if (connectorType === 'postgres') return sql({ dialect: PostgreSQL })
@@ -10,24 +11,51 @@ function languageExtension(connectorType?: string) {
   return sql({ dialect: MySQL })
 }
 
-export function SqlEditor({ value, onChange, minHeight = 160, connectorType }: {
+/** Binds the editor to a widget's query text in a live dashboard document. */
+export interface SqlEditorCollab {
+  collab: DashboardCollab
+  widgetId: string
+}
+
+export function SqlEditor({ value, onChange, minHeight = 160, connectorType, collab = null, editable = true }: {
   value: string
   onChange: (value: string) => void
   minHeight?: number
   connectorType?: string
+  /**
+   * When set, the editor binds to the widget's shared `Y.Text` for
+   * character-level co-editing instead of owning the text locally. The
+   * binding module is imported on demand.
+   */
+  collab?: SqlEditorCollab | null
+  /** When false the editor is read-only (used while editing is paused). */
+  editable?: boolean
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
-  onChangeRef.current = onChange
   const valueRef = useRef(value)
-  valueRef.current = value
+
+  // Latest-value refs, updated after render (refs must not be written during
+  // render): the view creation effect reads them without re-running per
+  // keystroke, and the update listener always calls the current callback.
+  useEffect(() => {
+    onChangeRef.current = onChange
+    valueRef.current = value
+  })
+
+  // The view lives in state (not only a ref) so the binding and value effects
+  // below re-run when the view is recreated for a new dialect.
+  const [view, setView] = useState<EditorView | null>(null)
+  const editableCompartment = useRef(new Compartment())
+  const collabCompartment = useRef(new Compartment())
+  const collabBoundRef = useRef(false)
 
   // Recreate only when the dialect changes; keystrokes must not tear down the
   // editor or the cursor would reset on every character.
   useEffect(() => {
     if (!ref.current) return
-    const view = new EditorView({
+    const editorView = new EditorView({
       state: EditorState.create({
         doc: valueRef.current,
         extensions: [
@@ -52,26 +80,62 @@ export function SqlEditor({ value, onChange, minHeight = 160, connectorType }: {
             '.cm-gutters': { display: 'none' },
             '.cm-focused': { outline: 'none' },
           }),
+          editableCompartment.current.of(EditorView.editable.of(editable)),
+          collabCompartment.current.of([]),
         ],
       }),
       parent: ref.current,
     })
-    viewRef.current = view
+    viewRef.current = editorView
+    setView(editorView)
     return () => {
-      view.destroy()
+      editorView.destroy()
       viewRef.current = null
+      setView(null)
     }
+    // `editable` is applied by the compartment effect below instead, so a
+    // pause toggle never recreates the view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectorType, minHeight])
 
-  // Apply external value changes without recreating the view.
+  // Toggle read-only without recreating the view.
   useEffect(() => {
-    const view = viewRef.current
-    if (!view) return
+    view?.dispatch({ effects: editableCompartment.current.reconfigure(EditorView.editable.of(editable)) })
+  }, [view, editable])
+
+  // Apply external value changes without recreating the view. Once bound to a
+  // shared document the Yjs text is the source of truth, so external values
+  // are ignored (the binding applies the shared text instead).
+  useEffect(() => {
+    if (!view || collabBoundRef.current) return
     const current = view.state.doc.toString()
     if (current !== value) {
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: value } })
     }
-  }, [value])
+  }, [view, value])
+
+  // Collaboration binding; the y-codemirror stack is imported on demand.
+  useEffect(() => {
+    if (!view || !collab) return
+    let cancelled = false
+    let detach: (() => void) | undefined
+    collabBoundRef.current = false
+    void import('./dashboardCollabEditor').then((mod) => {
+      if (cancelled) return
+      detach = mod.attachDashboardCollabToEditor({
+        view,
+        compartment: collabCompartment.current,
+        collab: collab.collab,
+        widgetId: collab.widgetId,
+      })
+      collabBoundRef.current = true
+    })
+    return () => {
+      cancelled = true
+      detach?.()
+      collabBoundRef.current = false
+    }
+  }, [view, collab])
 
   return <div ref={ref} />
 }
