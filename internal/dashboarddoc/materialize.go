@@ -28,17 +28,18 @@ import (
 // documentation for the Project error/warning split):
 //
 //   - A projection with no widgets but one or more widget warnings refuses to
-//     materialize. That shape means every widget in the doc was skipped as
-//     invalid; treating it as "delete every widget row" would let one corrupt
-//     document wipe the dashboard. Only widget-origin warnings count, so a
-//     settings/variables-only warning can never trip this.
-//   - An entirely empty projection (no title, settings, variables, widgets, or
-//     warnings) refuses to materialize while the dashboard still has content:
-//     a non-empty title, non-empty settings, or widget rows. ygo's typed root
-//     getters project a wrong-root-kind document (for example a "meta" root
-//     that is actually a Y.Text) as an empty projection without an error, so
-//     without this a corrupt doc would wipe the title/settings even on a
-//     dashboard with no widgets.
+//     materialize unconditionally. That shape means every widget in the doc
+//     was skipped as invalid; treating it as "delete every widget row" would
+//     let one corrupt document wipe the dashboard.
+//   - A widget-less projection over a dashboard that still has content (a
+//     non-empty title, non-empty settings, or widget rows) refuses to
+//     materialize when the projection is entirely empty, or when it carries
+//     any warnings. The empty case covers wrong-root-kind corruption (ygo's
+//     typed root getters project, for example, a "meta" root that is actually
+//     a Y.Text as an empty projection without an error); the warnings case
+//     keeps a settings/variables-only warning from exempting an empty widget
+//     set from the wipe protection. On a dashboard with no content the store
+//     proceeds, since there is nothing to wipe.
 //
 // Per-widget isolation: widgets whose connector/notebook/cell references do
 // not exist (or are not UUIDs) are skipped with a warning instead of aborting
@@ -98,30 +99,43 @@ func Materialize(ctx context.Context, tx pgx.Tx, dashboardID string, proj *Proje
 	}
 
 	// Guard 1: every widget failed validation. Refuse rather than interpret
-	// corruption as "delete every widget row".
+	// corruption as "delete every widget row". Unconditional: a doc whose only
+	// widget entries are invalid cannot be materialized even on a dashboard
+	// with no content.
 	if len(proj.Widgets) == 0 && len(proj.WidgetWarnings) > 0 {
 		return nil, fmt.Errorf(
 			"materialize dashboard %s: refusing to materialize: projection has no widgets and %d widget warning(s)",
 			dashboardID, len(proj.WidgetWarnings))
 	}
 
-	// Guard 2: entirely empty projection against a dashboard that still has
-	// content. Refuse rather than interpret corruption as "wipe everything".
-	if projectionIsEmpty(proj) {
-		var reasons []string
-		if currentTitle != "" {
-			reasons = append(reasons, "a title")
-		}
-		if settingsHaveContent(currentSettings) {
-			reasons = append(reasons, "settings")
-		}
-		if currentWidgets > 0 {
-			reasons = append(reasons, fmt.Sprintf("%d widget row(s)", currentWidgets))
-		}
-		if len(reasons) > 0 {
+	// Guard 2: a widget-less projection over a dashboard that still has
+	// content must never be interpreted as "wipe everything". Two shapes
+	// qualify: an entirely empty projection (wrong-root-kind corruption), and
+	// a warning-tainted projection that yielded no widgets. The second shape
+	// matters because guard 1 only covers widget-origin warnings — a
+	// settings/variables-only warning must not exempt an empty widget set
+	// from the wipe protection.
+	rowContent := currentWidgets > 0 || currentTitle != "" || settingsHaveContent(currentSettings)
+	if rowContent {
+		if projectionIsEmpty(proj) {
+			var reasons []string
+			if currentTitle != "" {
+				reasons = append(reasons, "a title")
+			}
+			if settingsHaveContent(currentSettings) {
+				reasons = append(reasons, "settings")
+			}
+			if currentWidgets > 0 {
+				reasons = append(reasons, fmt.Sprintf("%d widget row(s)", currentWidgets))
+			}
 			return nil, fmt.Errorf(
 				"materialize dashboard %s: refusing to materialize: projection is empty but the dashboard still has %s",
 				dashboardID, strings.Join(reasons, ", "))
+		}
+		if len(proj.Widgets) == 0 && len(proj.Warnings) > 0 {
+			return nil, fmt.Errorf(
+				"materialize dashboard %s: refusing to materialize: projection has no widgets and %d warning(s) while the dashboard still has content",
+				dashboardID, len(proj.Warnings))
 		}
 	}
 

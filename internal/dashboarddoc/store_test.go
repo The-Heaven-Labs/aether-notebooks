@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"math"
 	"os"
 	"sync"
 	"testing"
@@ -394,6 +395,56 @@ func TestMergeAndStore_RefusesEntirelyEmptyProjection(t *testing.T) {
 	require.Equal(t, "Fixture Dashboard", dashboardTitle(t, db, f.dashID))
 	require.Equal(t, widgetsBefore, loadStoreTestWidgets(t, db, f.dashID))
 	require.Nil(t, dashboardDocState(t, db, f.dashID))
+}
+
+// TestMergeAndStore_RefusesWarningTaintedEmptyProjection pins the guard-2
+// extension: a doc that projects zero widgets but carries settings/variables
+// warnings must not have its empty widget set interpreted as "delete every
+// row" while the dashboard still has content. This was the hole where a
+// settings-only warning (grid_cols = NaN) exempted the projection from the
+// total-wipe guard.
+func TestMergeAndStore_RefusesWarningTaintedEmptyProjection(t *testing.T) {
+	db := setupStoreTestDB(t)
+	ctx := context.Background()
+
+	// No widget entries; settings.grid_cols = NaN is dropped by Project with
+	// a settings-only warning.
+	corrupt := buildState(t, func(txn *crdt.Transaction, meta, _ *crdt.YMap) {
+		settings := crdt.NewMapPrelim()
+		settings.Set(txn, "grid_cols", math.NaN())
+		meta.Set(txn, keySettings, settings)
+	})
+
+	t.Run("populated dashboard refuses", func(t *testing.T) {
+		f := seedStoreTestFixture(t, db)
+		insertStoreTestWidgetRow(t, db, f.dashID, testUUID(1))
+		widgetsBefore := loadStoreTestWidgets(t, db, f.dashID)
+		settingsBefore := dashboardSettings(t, db, f.dashID)
+		titleBefore := dashboardTitle(t, db, f.dashID)
+
+		err := MergeAndStore(ctx, db.Pool, f.dashID, corrupt)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "refusing to materialize")
+		require.Contains(t, err.Error(), "no widgets and 1 warning(s) while the dashboard still has content")
+
+		require.Equal(t, titleBefore, dashboardTitle(t, db, f.dashID))
+		require.Equal(t, settingsBefore, dashboardSettings(t, db, f.dashID))
+		require.Equal(t, widgetsBefore, loadStoreTestWidgets(t, db, f.dashID))
+		require.Nil(t, dashboardDocState(t, db, f.dashID), "the refused store must roll back the state write")
+	})
+
+	t.Run("pristine dashboard still materializes", func(t *testing.T) {
+		f := seedStoreTestFixture(t, db)
+		_, err := db.Pool.Exec(ctx,
+			`UPDATE dashboards SET title = '', settings = '{}' WHERE id = $1`, f.dashID)
+		require.NoError(t, err)
+
+		// Nothing to wipe: the warning-tainted projection is allowed.
+		require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, corrupt))
+		require.Empty(t, loadStoreTestWidgets(t, db, f.dashID))
+		require.Equal(t, "", dashboardTitle(t, db, f.dashID))
+		require.Equal(t, map[string]any{"variables": []any{}}, dashboardSettings(t, db, f.dashID))
+	})
 }
 
 func TestMergeAndStore_AllowsDeletingEveryWidget(t *testing.T) {
