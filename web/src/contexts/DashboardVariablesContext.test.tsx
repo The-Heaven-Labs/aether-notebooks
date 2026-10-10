@@ -254,3 +254,98 @@ describe('DashboardVariablesContext', () => {
     expect(state.params!.toString()).toBe('')
   })
 })
+
+describe('DashboardVariablesContext live definition changes', () => {
+  // Renders with a mutable `variables` prop so tests can simulate an editor
+  // changing a definition (the viewer page passes a fresh array on each doc
+  // update).
+  function renderWithLiveVariables(initial: DashboardVariable[], initialPath = '/dash/d1') {
+    const state = { variables: initial }
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <MemoryRouter initialEntries={[initialPath]}>
+        <DashboardVariablesProvider dashboardId="d1" variables={state.variables}>
+          {children}
+        </DashboardVariablesProvider>
+      </MemoryRouter>
+    )
+    const rendered = renderHook(() => useDashboardVariables(), { wrapper })
+    return {
+      ...rendered,
+      setVariables(next: DashboardVariable[]) {
+        state.variables = next
+        rendered.rerender()
+      },
+    }
+  }
+
+  test('an untouched variable adopts a live default change', () => {
+    const live = renderWithLiveVariables([{ name: 'region', type: 'text', default: 'EMEA' }])
+    expect(live.result.current.values.region).toBe('EMEA')
+
+    live.setVariables([{ name: 'region', type: 'text', default: 'AMER' }])
+    expect(live.result.current.values.region).toBe('AMER')
+
+    // The new default is persisted, but the variable stays untouched — a
+    // later default change keeps applying.
+    expect(JSON.parse(localStorage.getItem('aether_dashvars_d1') ?? '{}')).toMatchObject({ region: 'AMER' })
+    expect(JSON.parse(localStorage.getItem('aether_dashvars_touched_d1') ?? '[]')).not.toContain('region')
+
+    live.setVariables([{ name: 'region', type: 'text', default: 'APAC' }])
+    expect(live.result.current.values.region).toBe('APAC')
+  })
+
+  test('an explicitly chosen value survives a live default change', () => {
+    const live = renderWithLiveVariables([{ name: 'region', type: 'text', default: 'EMEA' }])
+    act(() => live.result.current.setValue('region', 'APAC'))
+
+    live.setVariables([{ name: 'region', type: 'text', default: 'AMER' }])
+    expect(live.result.current.values.region).toBe('APAC')
+    expect(JSON.parse(localStorage.getItem('aether_dashvars_touched_d1') ?? '[]')).toContain('region')
+  })
+
+  test('a URL-pinned value survives a live default change', () => {
+    const live = renderWithLiveVariables(
+      [{ name: 'region', type: 'text', default: 'EMEA' }],
+      '/dash/d1?region=APAC',
+    )
+    expect(live.result.current.values.region).toBe('APAC')
+
+    live.setVariables([{ name: 'region', type: 'text', default: 'AMER' }])
+    expect(live.result.current.values.region).toBe('APAC')
+  })
+
+  test('a variable added live receives its default', () => {
+    const live = renderWithLiveVariables([{ name: 'region', type: 'text', default: 'EMEA' }])
+    live.setVariables([
+      { name: 'region', type: 'text', default: 'EMEA' },
+      { name: 'env', type: 'text', default: 'prod' },
+    ])
+    expect(live.result.current.values.env).toBe('prod')
+  })
+
+  test('a persisted explicit choice survives a remount and later default changes', () => {
+    const first = renderWithLiveVariables([{ name: 'region', type: 'text', default: 'EMEA' }])
+    act(() => first.result.current.setValue('region', 'AMER'))
+    expect(JSON.parse(localStorage.getItem('aether_dashvars_touched_d1') ?? '[]')).toContain('region')
+    first.unmount()
+
+    // The editor changed the default to exactly the viewer's explicit choice
+    // while they were away: without the persisted touched set, the next
+    // default change would silently overwrite that choice.
+    const second = renderWithLiveVariables([{ name: 'region', type: 'text', default: 'AMER' }])
+    expect(second.result.current.values.region).toBe('AMER')
+
+    second.setVariables([{ name: 'region', type: 'text', default: 'APAC' }])
+    expect(second.result.current.values.region).toBe('AMER')
+  })
+
+  test('resetAll clears touched so later default changes apply', () => {
+    const live = renderWithLiveVariables([{ name: 'region', type: 'text', default: 'EMEA' }])
+    act(() => live.result.current.setValue('region', 'APAC'))
+    act(() => live.result.current.resetAll())
+    expect(live.result.current.values.region).toBe('EMEA')
+
+    live.setVariables([{ name: 'region', type: 'text', default: 'AMER' }])
+    expect(live.result.current.values.region).toBe('AMER')
+  })
+})
