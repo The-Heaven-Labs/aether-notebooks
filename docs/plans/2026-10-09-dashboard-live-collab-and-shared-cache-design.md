@@ -114,6 +114,13 @@ users arriving within one query's runtime still execute 100 times.
   definition). A non-bypass request that finds a cache entry never enters the flight.
 - v1 is **in-process**: worst case one warehouse run per API replica per key per burst.
   A Redis leader-lock for cross-replica dedupe is an optional phase 2 (not built now).
+- The shared computation is **detached from any single caller's cancellation**
+  (`context.WithoutCancel`) so one user's abort cannot 422 the rest of the flight, and
+  is bounded by the connector `timeout_seconds` with a 5-minute default when unset
+  (`dashboardQueryDefaultTimeout`, mirroring the agent `run_cell` default). This
+  deliberately diverges from HTTP cell execution, which treats `timeout_seconds = 0`
+  as unlimited. Consequence: a solo client abort no longer cancels a dashboard query;
+  it runs to completion/timeout and warms the shared entry.
 
 ## Alternatives considered
 

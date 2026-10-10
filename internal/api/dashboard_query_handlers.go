@@ -28,8 +28,9 @@ const (
 
 // dashboardQueryDefaultTimeout bounds a dashboard query when neither the
 // connector's timeout_seconds nor a caller override provides a budget. It
-// mirrors the 5-minute default of the cell execution path (agent run_cell's
-// defaultCellTimeoutMs), so a detached shared flight can never run unbounded.
+// mirrors the agent run_cell default (defaultCellTimeoutMs, 5 minutes) so a
+// detached shared flight can never run unbounded. This deliberately diverges
+// from HTTP cell execution, which treats timeout_seconds = 0 as unlimited.
 const dashboardQueryDefaultTimeout = 5 * time.Minute
 
 type dashboardExecuteRequest struct {
