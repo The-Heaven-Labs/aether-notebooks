@@ -72,6 +72,16 @@ func TestCollabAuthorizePermissionMatrix(t *testing.T) {
 	addOrgMember(t, srv, orgID, outsiderID, "non-admin")
 	outsiderToken := issueToken(t, outsiderID, orgID, "non-admin")
 
+	// A second org admin with no ACL row on the dashboard: internal routes
+	// never run the auth middleware, so they cannot carry admin mode and the
+	// org-admin bypass must not apply here.
+	adminID := insertUser(t, srv, fmt.Sprintf("collab-auth-admin-%d@example.com", ts), "Org Admin")
+	addOrgMember(t, srv, orgID, adminID, "non-admin")
+	_, err := srv.DB().Pool.Exec(ctx,
+		`UPDATE org_members SET role = 'admin' WHERE org_id = $1 AND user_id = $2`, orgID, adminID)
+	require.NoError(t, err)
+	adminToken := issueToken(t, adminID, orgID, "admin")
+
 	t.Run("owner can edit", func(t *testing.T) {
 		rec := collabAuthorize(t, srv, ownerToken, "dashboard:"+dashID)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
@@ -98,6 +108,11 @@ func TestCollabAuthorizePermissionMatrix(t *testing.T) {
 
 	t.Run("no access is forbidden", func(t *testing.T) {
 		rec := collabAuthorize(t, srv, outsiderToken, "dashboard:"+dashID)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	})
+
+	t.Run("org admin without ACL is forbidden", func(t *testing.T) {
+		rec := collabAuthorize(t, srv, adminToken, "dashboard:"+dashID)
 		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
 	})
 

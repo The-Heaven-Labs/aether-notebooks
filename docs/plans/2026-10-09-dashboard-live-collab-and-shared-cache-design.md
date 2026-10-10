@@ -218,10 +218,13 @@ client-side and the materializer rejects/clamps invalid entries.
   revalidation.
 - **Org admins**: the admin ACL bypass requires admin mode, which internal relay
   routes cannot carry (no admin-mode header/middleware there). An org admin without an
-  explicit `edit` ACL entry therefore connects **read-only** to the live doc even
-  though REST editing via admin mode works. Known v1 limitation; a follow-up can have
-  the provider forward an admin-mode flag (e.g. a URL parameter the relay passes to
-  authorize) so admins get read-write when their UI toggle is on.
+  explicit `edit` ACL entry therefore **cannot connect to the live doc** (authorize
+  returns 403), even though REST editing via admin mode works. The relay must reject
+  every non-200 from authorize — it must **never** map 403 to a read-only connection,
+  since that would admit org members with no access at all to the document. Such admins
+  need an explicit `edit` ACL entry in v1; a follow-up can have the provider forward an
+  admin-mode flag (e.g. a URL parameter the relay passes to authorize) so admins
+  connect read-write when their UI toggle is on.
 
 ## Frontend UX
 
