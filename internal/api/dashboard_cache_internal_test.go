@@ -162,8 +162,9 @@ func TestDashboardQueryAccessFingerprint(t *testing.T) {
 	userFallback := "user:" + fx.userID.String()
 
 	// A malformed warehouse id makes the managed fingerprint resolution fail;
-	// the run must fall back to the per-user key rather than sharing the
-	// constant "unmanaged" value (the reviewed bug).
+	// the run must fall back to the per-user key. The original implementation
+	// pre-assigned the constant "unmanaged" before calling the helper, so this
+	// error path kept a shared key.
 	badWarehouse := "not-a-uuid"
 	invalid := base
 	invalid.WarehouseID = &badWarehouse

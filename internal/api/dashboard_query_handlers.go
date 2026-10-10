@@ -800,7 +800,9 @@ func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) 
 	// The cache key carries the viewer's effective-access fingerprint instead
 	// of their identity, so viewers whose runs return identical data share
 	// entries. The resolver fails closed to a per-user key whenever sharing
-	// cannot be proven safe.
+	// cannot be proven safe. It deliberately covers authorization (`use`), not
+	// operational readiness (`sync_status`, provisioner gates), which a cache
+	// hit may bypass for the TTL — a documented accepted class.
 	p.AccessFingerprint = s.dashboardQueryAccessFingerprint(ctx, p)
 
 	ttl := defaultDashboardQueryCacheSeconds

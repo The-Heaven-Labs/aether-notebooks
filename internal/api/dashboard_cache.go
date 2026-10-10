@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/google/uuid"
@@ -15,6 +16,10 @@ import (
 // grants: unmanaged connectors execute with their shared stored credential, as
 // does every connector while warehouse management is disabled.
 const dashboardFingerprintUnmanaged = "unmanaged"
+
+// dashboardFingerprintPublic is the fingerprint for public-token runs: the
+// token scope in the cache key already discriminates them.
+const dashboardFingerprintPublic = "public"
 
 // dashboardAccessFingerprint returns a stable hash of the viewer's effective
 // data access for a served connector. Managed ClickHouse connectors hash the
@@ -54,17 +59,21 @@ func (s *Server) dashboardAccessFingerprint(ctx context.Context, orgID, userID s
 // resolved fingerprint is shared.
 func (s *Server) dashboardQueryAccessFingerprint(ctx context.Context, p dashboardQueryParams) string {
 	if p.CacheScope != "" {
-		return "public"
+		return dashboardFingerprintPublic
 	}
+	perUser := "user:" + p.Identity.UserID
 	// A viewer without `use` on the served connector is denied by openQuery on
 	// the miss path; a shared key would let a cache hit return data ahead of
 	// that denial.
 	useOK, err := s.checkPermission(ctx, p.Identity.UserID, p.OrgID, p.Identity.Role, "connector", p.ConnectorID, "use")
 	if err != nil || !useOK {
-		return "user:" + p.Identity.UserID
+		return perUser
 	}
-	if computed, err := s.dashboardAccessFingerprint(ctx, p.OrgID, p.Identity.UserID, p.WarehouseID); err == nil {
-		return computed
+	computed, err := s.dashboardAccessFingerprint(ctx, p.OrgID, p.Identity.UserID, p.WarehouseID)
+	if err != nil {
+		slog.Debug("dashboard access fingerprint unavailable; using a per-user cache key",
+			"org_id", p.OrgID, "user_id", p.Identity.UserID, "connector_id", p.ConnectorID, "error", err)
+		return perUser
 	}
-	return "user:" + p.Identity.UserID
+	return computed
 }

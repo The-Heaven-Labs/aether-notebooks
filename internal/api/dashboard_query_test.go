@@ -274,6 +274,118 @@ func TestDashboardQueryCacheHitStillRequiresConnectorUse(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, recB.Code, recB.Body.String())
 }
 
+// TestDashboardQueryCacheManagedFingerprintSplitsGrants pins the shared-cache
+// split for warehouse-managed connectors through the real HTTP handler: users
+// whose effective warehouse table grants match share a cache entry, while a
+// user with an extra table does not. A Postgres connector linked to a
+// warehouse executes with its stored credential (managed routing only applies
+// to ClickHouse) but still routes through the managed grant-hash fingerprint.
+func TestDashboardQueryCacheManagedFingerprintSplitsGrants(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	// Per-user table permissions must be on for the managed fingerprint
+	// branch; the setter is a per-server toggle, restored for tidiness.
+	srv.SetCHTablePermissions(true)
+	t.Cleanup(func() { srv.SetCHTablePermissions(false) })
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	email := fmt.Sprintf("dash-mfp-owner-%d@example.com", time.Now().UnixNano())
+	tokenA := registerAndGetToken(t, srv, email, "Dash Managed FP Org")
+	connID := createConnector(t, srv, tokenA)
+
+	var orgID, userA string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT org_id FROM connectors WHERE id = $1`, connID).Scan(&orgID))
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT id FROM users WHERE email = $1`, email).Scan(&userA))
+
+	// The warehouse link makes the served connector "managed" for fingerprint
+	// purposes; its Postgres type keeps execution on the stored credential.
+	var warehouseID string
+	require.NoError(t, db.Pool.QueryRow(ctx,
+		`INSERT INTO warehouses (id, org_id, name, sync_status)
+		 VALUES (gen_random_uuid(), $1, $2, 'ready') RETURNING id`,
+		orgID, fmt.Sprintf("Managed FP %d", time.Now().UnixNano())).Scan(&warehouseID))
+	_, err := db.Pool.Exec(ctx,
+		`UPDATE connectors SET warehouse_id = $1 WHERE id = $2`, warehouseID, connID)
+	require.NoError(t, err)
+
+	dashID := createDashWithSettings(t, srv, tokenA, nil)
+	widgetID := addQueryWidget(t, srv, tokenA, dashID, connID, "SELECT 'shared' AS value")
+
+	// Two more org members with view_with_data and connector use.
+	makeViewer := func(label string) (string, string) {
+		t.Helper()
+		userID := insertUser(t, srv,
+			fmt.Sprintf("dash-mfp-%s-%d@example.com", label, time.Now().UnixNano()), "Managed FP Viewer")
+		addOrgMember(t, srv, orgID, userID, "non-admin")
+		grantACL(t, srv, orgID, "dashboard", dashID, "user", userID, "view", "view_with_data")
+		grantACL(t, srv, orgID, "connector", connID, "user", userID, "view", "use")
+		return userID, issueToken(t, userID, orgID, "non-admin")
+	}
+	userB, tokenB := makeViewer("b")
+	userC, tokenC := makeViewer("c")
+
+	grantTable := func(subjectType, subjectID, table string) {
+		t.Helper()
+		_, err := db.Pool.Exec(ctx,
+			`INSERT INTO warehouse_table_grants
+			 (org_id, warehouse_id, subject_type, subject_id, database_name, table_name)
+			 VALUES ($1, $2, $3, $4, 'analytics', $5)`,
+			orgID, warehouseID, subjectType, subjectID, table)
+		require.NoError(t, err)
+	}
+	// A sees analytics.events directly; C sees the same effective set through
+	// a group; B sees one table more, so its fingerprint must differ.
+	grantTable("user", userA, "events")
+	grantTable("user", userB, "events")
+	grantTable("user", userB, "extra")
+	var groupID string
+	require.NoError(t, db.Pool.QueryRow(ctx,
+		`INSERT INTO groups (id, org_id, name) VALUES (gen_random_uuid(), $1, $2) RETURNING id`,
+		orgID, fmt.Sprintf("Managed FP Group %d", time.Now().UnixNano())).Scan(&groupID))
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`, groupID, userC)
+	require.NoError(t, err)
+	grantTable("group", groupID, "events")
+
+	execute := func(token string) map[string]any {
+		t.Helper()
+		rec := executeDashboardWidget(t, srv, token, dashID, map[string]any{"widget_id": widgetID})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		return resp
+	}
+	cachedFlag := func(resp map[string]any) bool {
+		t.Helper()
+		cached, ok := resp["cached"].(bool)
+		require.True(t, ok, "cached flag missing from response: %v", resp)
+		return cached
+	}
+	rowsOf := func(resp map[string]any) []any {
+		t.Helper()
+		outputs, ok := resp["outputs"].([]any)
+		require.True(t, ok && len(outputs) > 0, "expected outputs, got %v", resp)
+		data, ok := outputs[0].(map[string]any)["data"].(map[string]any)
+		require.True(t, ok, "expected table data, got %v", outputs[0])
+		rows, ok := data["rows"].([]any)
+		require.True(t, ok, "expected rows, got %v", data)
+		return rows
+	}
+
+	respA := execute(tokenA)
+	require.False(t, cachedFlag(respA), "the first run must be a cache miss")
+
+	respC := execute(tokenC)
+	require.True(t, cachedFlag(respC), "the same effective grants via a group must share the entry")
+	require.Equal(t, rowsOf(respA), rowsOf(respC), "the shared entry must return the first runner's rows")
+
+	respB := execute(tokenB)
+	require.False(t, cachedFlag(respB), "an extra table must not share the entry despite identical SQL")
+	respB2 := execute(tokenB)
+	require.True(t, cachedFlag(respB2), "a repeat of B's own grants must hit B's entry")
+}
+
 func dashboardVariableOptions(t *testing.T, srv *api.Server, token, dashID, name string, body map[string]any) *httptest.ResponseRecorder {
 	t.Helper()
 	raw, _ := json.Marshal(body)
