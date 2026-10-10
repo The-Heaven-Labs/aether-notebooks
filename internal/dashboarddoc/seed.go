@@ -47,12 +47,20 @@ func Seed(p Projection) ([]byte, error) {
 		config string
 	}
 	prepared := make([]preparedWidget, 0, len(p.Widgets))
+	seen := make(map[string]string, len(p.Widgets))
 	for id, w := range p.Widgets {
-		config, err := validateWidget(id, w)
+		canonical, config, err := validateWidget(id, w)
 		if err != nil {
 			return nil, err
 		}
-		prepared = append(prepared, preparedWidget{id: id, w: w, config: config})
+		// Two map keys that are spellings of the same UUID (e.g. "AB..." and
+		// "ab...") are one widget identity; refusing keeps Seed from writing
+		// one entry and silently dropping the other.
+		if prev, dup := seen[canonical]; dup {
+			return nil, fmt.Errorf("widget %q: duplicate widget ID %q (also spelled %q)", id, canonical, prev)
+		}
+		seen[canonical] = id
+		prepared = append(prepared, preparedWidget{id: canonical, w: w, config: config})
 	}
 	// Deterministic document construction: map iteration order is random.
 	sort.Slice(prepared, func(i, j int) bool { return prepared[i].id < prepared[j].id })
@@ -93,40 +101,46 @@ func Seed(p Projection) ([]byte, error) {
 // validateWidget checks a widget projection against the document's shape rules
 // and normalizes its config to the JSON string stored in the document. id is
 // the widgets-map key the widget will be stored under (for UpsertWidget, the
-// widget's own ID). Shared by Seed and UpsertWidget so both write paths accept
+// widget's own ID). It returns the canonical UUID spelling of id so both write
+// paths key the document by canonical UUIDs regardless of how the caller
+// spelled them. Shared by Seed and UpsertWidget so both write paths accept
 // exactly the same widgets.
-func validateWidget(id string, w WidgetDoc) (string, error) {
-	if _, err := uuid.Parse(id); err != nil {
-		return "", fmt.Errorf("widget %q: key is not a valid UUID: %w", id, err)
+func validateWidget(id string, w WidgetDoc) (canonicalID string, config string, err error) {
+	canonicalID, err = canonicalWidgetID(id)
+	if err != nil {
+		return "", "", err
 	}
-	if w.ID != "" && w.ID != id {
-		return "", fmt.Errorf("widget %q: ID %q does not match its map key", id, w.ID)
+	if w.ID != "" {
+		docID, parseErr := uuid.Parse(w.ID)
+		if parseErr != nil || docID.String() != canonicalID {
+			return "", "", fmt.Errorf("widget %q: ID %q does not match its map key", id, w.ID)
+		}
 	}
 	if !widgetTypes[w.Type] {
-		return "", fmt.Errorf("widget %q: unknown type %q", id, w.Type)
+		return "", "", fmt.Errorf("widget %q: unknown type %q", id, w.Type)
 	}
 	if !queryLanguages[w.Language] {
-		return "", fmt.Errorf("widget %q: unsupported language %q", id, w.Language)
+		return "", "", fmt.Errorf("widget %q: unsupported language %q", id, w.Language)
 	}
 	if w.Layout.Row < 0 || w.Layout.Col < 0 || w.Layout.Width < 0 || w.Layout.Height < 0 {
-		return "", fmt.Errorf("widget %q: negative layout %+v", id, w.Layout)
+		return "", "", fmt.Errorf("widget %q: negative layout %+v", id, w.Layout)
 	}
-	config := "{}"
+	config = "{}"
 	if len(w.Config) > 0 {
 		// normalizeForDoc rejects shared yjs types and non-finite
 		// numbers, which json.Marshal would otherwise encode silently
 		// (as {} or fail less clearly).
 		normalized, err := normalizeForDoc(w.Config)
 		if err != nil {
-			return "", fmt.Errorf("widget %q: config: %w", id, err)
+			return "", "", fmt.Errorf("widget %q: config: %w", id, err)
 		}
 		raw, err := json.Marshal(normalized)
 		if err != nil {
-			return "", fmt.Errorf("widget %q: config: %w", id, err)
+			return "", "", fmt.Errorf("widget %q: config: %w", id, err)
 		}
 		config = string(raw)
 	}
-	return config, nil
+	return canonicalID, config, nil
 }
 
 // widgetPrelim builds the detached widget Y.Map that the caller attaches under

@@ -473,3 +473,79 @@ func TestApply_RejectsCorruptState(t *testing.T) {
 		})
 	}
 }
+
+// TestCanonicalWidgetIDs pins that UUID spellings are canonicalized on every
+// path: Seed stores canonical keys, Project reports canonical IDs, and the
+// apply ops address canonical keys, so an uppercase spelling cannot create a
+// duplicate document key or a diff mismatch during materialization.
+func TestCanonicalWidgetIDs(t *testing.T) {
+	const upperID = "AAAAAAAA-BBBB-4CCC-8DDD-000000000001"
+	const canonID = "aaaaaaaa-bbbb-4ccc-8ddd-000000000001"
+
+	t.Run("Seed stores the canonical key", func(t *testing.T) {
+		state, err := Seed(Projection{
+			Widgets: map[string]WidgetDoc{upperID: {ID: upperID, Type: "table"}},
+		})
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		require.Contains(t, proj.Widgets, canonID)
+		require.Equal(t, canonID, proj.Widgets[canonID].ID)
+	})
+
+	t.Run("Project canonicalizes the widget ID", func(t *testing.T) {
+		state := buildState(t, func(txn *crdt.Transaction, _, widgets *crdt.YMap) {
+			putRawWidget(txn, widgets, upperID, nil)
+		})
+
+		proj, err := Project(state)
+		require.NoError(t, err)
+		require.Empty(t, proj.Warnings)
+		require.Contains(t, proj.Widgets, canonID)
+		require.Equal(t, canonID, proj.Widgets[canonID].ID)
+	})
+
+	t.Run("Project warns on duplicate spellings", func(t *testing.T) {
+		state := buildState(t, func(txn *crdt.Transaction, _, widgets *crdt.YMap) {
+			putRawWidget(txn, widgets, upperID, nil)
+			putRawWidget(txn, widgets, canonID, nil)
+		})
+
+		proj, err := Project(state)
+		require.NoError(t, err)
+		require.Len(t, proj.Widgets, 1)
+		require.Len(t, proj.Warnings, 1)
+		require.Contains(t, proj.Warnings[0], "duplicate UUID")
+	})
+
+	t.Run("apply ops address the canonical key", func(t *testing.T) {
+		state, err := UpsertWidget(nil, WidgetDoc{ID: upperID, Type: "table", Config: map[string]any{}})
+		require.NoError(t, err)
+
+		state, err = UpdateLayout(state, upperID, Layout{Row: 1, Col: 2, Width: 3, Height: 4})
+		require.NoError(t, err)
+		state, err = SetQuery(state, upperID, "SELECT 9")
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		require.Contains(t, proj.Widgets, canonID)
+		require.Equal(t, Layout{Row: 1, Col: 2, Width: 3, Height: 4}, proj.Widgets[canonID].Layout)
+		require.Equal(t, "SELECT 9", widgetQuery(t, proj.Widgets[canonID]))
+
+		state, err = DeleteWidget(state, upperID)
+		require.NoError(t, err)
+		proj = mustProject(t, state)
+		require.Empty(t, proj.Widgets)
+	})
+
+	t.Run("Seed rejects duplicate spellings", func(t *testing.T) {
+		_, err := Seed(Projection{
+			Widgets: map[string]WidgetDoc{
+				upperID: {ID: upperID, Type: "table"},
+				canonID: {ID: canonID, Type: "text"},
+			},
+		})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "duplicate widget ID")
+	})
+}

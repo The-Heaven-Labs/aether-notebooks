@@ -1,8 +1,10 @@
 // Package dashboarddoc defines the Yjs document format for live dashboard
 // co-editing, the seed/project pair that converts between the CRDT document
-// and the Go projection used by the REST and materialization layers, and the
+// and the Go projection used by the REST and materialization layers, the
 // backend-originated mutation operations (apply.go) that write widget and meta
-// changes into the document.
+// changes into the document, and the merge-on-store path (store.go,
+// materialize.go) that persists relay state into dashboard_yjs_documents and
+// derives the dashboards/widgets rows from it.
 //
 // # Document shape
 //
@@ -142,10 +144,13 @@ type Layout struct {
 
 // WidgetDoc is the projection of one widget in the dashboard document.
 //
-// ID is the widget UUID (the widgets map key). Seed requires the map key to be
-// a valid UUID and rejects a non-empty ID that disagrees with it; Project sets
-// ID from the key and skips + warns widgets whose key is not a UUID (the
-// materializer writes keys into a UUID column).
+// ID is the widget UUID (the widgets map key), in canonical lowercase
+// 8-4-4-4-12 form. Seed requires the map key to be a valid UUID and rejects a
+// non-empty ID that disagrees with it; Project sets ID from the key and skips +
+// warns widgets whose key is not a UUID (the materializer writes keys into a
+// UUID column). Both paths canonicalize UUID spellings, so uppercase or
+// brace-wrapped spellings of the same UUID never create two document keys or
+// two materialized rows.
 //
 // ConnectorID, Query, NotebookID and CellID are nil when unset, mapping to/from
 // the document's "" placeholder. Config is stored as a JSON string in the

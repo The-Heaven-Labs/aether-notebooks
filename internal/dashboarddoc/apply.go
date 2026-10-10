@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/google/uuid"
 	"github.com/reearth/ygo/crdt"
 )
 
@@ -67,7 +66,7 @@ func decodeDoc(state []byte) (*crdt.Doc, error) {
 // fields the new widget does not carry (connector, notebook/cell link, query)
 // are reset rather than merged over the old values.
 func UpsertWidget(state []byte, w WidgetDoc) ([]byte, error) {
-	config, err := validateWidget(w.ID, w)
+	canonical, config, err := validateWidget(w.ID, w)
 	if err != nil {
 		return nil, err
 	}
@@ -81,8 +80,8 @@ func UpsertWidget(state []byte, w WidgetDoc) ([]byte, error) {
 	widgets := doc.GetMap(rootWidgets)
 
 	doc.Transact(func(txn *crdt.Transaction) {
-		widgets.Delete(txn, w.ID)
-		widgets.Set(txn, w.ID, widgetPrelim(txn, w, config))
+		widgets.Delete(txn, canonical)
+		widgets.Set(txn, canonical, widgetPrelim(txn, w, config))
 	})
 
 	return doc.EncodeStateAsUpdate(), nil
@@ -90,19 +89,24 @@ func UpsertWidget(state []byte, w WidgetDoc) ([]byte, error) {
 
 // DeleteWidget removes the widget with the given ID and returns the merged
 // state. A widget that is not present is an error (ErrWidgetNotFound), not a
-// no-op.
+// no-op. The ID is canonicalized, so any UUID spelling addresses the same
+// widget.
 func DeleteWidget(state []byte, widgetID string) ([]byte, error) {
+	canonical, err := canonicalWidgetID(widgetID)
+	if err != nil {
+		return nil, err
+	}
 	doc, err := decodeDoc(state)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := findWidget(doc, widgetID); err != nil {
+	if _, err := findWidget(doc, canonical); err != nil {
 		return nil, err
 	}
 
 	widgets := doc.GetMap(rootWidgets)
 	doc.Transact(func(txn *crdt.Transaction) {
-		widgets.Delete(txn, widgetID)
+		widgets.Delete(txn, canonical)
 	})
 
 	return doc.EncodeStateAsUpdate(), nil
@@ -111,17 +115,22 @@ func DeleteWidget(state []byte, widgetID string) ([]byte, error) {
 // UpdateLayout writes all four layout fields of one widget and returns the
 // merged state. A missing layout map is created; a present-but-invalid layout
 // map is an error, as is a missing widget (ErrWidgetNotFound) or a negative
-// layout.
+// layout. The ID is canonicalized, so any UUID spelling addresses the same
+// widget.
 func UpdateLayout(state []byte, widgetID string, l Layout) ([]byte, error) {
+	canonical, err := canonicalWidgetID(widgetID)
+	if err != nil {
+		return nil, err
+	}
 	if l.Row < 0 || l.Col < 0 || l.Width < 0 || l.Height < 0 {
-		return nil, fmt.Errorf("widget %q: negative layout %+v", widgetID, l)
+		return nil, fmt.Errorf("widget %q: negative layout %+v", canonical, l)
 	}
 
 	doc, err := decodeDoc(state)
 	if err != nil {
 		return nil, err
 	}
-	wm, err := findWidget(doc, widgetID)
+	wm, err := findWidget(doc, canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +141,7 @@ func UpdateLayout(state []byte, widgetID string, l Layout) ([]byte, error) {
 	if v, ok := wm.Get(keyLayout); ok {
 		lm, isMap := v.(*crdt.YMap)
 		if !isMap {
-			return nil, fmt.Errorf("widget %q: layout is %T, want Y.Map", widgetID, v)
+			return nil, fmt.Errorf("widget %q: layout is %T, want Y.Map", canonical, v)
 		}
 		layout = lm
 	}
@@ -161,13 +170,18 @@ func UpdateLayout(state []byte, widgetID string, l Layout) ([]byte, error) {
 // transaction), so concurrent editor characters still merge at the CRDT
 // level. An empty sql clears the text; a widget whose query field is not a
 // Y.Text is an error, as is a missing widget (ErrWidgetNotFound). A widget
-// with no query field at all gets a fresh Y.Text.
+// with no query field at all gets a fresh Y.Text. The ID is canonicalized, so
+// any UUID spelling addresses the same widget.
 func SetQuery(state []byte, widgetID, sql string) ([]byte, error) {
+	canonical, err := canonicalWidgetID(widgetID)
+	if err != nil {
+		return nil, err
+	}
 	doc, err := decodeDoc(state)
 	if err != nil {
 		return nil, err
 	}
-	wm, err := findWidget(doc, widgetID)
+	wm, err := findWidget(doc, canonical)
 	if err != nil {
 		return nil, err
 	}
@@ -178,7 +192,7 @@ func SetQuery(state []byte, widgetID, sql string) ([]byte, error) {
 	if v, ok := wm.Get(keyQuery); ok {
 		t, isText := v.(*crdt.YText)
 		if !isText {
-			return nil, fmt.Errorf("widget %q: query is %T, want Y.Text", widgetID, v)
+			return nil, fmt.Errorf("widget %q: query is %T, want Y.Text", canonical, v)
 		}
 		text = t
 	}
@@ -264,19 +278,21 @@ func UpdateMeta(state []byte, title *string, settings map[string]any, variables 
 
 // findWidget resolves the live widget map stored under id. It returns
 // ErrWidgetNotFound when id is a valid UUID with no widget stored under it; a
-// malformed UUID or a non-Y.Map entry is a plain validation error.
+// malformed UUID or a non-Y.Map entry is a plain validation error. The ID is
+// canonicalized, so lookups accept any UUID spelling.
 func findWidget(doc *crdt.Doc, id string) (*crdt.YMap, error) {
-	if _, err := uuid.Parse(id); err != nil {
-		return nil, fmt.Errorf("widget %q: key is not a valid UUID: %w", id, err)
+	canonical, err := canonicalWidgetID(id)
+	if err != nil {
+		return nil, err
 	}
 	widgets := doc.GetMap(rootWidgets)
-	v, ok := widgets.Get(id)
+	v, ok := widgets.Get(canonical)
 	if !ok {
-		return nil, fmt.Errorf("widget %q: %w", id, ErrWidgetNotFound)
+		return nil, fmt.Errorf("widget %q: %w", canonical, ErrWidgetNotFound)
 	}
 	wm, isMap := v.(*crdt.YMap)
 	if !isMap {
-		return nil, fmt.Errorf("widget %q: got %T, want Y.Map", id, v)
+		return nil, fmt.Errorf("widget %q: got %T, want Y.Map", canonical, v)
 	}
 	return wm, nil
 }

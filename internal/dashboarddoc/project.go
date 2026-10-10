@@ -96,7 +96,8 @@ func Project(state []byte) (*Projection, error) {
 	ids := widgets.Keys()
 	sort.Strings(ids)
 	for _, id := range ids {
-		if _, err := uuid.Parse(id); err != nil {
+		canonical, err := canonicalWidgetID(id)
+		if err != nil {
 			proj.Warnings = append(proj.Warnings,
 				fmt.Sprintf("widget %q: key is not a valid UUID", id))
 			continue
@@ -113,11 +114,32 @@ func Project(state []byte) (*Projection, error) {
 			proj.Warnings = append(proj.Warnings, warning)
 			continue
 		}
-		w.ID = id
-		proj.Widgets[id] = w
+		// Two spellings of the same UUID cannot produce two projection
+		// entries: keep the first in sorted order and warn about the rest,
+		// so the materializer never sees duplicate identities.
+		if _, dup := proj.Widgets[canonical]; dup {
+			proj.Warnings = append(proj.Warnings,
+				fmt.Sprintf("widget %q: duplicate UUID %q", id, canonical))
+			continue
+		}
+		w.ID = canonical
+		proj.Widgets[canonical] = w
 	}
 
 	return proj, nil
+}
+
+// canonicalWidgetID parses id as a UUID and returns its canonical lowercase
+// string form (8-4-4-4-12). The widgets map is keyed by UUID strings, and the
+// materialized widgets table by uuid values: canonicalizing here and in the
+// apply ops means uppercase or brace-wrapped spellings of the same UUID address
+// the same document key and the same row instead of creating duplicates.
+func canonicalWidgetID(id string) (string, error) {
+	u, err := uuid.Parse(id)
+	if err != nil {
+		return "", fmt.Errorf("widget %q: key is not a valid UUID: %w", id, err)
+	}
+	return u.String(), nil
 }
 
 // projectWidget converts one widgets-map entry. It returns a non-empty warning
