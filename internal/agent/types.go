@@ -31,6 +31,11 @@ type DashboardDocStore interface {
 	// Store persists a backend-originated document state (CRDT-merged onto
 	// the stored state) and materializes the derived rows.
 	Store(ctx context.Context, dashboardID string, state []byte) error
+	// Invalidate tells relay replicas to disconnect viewers and unload any
+	// in-memory document for a dashboard whose row was hard-deleted, so a
+	// stale live copy cannot outlive it. Best-effort by contract: it returns
+	// nothing and a failed broadcast never fails the caller.
+	Invalidate(ctx context.Context, dashboardID string)
 }
 
 type ToolContext struct {

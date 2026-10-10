@@ -756,6 +756,15 @@ func makeDeleteDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("dashboard not found")
 		}
 		_ = ctx.AuditLog("dashboard.delete", "dashboard", req.DashboardID)
+
+		// The row is gone for good: tell relay replicas to disconnect viewers
+		// and unload any in-memory document so a stale live copy cannot outlive
+		// it (the REST delete publishes "trashed" for the same reason).
+		// Best-effort and optional: a bare context has no store, and a failed
+		// broadcast never fails the delete.
+		if ctx.DashboardDocStore != nil {
+			ctx.DashboardDocStore.Invalidate(ctx.Context, req.DashboardID)
+		}
 		return map[string]any{"dashboard_id": req.DashboardID, "status": "deleted"}, nil
 	}
 }

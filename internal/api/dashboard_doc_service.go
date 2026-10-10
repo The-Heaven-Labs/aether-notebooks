@@ -318,6 +318,13 @@ func (a agentDashboardDocStore) Store(ctx context.Context, dashboardID string, s
 	return a.s.storeAndMaterializeDashboardDoc(ctx, dashboardID, state)
 }
 
+// Invalidate delegates to the exported hard-delete invalidation publisher
+// (reason "purged"), so an agent hard delete fans out exactly like the
+// scheduler's trash purge. Best-effort like the publisher itself.
+func (a agentDashboardDocStore) Invalidate(ctx context.Context, dashboardID string) {
+	a.s.PublishDashboardDocInvalidate(ctx, dashboardID)
+}
+
 // dashboardVariablesFromJSON converts the JSON value of settings.variables
 // into the []map[string]any the document stores. A JSON null clears the
 // variable list; any other non-array value, or an array entry that is not an

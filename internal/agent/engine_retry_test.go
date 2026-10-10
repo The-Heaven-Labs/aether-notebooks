@@ -240,6 +240,8 @@ func (stubDashboardDocStore) LoadOrSeed(context.Context, string, string) ([]byte
 
 func (stubDashboardDocStore) Store(context.Context, string, []byte) error { return nil }
 
+func (stubDashboardDocStore) Invalidate(context.Context, string) {}
+
 // The engine must propagate running-state hooks into every ToolContext, the
 // same way BroadcastFunc is propagated.
 func TestProcessMessage_PropagatesRunningHooks(t *testing.T) {

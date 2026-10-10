@@ -66,7 +66,12 @@ func TestUpdatePermissionsRejectsAgentSessions(t *testing.T) {
 // uses. No mocks: the tools are exercised against the real document and rows.
 // Keep the seed projection in sync with api.Server.dashboardDocProjection
 // (internal/api/dashboard_doc_service.go).
-type testDashboardDocStore struct{ pool *pgxpool.Pool }
+type testDashboardDocStore struct {
+	pool *pgxpool.Pool
+	// invalidated, when non-nil, records every Invalidate call in order so a
+	// test can assert the hard-delete fan-out without a Redis-backed server.
+	invalidated *[]string
+}
 
 func (s testDashboardDocStore) LoadOrSeed(ctx context.Context, orgID, dashboardID string) ([]byte, error) {
 	var state []byte
@@ -171,6 +176,12 @@ func (s testDashboardDocStore) LoadOrSeed(ctx context.Context, orgID, dashboardI
 
 func (s testDashboardDocStore) Store(ctx context.Context, dashboardID string, state []byte) error {
 	return dashboarddoc.MergeAndStore(ctx, s.pool, dashboardID, state)
+}
+
+func (s testDashboardDocStore) Invalidate(_ context.Context, dashboardID string) {
+	if s.invalidated != nil {
+		*s.invalidated = append(*s.invalidated, dashboardID)
+	}
 }
 
 // dashboardToolContext wires the shared test ToolContext with the DB-backed
@@ -687,4 +698,66 @@ func TestAgentDashboardToolsFailClosedWithoutDocStore(t *testing.T) {
 	require.NoError(t, db.Pool.QueryRow(context.Background(),
 		`SELECT COUNT(*) FROM widgets WHERE dashboard_id = $1`, dashID).Scan(&widgets))
 	require.Zero(t, widgets)
+}
+
+// TestAgentDeleteDashboardInvalidatesDocStore pins the hard-delete fan-out:
+// once the dashboards row is gone the tool must invalidate the deleted
+// dashboard's document (so relay replicas drop any live copy) exactly once,
+// and a failed delete must not invalidate.
+func TestAgentDeleteDashboardInvalidatesDocStore(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Invalidate Me")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+
+	var invalidated []string
+	ctx := setupToolContext(t, db, orgID, userID, "")
+	ctx.DashboardDocStore = testDashboardDocStore{pool: db.Pool, invalidated: &invalidated}
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+	out, err := dashboardTool(t, reg, "delete_dashboard")(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "deleted", out.(map[string]any)["status"])
+	require.Equal(t, []string{dashID}, invalidated,
+		"the deleted dashboard id must be invalidated exactly once")
+
+	var count int
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM dashboards WHERE id = $1`, dashID).Scan(&count))
+	require.Zero(t, count, "the dashboard row must be hard-deleted")
+
+	// A second delete finds nothing: no further invalidation is published.
+	_, err = dashboardTool(t, reg, "delete_dashboard")(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "dashboard not found")
+	require.Equal(t, []string{dashID}, invalidated,
+		"a failed delete must not invalidate")
+}
+
+// TestAgentDeleteDashboardWithoutDocStore pins the optional-store path: unlike
+// the document-mutating dashboard tools, hard delete must still work (and not
+// panic) when no document store is configured.
+func TestAgentDeleteDashboardWithoutDocStore(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "No Store Delete")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	// setupToolContext deliberately leaves DashboardDocStore nil.
+	ctx := setupToolContext(t, db, orgID, userID, "")
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+	out, err := dashboardTool(t, reg, "delete_dashboard")(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "deleted", out.(map[string]any)["status"])
+
+	var count int
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM dashboards WHERE id = $1`, dashID).Scan(&count))
+	require.Zero(t, count)
 }
