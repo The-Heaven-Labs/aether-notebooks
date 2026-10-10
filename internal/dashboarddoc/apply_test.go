@@ -353,6 +353,298 @@ func TestApply_SetQuery(t *testing.T) {
 	})
 }
 
+func TestApply_SetWidgetConnector(t *testing.T) {
+	t.Run("sets the connector and preserves other fields", func(t *testing.T) {
+		base := applyTestBase(t)
+		edited, err := SetQuery(base, testUUID(1), "SELECT 42 -- typed")
+		require.NoError(t, err)
+
+		state, err := SetWidgetConnector(edited, testUUID(1), "conn-2")
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		w := proj.Widgets[testUUID(1)]
+		require.NotNil(t, w.ConnectorID)
+		require.Equal(t, "conn-2", *w.ConnectorID)
+		require.Nil(t, w.NotebookID)
+		require.Nil(t, w.CellID)
+		require.Equal(t, "SELECT 42 -- typed", widgetQuery(t, w))
+		require.Equal(t, "chart", w.Type)
+		require.Equal(t, Layout{Row: 0, Col: 0, Width: 6, Height: 4}, w.Layout)
+		require.Equal(t, map[string]any{"kind": "bar"}, w.Config)
+		// The other widget is untouched.
+		require.Equal(t, "SELECT 2", widgetQuery(t, proj.Widgets[testUUID(2)]))
+	})
+
+	t.Run("clears notebook and cell references", func(t *testing.T) {
+		nbID, cellID, query := testUUID(7), testUUID(8), "SELECT 3"
+		base, err := Seed(Projection{
+			Widgets: map[string]WidgetDoc{
+				testUUID(1): {
+					ID: testUUID(1), Type: "table", Language: "sql",
+					NotebookID: &nbID, CellID: &cellID, Query: &query,
+				},
+			},
+		})
+		require.NoError(t, err)
+
+		state, err := SetWidgetConnector(base, testUUID(1), "conn-9")
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		w := proj.Widgets[testUUID(1)]
+		require.NotNil(t, w.ConnectorID)
+		require.Equal(t, "conn-9", *w.ConnectorID)
+		require.Nil(t, w.NotebookID)
+		require.Nil(t, w.CellID)
+		require.Equal(t, "SELECT 3", widgetQuery(t, w))
+	})
+
+	t.Run("empty connector ID is rejected", func(t *testing.T) {
+		state, err := SetWidgetConnector(applyTestBase(t), testUUID(1), "")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "connector_id cannot be empty")
+		require.Nil(t, state)
+	})
+
+	t.Run("missing widget is an error", func(t *testing.T) {
+		state, err := SetWidgetConnector(applyTestBase(t), testUUID(9), "conn-2")
+		require.ErrorIs(t, err, ErrWidgetNotFound)
+		require.Nil(t, state)
+	})
+
+	t.Run("non-UUID widget ID is an error", func(t *testing.T) {
+		_, err := SetWidgetConnector(applyTestBase(t), "w-1", "conn-2")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not a valid UUID")
+	})
+}
+
+func TestApply_SetWidgetType(t *testing.T) {
+	t.Run("sets the type and preserves other fields", func(t *testing.T) {
+		base := applyTestBase(t)
+		edited, err := SetQuery(base, testUUID(1), "SELECT 42 -- typed")
+		require.NoError(t, err)
+
+		state, err := SetWidgetType(edited, testUUID(1), "metric")
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		w := proj.Widgets[testUUID(1)]
+		require.Equal(t, "metric", w.Type)
+		require.NotNil(t, w.ConnectorID)
+		require.Equal(t, "conn-1", *w.ConnectorID)
+		require.Equal(t, "SELECT 42 -- typed", widgetQuery(t, w))
+		require.Equal(t, Layout{Row: 0, Col: 0, Width: 6, Height: 4}, w.Layout)
+		require.Equal(t, map[string]any{"kind": "bar"}, w.Config)
+		require.Equal(t, "SELECT 2", widgetQuery(t, proj.Widgets[testUUID(2)]))
+	})
+
+	t.Run("unknown type is rejected", func(t *testing.T) {
+		state, err := SetWidgetType(applyTestBase(t), testUUID(1), "pie")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unknown type")
+		require.Nil(t, state)
+	})
+
+	t.Run("missing widget is an error", func(t *testing.T) {
+		state, err := SetWidgetType(applyTestBase(t), testUUID(9), "table")
+		require.ErrorIs(t, err, ErrWidgetNotFound)
+		require.Nil(t, state)
+	})
+
+	t.Run("non-UUID widget ID is an error", func(t *testing.T) {
+		_, err := SetWidgetType(applyTestBase(t), "w-1", "table")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not a valid UUID")
+	})
+}
+
+func TestApply_SetWidgetConfig(t *testing.T) {
+	t.Run("replaces the config and preserves other fields", func(t *testing.T) {
+		base := applyTestBase(t)
+		edited, err := SetQuery(base, testUUID(1), "SELECT 42 -- typed")
+		require.NoError(t, err)
+
+		state, err := SetWidgetConfig(edited, testUUID(1), map[string]any{"kind": "line", "stacked": true})
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		w := proj.Widgets[testUUID(1)]
+		require.Equal(t, map[string]any{"kind": "line", "stacked": true}, w.Config)
+		require.NotNil(t, w.ConnectorID)
+		require.Equal(t, "conn-1", *w.ConnectorID)
+		require.Equal(t, "SELECT 42 -- typed", widgetQuery(t, w))
+		require.Equal(t, "chart", w.Type)
+		require.Equal(t, Layout{Row: 0, Col: 0, Width: 6, Height: 4}, w.Layout)
+		require.Equal(t, "SELECT 2", widgetQuery(t, proj.Widgets[testUUID(2)]))
+	})
+
+	t.Run("nil and empty config become an empty object", func(t *testing.T) {
+		for name, config := range map[string]map[string]any{"nil": nil, "empty": {}} {
+			t.Run(name, func(t *testing.T) {
+				state, err := SetWidgetConfig(applyTestBase(t), testUUID(1), config)
+				require.NoError(t, err)
+
+				proj := mustProject(t, state)
+				require.Equal(t, map[string]any{}, proj.Widgets[testUUID(1)].Config)
+			})
+		}
+	})
+
+	t.Run("rejects invalid config values", func(t *testing.T) {
+		cases := []struct {
+			name    string
+			config  map[string]any
+			wantErr string
+		}{
+			{"non-finite number", map[string]any{"n": math.Inf(1)}, "non-finite"},
+			{"shared yjs type", map[string]any{"xml": crdt.NewYXmlText()}, "shared type"},
+			{"unmarshalable value", map[string]any{"fn": func() {}}, "config"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				state, err := SetWidgetConfig(applyTestBase(t), testUUID(1), tc.config)
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantErr)
+				require.Nil(t, state)
+			})
+		}
+	})
+
+	t.Run("missing widget is an error", func(t *testing.T) {
+		state, err := SetWidgetConfig(applyTestBase(t), testUUID(9), map[string]any{})
+		require.ErrorIs(t, err, ErrWidgetNotFound)
+		require.Nil(t, state)
+	})
+
+	t.Run("non-UUID widget ID is an error", func(t *testing.T) {
+		_, err := SetWidgetConfig(applyTestBase(t), "w-1", map[string]any{})
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "not a valid UUID")
+	})
+}
+
+func TestApply_SetWidgetLanguage(t *testing.T) {
+	t.Run("sets the language and preserves other fields", func(t *testing.T) {
+		base, err := Seed(Projection{
+			Widgets: map[string]WidgetDoc{
+				testUUID(1): {ID: testUUID(1), Type: "text", Language: ""},
+			},
+		})
+		require.NoError(t, err)
+
+		state, err := SetWidgetLanguage(base, testUUID(1), "sql")
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		require.Equal(t, "sql", proj.Widgets[testUUID(1)].Language)
+	})
+
+	t.Run("preserves other fields and a concurrent query edit", func(t *testing.T) {
+		base := applyTestBase(t)
+		edited, err := SetQuery(base, testUUID(1), "SELECT 42 -- typed")
+		require.NoError(t, err)
+
+		state, err := SetWidgetLanguage(edited, testUUID(1), "sql")
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		w := proj.Widgets[testUUID(1)]
+		require.Equal(t, "sql", w.Language)
+		require.Equal(t, "SELECT 42 -- typed", widgetQuery(t, w))
+		require.NotNil(t, w.ConnectorID)
+		require.Equal(t, "conn-1", *w.ConnectorID)
+		require.Equal(t, map[string]any{"kind": "bar"}, w.Config)
+	})
+
+	t.Run("unsupported language is rejected", func(t *testing.T) {
+		state, err := SetWidgetLanguage(applyTestBase(t), testUUID(1), "python")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unsupported language")
+		require.Nil(t, state)
+	})
+
+	t.Run("missing widget is an error", func(t *testing.T) {
+		state, err := SetWidgetLanguage(applyTestBase(t), testUUID(9), "sql")
+		require.ErrorIs(t, err, ErrWidgetNotFound)
+		require.Nil(t, state)
+	})
+}
+
+// TestApply_FieldOpsMergeWithConcurrentQueryEdit pins the fix for partial REST
+// updates clobbering in-flight SQL: each field-level setter writes a single
+// field of the widget map (never replacing the map or its Y.Text), so merging
+// it with a concurrent SetQuery edit in either order keeps both changes.
+func TestApply_FieldOpsMergeWithConcurrentQueryEdit(t *testing.T) {
+	base := applyTestBase(t)
+	queryState, err := SetQuery(base, testUUID(1), "SELECT 42 -- typed while saving")
+	require.NoError(t, err)
+
+	cases := []struct {
+		name  string
+		op    func([]byte) ([]byte, error)
+		check func(t *testing.T, w WidgetDoc)
+	}{
+		{
+			name: "SetWidgetConnector",
+			op:   func(s []byte) ([]byte, error) { return SetWidgetConnector(s, testUUID(1), "conn-2") },
+			check: func(t *testing.T, w WidgetDoc) {
+				require.NotNil(t, w.ConnectorID)
+				require.Equal(t, "conn-2", *w.ConnectorID)
+			},
+		},
+		{
+			name: "SetWidgetType",
+			op:   func(s []byte) ([]byte, error) { return SetWidgetType(s, testUUID(1), "metric") },
+			check: func(t *testing.T, w WidgetDoc) {
+				require.Equal(t, "metric", w.Type)
+			},
+		},
+		{
+			name: "SetWidgetConfig",
+			op:   func(s []byte) ([]byte, error) { return SetWidgetConfig(s, testUUID(1), map[string]any{"kind": "line"}) },
+			check: func(t *testing.T, w WidgetDoc) {
+				require.Equal(t, map[string]any{"kind": "line"}, w.Config)
+			},
+		},
+		{
+			name: "SetWidgetLanguage",
+			op:   func(s []byte) ([]byte, error) { return SetWidgetLanguage(s, testUUID(1), "sql") },
+			check: func(t *testing.T, w WidgetDoc) {
+				require.Equal(t, "sql", w.Language)
+			},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			fieldState, err := tc.op(base)
+			require.NoError(t, err)
+
+			orders := [][2][]byte{
+				{fieldState, queryState},
+				{queryState, fieldState},
+			}
+			for i, order := range orders {
+				doc := crdt.New()
+				require.NoError(t, crdt.ApplyUpdateV1(doc, order[0], nil), "merge order %d", i)
+				require.NoError(t, crdt.ApplyUpdateV1(doc, order[1], nil), "merge order %d", i)
+
+				proj := mustProject(t, doc.EncodeStateAsUpdate())
+				w := proj.Widgets[testUUID(1)]
+				require.Equal(t, "SELECT 42 -- typed while saving", widgetQuery(t, w),
+					"merge order %d: the concurrent SQL edit must survive", i)
+				tc.check(t, w)
+				// Untouched parts survive too.
+				require.Equal(t, Layout{Row: 0, Col: 0, Width: 6, Height: 4}, w.Layout,
+					"merge order %d", i)
+				require.Equal(t, "SELECT 2", widgetQuery(t, proj.Widgets[testUUID(2)]),
+					"merge order %d", i)
+			}
+		})
+	}
+}
+
 func TestApply_UpdateMeta(t *testing.T) {
 	t.Run("updates title settings and variables", func(t *testing.T) {
 		title := "Renamed"
@@ -482,10 +774,14 @@ func TestApply_RejectsCorruptState(t *testing.T) {
 		"UpsertWidget": func() ([]byte, error) {
 			return UpsertWidget(corrupt, WidgetDoc{ID: testUUID(1), Type: "table"})
 		},
-		"DeleteWidget": func() ([]byte, error) { return DeleteWidget(corrupt, testUUID(1)) },
-		"UpdateLayout": func() ([]byte, error) { return UpdateLayout(corrupt, testUUID(1), Layout{}) },
-		"SetQuery":     func() ([]byte, error) { return SetQuery(corrupt, testUUID(1), "SELECT 1") },
-		"UpdateMeta":   func() ([]byte, error) { return UpdateMeta(corrupt, &title, nil, nil) },
+		"DeleteWidget":       func() ([]byte, error) { return DeleteWidget(corrupt, testUUID(1)) },
+		"UpdateLayout":       func() ([]byte, error) { return UpdateLayout(corrupt, testUUID(1), Layout{}) },
+		"SetQuery":           func() ([]byte, error) { return SetQuery(corrupt, testUUID(1), "SELECT 1") },
+		"SetWidgetConnector": func() ([]byte, error) { return SetWidgetConnector(corrupt, testUUID(1), "conn-2") },
+		"SetWidgetType":      func() ([]byte, error) { return SetWidgetType(corrupt, testUUID(1), "table") },
+		"SetWidgetConfig":    func() ([]byte, error) { return SetWidgetConfig(corrupt, testUUID(1), map[string]any{}) },
+		"SetWidgetLanguage":  func() ([]byte, error) { return SetWidgetLanguage(corrupt, testUUID(1), "sql") },
+		"UpdateMeta":         func() ([]byte, error) { return UpdateMeta(corrupt, &title, nil, nil) },
 	}
 	for name, fn := range ops {
 		t.Run(name, func(t *testing.T) {

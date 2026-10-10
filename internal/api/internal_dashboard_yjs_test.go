@@ -313,6 +313,40 @@ func TestInternalDashboardYjsPutValidatesStoreActor(t *testing.T) {
 	})
 }
 
+// TestInternalDashboardYjsGetOrgScoped pins the internal GET org scoping: the
+// relay presents the connecting user's session token, so a dashboard in
+// another org must be a 404 — indistinguishable from unknown or trashed — and
+// must not be read or lazily seeded.
+func TestInternalDashboardYjsGetOrgScoped(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+
+	ownerToken := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-yjs-org-owner-%d@example.com", ts), "Dash Yjs Org Owner")
+	dashID := createDashWithSettings(t, srv, ownerToken, nil)
+
+	otherToken := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-yjs-org-other-%d@example.com", ts), "Dash Yjs Org Other")
+
+	// Another org's token sees a 404 and never seeds state.
+	rec := internalDashboardDocRequest(t, srv, otherToken, "GET", dashID, nil)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+	var count int
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM dashboard_yjs_documents WHERE dashboard_id = $1`, dashID).Scan(&count))
+	require.Zero(t, count, "a cross-org GET must not read or seed state")
+
+	// The owning org's token still seeds and reads the document.
+	rec = internalDashboardDocRequest(t, srv, ownerToken, "GET", dashID, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NotEmpty(t, rec.Body.Bytes())
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM dashboard_yjs_documents WHERE dashboard_id = $1`, dashID).Scan(&count))
+	require.Equal(t, 1, count)
+}
+
 // TestInternalDashboardYjsMissingTrashedAndEmptyBody pins the explicit error
 // answers: unknown/trashed dashboards are 404 (never a silent seed or store),
 // and an empty PUT body is a 400.

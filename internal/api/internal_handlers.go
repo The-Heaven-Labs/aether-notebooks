@@ -127,17 +127,20 @@ func (s *Server) handleInternalYjsPut(w http.ResponseWriter, r *http.Request) {
 // @Failure 500 {object} map[string]string
 // @Router /internal/dashboard-yjs/{dashboard_id} [get]
 func (s *Server) handleInternalDashboardYjsGet(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireInternalToken(w, r); !ok {
+	claims, ok := s.requireInternalToken(w, r)
+	if !ok {
 		return
 	}
 
 	dashID := r.PathValue("dashboard_id")
 
-	// The internal relay carries no org context: pass "" to skip the org
-	// filter. loadOrSeedDashboardDoc locks the dashboards row FOR UPDATE
-	// exactly like MergeAndStore, so a lazy seed and a concurrent store
-	// serialize on the same row.
-	state, err := s.loadOrSeedDashboardDoc(r.Context(), "", dashID)
+	// The relay presents the connecting user's session token, so the load is
+	// scoped to that user's org: a dashboard whose org_id differs is treated
+	// as missing (404), exactly like an unknown or trashed one, and can never
+	// be read or seeded with another org's token. loadOrSeedDashboardDoc locks
+	// the dashboards row FOR UPDATE exactly like MergeAndStore, so a lazy seed
+	// and a concurrent store serialize on the same row.
+	state, err := s.loadOrSeedDashboardDoc(r.Context(), claims.OrgID, dashID)
 	if errors.Is(err, errDashboardDocNotFound) {
 		writeError(w, http.StatusNotFound, "dashboard not found")
 		return

@@ -447,8 +447,11 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		widgetID := widgetUUID.String()
 
 		// Read-merge: the request is partial, so the projected widget is the
-		// base and only the provided fields are overwritten — a layout-only
-		// update must keep query/connector/notebook untouched.
+		// base for validation, and only the provided fields are applied to the
+		// document through field-level ops. Each op mutates one field of the
+		// live widget map, so a layout-only update keeps query/connector/
+		// notebook untouched even while an editor types SQL into the same
+		// widget.
 		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
 		if err != nil {
 			return nil, fmt.Errorf("load dashboard document: %w", err)
@@ -461,20 +464,22 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		if !ok {
 			return nil, fmt.Errorf("widget not found")
 		}
+
+		// Merged layout for validation only: the ops below write the same
+		// values into the document.
+		hasLayout := req.Row != nil || req.Col != nil || req.Width != nil || req.Height != nil
+		layout := existing.Layout
 		if req.Row != nil {
-			existing.Layout.Row = *req.Row
+			layout.Row = *req.Row
 		}
 		if req.Col != nil {
-			existing.Layout.Col = *req.Col
+			layout.Col = *req.Col
 		}
 		if req.Width != nil {
-			existing.Layout.Width = *req.Width
+			layout.Width = *req.Width
 		}
 		if req.Height != nil {
-			existing.Layout.Height = *req.Height
-		}
-		if req.WidgetType != "" {
-			existing.Type = req.WidgetType
+			layout.Height = *req.Height
 		}
 
 		// A merged notebook/cell pair (the request has no ref fields, so it
@@ -489,20 +494,29 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 
 		// Validate layout bounds and overlap against the materialized rows
 		// (kept current by every document store).
-		if req.Row != nil || req.Col != nil || req.Width != nil || req.Height != nil {
+		if hasLayout {
 			if err := validate.WidgetLayout(ctx.Context, pool, req.DashboardID, models.WidgetLayout{
-				Row:    existing.Layout.Row,
-				Col:    existing.Layout.Col,
-				Width:  existing.Layout.Width,
-				Height: existing.Layout.Height,
+				Row:    layout.Row,
+				Col:    layout.Col,
+				Width:  layout.Width,
+				Height: layout.Height,
 			}, widgetID); err != nil {
 				return nil, fmt.Errorf("invalid layout: %w", err)
 			}
 		}
 
-		newState, err := dashboarddoc.UpsertWidget(state, existing)
-		if err != nil {
-			return nil, fmt.Errorf("update widget: %w", err)
+		newState := state
+		if hasLayout {
+			newState, err = dashboarddoc.UpdateLayout(newState, widgetID, layout)
+			if err != nil {
+				return nil, fmt.Errorf("update widget: %w", err)
+			}
+		}
+		if req.WidgetType != "" {
+			newState, err = dashboarddoc.SetWidgetType(newState, widgetID, req.WidgetType)
+			if err != nil {
+				return nil, fmt.Errorf("update widget: %w", err)
+			}
 		}
 		if err := ctx.DashboardDocStore.Store(ctx.Context, req.DashboardID, newState); err != nil {
 			return nil, fmt.Errorf("update widget: %w", err)

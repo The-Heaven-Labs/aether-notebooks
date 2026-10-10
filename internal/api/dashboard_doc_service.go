@@ -107,8 +107,9 @@ type dashboardDocQuerier interface {
 // into the projection dashboarddoc.Seed consumes. Callers on the write path
 // run it inside the transaction holding the dashboard's FOR UPDATE lock so the
 // projection cannot race a concurrent store. An empty orgID skips the org
-// filter (internal relay reads carry no org context); REST callers pass their
-// org as defense in depth on top of the permission checks.
+// filter (defensive: every current caller passes one); callers pass their org
+// as defense in depth on top of the permission checks, and the internal relay
+// GET passes the connecting user's org so a cross-org ID can never be read.
 //
 // dashboards.settings keeps variables under its own key
 // (models.DashboardSettings); the document stores them as an ordered array
@@ -213,9 +214,10 @@ func (s *Server) dashboardDocProjection(ctx context.Context, q dashboardDocQueri
 // lazy seed and a concurrent store serialize on the same row: without the
 // lock, a store that read "no state" before this seed committed could
 // overwrite the freshly seeded document. An empty orgID skips the org filter
-// (internal relay reads carry no org context); REST callers pass their org so
-// a cross-org ID can never be read or seeded. A missing or trashed dashboard
-// returns errDashboardDocNotFound.
+// (defensive: every current caller passes one); callers pass their org so a
+// cross-org ID can never be read or seeded — including the internal relay GET,
+// which scopes to the connecting user's org exactly like the store's actor
+// validation. A missing or trashed dashboard returns errDashboardDocNotFound.
 func (s *Server) loadOrSeedDashboardDoc(ctx context.Context, orgID, dashID string) ([]byte, error) {
 	tx, err := s.db.Pool.Begin(ctx)
 	if err != nil {

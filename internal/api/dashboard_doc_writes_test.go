@@ -659,3 +659,177 @@ func TestWidgetUpdateRejectsDanglingCellPair(t *testing.T) {
 	proj := projectDashboardDoc(t, srv, dashID)
 	require.Equal(t, dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 6}, proj.Widgets[widgetID].Layout)
 }
+
+// TestWidgetUpdateConnectorPreservesDocOnlyQuery pins the field-level partial
+// update: a query edit that exists only in the stored document (the derived
+// row still lags it) must survive a connector-only PUT. The update must mutate
+// the connector field of the live widget, not replace the widget with a
+// projection of the stale document — and the store then refreshes the derived
+// row from the document, so both the new connector and the edited SQL land.
+func TestWidgetUpdateConnectorPreservesDocOnlyQuery(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	token := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-doc-field-conn-%d@example.com", time.Now().UnixNano()), "Dash Doc Field Conn Org")
+	connID := createConnector(t, srv, token)
+	newConnID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+
+	widget := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"connector_id": connID,
+		"query":        "SELECT 1",
+		"type":         "table",
+		"layout":       map[string]int{"row": 0, "col": 0, "width": 6, "height": 6},
+		"config":       map[string]any{"showLegend": true},
+	})
+	widgetID := widget["id"].(string)
+
+	// A doc-only query edit: written straight into the stored document without
+	// materializing, so the derived row still carries the old SQL.
+	edited, err := dashboarddoc.SetQuery(dashboardDocState(t, srv, dashID), widgetID, "SELECT 42 -- doc only")
+	require.NoError(t, err)
+	_, err = srv.DB().Pool.Exec(ctx,
+		`UPDATE dashboard_yjs_documents SET state = $2 WHERE dashboard_id = $1`, dashID, edited)
+	require.NoError(t, err)
+
+	var rowQuery *string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT query FROM widgets WHERE id = $1`, widgetID).Scan(&rowQuery))
+	require.NotNil(t, rowQuery)
+	require.Equal(t, "SELECT 1", *rowQuery, "the derived row must still lag the document")
+
+	rec := putWidgetRaw(t, srv, token, dashID, widgetID, map[string]any{"connector_id": newConnID})
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	// The stored document keeps the edited SQL and carries the new connector;
+	// every other field survives too.
+	proj := projectDashboardDoc(t, srv, dashID)
+	require.Empty(t, proj.Warnings)
+	w := proj.Widgets[widgetID]
+	require.NotNil(t, w.ConnectorID)
+	require.Equal(t, newConnID, *w.ConnectorID)
+	require.NotNil(t, w.Query)
+	require.Equal(t, "SELECT 42 -- doc only", *w.Query)
+	require.Equal(t, map[string]any{"showLegend": true}, w.Config)
+	require.Equal(t, dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 6}, w.Layout)
+
+	// The materialized row is refreshed from the document: new connector and
+	// the edited SQL.
+	var connectorOut, queryOut *string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT connector_id, query FROM widgets WHERE id = $1`, widgetID).Scan(&connectorOut, &queryOut))
+	require.NotNil(t, connectorOut)
+	require.Equal(t, newConnID, *connectorOut)
+	require.NotNil(t, queryOut)
+	require.Equal(t, "SELECT 42 -- doc only", *queryOut)
+}
+
+// TestWidgetUpdateConnectorSurvivesLiveDocEdit pins the race the field-level
+// ops exist for: the editor types SQL into the live document (not yet flushed
+// to Postgres by the relay), a connector-only REST update lands, and then the
+// relay flushes its state. The merge must keep both — replacing the widget map
+// (the old UpsertWidget behavior) would delete the Y.Text the editor typed
+// into and revert the SQL.
+func TestWidgetUpdateConnectorSurvivesLiveDocEdit(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	token := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-doc-field-race-%d@example.com", time.Now().UnixNano()), "Dash Doc Field Race Org")
+	connID := createConnector(t, srv, token)
+	newConnID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+
+	widget := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"connector_id": connID,
+		"query":        "SELECT 1",
+		"type":         "table",
+		"layout":       map[string]int{"row": 0, "col": 0, "width": 6, "height": 6},
+	})
+	widgetID := widget["id"].(string)
+
+	// The live document the relay holds: the stored state plus SQL the editor
+	// has typed but the relay has not stored yet.
+	live, err := dashboarddoc.SetQuery(dashboardDocState(t, srv, dashID), widgetID, "SELECT 42 -- live")
+	require.NoError(t, err)
+
+	// The connector-only REST update lands first.
+	rec := putWidgetRaw(t, srv, token, dashID, widgetID, map[string]any{"connector_id": newConnID})
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	// The relay then flushes the live document (the internal store path).
+	rec = internalDashboardDocRequest(t, srv, token, "PUT", dashID, live)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	// Both writes survive in the document...
+	proj := projectDashboardDoc(t, srv, dashID)
+	require.Empty(t, proj.Warnings)
+	w := proj.Widgets[widgetID]
+	require.NotNil(t, w.ConnectorID)
+	require.Equal(t, newConnID, *w.ConnectorID)
+	require.NotNil(t, w.Query)
+	require.Equal(t, "SELECT 42 -- live", *w.Query)
+
+	// ...and in the materialized row.
+	var connectorOut, queryOut *string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT connector_id, query FROM widgets WHERE id = $1`, widgetID).Scan(&connectorOut, &queryOut))
+	require.NotNil(t, connectorOut)
+	require.Equal(t, newConnID, *connectorOut)
+	require.NotNil(t, queryOut)
+	require.Equal(t, "SELECT 42 -- live", *queryOut)
+}
+
+// TestWidgetUpdateTypePreservesQueryAndConnector pins the type-change case of
+// the field-level partial update: a PUT carrying only the type must not touch
+// the widget's query (including a doc-only SQL edit) or connector.
+func TestWidgetUpdateTypePreservesQueryAndConnector(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	token := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-doc-field-type-%d@example.com", time.Now().UnixNano()), "Dash Doc Field Type Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+
+	widget := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"connector_id": connID,
+		"query":        "SELECT 1",
+		"type":         "table",
+		"layout":       map[string]int{"row": 0, "col": 0, "width": 6, "height": 6},
+		"config":       map[string]any{"showLegend": true},
+	})
+	widgetID := widget["id"].(string)
+
+	// Doc-only SQL edit, as above.
+	edited, err := dashboarddoc.SetQuery(dashboardDocState(t, srv, dashID), widgetID, "SELECT 42 -- doc only")
+	require.NoError(t, err)
+	_, err = srv.DB().Pool.Exec(ctx,
+		`UPDATE dashboard_yjs_documents SET state = $2 WHERE dashboard_id = $1`, dashID, edited)
+	require.NoError(t, err)
+
+	rec := putWidgetRaw(t, srv, token, dashID, widgetID, map[string]any{"type": "metric"})
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+	proj := projectDashboardDoc(t, srv, dashID)
+	require.Empty(t, proj.Warnings)
+	w := proj.Widgets[widgetID]
+	require.Equal(t, "metric", w.Type)
+	require.NotNil(t, w.ConnectorID)
+	require.Equal(t, connID, *w.ConnectorID)
+	require.NotNil(t, w.Query)
+	require.Equal(t, "SELECT 42 -- doc only", *w.Query)
+	require.Equal(t, map[string]any{"showLegend": true}, w.Config)
+
+	var typeOut string
+	var connectorOut, queryOut *string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT type, connector_id, query FROM widgets WHERE id = $1`, widgetID).
+		Scan(&typeOut, &connectorOut, &queryOut))
+	require.Equal(t, "metric", typeOut)
+	require.NotNil(t, connectorOut)
+	require.Equal(t, connID, *connectorOut)
+	require.NotNil(t, queryOut)
+	require.Equal(t, "SELECT 42 -- doc only", *queryOut)
+}

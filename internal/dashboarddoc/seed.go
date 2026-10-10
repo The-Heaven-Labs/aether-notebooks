@@ -146,25 +146,38 @@ func validateWidget(id string, w WidgetDoc) (canonicalID string, config string, 
 		return "", "", fmt.Errorf("widget %q: cell widget requires both notebook_id and cell_id", id)
 	}
 
-	config = "{}"
-	if len(w.Config) > 0 {
-		// normalizeForDoc rejects shared yjs types and non-finite
-		// numbers, which json.Marshal would otherwise encode silently
-		// (as {} or fail less clearly).
-		normalized, err := normalizeForDoc(w.Config)
-		if err != nil {
-			return "", "", fmt.Errorf("widget %q: config: %w", id, err)
-		}
-		raw, err := json.Marshal(normalized)
-		if err != nil {
-			return "", "", fmt.Errorf("widget %q: config: %w", id, err)
-		}
-		config = string(raw)
-	}
-	if len(config) > maxWidgetConfigBytes {
-		return "", "", fmt.Errorf("widget %q: config is %d bytes, exceeding the %d-byte cap", id, len(config), maxWidgetConfigBytes)
+	config, err = configJSONForDoc(w.Config)
+	if err != nil {
+		return "", "", fmt.Errorf("widget %q: config: %w", id, err)
 	}
 	return canonicalID, config, nil
+}
+
+// configJSONForDoc normalizes a widget config map into the JSON string the
+// document stores. A nil or empty map becomes "{}" (the document's empty
+// placeholder). Values pass through normalizeForDoc, which rejects shared yjs
+// types and non-finite numbers, and the encoded string is capped at
+// maxWidgetConfigBytes. Shared by validateWidget (Seed/UpsertWidget) and
+// SetWidgetConfig, so both write paths store exactly the same config shape.
+func configJSONForDoc(config map[string]any) (string, error) {
+	if len(config) == 0 {
+		return "{}", nil
+	}
+	// normalizeForDoc rejects shared yjs types and non-finite numbers, which
+	// json.Marshal would otherwise encode silently (as {} or fail less
+	// clearly).
+	normalized, err := normalizeForDoc(config)
+	if err != nil {
+		return "", err
+	}
+	raw, err := json.Marshal(normalized)
+	if err != nil {
+		return "", err
+	}
+	if len(raw) > maxWidgetConfigBytes {
+		return "", fmt.Errorf("config is %d bytes, exceeding the %d-byte cap", len(raw), maxWidgetConfigBytes)
+	}
+	return string(raw), nil
 }
 
 // widgetPrelim builds the detached widget Y.Map that the caller attaches under

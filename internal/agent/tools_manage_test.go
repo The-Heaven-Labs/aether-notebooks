@@ -400,6 +400,37 @@ func TestAgentUpdateDashboardWidgetLayoutOnlyPreservesSource(t *testing.T) {
 	require.Equal(t, "SELECT 1 AS x", *w.Query)
 	require.Equal(t, map[string]any{"showLegend": true}, w.Config)
 
+	// A type-only update must not touch the query or connector either.
+	typeArgs, err := json.Marshal(map[string]any{
+		"widget_id":    widgetID,
+		"dashboard_id": dashID,
+		"type":         "metric",
+	})
+	require.NoError(t, err)
+	out, err = dashboardTool(t, reg, "update_dashboard_widget")(typeArgs, ctx)
+	require.NoError(t, err)
+	require.Equal(t, widgetID, out.(map[string]any)["widget_id"])
+
+	proj = storedDashboardDoc(t, db.Pool, dashID)
+	require.Empty(t, proj.Warnings)
+	w = proj.Widgets[widgetID]
+	require.Equal(t, "metric", w.Type)
+	require.NotNil(t, w.ConnectorID)
+	require.Equal(t, connID, *w.ConnectorID)
+	require.NotNil(t, w.Query)
+	require.Equal(t, "SELECT 1 AS x", *w.Query)
+	require.Equal(t, map[string]any{"showLegend": true}, w.Config)
+
+	var typeOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT type, connector_id, query FROM widgets WHERE id = $1`, widgetID).
+		Scan(&typeOut, &connectorOut, &queryOut))
+	require.Equal(t, "metric", typeOut)
+	require.NotNil(t, connectorOut)
+	require.Equal(t, connID, *connectorOut)
+	require.NotNil(t, queryOut)
+	require.Equal(t, "SELECT 1 AS x", *queryOut)
+
 	// A missing widget is reported, not silently ignored.
 	missingArgs, err := json.Marshal(map[string]any{
 		"widget_id":    uuid.NewString(),

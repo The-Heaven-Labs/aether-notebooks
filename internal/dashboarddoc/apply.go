@@ -8,8 +8,8 @@ import (
 )
 
 // This file implements the backend-originated mutation operations on a
-// dashboard document: REST widget CRUD, layout writes, SQL replacement, and
-// meta (title/settings/variables) writes.
+// dashboard document: REST widget CRUD, field-level widget writes, layout
+// writes, SQL replacement, and meta (title/settings/variables) writes.
 //
 // Each op takes the current document state bytes, decodes them into a live ygo
 // document, applies the mutation in one transaction, and returns the full
@@ -26,9 +26,14 @@ import (
 //
 // # Merge semantics
 //
-// UpdateLayout and SetQuery write individual fields and merge at the CRDT
-// level: a concurrent editor's changes to other fields or other widgets
-// survive a merge of the two states (pinned by the concurrent-merge test).
+// UpdateLayout, SetQuery and the field-level setters (SetWidgetConnector,
+// SetWidgetType, SetWidgetConfig, SetWidgetLanguage) write individual fields
+// and merge at the CRDT level: a concurrent editor's changes to other fields
+// or other widgets survive a merge of the two states (pinned by the
+// concurrent-merge tests). None of them replaces the widget's Y.Map or its
+// query Y.Text, so a keystroke typed in the editor while a REST write is in
+// flight is never dropped by the write.
+//
 // UpsertWidget, DeleteWidget and the settings/variables branches of UpdateMeta
 // are whole-value writes: the entire widget (or settings/variables container)
 // is replaced or removed as one last-write-wins unit, so concurrent edits
@@ -36,11 +41,12 @@ import (
 // back REST forms whose submitted value is authoritative. UpsertWidget in
 // particular replaces the widget's Y.Text rather than editing it in place, so
 // it does not have to reconcile a form submission with in-flight keystrokes
-// from the editor.
+// from the editor; partial widget updates therefore go through the field-level
+// setters instead.
 //
 // A widget ID that is missing from the document is an error (ErrWidgetNotFound)
-// for DeleteWidget, UpdateLayout and SetQuery rather than a silent no-op, so
-// the REST layer can answer 404.
+// for DeleteWidget, UpdateLayout, SetQuery and the field-level setters rather
+// than a silent no-op, so the REST layer can answer 404.
 
 // ErrWidgetNotFound reports that an operation targets a widget ID that is not
 // present in the document. Malformed (non-UUID) widget IDs are plain
@@ -209,6 +215,134 @@ func SetQuery(state []byte, widgetID, sql string) ([]byte, error) {
 		}
 		text.Delete(txn, 0, text.Len())
 		text.Insert(txn, 0, sql, nil)
+	})
+
+	return doc.EncodeStateAsUpdate(), nil
+}
+
+// SetWidgetConnector sets one widget's connector_id and clears its
+// notebook_id/cell_id in the same transaction, and returns the merged state.
+// Clearing mirrors the source invariant (widgets_source_check): a connector
+// widget cannot reference a notebook or cell, so the write always leaves the
+// widget in the connector shape. An empty connector ID is rejected, and a
+// missing widget is an error (ErrWidgetNotFound). The ID is canonicalized, so
+// any UUID spelling addresses the same widget.
+func SetWidgetConnector(state []byte, widgetID, connectorID string) ([]byte, error) {
+	canonical, err := canonicalWidgetID(widgetID)
+	if err != nil {
+		return nil, err
+	}
+	if connectorID == "" {
+		return nil, fmt.Errorf("widget %q: connector_id cannot be empty", canonical)
+	}
+
+	doc, err := decodeDoc(state)
+	if err != nil {
+		return nil, err
+	}
+	wm, err := findWidget(doc, canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	doc.Transact(func(txn *crdt.Transaction) {
+		wm.Set(txn, keyConnectorID, connectorID)
+		wm.Set(txn, keyNotebookID, "")
+		wm.Set(txn, keyCellID, "")
+	})
+
+	return doc.EncodeStateAsUpdate(), nil
+}
+
+// SetWidgetType replaces one widget's type in place and returns the merged
+// state. The type is validated exactly like validateWidget validates it
+// (chart, table, metric, text); anything else is an error before the document
+// is touched. A missing widget is an error (ErrWidgetNotFound). The ID is
+// canonicalized, so any UUID spelling addresses the same widget.
+func SetWidgetType(state []byte, widgetID, widgetType string) ([]byte, error) {
+	canonical, err := canonicalWidgetID(widgetID)
+	if err != nil {
+		return nil, err
+	}
+	if !widgetTypes[widgetType] {
+		return nil, fmt.Errorf("widget %q: unknown type %q", canonical, widgetType)
+	}
+
+	doc, err := decodeDoc(state)
+	if err != nil {
+		return nil, err
+	}
+	wm, err := findWidget(doc, canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	doc.Transact(func(txn *crdt.Transaction) {
+		wm.Set(txn, keyType, widgetType)
+	})
+
+	return doc.EncodeStateAsUpdate(), nil
+}
+
+// SetWidgetConfig replaces one widget's config in place and returns the merged
+// state. The map is normalized and encoded exactly like validateWidget encodes
+// a widget config: a nil or empty map becomes "{}", shared yjs types and
+// non-finite numbers are rejected, and the encoded string is capped at
+// maxWidgetConfigBytes. Config is a whole-value field, so the JSON string is
+// replaced rather than merged field-wise. A missing widget is an error
+// (ErrWidgetNotFound). The ID is canonicalized, so any UUID spelling addresses
+// the same widget.
+func SetWidgetConfig(state []byte, widgetID string, config map[string]any) ([]byte, error) {
+	canonical, err := canonicalWidgetID(widgetID)
+	if err != nil {
+		return nil, err
+	}
+	configJSON, err := configJSONForDoc(config)
+	if err != nil {
+		return nil, fmt.Errorf("widget %q: config: %w", canonical, err)
+	}
+
+	doc, err := decodeDoc(state)
+	if err != nil {
+		return nil, err
+	}
+	wm, err := findWidget(doc, canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	doc.Transact(func(txn *crdt.Transaction) {
+		wm.Set(txn, keyConfig, configJSON)
+	})
+
+	return doc.EncodeStateAsUpdate(), nil
+}
+
+// SetWidgetLanguage replaces one widget's language in place and returns the
+// merged state. The language is validated against the document's allowed set
+// ("" or "sql"), exactly like validateWidget validates it. A missing widget is
+// an error (ErrWidgetNotFound). The ID is canonicalized, so any UUID spelling
+// addresses the same widget.
+func SetWidgetLanguage(state []byte, widgetID, language string) ([]byte, error) {
+	canonical, err := canonicalWidgetID(widgetID)
+	if err != nil {
+		return nil, err
+	}
+	if !queryLanguages[language] {
+		return nil, fmt.Errorf("widget %q: unsupported language %q", canonical, language)
+	}
+
+	doc, err := decodeDoc(state)
+	if err != nil {
+		return nil, err
+	}
+	wm, err := findWidget(doc, canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	doc.Transact(func(txn *crdt.Transaction) {
+		wm.Set(txn, keyLanguage, language)
 	})
 
 	return doc.EncodeStateAsUpdate(), nil
