@@ -17,6 +17,7 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
 import { Skeleton } from '../components/Skeleton'
+import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
@@ -200,6 +201,7 @@ const markSaved = useCallback(() => {
   const [editingArmed, setEditingArmed] = useState(false)
   const canEdit = dashboard?.can_edit !== false
   const liveDoc = useDashboardDoc(id, { enabled: canEdit && editingArmed })
+  const userEmail = localStorage.getItem('aether_user_email') ?? ''
   const { updateLayout: updateDocLayout, setConfig: setDocConfig } = liveDoc
   const editingEnabled = canEdit && liveDoc.synced && liveDoc.connected
   if (editingArmed !== editingEnabled) setEditingArmed(editingEnabled)
@@ -387,6 +389,7 @@ const markSaved = useCallback(() => {
           )}
         </div>
         <div style={styles.headerRight}>
+          <CollaboratorAvatars awareness={liveDoc.awareness} currentUserEmail={userEmail} />
           {!isMobileLayout && (
             <div className="nav-seg" role="group" aria-label="Grid columns">
               <span style={{ fontSize: 10, color: 'var(--nav-text-muted)', fontWeight: 700, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '0 4px' }}>Cols</span>
