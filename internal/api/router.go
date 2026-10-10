@@ -90,6 +90,9 @@ type Server struct {
 	// dashboardCacheSF dedupes concurrent dashboard query executions per cache
 	// key, so identical misses share one query even without Redis.
 	dashboardCacheSF singleflight.Group
+	// dashboardQueryCompute overrides the real query computation in tests
+	// (nil = production path). Guarded by the single flight when a cache key exists.
+	dashboardQueryCompute func(context.Context, dashboardQueryParams) (*dashboardQueryResponse, error)
 	// warehouseInvalidationLoop runs the Redis subscriber that applies other
 	// replicas' pooled-identity invalidations. It stops from Close; it is a
 	// no-op when no Redis client is configured.

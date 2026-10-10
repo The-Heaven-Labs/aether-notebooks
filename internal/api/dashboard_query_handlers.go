@@ -26,6 +26,12 @@ const (
 	dashboardCachePrefix              = "dashq:"
 )
 
+// dashboardQueryDefaultTimeout bounds a dashboard query when neither the
+// connector's timeout_seconds nor a caller override provides a budget. It
+// mirrors the 5-minute default of the cell execution path (agent run_cell's
+// defaultCellTimeoutMs), so a detached shared flight can never run unbounded.
+const dashboardQueryDefaultTimeout = 5 * time.Minute
+
 type dashboardExecuteRequest struct {
 	WidgetID    string         `json:"widget_id"`
 	ConnectorID string         `json:"connector_id,omitempty"` // viewer's dashboard selector
@@ -819,21 +825,28 @@ func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) 
 		// Empty SQL cannot produce a discriminating key; execute directly.
 		return s.executeDashboardQuery(ctx, p, cacheKey, ttl)
 	}
-	// Concurrent identical misses share one execution per cache key. Followers
-	// ride the leader's ctx, so a leader cancellation surfaces to them — an
-	// accepted trade-off for now. A bypass skips only the cache read, so it
-	// either leads a fresh run or rides a genuinely in-flight (fresh) one.
+	// Concurrent identical misses share one execution per cache key. The
+	// computation is intentionally detached from every caller's cancellation:
+	// one client aborting (refresh, filter change) must not cancel the shared
+	// run and spuriously fail its followers. A solo client abort therefore no
+	// longer cancels the server-side query — it runs to completion (bounded by
+	// the connector timeout, or dashboardQueryDefaultTimeout) and warms the
+	// shared cache. A bypass skips only the cache read, so it either leads a
+	// fresh run or rides a genuinely in-flight (fresh) one.
+	computeCtx := context.WithoutCancel(ctx)
 	v, err, _ := s.dashboardCacheSF.Do(cacheKey, func() (any, error) {
-		if dashboardQueryComputeHook != nil {
-			return dashboardQueryComputeHook(s, ctx, p)
+		if s.dashboardQueryCompute != nil {
+			return s.dashboardQueryCompute(computeCtx, p)
 		}
-		return s.executeDashboardQuery(ctx, p, cacheKey, ttl)
+		return s.executeDashboardQuery(computeCtx, p, cacheKey, ttl)
 	})
 	if err != nil {
 		return nil, err
 	}
+	// The *dashboardQueryResponse is shared across every caller that joined
+	// this flight and must be treated as immutable.
 	resp, ok := v.(*dashboardQueryResponse)
-	if !ok {
+	if !ok || resp == nil {
 		return nil, fmt.Errorf("dashboard query single flight returned %T", v)
 	}
 	return resp, nil
@@ -842,7 +855,8 @@ func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) 
 // executeDashboardQuery performs the real work of one dashboard query run:
 // resolve the execution target, execute under the row/byte/time limits, record
 // connector health, and warm the shared cache. It runs under the per-key
-// single flight so a shared computation stores its result once.
+// single flight when a discriminating cache key exists, so a shared
+// computation stores its result once.
 func (s *Server) executeDashboardQuery(ctx context.Context, p dashboardQueryParams, cacheKey string, ttl int) (*dashboardQueryResponse, error) {
 	opened, err := s.openQuery(ctx, p.OrgID, p.Identity.UserID, p.Identity.Role, p.ConnectorID, false)
 	if err != nil {
@@ -857,6 +871,11 @@ func (s *Server) executeDashboardQuery(ctx context.Context, p dashboardQueryPara
 	timeout := time.Duration(opened.TimeoutSecs) * time.Second
 	if p.Timeout > 0 && (timeout <= 0 || p.Timeout < timeout) {
 		timeout = p.Timeout
+	}
+	if timeout <= 0 {
+		// A detached shared flight must always be bounded, so the cell
+		// execution house default applies when the connector sets none.
+		timeout = dashboardQueryDefaultTimeout
 	}
 	maxBytes, err := s.orgCellOutputMaxBytes(ctx, p.OrgID)
 	if err != nil {

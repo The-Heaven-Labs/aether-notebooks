@@ -21,10 +21,6 @@ const dashboardFingerprintUnmanaged = "unmanaged"
 // token scope in the cache key already discriminates them.
 const dashboardFingerprintPublic = "public"
 
-// dashboardQueryComputeHook is a test seam: when non-nil it replaces the real
-// query computation under the single flight.
-var dashboardQueryComputeHook func(*Server, context.Context, dashboardQueryParams) (*dashboardQueryResponse, error)
-
 // dashboardAccessFingerprint returns a stable hash of the viewer's effective
 // data access for a served connector. Managed ClickHouse connectors hash the
 // effective table-grant set (user + groups + Everyone, org-membership gated);
