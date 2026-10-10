@@ -799,22 +799,9 @@ func (s *Server) resolveWidgetConnector(ctx context.Context, orgID, widgetConnec
 func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) (*dashboardQueryResponse, error) {
 	// The cache key carries the viewer's effective-access fingerprint instead
 	// of their identity, so viewers whose runs return identical data share
-	// entries. Public runs execute as the dashboard creator under a token
-	// scope, which already discriminates them.
-	p.AccessFingerprint = "public"
-	if p.CacheScope == "" { // authenticated runs only
-		p.AccessFingerprint = "user:" + p.Identity.UserID // fail closed
-		// A viewer without `use` on the served connector is denied by
-		// openQuery on the miss path; letting them share a key with
-		// authorized viewers would let a cache hit return data ahead of
-		// that denial. Only viewers who may execute at all are eligible.
-		if useOK, err := s.checkPermission(ctx, p.Identity.UserID, p.OrgID, p.Identity.Role, "connector", p.ConnectorID, "use"); err == nil && useOK {
-			p.AccessFingerprint = dashboardFingerprintUnmanaged
-			if computed, err := s.dashboardAccessFingerprint(ctx, p.OrgID, p.Identity.UserID, p.WarehouseID); err == nil {
-				p.AccessFingerprint = computed
-			}
-		}
-	}
+	// entries. The resolver fails closed to a per-user key whenever sharing
+	// cannot be proven safe.
+	p.AccessFingerprint = s.dashboardQueryAccessFingerprint(ctx, p)
 
 	ttl := defaultDashboardQueryCacheSeconds
 	if p.CacheSeconds != nil {

@@ -45,3 +45,26 @@ func (s *Server) dashboardAccessFingerprint(ctx context.Context, orgID, userID s
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:]), nil
 }
+
+// dashboardQueryAccessFingerprint resolves the cache-sharing fingerprint for
+// one run. Public-token runs keep the token scope as their discriminator;
+// authenticated runs return a per-user key whenever the viewer could not
+// execute the query or the effective-access fingerprint cannot be computed
+// (fail closed — caching continues, sharing stops); only a successfully
+// resolved fingerprint is shared.
+func (s *Server) dashboardQueryAccessFingerprint(ctx context.Context, p dashboardQueryParams) string {
+	if p.CacheScope != "" {
+		return "public"
+	}
+	// A viewer without `use` on the served connector is denied by openQuery on
+	// the miss path; a shared key would let a cache hit return data ahead of
+	// that denial.
+	useOK, err := s.checkPermission(ctx, p.Identity.UserID, p.OrgID, p.Identity.Role, "connector", p.ConnectorID, "use")
+	if err != nil || !useOK {
+		return "user:" + p.Identity.UserID
+	}
+	if computed, err := s.dashboardAccessFingerprint(ctx, p.OrgID, p.Identity.UserID, p.WarehouseID); err == nil {
+		return computed
+	}
+	return "user:" + p.Identity.UserID
+}

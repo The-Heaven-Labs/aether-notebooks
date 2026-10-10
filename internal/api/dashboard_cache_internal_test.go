@@ -142,3 +142,47 @@ func TestDashboardQueryCacheKeyFingerprint(t *testing.T) {
 
 	require.Empty(t, dashboardQueryCacheKey(dashboardQueryParams{}), "empty SQL must not produce a key")
 }
+
+// TestDashboardQueryAccessFingerprint pins the cache-sharing decision: only a
+// successfully resolved effective-access fingerprint is shared. Public runs
+// are discriminated by token scope, viewers without `use` on the served
+// connector and runs whose fingerprint cannot be computed fall back to a
+// per-user key (fail closed), and an unmanaged connector reports the constant
+// shared value.
+func TestDashboardQueryAccessFingerprint(t *testing.T) {
+	fx := setupExecutionTargetFixture(t)
+	// The fixture user may execute on connA; connB stays denied.
+	fx.grantUse(t, fx.connA)
+
+	base := dashboardQueryParams{
+		OrgID:       fx.orgID.String(),
+		Identity:    dashboardIdentity{UserID: fx.userID.String(), Role: "admin"},
+		ConnectorID: fx.connA.String(),
+	}
+	userFallback := "user:" + fx.userID.String()
+
+	// A malformed warehouse id makes the managed fingerprint resolution fail;
+	// the run must fall back to the per-user key rather than sharing the
+	// constant "unmanaged" value (the reviewed bug).
+	badWarehouse := "not-a-uuid"
+	invalid := base
+	invalid.WarehouseID = &badWarehouse
+	require.Equal(t, userFallback, fx.s.dashboardQueryAccessFingerprint(context.Background(), invalid))
+
+	// An unmanaged connector executes with a shared stored credential, so its
+	// fingerprint is the constant shared value.
+	unmanaged := base
+	unmanaged.WarehouseID = nil
+	require.Equal(t, dashboardFingerprintUnmanaged, fx.s.dashboardQueryAccessFingerprint(context.Background(), unmanaged))
+
+	// Without `use` on the served connector the viewer could not execute, so
+	// the key must stay private even though the connector is shareable.
+	denied := base
+	denied.ConnectorID = fx.connB.String()
+	require.Equal(t, userFallback, fx.s.dashboardQueryAccessFingerprint(context.Background(), denied))
+
+	// Public runs are discriminated by the token scope.
+	public := base
+	public.CacheScope = "token:t"
+	require.Equal(t, "public", fx.s.dashboardQueryAccessFingerprint(context.Background(), public))
+}
