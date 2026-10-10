@@ -12,6 +12,10 @@ env:
   AETHER_JWT_SECRET: dev-jwt-secret-change-in-production
   AETHER_PLATFORM_ADMIN_EMAIL: admin@heaven-labs.com
   AETHER_REDIS_URL: redis://localhost:6379
+  # E2E specs register many users in quick succession; match CI and the docker
+  # dev API (docker-compose.dev.yml sets the same values).
+  AETHER_RATE_LIMIT_REGISTER: "500"
+  AETHER_RATE_LIMIT_LOGIN: "500"
 
 tasks:
 
