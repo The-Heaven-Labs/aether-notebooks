@@ -160,6 +160,14 @@ func TestApply_UpsertWidget_ValidatesLikeSeed(t *testing.T) {
 			wantErr: "not a valid UUID",
 		},
 		{
+			name: "connector without query",
+			mutate: func(w *WidgetDoc) {
+				conn := testUUID(9)
+				w.ConnectorID = &conn
+			},
+			wantErr: "requires a non-empty query",
+		},
+		{
 			name:    "unknown type",
 			mutate:  func(w *WidgetDoc) { w.Type = "pie" },
 			wantErr: "unknown type",
@@ -291,11 +299,26 @@ func TestApply_SetQuery(t *testing.T) {
 	})
 
 	t.Run("empty SQL clears the query", func(t *testing.T) {
-		state, err := SetQuery(applyTestBase(t), testUUID(1), "")
+		state, err := SetQuery(applyTestBase(t), testUUID(2), "")
 		require.NoError(t, err)
 
 		proj := mustProject(t, state)
-		require.Nil(t, proj.Widgets[testUUID(1)].Query)
+		require.Nil(t, proj.Widgets[testUUID(2)].Query)
+	})
+
+	t.Run("clearing a connector widget's SQL projects as a skipped widget", func(t *testing.T) {
+		// A connector widget without SQL violates widgets_source_check, so
+		// Project skips it with a warning instead of the materializer
+		// aborting the store. The other widget is untouched.
+		state, err := SetQuery(applyTestBase(t), testUUID(1), "")
+		require.NoError(t, err)
+
+		proj, err := Project(state)
+		require.NoError(t, err)
+		require.NotContains(t, proj.Widgets, testUUID(1))
+		require.Len(t, proj.WidgetWarnings, 1)
+		require.Contains(t, proj.WidgetWarnings[0], "connector widget has no query")
+		require.Equal(t, "SELECT 2", widgetQuery(t, proj.Widgets[testUUID(2)]))
 	})
 
 	t.Run("creates the text when absent", func(t *testing.T) {
@@ -516,6 +539,7 @@ func TestCanonicalWidgetIDs(t *testing.T) {
 		require.Len(t, proj.Widgets, 1)
 		require.Len(t, proj.Warnings, 1)
 		require.Contains(t, proj.Warnings[0], "duplicate UUID")
+		require.Equal(t, proj.Warnings, proj.WidgetWarnings)
 	})
 
 	t.Run("apply ops address the canonical key", func(t *testing.T) {

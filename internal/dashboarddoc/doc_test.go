@@ -3,6 +3,7 @@ package dashboarddoc
 import (
 	"fmt"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/reearth/ygo/crdt"
@@ -260,6 +261,74 @@ func TestProject_SkipsInvalidWidgets(t *testing.T) {
 		require.Contains(t, got.Warnings[i], id, "warning %d", i)
 	}
 	require.Contains(t, got.Warnings[len(got.Warnings)-1], "not a valid UUID")
+	// Every warning here is widget-origin, so the subset matches.
+	require.Equal(t, got.Warnings, got.WidgetWarnings)
+}
+
+// TestProject_SkipsSourceShapeViolations pins that shapes the derived widgets
+// table cannot hold (widgets_source_check) are skipped with widget warnings
+// instead of reaching the materializer, where they would abort the store.
+func TestProject_SkipsSourceShapeViolations(t *testing.T) {
+	connectorID := "11111111-1111-4111-8111-111111111111"
+	notebookID := "22222222-2222-4222-8222-222222222222"
+	cellID := "33333333-3333-4333-8333-333333333333"
+
+	state := buildState(t, func(txn *crdt.Transaction, _, widgets *crdt.YMap) {
+		// Valid baseline: connector + query.
+		putRawWidget(txn, widgets, testUUID(1), func(txn *crdt.Transaction, w *crdt.YMap) {
+			w.Set(txn, keyConnectorID, connectorID)
+		})
+		// Connector without a query (putRawWidget seeds one, then delete it).
+		putRawWidget(txn, widgets, testUUID(2), func(txn *crdt.Transaction, w *crdt.YMap) {
+			w.Set(txn, keyConnectorID, connectorID)
+			w.Delete(txn, keyQuery)
+		})
+		// Connector + notebook.
+		putRawWidget(txn, widgets, testUUID(3), func(txn *crdt.Transaction, w *crdt.YMap) {
+			w.Set(txn, keyConnectorID, connectorID)
+			w.Set(txn, keyNotebookID, notebookID)
+		})
+		// Notebook without cell.
+		putRawWidget(txn, widgets, testUUID(4), func(txn *crdt.Transaction, w *crdt.YMap) {
+			w.Set(txn, keyNotebookID, notebookID)
+		})
+		// Cell without notebook.
+		putRawWidget(txn, widgets, testUUID(5), func(txn *crdt.Transaction, w *crdt.YMap) {
+			w.Set(txn, keyCellID, cellID)
+		})
+	})
+
+	proj, err := Project(state)
+	require.NoError(t, err)
+	require.Len(t, proj.Widgets, 1)
+	require.Contains(t, proj.Widgets, testUUID(1))
+	require.Equal(t, Layout{Row: 0, Col: 0, Width: 6, Height: 4}, proj.Widgets[testUUID(1)].Layout)
+
+	require.Len(t, proj.Warnings, 4)
+	require.Equal(t, proj.Warnings, proj.WidgetWarnings)
+	require.Contains(t, proj.Warnings[0], "connector widget has no query")
+	require.Contains(t, proj.Warnings[1], "connector widget also references a notebook or cell")
+	require.Contains(t, proj.Warnings[2], "cell widget requires both notebook_id and cell_id")
+	require.Contains(t, proj.Warnings[3], "cell widget requires both notebook_id and cell_id")
+}
+
+// TestProject_SkipsOversizedConfig pins the config size cap: an
+// editor-written config above maxWidgetConfigBytes is skipped with a widget
+// warning instead of being materialized.
+func TestProject_SkipsOversizedConfig(t *testing.T) {
+	big := strings.Repeat("x", maxWidgetConfigBytes+1)
+	state := buildState(t, func(txn *crdt.Transaction, _, widgets *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(1), func(txn *crdt.Transaction, w *crdt.YMap) {
+			w.Set(txn, keyConfig, `{"blob":"`+big+`"}`)
+		})
+	})
+
+	proj, err := Project(state)
+	require.NoError(t, err)
+	require.Empty(t, proj.Widgets)
+	require.Len(t, proj.WidgetWarnings, 1)
+	require.Contains(t, proj.WidgetWarnings[0], "exceeding")
+	require.Equal(t, proj.Warnings, proj.WidgetWarnings)
 }
 
 func TestProject_SkipsInvalidVariables(t *testing.T) {
@@ -277,6 +346,7 @@ func TestProject_SkipsInvalidVariables(t *testing.T) {
 	require.Equal(t, []map[string]any{{"name": "region"}}, got.Variables)
 	require.Len(t, got.Warnings, 1)
 	require.Contains(t, got.Warnings[0], "variables[1]")
+	require.Empty(t, got.WidgetWarnings, "variable warnings are not widget warnings")
 }
 
 func TestSeed_RejectsInvalidProjection(t *testing.T) {
@@ -380,6 +450,51 @@ func TestSeed_RejectsInvalidProjection(t *testing.T) {
 				p.Variables = []map[string]any{{"fn": func() {}}}
 			},
 			wantErr: "variables[0]",
+		},
+		{
+			name: "connector without query",
+			mutate: func(p *Projection) {
+				conn := testUUID(9)
+				p.Widgets[testUUID(1)] = WidgetDoc{ID: testUUID(1), Type: "table", ConnectorID: &conn}
+			},
+			wantErr: "requires a non-empty query",
+		},
+		{
+			name: "connector with notebook",
+			mutate: func(p *Projection) {
+				conn, nb, q := testUUID(9), testUUID(8), "SELECT 1"
+				p.Widgets[testUUID(1)] = WidgetDoc{
+					ID: testUUID(1), Type: "table",
+					ConnectorID: &conn, NotebookID: &nb, Query: &q,
+				}
+			},
+			wantErr: "cannot reference a notebook or cell",
+		},
+		{
+			name: "notebook without cell",
+			mutate: func(p *Projection) {
+				nb := testUUID(8)
+				p.Widgets[testUUID(1)] = WidgetDoc{ID: testUUID(1), Type: "table", NotebookID: &nb}
+			},
+			wantErr: "requires both notebook_id and cell_id",
+		},
+		{
+			name: "cell without notebook",
+			mutate: func(p *Projection) {
+				c := testUUID(7)
+				p.Widgets[testUUID(1)] = WidgetDoc{ID: testUUID(1), Type: "table", CellID: &c}
+			},
+			wantErr: "requires both notebook_id and cell_id",
+		},
+		{
+			name: "oversized config",
+			mutate: func(p *Projection) {
+				p.Widgets[testUUID(1)] = WidgetDoc{
+					ID: testUUID(1), Type: "table",
+					Config: map[string]any{"blob": strings.Repeat("x", maxWidgetConfigBytes)},
+				}
+			},
+			wantErr: "exceeding",
 		},
 	}
 	for _, tc := range cases {
@@ -549,6 +664,7 @@ func TestProject_ConvertsXMLAndDropsSubdocs(t *testing.T) {
 	require.Len(t, got.Warnings, 1)
 	require.Contains(t, got.Warnings[0], `settings["subdoc"]`)
 	require.Contains(t, got.Warnings[0], "subdocument")
+	require.Empty(t, got.WidgetWarnings, "settings warnings are not widget warnings")
 }
 
 // TestProject_DropsNonFiniteFloats pins that NaN/±Inf never reach the
@@ -583,6 +699,7 @@ func TestProject_DropsNonFiniteFloats(t *testing.T) {
 	for _, w := range got.Warnings {
 		require.Contains(t, w, "non-finite")
 	}
+	require.Empty(t, got.WidgetWarnings, "settings/variables warnings are not widget warnings")
 }
 
 // TestSeedProject_LargeLayoutRoundTrip proves Seed's large int layouts survive

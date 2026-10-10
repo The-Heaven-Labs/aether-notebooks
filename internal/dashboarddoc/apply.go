@@ -18,8 +18,11 @@ import (
 // a dashboard that has never been seeded.
 //
 // Inputs are validated before the document is touched, so a failed op returns
-// no state (never partially mutated bytes). State produced by an op always
-// projects without warnings.
+// no state (never partially mutated bytes). State produced by an op projects
+// without warnings, with one deliberate exception: SetQuery can clear a
+// connector widget's SQL, producing the transient connector-without-query
+// shape that Project skips with a warning until a query is set again (the
+// materializer then skips that widget rather than aborting the store).
 //
 // # Merge semantics
 //

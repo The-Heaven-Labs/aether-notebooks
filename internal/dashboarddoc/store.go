@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -31,13 +32,16 @@ import (
 // atomic on its own) and keeps a concurrent purge from deleting the row between
 // the existence check and the state upsert.
 //
-// An undecodable incoming update (or undecodable stored state) returns an
-// error and commits nothing, so a corrupt document can never partially
-// materialize. Project-level problems are governed by Materialize's guards.
+// An undecodable incoming update, or an undecodable stored state, returns an
+// error and commits nothing: corrupt bytes fail closed rather than being
+// silently replaced, and a corrupt document can never partially materialize.
+// Project-level and reference-level problems do not fail the store: bad
+// widgets are skipped with warnings (see Materialize), and every warning is
+// logged once per store.
 func MergeAndStore(ctx context.Context, pool *pgxpool.Pool, dashboardID string, incoming []byte) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("merge dashboard document: begin: %w", err)
+		return fmt.Errorf("merge dashboard document %s: begin: %w", dashboardID, err)
 	}
 	defer tx.Rollback(ctx)
 
@@ -49,7 +53,7 @@ func MergeAndStore(ctx context.Context, pool *pgxpool.Pool, dashboardID string, 
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("merge dashboard document: lock dashboard: %w", err)
+		return fmt.Errorf("merge dashboard document %s: lock dashboard: %w", dashboardID, err)
 	}
 
 	var stored []byte
@@ -57,15 +61,15 @@ func MergeAndStore(ctx context.Context, pool *pgxpool.Pool, dashboardID string, 
 		`SELECT state FROM dashboard_yjs_documents WHERE dashboard_id = $1`,
 		dashboardID).Scan(&stored)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return fmt.Errorf("merge dashboard document: read stored state: %w", err)
+		return fmt.Errorf("merge dashboard document %s: read stored state: %w", dashboardID, err)
 	}
 
 	doc, err := decodeDoc(stored)
 	if err != nil {
-		return err
+		return fmt.Errorf("merge dashboard document %s: decode stored state: %w", dashboardID, err)
 	}
 	if err := crdt.ApplyUpdateV1(doc, incoming, nil); err != nil {
-		return fmt.Errorf("merge dashboard document: apply incoming state: %w", err)
+		return fmt.Errorf("merge dashboard document %s: apply incoming state: %w", dashboardID, err)
 	}
 	merged := doc.EncodeStateAsUpdate()
 
@@ -75,19 +79,27 @@ func MergeAndStore(ctx context.Context, pool *pgxpool.Pool, dashboardID string, 
 		ON CONFLICT (dashboard_id) DO UPDATE
 		SET state = EXCLUDED.state, updated_at = NOW()`,
 		dashboardID, merged); err != nil {
-		return fmt.Errorf("merge dashboard document: store state: %w", err)
+		return fmt.Errorf("merge dashboard document %s: store state: %w", dashboardID, err)
 	}
 
 	proj, err := Project(merged)
 	if err != nil {
-		return err
+		return fmt.Errorf("merge dashboard document %s: project merged state: %w", dashboardID, err)
 	}
-	if err := Materialize(ctx, tx, dashboardID, proj); err != nil {
-		return err
+	materializeWarnings, err := Materialize(ctx, tx, dashboardID, proj)
+	if err != nil {
+		return fmt.Errorf("merge dashboard document %s: %w", dashboardID, err)
 	}
 
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("merge dashboard document: commit: %w", err)
+		return fmt.Errorf("merge dashboard document %s: commit: %w", dashboardID, err)
+	}
+
+	if warnings := append(append([]string{}, proj.Warnings...), materializeWarnings...); len(warnings) > 0 {
+		slog.Warn("dashboard document stored with warnings",
+			"dashboard_id", dashboardID,
+			"count", len(warnings),
+			"warnings", warnings)
 	}
 	return nil
 }

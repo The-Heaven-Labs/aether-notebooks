@@ -22,9 +22,10 @@ import (
 // Wrong field types in the root meta map (non-string title, settings that is
 // not a Y.Map, variables that is not a Y.Array) are returned as an error.
 // Per-widget and per-variable problems skip just that entry and land in
-// Projection.Warnings; see the package documentation for the split, including
-// the root-container-kind limitation. Warnings are ordered by sorted widget ID
-// (variables keep array order).
+// Projection.Warnings, with widget-origin problems also in
+// Projection.WidgetWarnings; see the package documentation for the split,
+// including the root-container-kind limitation. Warnings are ordered by sorted
+// widget ID (variables keep array order).
 func Project(state []byte) (*Projection, error) {
 	doc, err := decodeDoc(state)
 	if err != nil {
@@ -35,6 +36,15 @@ func Project(state []byte) (*Projection, error) {
 		Settings:  map[string]any{},
 		Variables: []map[string]any{},
 		Widgets:   map[string]WidgetDoc{},
+	}
+
+	// warnWidget records a skipped widget in both lists: Warnings keeps every
+	// warning, WidgetWarnings is the widget-origin subset Materialize's
+	// no-widgets guard uses.
+	warnWidget := func(format string, args ...any) {
+		msg := fmt.Sprintf(format, args...)
+		proj.Warnings = append(proj.Warnings, msg)
+		proj.WidgetWarnings = append(proj.WidgetWarnings, msg)
 	}
 
 	meta := doc.GetMap(rootMeta)
@@ -98,28 +108,25 @@ func Project(state []byte) (*Projection, error) {
 	for _, id := range ids {
 		canonical, err := canonicalWidgetID(id)
 		if err != nil {
-			proj.Warnings = append(proj.Warnings,
-				fmt.Sprintf("widget %q: key is not a valid UUID", id))
+			warnWidget("widget %q: key is not a valid UUID", id)
 			continue
 		}
 		v, _ := widgets.Get(id)
 		wm, isMap := v.(*crdt.YMap)
 		if !isMap {
-			proj.Warnings = append(proj.Warnings,
-				fmt.Sprintf("widget %q: got %T, want Y.Map", id, v))
+			warnWidget("widget %q: got %T, want Y.Map", id, v)
 			continue
 		}
 		w, warning := projectWidget(id, wm)
 		if warning != "" {
-			proj.Warnings = append(proj.Warnings, warning)
+			warnWidget("%s", warning)
 			continue
 		}
 		// Two spellings of the same UUID cannot produce two projection
 		// entries: keep the first in sorted order and warn about the rest,
 		// so the materializer never sees duplicate identities.
 		if _, dup := proj.Widgets[canonical]; dup {
-			proj.Warnings = append(proj.Warnings,
-				fmt.Sprintf("widget %q: duplicate UUID %q", id, canonical))
+			warnWidget("widget %q: duplicate UUID %q", id, canonical)
 			continue
 		}
 		w.ID = canonical
@@ -203,6 +210,23 @@ func projectWidget(id string, m *crdt.YMap) (WidgetDoc, string) {
 			*f.dst = &s
 		}
 	}
+
+	// Mirror the widgets_source_check constraint (V121) and the cell-pair
+	// rule: a widget the derived table cannot hold is skipped here, with a
+	// warning, instead of aborting the whole materialization at insert time.
+	// A connector widget needs a non-empty query (an empty Y.Text projects as
+	// nil) and no notebook/cell; a cell widget needs both notebook_id and
+	// cell_id.
+	if w.ConnectorID != nil {
+		if w.NotebookID != nil || w.CellID != nil {
+			return fail("connector widget also references a notebook or cell")
+		}
+		if w.Query == nil {
+			return fail("connector widget has no query")
+		}
+	} else if (w.NotebookID == nil) != (w.CellID == nil) {
+		return fail("cell widget requires both notebook_id and cell_id")
+	}
 	return w, ""
 }
 
@@ -274,7 +298,9 @@ func layoutFieldInt(v any) (int, string) {
 }
 
 // readConfig reads the widget's config JSON string. A missing or empty value
-// projects as an empty map; anything that is not a JSON object fails.
+// projects as an empty map; anything that is not a JSON object, or a JSON
+// string larger than maxWidgetConfigBytes, fails. The size check runs before
+// decoding so an oversized string is never parsed.
 func readConfig(m *crdt.YMap) (map[string]any, string) {
 	v, ok := m.Get(keyConfig)
 	if !ok {
@@ -283,6 +309,9 @@ func readConfig(m *crdt.YMap) (map[string]any, string) {
 	s, isString := v.(string)
 	if !isString {
 		return nil, fmt.Sprintf("%s is %T, want JSON string", keyConfig, v)
+	}
+	if len(s) > maxWidgetConfigBytes {
+		return nil, fmt.Sprintf("%s is %d bytes, exceeding the %d-byte cap", keyConfig, len(s), maxWidgetConfigBytes)
 	}
 	if strings.TrimSpace(s) == "" {
 		return map[string]any{}, ""

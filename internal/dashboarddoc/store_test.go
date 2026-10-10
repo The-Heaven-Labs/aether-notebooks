@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,13 +78,17 @@ func seedStoreTestFixture(t *testing.T, db *database.DB) storeTestFixture {
 }
 
 // storeTestBaseState seeds the dashboard document the store tests start from:
-// a query widget (connector + SQL) and a text widget.
+// a query widget (connector + SQL), a text widget, and ordered variables.
 func storeTestBaseState(t *testing.T, connectorID string) []byte {
 	t.Helper()
 	query := "SELECT 1"
 	state, err := Seed(Projection{
 		Title:    "Base Title",
 		Settings: map[string]any{"grid_cols": 12, "query_cache_seconds": 30},
+		Variables: []map[string]any{
+			{"name": "region", "label": "Region", "type": "single_select", "default": "us"},
+			{"name": "threshold", "label": "Threshold", "type": "number", "default": 0.5},
+		},
 		Widgets: map[string]WidgetDoc{
 			testUUID(1): {
 				ID:          testUUID(1),
@@ -115,6 +121,7 @@ type storeTestWidget struct {
 	ConnectorID *string
 	Query       *string
 	Layout      Layout
+	LayoutRaw   map[string]any
 	Config      map[string]any
 	CreatedAt   time.Time
 	UpdatedAt   time.Time
@@ -135,6 +142,7 @@ func loadStoreTestWidgets(t *testing.T, db *database.DB, dashID string) map[stri
 		require.NoError(t, rows.Scan(&w.ID, &w.Type, &w.Language, &w.NotebookID, &w.CellID,
 			&w.ConnectorID, &w.Query, &layoutJSON, &configJSON, &w.CreatedAt, &w.UpdatedAt))
 		require.NoError(t, json.Unmarshal(layoutJSON, &w.Layout))
+		require.NoError(t, json.Unmarshal(layoutJSON, &w.LayoutRaw))
 		require.NoError(t, json.Unmarshal(configJSON, &w.Config))
 		out[w.ID] = w
 	}
@@ -148,6 +156,16 @@ func dashboardTitle(t *testing.T, db *database.DB, dashID string) string {
 	require.NoError(t, db.Pool.QueryRow(context.Background(),
 		`SELECT title FROM dashboards WHERE id = $1`, dashID).Scan(&title))
 	return title
+}
+
+func dashboardSettings(t *testing.T, db *database.DB, dashID string) map[string]any {
+	t.Helper()
+	var raw []byte
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT settings FROM dashboards WHERE id = $1`, dashID).Scan(&raw))
+	var settings map[string]any
+	require.NoError(t, json.Unmarshal(raw, &settings))
+	return settings
 }
 
 // dashboardDocState returns the stored document state, or nil when none is
@@ -257,6 +275,9 @@ func TestMergeAndStore_MaterializesWidgetDiff(t *testing.T) {
 	a := after[testUUID(1)]
 	require.Equal(t, "metric", a.Type)
 	require.Equal(t, Layout{Row: 2, Col: 0, Width: 3, Height: 2}, a.Layout)
+	require.Equal(t, map[string]any{
+		"row": float64(2), "col": float64(0), "width": float64(3), "height": float64(2),
+	}, a.LayoutRaw, "layout JSONB must match the REST-written shape")
 	require.Equal(t, map[string]any{"field": "count"}, a.Config)
 	require.Equal(t, f.connectorID, *a.ConnectorID)
 	require.Equal(t, "SELECT count(*) FROM sales", *a.Query)
@@ -343,7 +364,7 @@ func TestMergeAndStore_RefusesNoWidgetsWithWarnings(t *testing.T) {
 	err := MergeAndStore(ctx, db.Pool, f.dashID, corrupt)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "refusing to materialize")
-	require.Contains(t, err.Error(), "no widgets and 1 warning")
+	require.Contains(t, err.Error(), "no widgets and 1 widget warning")
 
 	require.Equal(t, "Fixture Dashboard", dashboardTitle(t, db, f.dashID))
 	require.Equal(t, widgetsBefore, loadStoreTestWidgets(t, db, f.dashID))
@@ -367,7 +388,8 @@ func TestMergeAndStore_RefusesEntirelyEmptyProjection(t *testing.T) {
 	err = MergeAndStore(ctx, db.Pool, f.dashID, empty)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "refusing to materialize")
-	require.Contains(t, err.Error(), "projection is empty but 1 widget row")
+	require.Contains(t, err.Error(), "projection is empty but the dashboard still has")
+	require.Contains(t, err.Error(), "1 widget row(s)")
 
 	require.Equal(t, "Fixture Dashboard", dashboardTitle(t, db, f.dashID))
 	require.Equal(t, widgetsBefore, loadStoreTestWidgets(t, db, f.dashID))
@@ -398,4 +420,339 @@ func TestMergeAndStore_AllowsDeletingEveryWidget(t *testing.T) {
 	proj := mustProject(t, dashboardDocState(t, db, f.dashID))
 	require.Empty(t, proj.Widgets)
 	require.Equal(t, "Base Title", proj.Title)
+}
+
+func TestMergeAndStore_MaterializesSettingsAndVariables(t *testing.T) {
+	db := setupStoreTestDB(t)
+	ctx := context.Background()
+
+	t.Run("settings and ordered variables", func(t *testing.T) {
+		f := seedStoreTestFixture(t, db)
+		require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, storeTestBaseState(t, f.connectorID)))
+
+		// The doc's Y.Array variables are injected under settings.variables,
+		// preserving order, alongside the plain settings keys.
+		require.Equal(t, map[string]any{
+			"grid_cols":           float64(12),
+			"query_cache_seconds": float64(30),
+			"variables": []any{
+				map[string]any{"name": "region", "label": "Region", "type": "single_select", "default": "us"},
+				map[string]any{"name": "threshold", "label": "Threshold", "type": "number", "default": float64(0.5)},
+			},
+		}, dashboardSettings(t, db, f.dashID))
+	})
+
+	t.Run("no variables materializes as an empty array", func(t *testing.T) {
+		f := seedStoreTestFixture(t, db)
+		state, err := Seed(Projection{Title: "No Variables", Settings: map[string]any{"grid_cols": 6}})
+		require.NoError(t, err)
+		require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, state))
+
+		require.Equal(t, map[string]any{
+			"grid_cols": float64(6),
+			"variables": []any{},
+		}, dashboardSettings(t, db, f.dashID))
+	})
+}
+
+// TestMergeAndStore_OneBadWidgetDoesNotAbortStore pins per-widget isolation:
+// a widget whose shape fails validation is skipped (and its row diffed away)
+// while the rest of the store, including unrelated edits, still commits.
+func TestMergeAndStore_OneBadWidgetDoesNotAbortStore(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	base := storeTestBaseState(t, f.connectorID)
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, base))
+	require.Len(t, loadStoreTestWidgets(t, db, f.dashID), 2)
+
+	// The editor-cleared drawer shape: widget 1 keeps its connector but its
+	// SQL text is now empty, which violates widgets_source_check. Project
+	// skips it with a widget warning; the store must still succeed.
+	badState, err := SetQuery(base, testUUID(1), "")
+	require.NoError(t, err)
+	title := "Renamed With Bad Widget"
+	badState, err = UpdateMeta(badState, &title, nil, nil)
+	require.NoError(t, err)
+
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, badState))
+
+	after := loadStoreTestWidgets(t, db, f.dashID)
+	require.Len(t, after, 1, "the bad widget's row is diffed away")
+	require.Contains(t, after, testUUID(2), "the valid sibling still materializes")
+	require.Equal(t, "Renamed With Bad Widget", dashboardTitle(t, db, f.dashID),
+		"unrelated edits in the same store persist")
+}
+
+// TestMaterialize_SkipsDanglingWidgetReferences pins that missing (or
+// malformed) connector/notebook/cell references skip only their widget, with
+// a materialization warning, instead of failing the FK insert.
+func TestMaterialize_SkipsDanglingWidgetReferences(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	missing := uuid.NewString()
+	badRef := "not-a-uuid"
+	query := "SELECT 1"
+	proj := &Projection{
+		Title: "Dangling",
+		Widgets: map[string]WidgetDoc{
+			testUUID(1): {ID: testUUID(1), Type: "table", ConnectorID: &f.connectorID, Query: &query, Language: "sql"},
+			testUUID(2): {ID: testUUID(2), Type: "table", ConnectorID: &missing, Query: &query, Language: "sql"},
+			testUUID(3): {ID: testUUID(3), Type: "table", NotebookID: &missing, CellID: &missing, Language: "sql"},
+			testUUID(4): {ID: testUUID(4), Type: "table", ConnectorID: &badRef, Query: &query, Language: "sql"},
+		},
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	warnings, err := Materialize(ctx, tx, f.dashID, proj)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	require.Len(t, warnings, 3)
+	require.Contains(t, warnings[0], testUUID(2))
+	require.Contains(t, warnings[0], "connector_id "+missing+" does not exist")
+	require.Contains(t, warnings[1], testUUID(3))
+	require.Contains(t, warnings[1], "notebook_id "+missing+" does not exist")
+	require.Contains(t, warnings[1], "cell_id "+missing+" does not exist")
+	require.Contains(t, warnings[2], testUUID(4))
+	require.Contains(t, warnings[2], "is not a valid UUID")
+
+	after := loadStoreTestWidgets(t, db, f.dashID)
+	require.Len(t, after, 1)
+	require.Contains(t, after, testUUID(1))
+}
+
+// TestMergeAndStore_SkipsWidgetsWithHardDeletedReferences covers the stale
+// reference case end to end: a connector that existed when the widget was
+// materialized is hard-deleted, and the next store drops the widget's row
+// instead of failing on the FK.
+func TestMergeAndStore_SkipsWidgetsWithHardDeletedReferences(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	base := storeTestBaseState(t, f.connectorID)
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, base))
+	require.Len(t, loadStoreTestWidgets(t, db, f.dashID), 2)
+
+	_, err := db.Pool.Exec(ctx, `DELETE FROM connectors WHERE id = $1`, f.connectorID)
+	require.NoError(t, err)
+
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, base))
+	after := loadStoreTestWidgets(t, db, f.dashID)
+	require.Len(t, after, 1)
+	require.Contains(t, after, testUUID(2), "the widget with a live reference survives")
+}
+
+// TestMergeAndStore_RefusesEmptyProjectionWhenDashboardHasContent extends
+// guard 2 beyond widget rows: an entirely empty projection must not wipe a
+// dashboard title or settings, while a pristine empty dashboard still
+// materializes.
+func TestMergeAndStore_RefusesEmptyProjectionWhenDashboardHasContent(t *testing.T) {
+	db := setupStoreTestDB(t)
+	ctx := context.Background()
+	empty, err := Seed(Projection{})
+	require.NoError(t, err)
+
+	t.Run("non-empty title", func(t *testing.T) {
+		f := seedStoreTestFixture(t, db)
+		err := MergeAndStore(ctx, db.Pool, f.dashID, empty)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "refusing to materialize")
+		require.Contains(t, err.Error(), "still has a title")
+		require.Equal(t, "Fixture Dashboard", dashboardTitle(t, db, f.dashID))
+		require.Nil(t, dashboardDocState(t, db, f.dashID))
+	})
+
+	t.Run("non-empty settings", func(t *testing.T) {
+		f := seedStoreTestFixture(t, db)
+		_, err := db.Pool.Exec(ctx,
+			`UPDATE dashboards SET title = '', settings = '{"grid_cols": 6}' WHERE id = $1`, f.dashID)
+		require.NoError(t, err)
+
+		err = MergeAndStore(ctx, db.Pool, f.dashID, empty)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "still has settings")
+		require.Equal(t, "", dashboardTitle(t, db, f.dashID))
+		require.Equal(t, map[string]any{"grid_cols": float64(6)}, dashboardSettings(t, db, f.dashID))
+	})
+
+	t.Run("settings with only empty variables materializes", func(t *testing.T) {
+		f := seedStoreTestFixture(t, db)
+		_, err := db.Pool.Exec(ctx,
+			`UPDATE dashboards SET title = '', settings = '{"variables": []}' WHERE id = $1`, f.dashID)
+		require.NoError(t, err)
+
+		require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, empty))
+		require.Equal(t, map[string]any{"variables": []any{}}, dashboardSettings(t, db, f.dashID))
+	})
+
+	t.Run("pristine dashboard", func(t *testing.T) {
+		f := seedStoreTestFixture(t, db)
+		_, err := db.Pool.Exec(ctx,
+			`UPDATE dashboards SET title = '', settings = '{}' WHERE id = $1`, f.dashID)
+		require.NoError(t, err)
+
+		require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, empty))
+		require.Equal(t, "", dashboardTitle(t, db, f.dashID))
+		require.Equal(t, map[string]any{"variables": []any{}}, dashboardSettings(t, db, f.dashID))
+		require.Empty(t, loadStoreTestWidgets(t, db, f.dashID))
+	})
+}
+
+// TestMergeAndStore_ConcurrentStoresBothSurvive pins the FOR UPDATE
+// serialization: two overlapping stores built from the same base must not
+// lose either update to a last-write-wins state overwrite.
+func TestMergeAndStore_ConcurrentStoresBothSurvive(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	base := storeTestBaseState(t, f.connectorID)
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, base))
+
+	layoutState, err := UpdateLayout(base, testUUID(1), Layout{Row: 7, Col: 1, Width: 5, Height: 3})
+	require.NoError(t, err)
+	queryState, err := SetQuery(base, testUUID(2), "SELECT 42")
+	require.NoError(t, err)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, 2)
+	for _, state := range [][]byte{layoutState, queryState} {
+		wg.Add(1)
+		go func(s []byte) {
+			defer wg.Done()
+			errs <- MergeAndStore(ctx, db.Pool, f.dashID, s)
+		}(state)
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	proj := mustProject(t, dashboardDocState(t, db, f.dashID))
+	require.Equal(t, Layout{Row: 7, Col: 1, Width: 5, Height: 3}, proj.Widgets[testUUID(1)].Layout)
+	require.Equal(t, "SELECT 42", widgetQuery(t, proj.Widgets[testUUID(2)]))
+}
+
+// TestMergeAndStore_IdempotentRestore pins that re-storing the same state is
+// a no-op for the stored bytes and derived rows.
+func TestMergeAndStore_IdempotentRestore(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	base := storeTestBaseState(t, f.connectorID)
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, base))
+	stateFirst := dashboardDocState(t, db, f.dashID)
+	widgetsFirst := loadStoreTestWidgets(t, db, f.dashID)
+	settingsFirst := dashboardSettings(t, db, f.dashID)
+
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, base))
+
+	require.Equal(t, stateFirst, dashboardDocState(t, db, f.dashID))
+	require.Equal(t, settingsFirst, dashboardSettings(t, db, f.dashID))
+	require.Equal(t, "Base Title", dashboardTitle(t, db, f.dashID))
+
+	after := loadStoreTestWidgets(t, db, f.dashID)
+	require.Len(t, after, len(widgetsFirst))
+	for id, before := range widgetsFirst {
+		got := after[id]
+		require.Equal(t, before.CreatedAt, got.CreatedAt)
+		require.Equal(t, before.Type, got.Type)
+		require.Equal(t, before.Language, got.Language)
+		require.Equal(t, before.Layout, got.Layout)
+		require.Equal(t, before.Config, got.Config)
+	}
+}
+
+// TestMergeAndStore_CorruptStoredStateErrors pins the fail-closed decision:
+// an undecodable stored state errors and commits nothing rather than being
+// silently replaced (recovery is an explicit operational action).
+func TestMergeAndStore_CorruptStoredStateErrors(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	insertStoreTestWidgetRow(t, db, f.dashID, testUUID(1))
+	widgetsBefore := loadStoreTestWidgets(t, db, f.dashID)
+
+	corrupt := []byte("this is not a yjs update")
+	_, err := db.Pool.Exec(ctx,
+		`INSERT INTO dashboard_yjs_documents (dashboard_id, state) VALUES ($1, $2)`,
+		f.dashID, corrupt)
+	require.NoError(t, err)
+
+	state, err := Seed(Projection{
+		Title: "Incoming",
+		Widgets: map[string]WidgetDoc{
+			testUUID(2): {ID: testUUID(2), Type: "text"},
+		},
+	})
+	require.NoError(t, err)
+
+	err = MergeAndStore(ctx, db.Pool, f.dashID, state)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), f.dashID, "errors must be correlated with the dashboard")
+	require.Contains(t, err.Error(), "decode stored state")
+
+	require.Equal(t, corrupt, dashboardDocState(t, db, f.dashID))
+	require.Equal(t, widgetsBefore, loadStoreTestWidgets(t, db, f.dashID))
+	require.Equal(t, "Fixture Dashboard", dashboardTitle(t, db, f.dashID))
+}
+
+// captureHandler is a minimal slog.Handler that records entries, so tests can
+// assert on warning logging.
+type captureHandler struct {
+	mu      sync.Mutex
+	records []slog.Record
+}
+
+func (h *captureHandler) Enabled(context.Context, slog.Level) bool { return true }
+func (h *captureHandler) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.records = append(h.records, r)
+	return nil
+}
+func (h *captureHandler) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *captureHandler) WithGroup(string) slog.Handler      { return h }
+
+// TestMergeAndStore_LogsWarningsOncePerStore pins the non-noisy warning log:
+// one line per store, carrying the dashboard ID and the warning count.
+func TestMergeAndStore_LogsWarningsOncePerStore(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	base := storeTestBaseState(t, f.connectorID)
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, base))
+
+	h := &captureHandler{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(h))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	badState, err := SetQuery(base, testUUID(1), "")
+	require.NoError(t, err)
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, badState))
+
+	require.Len(t, h.records, 1, "exactly one log line per store with warnings")
+	attrs := map[string]any{}
+	h.records[0].Attrs(func(a slog.Attr) bool {
+		attrs[a.Key] = a.Value.Any()
+		return true
+	})
+	require.Equal(t, f.dashID, attrs["dashboard_id"])
+	require.Equal(t, int64(1), attrs["count"])
+	warnings, ok := attrs["warnings"].([]string)
+	require.True(t, ok)
+	require.Len(t, warnings, 1)
+	require.Contains(t, warnings[0], "connector widget has no query")
 }

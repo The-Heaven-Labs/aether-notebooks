@@ -105,6 +105,11 @@ func Seed(p Projection) ([]byte, error) {
 // paths key the document by canonical UUIDs regardless of how the caller
 // spelled them. Shared by Seed and UpsertWidget so both write paths accept
 // exactly the same widgets.
+//
+// Besides the type/language/layout rules it mirrors the widgets_source_check
+// constraint (V121) and the cell-pair rule, so backend-originated writes can
+// never create a widget shape the materializer would have to skip. Pointer
+// fields that point at "" count as unset, matching the document's placeholder.
 func validateWidget(id string, w WidgetDoc) (canonicalID string, config string, err error) {
 	canonicalID, err = canonicalWidgetID(id)
 	if err != nil {
@@ -125,6 +130,22 @@ func validateWidget(id string, w WidgetDoc) (canonicalID string, config string, 
 	if w.Layout.Row < 0 || w.Layout.Col < 0 || w.Layout.Width < 0 || w.Layout.Height < 0 {
 		return "", "", fmt.Errorf("widget %q: negative layout %+v", id, w.Layout)
 	}
+
+	hasConnector := w.ConnectorID != nil && *w.ConnectorID != ""
+	hasNotebook := w.NotebookID != nil && *w.NotebookID != ""
+	hasCell := w.CellID != nil && *w.CellID != ""
+	hasQuery := w.Query != nil && *w.Query != ""
+	if hasConnector {
+		if hasNotebook || hasCell {
+			return "", "", fmt.Errorf("widget %q: connector widget cannot reference a notebook or cell", id)
+		}
+		if !hasQuery {
+			return "", "", fmt.Errorf("widget %q: connector widget requires a non-empty query", id)
+		}
+	} else if hasNotebook != hasCell {
+		return "", "", fmt.Errorf("widget %q: cell widget requires both notebook_id and cell_id", id)
+	}
+
 	config = "{}"
 	if len(w.Config) > 0 {
 		// normalizeForDoc rejects shared yjs types and non-finite
@@ -139,6 +160,9 @@ func validateWidget(id string, w WidgetDoc) (canonicalID string, config string, 
 			return "", "", fmt.Errorf("widget %q: config: %w", id, err)
 		}
 		config = string(raw)
+	}
+	if len(config) > maxWidgetConfigBytes {
+		return "", "", fmt.Errorf("widget %q: config is %d bytes, exceeding the %d-byte cap", id, len(config), maxWidgetConfigBytes)
 	}
 	return canonicalID, config, nil
 }

@@ -83,11 +83,20 @@
 // empty as "delete all rows" without an explicit guard.
 //
 // Per-widget problems — unknown type, a map key that is not a UUID, invalid or
-// negative layout, config that is not a JSON object, unsupported language,
-// non-Y.Map widget values — skip that widget and are recorded in
-// Projection.Warnings, so one bad widget can never block materialization.
-// Malformed individual variable entries are likewise skipped with a warning.
-// Warnings are emitted in sorted widget-ID order for determinism.
+// negative layout, config that is not a JSON object or exceeds
+// maxWidgetConfigBytes, an invalid widget source shape (a connector without a
+// non-empty query, a connector combined with notebook/cell, or a partial
+// notebook/cell pair), unsupported language, non-Y.Map widget values — skip
+// that widget and are recorded in Projection.Warnings and
+// Projection.WidgetWarnings, so one bad widget can never block materialization.
+// Malformed individual variable entries are likewise skipped with a warning,
+// but only in Warnings. Warnings are emitted in sorted widget-ID order for
+// determinism.
+//
+// Referential integrity (a connector/notebook/cell ID that no longer exists)
+// is not a projection concern: Project cannot know the database. Materialize
+// pre-validates those references and skips offending widgets with a
+// materialization warning.
 //
 // A missing layout map (or missing layout fields) defaults to zero values;
 // only present-but-invalid fields skip the widget.
@@ -118,6 +127,12 @@ const (
 	keyHeight = "height"
 )
 
+// maxWidgetConfigBytes caps a widget's config JSON (1 MiB) as stored in the
+// document. Seed and UpsertWidget reject larger configs; Project skips such a
+// widget with a warning, so an oversized editor-written config can never abort
+// a store.
+const maxWidgetConfigBytes = 1 << 20
+
 // widgetTypes is the set of widget types allowed in the document, mirroring
 // the widgets.type CHECK constraint.
 var widgetTypes = map[string]bool{
@@ -134,12 +149,14 @@ var queryLanguages = map[string]bool{
 	"sql": true,
 }
 
-// Layout is a widget's position on the dashboard grid.
+// Layout is a widget's position on the dashboard grid. The JSON tags match
+// the REST-written widgets.layout shape, so materialized JSONB rows are
+// byte-shape compatible with rows written by the REST handlers.
 type Layout struct {
-	Row    int
-	Col    int
-	Width  int
-	Height int
+	Row    int `json:"row"`
+	Col    int `json:"col"`
+	Width  int `json:"width"`
+	Height int `json:"height"`
 }
 
 // WidgetDoc is the projection of one widget in the dashboard document.
@@ -173,13 +190,20 @@ type WidgetDoc struct {
 // Settings, Variables and Widgets are always non-nil after Project, even for an
 // empty document. Variables preserves the document's Y.Array order.
 //
-// Warnings holds per-widget (and per-variable) validation failures whose
+// Warnings holds every per-widget and per-variable validation failure whose
 // entries were skipped; see the package documentation for the split between
 // warnings and errors.
+//
+// WidgetWarnings is the widget-origin subset of Warnings: entries skipped
+// because the widget itself is invalid (non-UUID key, invalid shape, oversized
+// config, duplicate UUID, non-Y.Map value). Materialize's "no widgets
+// projected" guard uses this subset so a settings/variables-only warning can
+// never be mistaken for "every widget was skipped".
 type Projection struct {
-	Title     string
-	Settings  map[string]any
-	Variables []map[string]any
-	Widgets   map[string]WidgetDoc
-	Warnings  []string
+	Title          string
+	Settings       map[string]any
+	Variables      []map[string]any
+	Widgets        map[string]WidgetDoc
+	Warnings       []string
+	WidgetWarnings []string
 }
