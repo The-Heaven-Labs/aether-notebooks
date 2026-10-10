@@ -14,6 +14,14 @@ const apiTarget = process.env.API_URL ?? 'http://localhost:8088';
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // react-draggable's debug logger references `process.env.DRAGGABLE_DEBUG`
+  // directly; Vite does not shim `process` in dev, so every drag start throws
+  // `ReferenceError: process is not defined`. Define the flag away so the
+  // logger short-circuits (production builds already replace the reference,
+  // but the define is harmless there too).
+  define: {
+    'process.env.DRAGGABLE_DEBUG': 'false',
+  },
   build: {
     rollupOptions: {
       output: {
@@ -37,7 +45,16 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    include: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities', 'rehype-highlight']
+    include: ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities', 'rehype-highlight'],
+    // Vite 8 pre-bundles dependencies with Rolldown and the top-level `define`
+    // above does not reach pre-bundled code. react-draggable is inlined into
+    // the optimized react-grid-layout bundle, so the same define must be
+    // applied by the dependency optimizer or the dev-server drag bug remains.
+    rolldownOptions: {
+      transform: {
+        define: { 'process.env.DRAGGABLE_DEBUG': 'false' },
+      },
+    },
   },
   test: {
     projects: [{

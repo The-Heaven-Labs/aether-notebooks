@@ -65,12 +65,6 @@ async function loginSessions(request: APIRequestContext): Promise<{ nova: Sessio
 /**
  * Opens a browser context with the session seeded into localStorage and the
  * relay URL injected before the app boots (the Vite dev server omits it).
- *
- * `process.env` is also shimmed: react-draggable's debug log reads
- * `process.env.DRAGGABLE_DEBUG` and the Vite dev server does not replace
- * `process.env` in that dependency, so without the shim every drag start
- * throws `ReferenceError: process is not defined` in dev (production builds
- * replace it with `{}` and are unaffected). Test-only workaround.
  */
 async function openSession(browser: Browser, session: Session): Promise<{ page: Page }> {
   const context = await browser.newContext()
@@ -83,7 +77,6 @@ async function openSession(browser: Browser, session: Session): Promise<{ page: 
       ;(window as Window & { __AETHER_CONFIG__?: { relayUrl?: string } }).__AETHER_CONFIG__ = {
         relayUrl: cfg.relayUrl,
       }
-      ;(window as unknown as { process?: { env: Record<string, string> } }).process = { env: {} }
     },
     { token: session.token, email: session.email, name: session.name, relayUrl: RELAY_URL },
   )
