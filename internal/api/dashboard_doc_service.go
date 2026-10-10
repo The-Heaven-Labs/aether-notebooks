@@ -298,6 +298,26 @@ func (s *Server) storeAndMaterializeDashboardDoc(ctx context.Context, dashboardI
 	return nil
 }
 
+// agentDashboardDocStore adapts the Server's dashboard document helpers to the
+// agent.DashboardDocStore interface (the method names differ, and the adapter
+// keeps the Server API clean). Agent and MCP dashboard-mutating tools write
+// through it, so their edits land in the document (the source of truth) and
+// are materialized exactly like REST writes — a direct SQL write would be
+// clobbered by the next relay store.
+type agentDashboardDocStore struct{ s *Server }
+
+// LoadOrSeed delegates to the single lazy-seed path shared with the internal
+// relay GET and the REST write handlers.
+func (a agentDashboardDocStore) LoadOrSeed(ctx context.Context, orgID, dashboardID string) ([]byte, error) {
+	return a.s.loadOrSeedDashboardDoc(ctx, orgID, dashboardID)
+}
+
+// Store delegates to the merge-and-materialize store shared with the REST
+// write handlers, including the best-effort relay publish.
+func (a agentDashboardDocStore) Store(ctx context.Context, dashboardID string, state []byte) error {
+	return a.s.storeAndMaterializeDashboardDoc(ctx, dashboardID, state)
+}
+
 // dashboardVariablesFromJSON converts the JSON value of settings.variables
 // into the []map[string]any the document stores. A JSON null clears the
 // variable list; any other non-array value, or an array entry that is not an

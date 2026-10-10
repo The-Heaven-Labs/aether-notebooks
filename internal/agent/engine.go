@@ -21,17 +21,21 @@ import (
 )
 
 type Engine struct {
-	rdb              *redis.Client // shared Redis client for cross-pod state
-	registry         *ToolRegistry
-	session          *SessionStore
-	llm              *LLMClient
-	pool             *pgxpool.Pool
-	mu               sync.Mutex
-	BroadcastFunc    func(notebookID string, msg any)
-	SetRunningFunc   func(cellID, notebookID string, startedAt time.Time)
-	UnsetRunningFunc func(cellID string)
-	SetCancelFunc    func(cellID string, cancel context.CancelFunc)
-	DeleteCancelFunc func(cellID string)
+	rdb           *redis.Client // shared Redis client for cross-pod state
+	registry      *ToolRegistry
+	session       *SessionStore
+	llm           *LLMClient
+	pool          *pgxpool.Pool
+	mu            sync.Mutex
+	BroadcastFunc func(notebookID string, msg any)
+	// DashboardDocStore routes agent dashboard writes through the dashboard
+	// Yjs document; wired by the API server like BroadcastFunc. See
+	// ToolContext.DashboardDocStore for semantics.
+	DashboardDocStore DashboardDocStore
+	SetRunningFunc    func(cellID, notebookID string, startedAt time.Time)
+	UnsetRunningFunc  func(cellID string)
+	SetCancelFunc     func(cellID string, cancel context.CancelFunc)
+	DeleteCancelFunc  func(cellID string)
 	// ResolveTarget/ConnPool/CheckPermissionFunc are wired by the API server to
 	// the shared HTTP implementations (see router.go). Agent tools use them to
 	// execute ClickHouse queries as the acting user's warehouse identity and to
@@ -1222,6 +1226,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				MasterKey:     masterKey,
 				OnEvent:       onEvent,
 				BroadcastFunc: e.BroadcastFunc,
+				// Dashboard writes go through the shared document store so
+				// agent edits are live and cannot be clobbered by the next
+				// relay store.
+				DashboardDocStore: e.DashboardDocStore,
 				// Running-state/cancel hooks propagate like BroadcastFunc.
 				SetRunningFunc:          e.SetRunningFunc,
 				UnsetRunningFunc:        e.UnsetRunningFunc,

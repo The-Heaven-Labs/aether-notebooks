@@ -15,6 +15,24 @@ import (
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
+// DashboardDocStore loads and stores a dashboard's Yjs document state.
+//
+// It is implemented by the API server and injected like BroadcastFunc, because
+// internal/agent cannot import internal/api. Dashboard-mutating agent tools
+// write through it so their edits land in the dashboard document (the source
+// of truth) and are materialized into the derived dashboards/widgets rows —
+// exactly like REST writes. A direct SQL write would be clobbered by the next
+// relay store (the document wins).
+type DashboardDocStore interface {
+	// LoadOrSeed returns the stored document state for a dashboard, lazily
+	// seeding it from the current dashboards/widgets rows when no state
+	// exists yet. A missing or trashed dashboard is an error.
+	LoadOrSeed(ctx context.Context, orgID, dashboardID string) ([]byte, error)
+	// Store persists a backend-originated document state (CRDT-merged onto
+	// the stored state) and materializes the derived rows.
+	Store(ctx context.Context, dashboardID string, state []byte) error
+}
+
 type ToolContext struct {
 	Context          context.Context
 	UserID           string
@@ -29,6 +47,10 @@ type ToolContext struct {
 	MasterKey        []byte
 	OnEvent          func(EngineEvent)
 	BroadcastFunc    func(notebookID string, msg any)
+	// DashboardDocStore routes dashboard-mutating tools (widget CRUD,
+	// update_dashboard) through the dashboard Yjs document. Nil fails
+	// closed: a bare context must wire one explicitly.
+	DashboardDocStore DashboardDocStore
 	// ResolveTarget resolves the acting user's ClickHouse execution target for
 	// a connector (the api.Server implementation is the same resolver HTTP
 	// uses). It is wired by the API server because internal/agent cannot import

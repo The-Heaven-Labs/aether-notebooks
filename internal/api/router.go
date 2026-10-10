@@ -135,6 +135,10 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.ConnPool = s.connPool
 	s.agentEngine.CheckPermissionFunc = s.checkPermission
 	s.agentEngine.RecordConnectorActivity = s.recordConnectorActivity
+	// Dashboard-mutating agent tools write through the dashboard Yjs document
+	// (the same seed/store path REST uses) so their edits are live and cannot
+	// be clobbered by the next relay store.
+	s.agentEngine.DashboardDocStore = agentDashboardDocStore{s: s}
 	// Running-state/cancel lifecycle for agent-driven cell runs (mirrors the
 	// user-triggered execute path so badges, refresh-safe sync, and the Cancel
 	// endpoint all work for agent runs).
