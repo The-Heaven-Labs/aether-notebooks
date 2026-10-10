@@ -126,6 +126,28 @@ export function storeResponseDisposition(status: number): StoreResponseDispositi
   return 'retry'
 }
 
+/** How onLoadDocument must react to the internal load endpoint's status. */
+export type LoadResponseDisposition = 'load' | 'empty' | 'fail'
+
+/**
+ * Classifies a load response for onLoadDocument.
+ *
+ * - 2xx: the state was fetched (an empty body is handled separately by the
+ *   caller).
+ * - dashboard non-2xx: the dashboard GET always seeds, so a non-2xx is a real
+ *   failure, never "no state stored yet". The hook must throw so Hocuspocus
+ *   aborts the load and the provider retries; returning null would serve an
+ *   empty document that editors could mistake for the dashboard's content
+ *   (the page keeps painting from REST in the meantime).
+ * - notebook non-2xx: keep the historical behavior — return null, matching
+ *   the notebook GET's "no state stored yet" semantics.
+ */
+export function loadResponseDisposition(kind: DocumentKind, status: number): LoadResponseDisposition {
+  if (status >= 200 && status < 300) return 'load'
+  if (kind === 'dashboard') return 'fail'
+  return 'empty'
+}
+
 /** How a live dashboard connection must react to a revalidation outcome. */
 export type RevalidationDisposition = 'keep' | 'readonly' | 'close' | 'retry'
 

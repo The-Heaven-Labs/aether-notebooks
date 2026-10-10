@@ -10,6 +10,7 @@ import {
   DASHBOARD_REVALIDATE_INTERVAL_MS,
   applyRevalidationDisposition,
   extractToken,
+  loadResponseDisposition,
   mapAuthorizeResponse,
   parseInvalidateChannel,
   parseUpdateChannel,
@@ -172,9 +173,17 @@ const server = new Server<RelayContext>({
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS),
     })
-    if (!res.ok) {
-      console.warn(`[relay] load ${route.kind} document "${route.id}" failed with status ${res.status}`)
+    const disposition = loadResponseDisposition(route.kind, res.status)
+    if (disposition === 'empty') {
+      console.warn(`[relay] load ${route.kind} document "${route.id}" failed with status ${res.status}; serving an empty document`)
       return null
+    }
+    if (disposition === 'fail') {
+      // Dashboard GETs always seed server-side, so a non-2xx is a real
+      // failure. Throwing aborts the load and the provider retries; serving
+      // an empty document here would show a blank dashboard and could be
+      // edited into a state nobody ever intended.
+      throw new Error(`load ${route.kind} document "${route.id}" failed with status ${res.status}`)
     }
     const buf = await res.arrayBuffer()
     if (buf.byteLength === 0) return null

@@ -7,6 +7,7 @@ import {
   applyRevalidationDisposition,
   extractToken,
   isDashboardDocument,
+  loadResponseDisposition,
   mapAuthorizeResponse,
   parseInvalidateChannel,
   parseUpdateChannel,
@@ -104,6 +105,28 @@ test('store 401/500/502 failures must throw so the doc stays in memory', () => {
   assert.equal(storeResponseDisposition(500), 'retry')
   assert.equal(storeResponseDisposition(502), 'retry')
   assert.equal(storeResponseDisposition(503), 'retry')
+})
+
+test('load 2xx responses load the fetched state for both kinds', () => {
+  assert.equal(loadResponseDisposition('dashboard', 200), 'load')
+  assert.equal(loadResponseDisposition('dashboard', 204), 'load')
+  assert.equal(loadResponseDisposition('notebook', 200), 'load')
+})
+
+test('load non-2xx fails dashboard documents instead of serving an empty doc', () => {
+  // Dashboard GETs always seed, so any non-2xx is a real failure: the hook
+  // must throw so the provider retries rather than syncing an empty doc.
+  assert.equal(loadResponseDisposition('dashboard', 401), 'fail')
+  assert.equal(loadResponseDisposition('dashboard', 403), 'fail')
+  assert.equal(loadResponseDisposition('dashboard', 404), 'fail')
+  assert.equal(loadResponseDisposition('dashboard', 500), 'fail')
+  assert.equal(loadResponseDisposition('dashboard', 503), 'fail')
+})
+
+test('load non-2xx keeps the notebook empty-document behavior', () => {
+  assert.equal(loadResponseDisposition('notebook', 401), 'empty')
+  assert.equal(loadResponseDisposition('notebook', 404), 'empty')
+  assert.equal(loadResponseDisposition('notebook', 500), 'empty')
 })
 
 test('parseInvalidateChannel extracts the dashboard id', () => {
