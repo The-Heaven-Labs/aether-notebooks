@@ -533,6 +533,8 @@ func (s *Server) routes() {
 	// Internal routes (called by Hocuspocus relay only)
 	s.mux.HandleFunc("GET /internal/yjs/{notebook_id}", s.handleInternalYjsGet)
 	s.mux.HandleFunc("PUT /internal/yjs/{notebook_id}", s.handleInternalYjsPut)
+	s.mux.HandleFunc("GET /internal/dashboard-yjs/{dashboard_id}", s.handleInternalDashboardYjsGet)
+	s.mux.HandleFunc("PUT /internal/dashboard-yjs/{dashboard_id}", s.handleInternalDashboardYjsPut)
 	s.mux.HandleFunc("GET /internal/auth/validate", s.handleInternalAuthValidate)
 
 	// Attachment routes
