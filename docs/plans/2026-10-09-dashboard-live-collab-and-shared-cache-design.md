@@ -216,6 +216,12 @@ client-side and the materializer rejects/clamps invalid entries.
 - **Restore**: no doc change; access resumes on next connect.
 - Folder moves / ACL edits / share have no doc impact and are picked up by
   revalidation.
+- **Org admins**: the admin ACL bypass requires admin mode, which internal relay
+  routes cannot carry (no admin-mode header/middleware there). An org admin without an
+  explicit `edit` ACL entry therefore connects **read-only** to the live doc even
+  though REST editing via admin mode works. Known v1 limitation; a follow-up can have
+  the provider forward an admin-mode flag (e.g. a URL parameter the relay passes to
+  authorize) so admins get read-write when their UI toggle is on.
 
 ## Frontend UX
 
