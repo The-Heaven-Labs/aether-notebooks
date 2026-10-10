@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -27,9 +26,13 @@ type createDashboardRequest struct {
 }
 
 type updateDashboardRequest struct {
-	Title    *string                   `json:"title,omitempty"`
-	Settings *models.DashboardSettings `json:"settings,omitempty"`
-	FolderID *string                   `json:"folder_id,omitempty"`
+	Title *string `json:"title,omitempty"`
+	// Settings is decoded as a raw map (not models.DashboardSettings) so an
+	// explicit variables: [] clears the list and every provided key can be
+	// shallow-merged over the document's current settings; the typed struct's
+	// omitempty would silently drop both.
+	Settings map[string]any `json:"settings,omitempty"`
+	FolderID *string        `json:"folder_id,omitempty"`
 }
 
 type widgetCellData struct {
@@ -140,46 +143,95 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		req.FolderID = nil
 	}
 
-	ctx := r.Context()
-
-	// Build dynamic UPDATE query
-	updates := []string{}
-	args := []interface{}{}
-	argIdx := 1
-
-	if req.Title != nil {
-		updates = append(updates, fmt.Sprintf("title=$%d", argIdx))
-		args = append(args, *req.Title)
-		argIdx++
-	}
-	if req.Settings != nil {
-		settingsJSON, _ := json.Marshal(req.Settings)
-		updates = append(updates, fmt.Sprintf("settings=$%d", argIdx))
-		args = append(args, settingsJSON)
-		argIdx++
-	}
-	if req.FolderID != nil {
-		updates = append(updates, fmt.Sprintf("folder_id=$%d", argIdx))
-		args = append(args, *req.FolderID)
-		argIdx++
-	}
-
-	if len(updates) == 0 {
+	if req.Title == nil && req.Settings == nil && req.FolderID == nil {
 		writeError(w, http.StatusBadRequest, "no fields to update")
 		return
 	}
 
-	updates = append(updates, "updated_at=NOW()")
-	query := fmt.Sprintf("UPDATE dashboards SET %s WHERE id=$%d AND org_id=$%d RETURNING id, org_id, title, settings, folder_id, created_by, created_at, updated_at",
-		strings.Join(updates, ", "), argIdx, argIdx+1)
-	args = append(args, dashID, claims.OrgID)
+	ctx := r.Context()
 
+	// Title and settings live in the Yjs document (the source of truth), so
+	// they are read-merged there and stored through MergeAndStore. The
+	// settings merge is shallow: provided keys replace their projected
+	// counterparts and absent keys stay, while variables are split out into
+	// the document's separate ordered array.
+	if req.Title != nil || req.Settings != nil {
+		state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
+		if errors.Is(err, errDashboardDocNotFound) {
+			writeError(w, http.StatusNotFound, "dashboard not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+		proj, err := dashboarddoc.Project(state)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+
+		var mergedSettings map[string]any
+		var variables []map[string]any
+		if req.Settings != nil {
+			mergedSettings = make(map[string]any, len(proj.Settings)+len(req.Settings))
+			for k, v := range proj.Settings {
+				mergedSettings[k] = v
+			}
+			for k, v := range req.Settings {
+				if k == "variables" {
+					continue
+				}
+				mergedSettings[k] = v
+			}
+			if v, ok := req.Settings["variables"]; ok {
+				variables, err = dashboardVariablesFromJSON(v)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
+		}
+
+		newState, err := dashboarddoc.UpdateMeta(state, req.Title, mergedSettings, variables)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+		if err := s.storeAndMaterializeDashboardDoc(ctx, dashID, newState); err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+	}
+
+	// folder_id is not part of the document; it stays a direct derived-row
+	// write (folder moves have no doc impact).
+	if req.FolderID != nil {
+		tag, err := s.db.Pool.Exec(ctx,
+			`UPDATE dashboards SET folder_id = $1, updated_at = NOW()
+			 WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL`,
+			*req.FolderID, dashID, claims.OrgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeError(w, http.StatusNotFound, "dashboard not found")
+			return
+		}
+	}
+
+	// The response is the materialized row, so title/settings reflect the
+	// document store and updated_at is the stored value.
 	var dash models.Dashboard
 	var settingsOut []byte
-	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
-		&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.FolderID,
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, org_id, title, settings, folder_id, created_by, created_at, updated_at
+		 FROM dashboards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		dashID, claims.OrgID,
+	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "dashboard not found")
 		return
 	}

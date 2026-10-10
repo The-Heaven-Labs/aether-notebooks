@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/dashboard"
+	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -362,8 +363,22 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	widget, err := s.loadQueryWidget(ctx, dashID, widgetID)
+	state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
+	if errors.Is(err, errDashboardDocNotFound) {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
 	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to convert widget")
+		return
+	}
+	proj, err := dashboarddoc.Project(state)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to convert widget")
+		return
+	}
+	widget, found := proj.Widgets[widgetID]
+	if !found {
 		writeError(w, http.StatusNotFound, "widget not found")
 		return
 	}
@@ -452,14 +467,14 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	dash, err := s.loadDashboardSettings(ctx, claims.OrgID, dashID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "dashboard not found")
-		return
-	}
+	// Variables: the document's ordered array is the base, and each resolved
+	// {{slug}} backed by a notebook/cell parameter is appended once.
+	vars := make([]map[string]any, 0, len(proj.Variables))
+	vars = append(vars, proj.Variables...)
 	existing := map[string]bool{}
-	for _, v := range dash.Settings.Variables {
-		existing[v.Name] = true
+	for _, v := range vars {
+		name, _ := v["name"].(string)
+		existing[name] = true
 	}
 	for _, m := range slugRefRe.FindAllStringSubmatch(source, -1) {
 		name := m[1]
@@ -470,54 +485,55 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			continue
 		}
-		dash.Settings.Variables = append(dash.Settings.Variables, variableFromParameter(p))
+		vm, err := dashboardVariableFromParameter(p)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update dashboard settings")
+			return
+		}
+		vars = append(vars, vm)
 		existing[name] = true
 	}
-	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+	typedVars, err := dashboardVariablesFromMaps(vars)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid dashboard variables")
+		return
+	}
+	if typedVars == nil {
+		typedVars = []models.DashboardVariable{}
+	}
+	if err := dashboard.ValidateVariables(typedVars); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	tx, err := s.db.Pool.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to convert widget")
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	var updated models.Widget
-	var layoutOut, configOut []byte
-	err = tx.QueryRow(ctx,
-		`UPDATE widgets SET notebook_id = NULL, cell_id = NULL, connector_id = $1, query = $2, language = 'sql', updated_at = NOW()
-		 WHERE id = $3 AND dashboard_id = $4
-		 RETURNING id, dashboard_id, notebook_id, cell_id, connector_id, query, language, type, layout, config, created_at, updated_at`,
-		*cellConnID, resolved, widgetID, dashID,
-	).Scan(&updated.ID, &updated.DashboardID, &updated.NotebookID, &updated.CellID,
-		&updated.ConnectorID, &updated.Query, &updated.Language, &updated.Type,
-		&layoutOut, &configOut, &updated.CreatedAt, &updated.UpdatedAt)
+	// One document write carries both the widget change (query fields set,
+	// notebook/cell cleared) and the appended variables; the store merges and
+	// materializes them together and publishes the state once.
+	cellID := *widget.CellID
+	notebookID := *widget.NotebookID
+	widget.ConnectorID = cellConnID
+	widget.Query = &resolved
+	widget.NotebookID = nil
+	widget.CellID = nil
+	widget.Language = "sql"
+	newState, err := dashboarddoc.UpsertWidget(state, widget)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update widget")
 		return
 	}
-	json.Unmarshal(layoutOut, &updated.Layout)
-	json.Unmarshal(configOut, &updated.Config)
-
-	if dash.Settings.Variables == nil {
-		dash.Settings.Variables = []models.DashboardVariable{}
-	}
-	settingsJSON, err := json.Marshal(dash.Settings)
+	newState, err = dashboarddoc.UpdateMeta(newState, nil, nil, vars)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update dashboard settings")
 		return
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE dashboards SET settings = $1, updated_at = NOW() WHERE id = $2`,
-		settingsJSON, dashID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update dashboard settings")
+	if err := s.storeAndMaterializeDashboardDoc(ctx, dashID, newState); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to convert widget")
 		return
 	}
-	if err := tx.Commit(ctx); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to convert widget")
+
+	updated, err := s.loadQueryWidget(ctx, dashID, widgetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update widget")
 		return
 	}
 
@@ -526,12 +542,12 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		Action: "widget.convert_to_query", ResourceType: "widget", ResourceID: widgetID,
 		Metadata: map[string]any{
 			"dashboard_id": dashID,
-			"cell_id":      *widget.CellID,
-			"notebook_id":  *widget.NotebookID,
+			"cell_id":      cellID,
+			"notebook_id":  notebookID,
 			"connector_id": *cellConnID,
 		},
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"widget": updated, "variables": dash.Settings.Variables})
+	writeJSON(w, http.StatusOK, map[string]any{"widget": updated, "variables": typedVars})
 }
 
 // variableFromParameter maps a notebook/cell parameter onto a dashboard
