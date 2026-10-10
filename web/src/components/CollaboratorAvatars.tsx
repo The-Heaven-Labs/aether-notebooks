@@ -1,5 +1,5 @@
 import { useEffect, useState, useRef } from 'react'
-import type { HocuspocusProvider } from '@hocuspocus/provider'
+import type { Awareness } from 'y-protocols/awareness'
 
 /** Ink for initials over a user-provided avatar color. */
 function readableOn(color: string): string {
@@ -21,13 +21,22 @@ interface Collaborator {
 }
 
 interface CollaboratorAvatarsProps {
-  provider: HocuspocusProvider | undefined
+  /**
+   * Presence source: a notebook or dashboard provider's `awareness`
+   * (null/undefined while the relay is unreachable renders nothing).
+   */
+  awareness: Awareness | null | undefined
   currentUserEmail: string
-  following: { email: string; name: string } | null
-  onFollow: (collab: { email: string; name: string }) => void
-  onUnfollow: () => void
-  showAgent: boolean
-  onFollowAgent: () => void
+  /** Follow target, when the host page supports following. */
+  following?: { email: string; name: string } | null
+  /**
+   * Opt-in follow UI: without it avatars render as static presence badges,
+   * so presence-only pages (the dashboard viewer) don't offer dead clicks.
+   */
+  onFollow?: (collab: { email: string; name: string }) => void
+  onUnfollow?: () => void
+  showAgent?: boolean
+  onFollowAgent?: () => void
 }
 
 const MAX_VISIBLE = 4
@@ -39,12 +48,12 @@ function initials(name: string): string {
 }
 
 export function CollaboratorAvatars({
-  provider,
+  awareness,
   currentUserEmail,
-  following,
+  following = null,
   onFollow,
   onUnfollow,
-  showAgent,
+  showAgent = false,
   onFollowAgent,
 }: CollaboratorAvatarsProps) {
   const [collaborators, setCollaborators] = useState<Collaborator[]>([])
@@ -54,7 +63,6 @@ export function CollaboratorAvatars({
   const overflowRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    const awareness = provider?.awareness
     if (!awareness) {
       setCollaborators([])
       return
@@ -97,12 +105,12 @@ export function CollaboratorAvatars({
     handler()
 
     return () => awareness.off('change', handler)
-  }, [provider, currentUserEmail, following])
+  }, [awareness, currentUserEmail, following])
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && following) {
-        onUnfollow()
+        onUnfollow?.()
       }
     }
     window.addEventListener('keydown', handler)
@@ -127,73 +135,82 @@ export function CollaboratorAvatars({
 
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 4, position: 'relative' }}>
-      {visible.map((c) => (
-        <div key={c.email} style={{ position: 'relative' }}>
-          <button
-            type="button"
-            onClick={() => {
-              if (following?.email === c.email) {
-                onUnfollow()
-              } else {
-                onFollow({ email: c.email, name: c.name })
-              }
-            }}
-            title={c.name}
-            aria-pressed={following?.email === c.email}
-            style={{
-              width: 28,
-              height: 28,
-              borderRadius: '50%',
-              background: c.color,
-              color: readableOn(c.color),
-              border: following?.email === c.email ? '2px solid var(--accent)' : '2px solid transparent',
-              fontSize: 11,
-              fontWeight: 600,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 0,
-              lineHeight: 1,
-              transition: 'border-color 0.15s',
-              position: 'relative',
-            }}
-          >
-            {initials(c.name)}
-          </button>
-          {followersOfMe.includes(c.email) && (
-            <div
-              style={{
-                position: 'absolute',
-                bottom: 0,
-                right: 0,
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background: 'var(--accent)',
-                border: '1px solid var(--bg-card)',
-              }}
-            />
-          )}
-          {following?.email === c.email && (
-            <div
-              aria-hidden="true"
-              style={{
-                position: 'absolute',
-                top: 0,
-                right: 0,
-                width: 6,
-                height: 6,
-                borderRadius: '50%',
-                background: 'var(--accent)',
-                border: '1px solid var(--bg-card)',
-              }}
-            />
-          )}
-        </div>
-      ))}
+      {visible.map((c) => {
+        const isFollowing = following?.email === c.email
+        const avatarStyle = {
+          width: 28,
+          height: 28,
+          borderRadius: '50%',
+          background: c.color,
+          color: readableOn(c.color),
+          border: isFollowing ? '2px solid var(--accent)' : '2px solid transparent',
+          fontSize: 11,
+          fontWeight: 600,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          padding: 0,
+          lineHeight: 1,
+          transition: 'border-color 0.15s',
+          cursor: onFollow ? 'pointer' : 'default',
+        } as const
+        return (
+          <div key={c.email} style={{ position: 'relative' }}>
+            {onFollow ? (
+              <button
+                type="button"
+                onClick={() => {
+                  if (isFollowing) {
+                    onUnfollow?.()
+                  } else {
+                    onFollow({ email: c.email, name: c.name })
+                  }
+                }}
+                title={c.name}
+                aria-pressed={isFollowing}
+                style={avatarStyle}
+              >
+                {initials(c.name)}
+              </button>
+            ) : (
+              <div title={c.name} style={avatarStyle}>
+                {initials(c.name)}
+              </div>
+            )}
+            {followersOfMe.includes(c.email) && (
+              <div
+                style={{
+                  position: 'absolute',
+                  bottom: 0,
+                  right: 0,
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: 'var(--accent)',
+                  border: '1px solid var(--bg-card)',
+                }}
+              />
+            )}
+            {isFollowing && (
+              <div
+                aria-hidden="true"
+                style={{
+                  position: 'absolute',
+                  top: 0,
+                  right: 0,
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  background: 'var(--accent)',
+                  border: '1px solid var(--bg-card)',
+                }}
+              />
+            )}
+          </div>
+        )
+      })}
 
-      {showAgent && (
+      {showAgent && onFollowAgent && (
         <div style={{ position: 'relative' }}>
           <button
             type="button"
@@ -278,55 +295,65 @@ export function CollaboratorAvatars({
                 padding: '4px 0',
               }}
             >
-              {overflow.map((c) => (
-                <button
-                  key={c.email}
-                  type="button"
-                  onClick={() => {
-                    if (following?.email === c.email) {
-                      onUnfollow()
-                    } else {
-                      onFollow({ email: c.email, name: c.name })
-                    }
-                    setShowOverflow(false)
-                  }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    width: '100%',
-                    padding: '6px 12px',
-                    border: 'none',
-                    background: 'none',
-                    cursor: 'pointer',
-                    fontSize: 13,
-                    color: 'var(--text-primary)',
-                    textAlign: 'left',
-                  }}
-                >
-                  <div
-                    style={{
-                      width: 20,
-                      height: 20,
-                      borderRadius: '50%',
-                      background: c.color,
-                      color: readableOn(c.color),
-                      fontSize: 9,
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      flexShrink: 0,
+              {overflow.map((c) => {
+                const isFollowing = following?.email === c.email
+                const content = (
+                  <>
+                    <div
+                      style={{
+                        width: 20,
+                        height: 20,
+                        borderRadius: '50%',
+                        background: c.color,
+                        color: readableOn(c.color),
+                        fontSize: 9,
+                        fontWeight: 600,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        flexShrink: 0,
+                      }}
+                    >
+                      {initials(c.name)}
+                    </div>
+                    <span style={{ flex: 1 }}>{c.name}</span>
+                    {isFollowing && (
+                      <span style={{ color: 'var(--accent)', fontSize: 11 }}>Following</span>
+                    )}
+                  </>
+                )
+                const rowStyle = {
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 8,
+                  width: '100%',
+                  padding: '6px 12px',
+                  border: 'none',
+                  background: 'none',
+                  fontSize: 13,
+                  color: 'var(--text-primary)',
+                  textAlign: 'left',
+                } as const
+                return onFollow ? (
+                  <button
+                    key={c.email}
+                    type="button"
+                    onClick={() => {
+                      if (isFollowing) {
+                        onUnfollow?.()
+                      } else {
+                        onFollow({ email: c.email, name: c.name })
+                      }
+                      setShowOverflow(false)
                     }}
+                    style={{ ...rowStyle, cursor: 'pointer' }}
                   >
-                    {initials(c.name)}
-                  </div>
-                  <span style={{ flex: 1 }}>{c.name}</span>
-                  {following?.email === c.email && (
-                    <span style={{ color: 'var(--accent)', fontSize: 11 }}>Following</span>
-                  )}
-                </button>
-              ))}
+                    {content}
+                  </button>
+                ) : (
+                  <div key={c.email} style={rowStyle}>{content}</div>
+                )
+              })}
             </div>
           )}
         </div>

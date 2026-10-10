@@ -1378,7 +1378,7 @@ export function NotebookPage() {
           </div>
           <div className="nbt-presence">
             <CollaboratorAvatars
-              provider={collab?.provider}
+              awareness={collab?.provider.awareness ?? null}
               currentUserEmail={userEmail}
               following={following}
               onFollow={(c) => setFollowing({ email: c.email, name: c.name })}
