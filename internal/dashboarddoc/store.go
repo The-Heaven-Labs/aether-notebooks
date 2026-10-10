@@ -49,13 +49,20 @@ func MergeAndStore(ctx context.Context, pool *pgxpool.Pool, dashboardID string, 
 // atomic on its own) and keeps a concurrent purge from deleting the row between
 // the existence check and the state upsert.
 //
-// validate, when non-nil, runs after the stored state is read (and decoded)
-// and before anything is written. It receives the merge transaction (so
-// permission checks can run on the same connection instead of acquiring a
-// second pool connection while this transaction holds one), the raw stored
-// state (nil when none), and the incoming state bytes. A non-nil return
-// aborts the store and commits nothing; ErrStoreForbidden is returned as-is
-// so callers can map it to a 403, and any other error means the store failed.
+// validate, when non-nil, runs after the incoming update is merged onto the
+// stored state and the merged state is encoded, and before anything is
+// written. It receives the merge transaction (so permission checks can run on
+// the same connection instead of acquiring a second pool connection while
+// this transaction holds one), the raw stored state (nil when none), and the
+// merged state bytes. A non-nil return aborts the store and commits nothing;
+// ErrStoreForbidden is returned as-is so callers can map it to a 403, and any
+// other error means the store failed.
+//
+// Validators must judge the merged state, not the incoming bytes: a crafted
+// delta update has no standalone projection (its structs are pending on
+// parents that live only in the stored document) but integrates into the
+// stored document, so projecting the incoming bytes alone can miss every
+// change it carries.
 //
 // An undecodable incoming update, or an undecodable stored state, returns an
 // error and commits nothing: corrupt bytes fail closed rather than being
@@ -94,16 +101,21 @@ func MergeAndStoreValidated(ctx context.Context, pool *pgxpool.Pool, dashboardID
 		return fmt.Errorf("merge dashboard document %s: decode stored state: %w", dashboardID, err)
 	}
 
-	if validate != nil {
-		if err := validate(ctx, tx, stored, incoming); err != nil {
-			return err
-		}
-	}
-
 	if err := crdt.ApplyUpdateV1(doc, incoming, nil); err != nil {
 		return fmt.Errorf("merge dashboard document %s: apply incoming state: %w", dashboardID, err)
 	}
 	merged := doc.EncodeStateAsUpdate()
+
+	// The validator judges the merged projection (see the doc comment): a
+	// crafted delta update carries no standalone projection, so validating the
+	// incoming bytes alone would skip every check it should trigger. Nothing
+	// durable is written until the INSERT below, so a rejection aborts with
+	// nothing committed.
+	if validate != nil {
+		if err := validate(ctx, tx, stored, merged); err != nil {
+			return err
+		}
+	}
 
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO dashboard_yjs_documents (dashboard_id, state, updated_at)

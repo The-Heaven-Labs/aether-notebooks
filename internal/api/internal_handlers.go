@@ -123,6 +123,7 @@ func (s *Server) handleInternalYjsPut(w http.ResponseWriter, r *http.Request) {
 // @Produce octet-stream
 // @Param dashboard_id path string true "Dashboard ID"
 // @Success 200 {string} binary
+// @Failure 403 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /internal/dashboard-yjs/{dashboard_id} [get]
@@ -133,14 +134,43 @@ func (s *Server) handleInternalDashboardYjsGet(w http.ResponseWriter, r *http.Re
 	}
 
 	dashID := r.PathValue("dashboard_id")
+	ctx := r.Context()
 
 	// The relay presents the connecting user's session token, so the load is
 	// scoped to that user's org: a dashboard whose org_id differs is treated
 	// as missing (404), exactly like an unknown or trashed one, and can never
-	// be read or seeded with another org's token. loadOrSeedDashboardDoc locks
-	// the dashboards row FOR UPDATE exactly like MergeAndStore, so a lazy seed
-	// and a concurrent store serialize on the same row.
-	state, err := s.loadOrSeedDashboardDoc(r.Context(), claims.OrgID, dashID)
+	// be read or seeded with another org's token. The liveness read comes
+	// before the ACL check so those 404s are preserved; it does not seed.
+	var found string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id FROM dashboards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		dashID, claims.OrgID).Scan(&found)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	// ACL gate: the same access set the authorize endpoint accepts. Without
+	// it, any org member could read (and lazily seed) any same-org dashboard
+	// document regardless of its ACL. The check runs before the seed so a
+	// denied caller cannot create state. loadOrSeedDashboardDoc locks the
+	// dashboards row FOR UPDATE exactly like MergeAndStore, so a lazy seed and
+	// a concurrent store serialize on the same row.
+	allowed, err := s.dashboardDocReadable(ctx, claims, dashID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !allowed {
+		writeError(w, http.StatusForbidden, "forbidden")
+		return
+	}
+
+	state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
 	if errors.Is(err, errDashboardDocNotFound) {
 		writeError(w, http.StatusNotFound, "dashboard not found")
 		return

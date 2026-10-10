@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/reearth/ygo/crdt"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
@@ -281,7 +282,14 @@ func TestInternalDashboardYjsPutValidatesStoreActor(t *testing.T) {
 	})
 
 	t.Run("viewer changing the title is forbidden", func(t *testing.T) {
-		viewerState, err := dashboarddoc.Seed(dashboarddoc.Projection{Title: "Viewer Edit"})
+		// Derive the attempted change from the stored state so it is causally
+		// after it and definitely wins the merge. A fresh standalone document
+		// carries a concurrent title write that may lose CRDT last-write-wins
+		// and merge into a no-op, which the validator correctly treats as an
+		// idempotent store (nothing changes, nothing to authorize).
+		stored := dashboardDocState(t, srv, dashID)
+		viewerTitle := "Viewer Edit"
+		viewerState, err := dashboarddoc.UpdateMeta(stored, &viewerTitle, nil, nil)
 		require.NoError(t, err)
 		rec := internalDashboardDocRequest(t, srv, viewerToken, "PUT", dashID, viewerState)
 		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
@@ -310,6 +318,186 @@ func TestInternalDashboardYjsPutValidatesStoreActor(t *testing.T) {
 		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
 			`SELECT COUNT(*) FROM dashboard_yjs_documents WHERE dashboard_id = $1`, otherDashID).Scan(&count))
 		require.Zero(t, count, "a cross-org store must not write state")
+	})
+}
+
+// dashboardDeltaToWidgetRefs decodes the stored dashboard document, rewrites
+// one widget's notebook/cell references, and encodes only the new changes
+// against the stored state vector — the shape of a relay delta update. The
+// delta has no standalone projection (its structs are pending on parents that
+// live only in the stored document) but integrates cleanly into the stored
+// document, which is exactly the bypass shape the merged-projection validator
+// must catch. The root and field keys are the document format pinned by
+// dashboarddoc (internal/dashboarddoc/doc.go): widgets/notebook_id/cell_id.
+func dashboardDeltaToWidgetRefs(t *testing.T, stored []byte, widgetID, notebookID, cellID string) []byte {
+	t.Helper()
+	doc := crdt.New()
+	require.NoError(t, crdt.ApplyUpdateV1(doc, stored, nil))
+	sv, err := crdt.DecodeStateVectorV1(crdt.EncodeStateVectorV1(doc))
+	require.NoError(t, err)
+
+	widgets := doc.GetMap("widgets")
+	v, ok := widgets.Get(widgetID)
+	require.True(t, ok, "stored document must contain widget %s", widgetID)
+	wm, isMap := v.(*crdt.YMap)
+	require.True(t, isMap, "widget %s must be a Y.Map", widgetID)
+
+	doc.Transact(func(txn *crdt.Transaction) {
+		wm.Set(txn, "notebook_id", notebookID)
+		wm.Set(txn, "cell_id", cellID)
+	})
+	return crdt.EncodeStateAsUpdateV1(doc, sv)
+}
+
+// TestInternalDashboardYjsPutValidatesMergedProjection pins the C1 delta
+// bypass fix: a crafted delta update has no standalone projection, so
+// projecting the incoming bytes alone sees no widgets and skips the notebook
+// checks, while the merge integrates the delta into the stored document. The
+// validator must judge the merged projection, so a delta that repoints an
+// existing widget at a notebook the editor cannot view is forbidden and
+// materializes nothing, while a delta pointing at a viewable notebook
+// succeeds.
+func TestInternalDashboardYjsPutValidatesMergedProjection(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	ts := time.Now().UnixNano()
+
+	ownerToken := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-yjs-merged-owner-%d@example.com", ts), "Dash Yjs Merged Org")
+	dashID := createDashWithSettings(t, srv, ownerToken, nil)
+	var orgID string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+
+	connID := createConnector(t, srv, ownerToken)
+	nbVisible := createNotebook(t, srv, ownerToken, "Visible Notebook")
+	cellVisible := createCell(t, srv, ownerToken, nbVisible, "sql", "SELECT 1", connID)
+	nbVisible2 := createNotebook(t, srv, ownerToken, "Visible Notebook 2")
+	cellVisible2 := createCell(t, srv, ownerToken, nbVisible2, "sql", "SELECT 1", connID)
+	nbHidden := createNotebook(t, srv, ownerToken, "Hidden Notebook")
+	cellHidden := createCell(t, srv, ownerToken, nbHidden, "sql", "SELECT 1", connID)
+
+	// An editor with dashboard edit and notebook view on the visible
+	// notebooks only.
+	editorID := insertUser(t, srv, fmt.Sprintf("dash-yjs-merged-editor-%d@example.com", ts), "Merged Editor")
+	addOrgMember(t, srv, orgID, editorID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", editorID, "edit")
+	grantACL(t, srv, orgID, "notebook", nbVisible, "user", editorID, "view")
+	grantACL(t, srv, orgID, "notebook", nbVisible2, "user", editorID, "view")
+	editorToken := issueToken(t, editorID, orgID, "non-admin")
+
+	// The owner stores a base document with one cell widget on nbVisible.
+	widgetID := uuid.NewString()
+	base, err := dashboarddoc.Seed(dashboarddoc.Projection{
+		Title: "Query Dash",
+		Widgets: map[string]dashboarddoc.WidgetDoc{
+			widgetID: {
+				ID:         widgetID,
+				Type:       "table",
+				Layout:     dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 4},
+				NotebookID: &nbVisible,
+				CellID:     &cellVisible,
+				Language:   "sql",
+			},
+		},
+	})
+	require.NoError(t, err)
+	rec := internalDashboardDocRequest(t, srv, ownerToken, "PUT", dashID, base)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	storedBase := dashboardDocState(t, srv, dashID)
+
+	hiddenDelta := dashboardDeltaToWidgetRefs(t, storedBase, widgetID, nbHidden, cellHidden)
+	// The bypass shape: the delta alone projects no widgets, so an
+	// incoming-only projection would skip every notebook check.
+	deltaProj, err := dashboarddoc.Project(hiddenDelta)
+	require.NoError(t, err)
+	require.Empty(t, deltaProj.Widgets, "the crafted delta must have no standalone projection")
+
+	t.Run("delta to an unviewable notebook is forbidden", func(t *testing.T) {
+		rec := internalDashboardDocRequest(t, srv, editorToken, "PUT", dashID, hiddenDelta)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+		require.Equal(t, storedBase, dashboardDocState(t, srv, dashID),
+			"a rejected delta must not change the stored state")
+
+		var gotNotebook, gotCell *string
+		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+			`SELECT notebook_id, cell_id FROM widgets WHERE id = $1`, widgetID).Scan(&gotNotebook, &gotCell))
+		require.NotNil(t, gotNotebook)
+		require.Equal(t, nbVisible, *gotNotebook, "the widget must keep its materialized reference")
+		require.NotNil(t, gotCell)
+		require.Equal(t, cellVisible, *gotCell)
+	})
+
+	t.Run("delta to a viewable notebook succeeds", func(t *testing.T) {
+		visibleDelta := dashboardDeltaToWidgetRefs(t, storedBase, widgetID, nbVisible2, cellVisible2)
+		rec := internalDashboardDocRequest(t, srv, editorToken, "PUT", dashID, visibleDelta)
+		require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+		var gotNotebook, gotCell *string
+		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+			`SELECT notebook_id, cell_id FROM widgets WHERE id = $1`, widgetID).Scan(&gotNotebook, &gotCell))
+		require.NotNil(t, gotNotebook)
+		require.Equal(t, nbVisible2, *gotNotebook)
+		require.NotNil(t, gotCell)
+		require.Equal(t, cellVisible2, *gotCell)
+	})
+}
+
+// TestInternalDashboardYjsGetACLGated pins the read-side gate: the internal
+// GET requires the same dashboard access the collab authorize endpoint
+// accepts (edit, view, or view_with_data). An org member with no ACL on the
+// dashboard gets 403, and the document is not lazily seeded for them.
+func TestInternalDashboardYjsGetACLGated(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	ts := time.Now().UnixNano()
+
+	ownerToken := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-yjs-get-owner-%d@example.com", ts), "Dash Yjs Get Org")
+	dashID := createDashWithSettings(t, srv, ownerToken, nil)
+	var orgID string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+
+	// An org member with no ACL on the dashboard at all.
+	outsiderID := insertUser(t, srv, fmt.Sprintf("dash-yjs-get-outsider-%d@example.com", ts), "Outsider")
+	addOrgMember(t, srv, orgID, outsiderID, "non-admin")
+	outsiderToken := issueToken(t, outsiderID, orgID, "non-admin")
+
+	// A viewer with `view`, and a data viewer with only `view_with_data`
+	// (which the resolver does not treat as implying view).
+	viewerID := insertUser(t, srv, fmt.Sprintf("dash-yjs-get-viewer-%d@example.com", ts), "Viewer")
+	addOrgMember(t, srv, orgID, viewerID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", viewerID, "view")
+	viewerToken := issueToken(t, viewerID, orgID, "non-admin")
+
+	dataViewerID := insertUser(t, srv, fmt.Sprintf("dash-yjs-get-data-%d@example.com", ts), "Data Viewer")
+	addOrgMember(t, srv, orgID, dataViewerID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", dataViewerID, "view_with_data")
+	dataViewerToken := issueToken(t, dataViewerID, orgID, "non-admin")
+
+	t.Run("no ACL is forbidden and does not seed", func(t *testing.T) {
+		rec := internalDashboardDocRequest(t, srv, outsiderToken, "GET", dashID, nil)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+		var count int
+		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM dashboard_yjs_documents WHERE dashboard_id = $1`, dashID).Scan(&count))
+		require.Zero(t, count, "a forbidden GET must not read or seed state")
+	})
+
+	t.Run("view access loads and seeds", func(t *testing.T) {
+		rec := internalDashboardDocRequest(t, srv, viewerToken, "GET", dashID, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NotEmpty(t, rec.Body.Bytes())
+	})
+
+	t.Run("view_with_data access loads", func(t *testing.T) {
+		rec := internalDashboardDocRequest(t, srv, dataViewerToken, "GET", dashID, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NotEmpty(t, rec.Body.Bytes())
 	})
 }
 

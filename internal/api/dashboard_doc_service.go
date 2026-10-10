@@ -293,7 +293,11 @@ func (s *Server) loadOrSeedDashboardDoc(ctx context.Context, orgID, dashID strin
 // dashboarddoc.MergeAndStoreValidated), so the stored state it compares
 // against cannot change between the check and the write.
 //
-// The stored and incoming states are projected and compared:
+// The stored and merged states are projected and compared. The merged state
+// is what the validator must judge: a crafted delta update has no standalone
+// projection (its structs are pending on parents that live only in the stored
+// document), so projecting the incoming bytes alone would skip every widget
+// check it carries while the merge still applies it.
 //
 //   - Identical content (an idempotent store: a fan-in re-store, or a
 //     read-only viewer flushing an unchanged document on unload) skips every
@@ -316,16 +320,16 @@ func (s *Server) loadOrSeedDashboardDoc(ctx context.Context, orgID, dashID strin
 // (checkPermissionQ), not the pool: the transaction is already holding a pool
 // connection, and acquiring another from inside it could stall a saturated
 // pool behind transactions waiting for one.
-func (s *Server) validateDashboardDocStore(ctx context.Context, tx pgx.Tx, claims *auth.Claims, dashID string, stored, incoming []byte) error {
+func (s *Server) validateDashboardDocStore(ctx context.Context, tx pgx.Tx, claims *auth.Claims, dashID string, stored, merged []byte) error {
 	storedProj, err := dashboarddoc.Project(stored)
 	if err != nil {
 		return fmt.Errorf("project stored state: %w", err)
 	}
-	incomingProj, err := dashboarddoc.Project(incoming)
+	mergedProj, err := dashboarddoc.Project(merged)
 	if err != nil {
-		return fmt.Errorf("project incoming state: %w", err)
+		return fmt.Errorf("project merged state: %w", err)
 	}
-	if dashboarddoc.ProjectionsEqual(storedProj, incomingProj) {
+	if dashboarddoc.ProjectionsEqual(storedProj, mergedProj) {
 		return nil
 	}
 
@@ -337,7 +341,7 @@ func (s *Server) validateDashboardDocStore(ctx context.Context, tx pgx.Tx, claim
 		return dashboarddoc.ErrStoreForbidden
 	}
 
-	for id, w := range incomingProj.Widgets {
+	for id, w := range mergedProj.Widgets {
 		if w.NotebookID == nil {
 			continue
 		}
@@ -353,6 +357,25 @@ func (s *Server) validateDashboardDocStore(ctx context.Context, tx pgx.Tx, claim
 		}
 	}
 	return nil
+}
+
+// dashboardDocReadable reports whether the caller may load a dashboard's
+// document: the same access set the collab authorize endpoint accepts —
+// dashboard edit, view, or view_with_data. Internal relay routes carry no
+// admin mode, so an org admin without an explicit ACL entry is denied,
+// matching authorize. The view check comes second because edit implies view
+// in the resolver while view_with_data does not.
+func (s *Server) dashboardDocReadable(ctx context.Context, claims *auth.Claims, dashID string) (bool, error) {
+	for _, action := range []string{"edit", "view", "view_with_data"} {
+		allowed, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, action)
+		if err != nil {
+			return false, err
+		}
+		if allowed {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // widgetRefPairEqual reports whether two widgets carry the same

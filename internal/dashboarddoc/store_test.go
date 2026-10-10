@@ -884,8 +884,8 @@ func TestMergeAndStore_IdempotentRestore(t *testing.T) {
 
 // TestMergeAndStoreValidated_ValidatorAbortsWithoutWriting pins the validated
 // store contract: the validator sees the stored state read under the row lock
-// and the incoming bytes, and a non-nil return aborts the store with nothing
-// written or materialized.
+// and the merged state (stored + incoming), and a non-nil return aborts the
+// store with nothing written or materialized.
 func TestMergeAndStoreValidated_ValidatorAbortsWithoutWriting(t *testing.T) {
 	db := setupStoreTestDB(t)
 	f := seedStoreTestFixture(t, db)
@@ -901,21 +901,26 @@ func TestMergeAndStoreValidated_ValidatorAbortsWithoutWriting(t *testing.T) {
 	require.NoError(t, err)
 
 	var (
-		gotStored   []byte
-		gotIncoming []byte
-		ran         bool
+		gotStored []byte
+		gotMerged []byte
+		ran       bool
 	)
 	err = MergeAndStoreValidated(ctx, db.Pool, f.dashID, state,
-		func(_ context.Context, _ pgx.Tx, stored, incoming []byte) error {
+		func(_ context.Context, _ pgx.Tx, stored, merged []byte) error {
 			ran = true
 			gotStored = stored
-			gotIncoming = incoming
+			gotMerged = merged
 			return ErrStoreForbidden
 		})
 	require.ErrorIs(t, err, ErrStoreForbidden)
 	require.True(t, ran)
 	require.Equal(t, storedBefore, gotStored, "the validator must see the stored state read under the lock")
-	require.Equal(t, state, gotIncoming)
+
+	// The validator receives the merged state, so its projection carries the
+	// incoming change even though the incoming bytes alone might not project.
+	mergedProj, err := Project(gotMerged)
+	require.NoError(t, err)
+	require.Equal(t, "Rejected", mergedProj.Title)
 
 	require.Equal(t, storedBefore, dashboardDocState(t, db, f.dashID),
 		"a rejected store must not change the stored state")
