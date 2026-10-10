@@ -536,6 +536,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /internal/dashboard-yjs/{dashboard_id}", s.handleInternalDashboardYjsGet)
 	s.mux.HandleFunc("PUT /internal/dashboard-yjs/{dashboard_id}", s.handleInternalDashboardYjsPut)
 	s.mux.HandleFunc("GET /internal/auth/validate", s.handleInternalAuthValidate)
+	s.mux.HandleFunc("POST /internal/collab/authorize", s.handleInternalCollabAuthorize)
 
 	// Attachment routes
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/attachments", authMW(http.HandlerFunc(s.handleUploadAttachment)))
