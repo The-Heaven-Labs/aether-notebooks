@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -15,6 +17,42 @@ import (
 // loaded or seeded because the dashboards row is missing or trashed. REST
 // handlers translate it into a 404.
 var errDashboardDocNotFound = errors.New("dashboard not found")
+
+// errDashboardConnectorNotFound reports that a widget write referenced a
+// connector that does not exist in the org (or is soft-deleted). REST
+// handlers translate it into a 404 "connector not found".
+var errDashboardConnectorNotFound = errors.New("connector not found")
+
+// validateWidgetConnectorRef rejects widget writes whose connector reference
+// is missing, soft-deleted, or outside the org. The document store does not
+// check connector existence, and the materializer skips widgets with dangling
+// references (deleting their derived rows), so without this check a success
+// response would silently drop the widget.
+func (s *Server) validateWidgetConnectorRef(ctx context.Context, orgID, connectorID string) error {
+	if _, err := uuid.Parse(connectorID); err != nil {
+		return errDashboardConnectorNotFound
+	}
+	var exists bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM connectors WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL)`,
+		connectorID, orgID).Scan(&exists); err != nil {
+		return fmt.Errorf("check connector reference: %w", err)
+	}
+	if !exists {
+		return errDashboardConnectorNotFound
+	}
+	return nil
+}
+
+// writeConnectorRefError maps a validateWidgetConnectorRef failure onto an
+// HTTP response: 404 for a missing reference, 500 otherwise.
+func writeConnectorRefError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errDashboardConnectorNotFound) {
+		writeError(w, http.StatusNotFound, "connector not found")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "connector lookup failed")
+}
 
 // dashboardDocQuerier is the read surface shared by *pgxpool.Pool and pgx.Tx,
 // so the projection builder can run standalone or inside the transaction that

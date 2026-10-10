@@ -363,6 +363,16 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Path IDs are canonicalized before any lookup: document widget keys are
+	// canonical lowercase UUIDs, so an uppercase or braced spelling must
+	// address the same widget instead of 404ing.
+	widgetUUID, err := uuid.Parse(widgetID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	widgetID = widgetUUID.String()
+
 	state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
 	if errors.Is(err, errDashboardDocNotFound) {
 		writeError(w, http.StatusNotFound, "dashboard not found")
@@ -427,6 +437,13 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "cell has no connector assigned")
 		return
 	}
+	// The cell's connector becomes the converted widget's own reference; a
+	// missing or soft-deleted connector would make the materializer drop the
+	// widget, so validate it before the document write.
+	if err := s.validateWidgetConnectorRef(ctx, claims.OrgID, *cellConnID); err != nil {
+		writeConnectorRefError(w, err)
+		return
+	}
 
 	// Parameters: notebook defaults win over cell defaults, as in execution.
 	var notebookParamsJSON []byte
@@ -464,6 +481,13 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 	resolved, err := resolveSlugRefs(source, slugMap, knownParams)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if resolved == "" {
+		// An empty cell source would produce a connector widget with no
+		// query, which the document store rejects; fail with the same 400
+		// as an explicitly cleared query instead of a 500.
+		writeError(w, http.StatusBadRequest, "query is required for query widgets")
 		return
 	}
 

@@ -614,6 +614,16 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A dangling connector reference must fail the request: the document
+	// store accepts it, but the materializer skips the widget (deleting its
+	// derived row), so a success response would silently drop it.
+	if req.ConnectorID != nil {
+		if err := s.validateWidgetConnectorRef(ctx, claims.OrgID, *req.ConnectorID); err != nil {
+			writeConnectorRefError(w, err)
+			return
+		}
+	}
+
 	// Validate widget layout bounds and overlap.
 	if err := s.validateWidgetLayout(ctx, dashID, req.Layout, ""); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -701,6 +711,16 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Path IDs are canonicalized before any lookup: document widget keys are
+	// canonical lowercase UUIDs, so an uppercase or braced spelling must
+	// address the same widget instead of 404ing.
+	widgetUUID, err := uuid.Parse(widgetID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	widgetID = widgetUUID.String()
+
 	var req struct {
 		Layout *struct {
 			Row    int `json:"row"`
@@ -733,6 +753,12 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	if req.ConnectorID != nil && *req.ConnectorID == "" {
 		writeError(w, http.StatusBadRequest, "connector_id cannot be empty")
 		return
+	}
+	if req.ConnectorID != nil {
+		if err := s.validateWidgetConnectorRef(r.Context(), claims.OrgID, *req.ConnectorID); err != nil {
+			writeConnectorRefError(w, err)
+			return
+		}
 	}
 
 	if req.Layout != nil {
@@ -773,12 +799,6 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "widget not found")
 		return
 	}
-	// A connector must not be added on top of a notebook-cell link; the
-	// document write would reject the mixed shape anyway.
-	if req.ConnectorID != nil && (existing.NotebookID != nil || existing.CellID != nil) {
-		writeError(w, http.StatusBadRequest, "widget cannot reference both a notebook cell and a query connector")
-		return
-	}
 
 	if req.Layout != nil {
 		existing.Layout = dashboarddoc.Layout{
@@ -802,6 +822,21 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Language != nil {
 		existing.Language = *req.Language
+	}
+
+	// Enforce the source invariant on the merged result before the document
+	// write: a connector widget without a query or with a notebook/cell link
+	// cannot be materialized (the row would be dropped, or the write would
+	// fail), so answer 400 instead of a silent success or a 500.
+	if existing.ConnectorID != nil {
+		if existing.NotebookID != nil || existing.CellID != nil {
+			writeError(w, http.StatusBadRequest, "widget cannot reference both a notebook cell and a query connector")
+			return
+		}
+		if existing.Query == nil || *existing.Query == "" {
+			writeError(w, http.StatusBadRequest, "query is required for query widgets")
+			return
+		}
 	}
 
 	newState, err := dashboarddoc.UpsertWidget(state, existing)
