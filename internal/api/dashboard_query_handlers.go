@@ -815,7 +815,35 @@ func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) 
 			return dashboardQueryResult(rs, 0, true, &expires), nil
 		}
 	}
+	if cacheKey == "" {
+		// Empty SQL cannot produce a discriminating key; execute directly.
+		return s.executeDashboardQuery(ctx, p, cacheKey, ttl)
+	}
+	// Concurrent identical misses share one execution per cache key. Followers
+	// ride the leader's ctx, so a leader cancellation surfaces to them — an
+	// accepted trade-off for now. A bypass skips only the cache read, so it
+	// either leads a fresh run or rides a genuinely in-flight (fresh) one.
+	v, err, _ := s.dashboardCacheSF.Do(cacheKey, func() (any, error) {
+		if dashboardQueryComputeHook != nil {
+			return dashboardQueryComputeHook(s, ctx, p)
+		}
+		return s.executeDashboardQuery(ctx, p, cacheKey, ttl)
+	})
+	if err != nil {
+		return nil, err
+	}
+	resp, ok := v.(*dashboardQueryResponse)
+	if !ok {
+		return nil, fmt.Errorf("dashboard query single flight returned %T", v)
+	}
+	return resp, nil
+}
 
+// executeDashboardQuery performs the real work of one dashboard query run:
+// resolve the execution target, execute under the row/byte/time limits, record
+// connector health, and warm the shared cache. It runs under the per-key
+// single flight so a shared computation stores its result once.
+func (s *Server) executeDashboardQuery(ctx context.Context, p dashboardQueryParams, cacheKey string, ttl int) (*dashboardQueryResponse, error) {
 	opened, err := s.openQuery(ctx, p.OrgID, p.Identity.UserID, p.Identity.Role, p.ConnectorID, false)
 	if err != nil {
 		return nil, err
