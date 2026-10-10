@@ -121,6 +121,66 @@ export function storeResponseDisposition(status: number): StoreResponseDispositi
   return 'retry'
 }
 
+/** How a live dashboard connection must react to a revalidation outcome. */
+export type RevalidationDisposition = 'keep' | 'readonly' | 'close' | 'retry'
+
+/**
+ * Classifies one revalidation result for a live dashboard connection.
+ *
+ * - 200 with can_edit true → keep: still an editor, nothing to change.
+ * - 200 with can_edit false → readonly: the caller was demoted to viewer; the
+ *   connection is kept but marked read-only so the message receiver rejects
+ *   its updates, instead of disconnecting someone who still has access.
+ * - 401/403/404 → close: the token is invalid, access was revoked, or the
+ *   dashboard is gone; none of these can recover on this connection.
+ * - anything else (null status = network error, 5xx, 429, ...) → retry: the
+ *   outcome is uncertain or transient, so the connection stays and the next
+ *   tick tries again. An API blip must not evict every live viewer.
+ * - 200 with an unreadable body (can_edit neither true nor false) is also
+ *   retry: it is inconclusive, not a grant, so it is never treated as keep.
+ */
+export function revalidationDisposition(
+  status: number | null,
+  canEdit: boolean | null = null,
+): RevalidationDisposition {
+  if (status === 200) {
+    if (canEdit === true) return 'keep'
+    if (canEdit === false) return 'readonly'
+    return 'retry'
+  }
+  if (status === 401 || status === 403 || status === 404) return 'close'
+  return 'retry'
+}
+
+/**
+ * Applies a revalidation disposition to a live connection. `close` performs
+ * the transport teardown (injected so this module stays free of server
+ * imports). Returns what happened so the timer can log accordingly. Extracted
+ * from the relay's timer callback so the decision → action mapping is
+ * unit-testable without a live server.
+ */
+export function applyRevalidationDisposition(
+  disposition: RevalidationDisposition,
+  connection: { readOnly: boolean },
+  close: (reason: string) => void,
+): 'kept' | 'downgraded' | 'closed' | 'retried' {
+  switch (disposition) {
+    case 'keep':
+      return 'kept'
+    case 'readonly':
+      // Idempotent: a connection that is already read-only (a viewer) is left
+      // alone, so the timer does not re-log the downgrade every tick.
+      if (connection.readOnly) return 'kept'
+      connection.readOnly = true
+      return 'downgraded'
+    case 'close':
+      close('authorization revoked')
+      return 'closed'
+    case 'retry':
+      return 'retried'
+  }
+}
+
 /** Extracts a non-empty bearer token from a connection context object. */
 export function extractToken(value: unknown): string | null {
   if (value && typeof value === 'object') {

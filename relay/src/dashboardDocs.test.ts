@@ -4,6 +4,7 @@ import {
   AuthorizeError,
   DASHBOARD_DOC_PREFIX,
   DASHBOARD_REVALIDATE_INTERVAL_MS,
+  applyRevalidationDisposition,
   extractToken,
   isDashboardDocument,
   mapAuthorizeResponse,
@@ -11,6 +12,7 @@ import {
   parseUpdateChannel,
   pickStoreToken,
   resolveDocumentRoute,
+  revalidationDisposition,
   revalidationKey,
   storeResponseDisposition,
 } from './dashboardDocs.ts'
@@ -151,4 +153,81 @@ test('revalidationKey distinguishes socket and document combinations', () => {
 
 test('revalidation interval is one minute', () => {
   assert.equal(DASHBOARD_REVALIDATE_INTERVAL_MS, 60_000)
+})
+
+test('revalidation 200 with can_edit true keeps the connection', () => {
+  assert.equal(revalidationDisposition(200, true), 'keep')
+})
+
+test('revalidation 200 with can_edit false downgrades to read-only', () => {
+  assert.equal(revalidationDisposition(200, false), 'readonly')
+})
+
+test('revalidation 200 with an unreadable body is inconclusive and retried', () => {
+  assert.equal(revalidationDisposition(200), 'retry')
+  assert.equal(revalidationDisposition(200, null), 'retry')
+})
+
+test('revalidation 401/403/404 are definitive and close the connection', () => {
+  assert.equal(revalidationDisposition(401, null), 'close')
+  assert.equal(revalidationDisposition(403, null), 'close')
+  assert.equal(revalidationDisposition(404, null), 'close')
+})
+
+test('revalidation 5xx and other statuses are transient and retried', () => {
+  assert.equal(revalidationDisposition(500), 'retry')
+  assert.equal(revalidationDisposition(502), 'retry')
+  assert.equal(revalidationDisposition(503), 'retry')
+  assert.equal(revalidationDisposition(429), 'retry')
+})
+
+test('revalidation network errors (no status) are transient and retried', () => {
+  assert.equal(revalidationDisposition(null), 'retry')
+  assert.equal(revalidationDisposition(null, null), 'retry')
+})
+
+test('applyRevalidationDisposition keeps and retries without touching the connection', () => {
+  for (const disposition of ['keep', 'retry'] as const) {
+    const connection = { readOnly: false }
+    let closed = false
+    const effect = applyRevalidationDisposition(disposition, connection, () => {
+      closed = true
+    })
+    assert.equal(effect, disposition === 'keep' ? 'kept' : 'retried')
+    assert.equal(connection.readOnly, false)
+    assert.equal(closed, false)
+  }
+})
+
+test('applyRevalidationDisposition downgrades the live connection on readonly', () => {
+  const connection = { readOnly: false }
+  let closed = false
+  const effect = applyRevalidationDisposition('readonly', connection, () => {
+    closed = true
+  })
+  assert.equal(effect, 'downgraded')
+  assert.equal(connection.readOnly, true)
+  assert.equal(closed, false)
+})
+
+test('applyRevalidationDisposition is idempotent for an already read-only connection', () => {
+  const connection = { readOnly: true }
+  let closed = false
+  const effect = applyRevalidationDisposition('readonly', connection, () => {
+    closed = true
+  })
+  assert.equal(effect, 'kept', 'a viewer must not re-report the downgrade every tick')
+  assert.equal(connection.readOnly, true)
+  assert.equal(closed, false)
+})
+
+test('applyRevalidationDisposition closes with the revocation reason on close', () => {
+  const connection = { readOnly: false }
+  const reasons: string[] = []
+  const effect = applyRevalidationDisposition('close', connection, (reason) => {
+    reasons.push(reason)
+  })
+  assert.equal(effect, 'closed')
+  assert.deepEqual(reasons, ['authorization revoked'])
+  assert.equal(connection.readOnly, false)
 })

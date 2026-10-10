@@ -3,16 +3,19 @@ import { Redis } from '@hocuspocus/extension-redis'
 import IORedis from 'ioredis'
 import * as Y from 'yjs'
 import {
+  AuthorizeError,
   DASHBOARD_DOC_INVALIDATE_PATTERN,
   DASHBOARD_DOC_PREFIX,
   DASHBOARD_DOC_UPDATE_PATTERN,
   DASHBOARD_REVALIDATE_INTERVAL_MS,
+  applyRevalidationDisposition,
   extractToken,
   mapAuthorizeResponse,
   parseInvalidateChannel,
   parseUpdateChannel,
   pickStoreToken,
   resolveDocumentRoute,
+  revalidationDisposition,
   revalidationKey,
   storeResponseDisposition,
   type AuthorizeResult,
@@ -94,10 +97,14 @@ async function authorizeDashboard(documentName: string, token: string): Promise<
 }
 
 /**
- * Re-runs dashboard authorization for a live connection. Any failure
- * (non-200 or network) disconnects it; a 200 is left alone so role changes
- * are applied by the next connection's authenticate, never by silently
- * downgrading (or upgrading) a live connection.
+ * Re-runs dashboard authorization for a live connection and applies the
+ * outcome:
+ * - still an editor → keep the connection as-is;
+ * - demoted to viewer → downgrade the live connection to read-only;
+ * - definitive denial/removal (401/403/404) → disconnect;
+ * - transient failure (network error, 5xx, ...) → keep the connection and
+ *   retry on the next tick, so an API blip cannot evict every live viewer.
+ * A 200 with an unreadable body is inconclusive and retried, never kept.
  */
 async function revalidateDashboardConnection(
   documentName: string,
@@ -109,14 +116,39 @@ async function revalidateDashboardConnection(
     closeConnection(connection, 'authorization revoked')
     return
   }
+
+  let status: number | null = null
+  let canEdit: boolean | null = null
+  let failure: string | null = null
   try {
-    await authorizeDashboard(documentName, token)
+    const result = await authorizeDashboard(documentName, token)
+    status = 200
+    canEdit = result.canEdit
   } catch (err) {
+    // AuthorizeError carries the HTTP status; anything else is a network or
+    // abort failure with no status at all (retried, never a disconnect).
+    status = err instanceof AuthorizeError ? err.status : null
+    failure = err instanceof Error ? err.message : String(err)
+  }
+
+  const disposition = revalidationDisposition(status, canEdit)
+  const effect = applyRevalidationDisposition(disposition, connection, (reason) =>
+    closeConnection(connection, reason),
+  )
+  if (effect === 'downgraded') {
+    console.warn(
+      `[relay] dashboard "${documentName}" (socket ${connection.socketId}) is no longer editable; downgraded to read-only`,
+    )
+  } else if (effect === 'closed') {
     console.warn(
       `[relay] re-authorization failed for "${documentName}" (socket ${connection.socketId}), disconnecting:`,
-      err instanceof Error ? err.message : err,
+      failure ?? `status ${status}`,
     )
-    closeConnection(connection, 'authorization revoked')
+  } else if (effect === 'retried') {
+    console.warn(
+      `[relay] re-authorization for "${documentName}" (socket ${connection.socketId}) was inconclusive (status ${status ?? 'network error'}); keeping the connection and retrying:`,
+      failure,
+    )
   }
 }
 
