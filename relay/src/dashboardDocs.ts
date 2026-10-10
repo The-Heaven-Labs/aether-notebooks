@@ -98,6 +98,29 @@ export function mapAuthorizeResponse(status: number, body: unknown): AuthorizeRe
   return { documentId: record.document_id, canEdit: record.can_edit }
 }
 
+/** How onStoreDocument must react to the internal store endpoint's status. */
+export type StoreResponseDisposition = 'ok' | 'terminal' | 'retry'
+
+/**
+ * Classifies a store response for onStoreDocument.
+ *
+ * - 2xx: the state was persisted; resolve normally.
+ * - 404: the notebook/dashboard row is gone or trashed, so no retry can ever
+ *   succeed; the store is abandoned (terminal) and invalidation/unload drops
+ *   the document separately.
+ * - anything else (401, 5xx, ...): uncertain or transient. The hook must
+ *   throw so Hocuspocus keeps the document in memory instead of unloading it
+ *   ("Document stays in memory to avoid data loss" in storeDocumentHooks).
+ *   Throwing is deliberately not used for 404: the pinned server treats every
+ *   non-SkipFurtherHooksError throw identically (keep in memory), which would
+ *   turn a terminal 404 into an endless resident document.
+ */
+export function storeResponseDisposition(status: number): StoreResponseDisposition {
+  if (status >= 200 && status < 300) return 'ok'
+  if (status === 404) return 'terminal'
+  return 'retry'
+}
+
 /** Extracts a non-empty bearer token from a connection context object. */
 export function extractToken(value: unknown): string | null {
   if (value && typeof value === 'object') {

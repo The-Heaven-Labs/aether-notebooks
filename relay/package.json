@@ -3,6 +3,9 @@
   "version": "1.0.0",
   "description": "Hocuspocus Yjs relay for Aether Notebooks",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",

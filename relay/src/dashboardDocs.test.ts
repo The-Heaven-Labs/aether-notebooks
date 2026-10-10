@@ -12,6 +12,7 @@ import {
   pickStoreToken,
   resolveDocumentRoute,
   revalidationKey,
+  storeResponseDisposition,
 } from './dashboardDocs.ts'
 
 test('resolveDocumentRoute routes dashboard docs to the dashboard endpoint', () => {
@@ -79,6 +80,23 @@ test('authorize 200 with a malformed body rejects (fail closed)', () => {
   assert.throws(() => mapAuthorizeResponse(200, null), AuthorizeError)
   assert.throws(() => mapAuthorizeResponse(200, {}), AuthorizeError)
   assert.throws(() => mapAuthorizeResponse(200, { document_id: 'd', can_edit: 'yes' }), AuthorizeError)
+})
+
+test('store 200/204 responses resolve normally', () => {
+  assert.equal(storeResponseDisposition(200), 'ok')
+  assert.equal(storeResponseDisposition(201), 'ok')
+  assert.equal(storeResponseDisposition(204), 'ok')
+})
+
+test('store 404 is terminal (no retry for a trashed or deleted document)', () => {
+  assert.equal(storeResponseDisposition(404), 'terminal')
+})
+
+test('store 401/500/502 failures must throw so the doc stays in memory', () => {
+  assert.equal(storeResponseDisposition(401), 'retry')
+  assert.equal(storeResponseDisposition(500), 'retry')
+  assert.equal(storeResponseDisposition(502), 'retry')
+  assert.equal(storeResponseDisposition(503), 'retry')
 })
 
 test('parseInvalidateChannel extracts the dashboard id', () => {

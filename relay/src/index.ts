@@ -14,6 +14,7 @@ import {
   pickStoreToken,
   resolveDocumentRoute,
   revalidationKey,
+  storeResponseDisposition,
   type AuthorizeResult,
 } from './dashboardDocs'
 
@@ -21,6 +22,9 @@ const API_URL = process.env.AETHER_API_URL || 'http://localhost:8088'
 const PORT = parseInt(process.env.AETHER_RELAY_PORT || '3001')
 const REDIS_HOST = process.env.REDIS_HOST || 'localhost'
 const REDIS_PORT = parseInt(process.env.REDIS_PORT || '6379')
+
+/** Bound every internal API call so a hung API cannot stall document hooks. */
+const API_FETCH_TIMEOUT_MS = 10_000
 
 /**
  * Connection context stashed by onAuthenticate and carried by every later
@@ -76,6 +80,7 @@ async function authorizeDashboard(documentName: string, token: string): Promise<
       'Content-Type': 'application/json',
     },
     body: JSON.stringify({ document_name: documentName }),
+    signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS),
   })
   let body: unknown = null
   try {
@@ -133,6 +138,7 @@ const server = new Server<RelayContext>({
     }
     const res = await fetch(route.loadUrl, {
       headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS),
     })
     if (!res.ok) {
       console.warn(`[relay] load ${route.kind} document "${route.id}" failed with status ${res.status}`)
@@ -158,10 +164,22 @@ const server = new Server<RelayContext>({
         'Content-Type': 'application/octet-stream',
       },
       body: Buffer.from(state),
+      signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS),
     })
-    if (!res.ok) {
-      console.warn(`[relay] store ${route.kind} document "${route.id}" failed with status ${res.status}`)
+    const disposition = storeResponseDisposition(res.status)
+    if (disposition === 'ok') return
+    if (disposition === 'terminal') {
+      // The notebook/dashboard is trashed or gone: no retry can succeed, and
+      // throwing would keep the document resident forever because the pinned
+      // server treats every non-SkipFurtherHooksError throw as "stay in
+      // memory". Dashboard invalidation unloads the document separately.
+      console.warn(`[relay] store ${route.kind} document "${route.id}" is gone (status ${res.status}); abandoning store`)
+      return
     }
+    // Throw so Hocuspocus keeps the document in memory and retries on the
+    // next change instead of unloading it ("Document stays in memory to
+    // avoid data loss" in storeDocumentHooks).
+    throw new Error(`store ${route.kind} document "${route.id}" failed with status ${res.status}`)
   },
 
   async onAuthenticate({ token, documentName, context, connectionConfig }) {
@@ -181,6 +199,7 @@ const server = new Server<RelayContext>({
       // Notebooks keep the existing session validation (no doc-level ACL).
       const res = await fetch(`${API_URL}/internal/auth/validate`, {
         headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS),
       })
       if (!res.ok) throw new Error('Unauthorized')
     }
