@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'vitest'
-import { screen, fireEvent } from '@testing-library/react'
+import { screen, fireEvent, act } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
@@ -73,5 +73,49 @@ describe('QueryDataWidget zero states', () => {
     mockExecute([[1]])
     renderWidget([], '/d1')
     expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+  })
+})
+
+describe('QueryDataWidget cache semantics', () => {
+  test('the rerunner goes through the shared cache while the manual refresher bypasses it', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({
+          outputs: [{ type: 'table', data: { columns: [{ name: 'x', type: 'String' }], rows: [[1]] } }],
+          metrics: {},
+          cached: false,
+        })
+      }),
+    )
+
+    const handles: { rerun?: () => Promise<unknown>; refresh?: () => Promise<unknown> } = {}
+    renderWithProviders(
+      <DashboardVariablesProvider dashboardId="d1" variables={[]} storageId="qdw-test">
+        <QueryDataWidget
+          dashboardId="d1"
+          widget={widget}
+          canViewWithData
+          registerRefresher={(fn) => { handles.refresh = fn }}
+          registerRerunner={(fn) => { handles.rerun = fn }}
+        />
+      </DashboardVariablesProvider>,
+      { initialPath: '/d1' },
+    )
+
+    expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0].bypass_cache).toBe(false)
+
+    // Auto re-runs (live definition changes) must not bypass the shared cache.
+    await act(async () => { await handles.rerun!() })
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1].bypass_cache).toBe(false)
+
+    // The manual Refresh action keeps its cache-bypassing semantics.
+    await act(async () => { await handles.refresh!() })
+    expect(bodies).toHaveLength(3)
+    expect(bodies[2].bypass_cache).toBe(true)
   })
 })

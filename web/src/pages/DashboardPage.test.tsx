@@ -7,7 +7,8 @@ import type { Awareness } from 'y-protocols/awareness'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
 import { DashboardPage } from './DashboardPage'
-import type { Widget } from '../types'
+import { AUTO_RERUN_DEBOUNCE_MS } from '../utils/dashboardRunSignature'
+import type { DashboardVariable, Widget } from '../types'
 
 // The page shell, the live-document hook, and the heavy children are replaced
 // with probes: this file verifies the REST/doc takeover and presence wiring,
@@ -88,11 +89,28 @@ vi.mock('../components/OutputRenderer', () => ({
   ),
 }))
 
-vi.mock('../components/QueryDataWidget', () => ({
-  QueryDataWidget: ({ widget }: { widget: { id: string; query?: string | null } }) => (
-    <div data-testid={`query-${widget.id}`}>{widget.query}</div>
-  ),
-}))
+// Registered cache-eligible re-run handles, keyed by widget id. The page calls
+// the handle registered for a widget when a live definition change fires; the
+// probe maps that call onto the test's spy for the widget.
+const rerunSpies = vi.hoisted(() => new Map<string, () => void>())
+
+vi.mock('../components/QueryDataWidget', async () => {
+  const { useEffect } = await import('react')
+  function QueryDataWidgetProbe({ widget, registerRerunner }: {
+    widget: { id: string; query?: string | null }
+    registerRerunner?: (rerun: () => Promise<unknown>) => (() => void) | void
+  }) {
+    useEffect(
+      () => registerRerunner?.(() => {
+        rerunSpies.get(widget.id)?.()
+        return Promise.resolve()
+      }),
+      [registerRerunner, widget.id],
+    )
+    return <div data-testid={`query-${widget.id}`}>{widget.query}</div>
+  }
+  return { QueryDataWidget: QueryDataWidgetProbe }
+})
 
 // Reads the real variables context so the test can see which definitions the
 // page handed the provider (REST first, doc after sync).
@@ -195,11 +213,15 @@ beforeEach(() => {
   localStorage.clear()
   localStorage.setItem('aether_user_email', 'me@test.com')
   docStore.reset()
+  rerunSpies.clear()
   server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json(REST_DASHBOARD)))
 })
 
 afterEach(() => {
   delete (HTMLElement.prototype as { clientWidth?: unknown }).clientWidth
+  // The auto re-run tests flip to fake timers; make sure a failing assertion
+  // cannot leak them into the next test.
+  vi.useRealTimers()
 })
 
 describe('DashboardPage live document wiring', () => {
@@ -286,5 +308,155 @@ describe('DashboardPage live document wiring', () => {
     expect(screen.getByTitle('8 columns')).toHaveAttribute('aria-pressed', 'true')
     // Cell outputs still come from the REST widgets_data payload.
     expect(screen.getByTestId('output-renderer')).toHaveAttribute('data-count', '2')
+  })
+})
+
+describe('DashboardPage live auto re-run', () => {
+  const REGION_VAR: DashboardVariable = { name: 'region', type: 'text', label: 'Region', default: 'us' }
+
+  async function advance(ms: number) {
+    await act(async () => { await vi.advanceTimersByTimeAsync(ms) })
+  }
+
+  // Renders under real timers until the REST snapshot is on screen, then
+  // flips to fake timers for the takeover: `findBy`/`waitFor` cannot run
+  // under fake timers in this setup, but the debounce windows must be
+  // deterministic. The takeover advance also proves the first sync seeds
+  // baselines instead of scheduling runs.
+  async function takeoverDoc(
+    widgets: Widget[],
+    variables: unknown[] = [],
+    settings: Record<string, unknown> = { grid_cols: 12 },
+  ) {
+    renderDashboard()
+    await screen.findByText('Rest board')
+    vi.useFakeTimers()
+    act(() => {
+      docStore.set({ synced: true, connected: true, title: 'Doc board', settings, variables, widgets })
+    })
+    await advance(AUTO_RERUN_DEBOUNCE_MS + 50)
+  }
+
+  test('the first sync seeds baselines without re-running widgets', async () => {
+    const spy = vi.fn()
+    rerunSpies.set('w2', spy)
+    await takeoverDoc([queryWidget({ id: 'w2', query: 'SELECT 2' })])
+    // takeoverDoc already advanced past the debounce window.
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('typing SQL coalesces into one re-run after the debounce', async () => {
+    const spy = vi.fn()
+    rerunSpies.set('w2', spy)
+    await takeoverDoc([queryWidget({ id: 'w2', query: 'SELECT 2' })])
+
+    act(() => { docStore.set({ widgets: [queryWidget({ id: 'w2', query: 'SELECT 2 -- a' })] }) })
+    act(() => { docStore.set({ widgets: [queryWidget({ id: 'w2', query: 'SELECT 2 -- ab' })] }) })
+    await advance(AUTO_RERUN_DEBOUNCE_MS - 100)
+    expect(spy).not.toHaveBeenCalled()
+
+    await advance(200)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  test('a layout-only change re-renders without running', async () => {
+    const spy = vi.fn()
+    rerunSpies.set('w2', spy)
+    await takeoverDoc([queryWidget({ id: 'w2', query: 'SELECT 2' })])
+
+    act(() => {
+      docStore.set({
+        widgets: [queryWidget({ id: 'w2', query: 'SELECT 2', layout: { row: 4, col: 4, width: 6, height: 8 } })],
+      })
+    })
+    await advance(AUTO_RERUN_DEBOUNCE_MS + 50)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('a connector change re-runs the widget after the debounce', async () => {
+    const spy = vi.fn()
+    rerunSpies.set('w2', spy)
+    await takeoverDoc([queryWidget({ id: 'w2', connector_id: 'c-1', query: 'SELECT 2' })])
+
+    act(() => { docStore.set({ widgets: [queryWidget({ id: 'w2', connector_id: 'c-2', query: 'SELECT 2' })] }) })
+    await advance(AUTO_RERUN_DEBOUNCE_MS + 50)
+    expect(spy).toHaveBeenCalledTimes(1)
+  })
+
+  test('a variable default change re-runs only widgets referencing that token', async () => {
+    const w2Spy = vi.fn()
+    const w3Spy = vi.fn()
+    rerunSpies.set('w2', w2Spy)
+    rerunSpies.set('w3', w3Spy)
+    await takeoverDoc(
+      [
+        queryWidget({ id: 'w2', query: 'SELECT * FROM t WHERE r = {{region}}' }),
+        queryWidget({ id: 'w3', query: 'SELECT 1' }),
+      ],
+      [REGION_VAR],
+    )
+
+    act(() => { docStore.set({ variables: [{ ...REGION_VAR, default: 'eu' }] }) })
+    await advance(AUTO_RERUN_DEBOUNCE_MS + 50)
+    expect(w2Spy).toHaveBeenCalledTimes(1)
+    expect(w3Spy).not.toHaveBeenCalled()
+  })
+
+  test('a cell reference change invalidates the dashboard without executing', async () => {
+    let dashboardGets = 0
+    server.use(http.get('/api/v1/dashboards/d1', () => {
+      dashboardGets += 1
+      return HttpResponse.json(REST_DASHBOARD)
+    }))
+    const spy = vi.fn()
+    rerunSpies.set('w2', spy)
+    await takeoverDoc([
+      widget({ id: 'w1', notebook_id: 'nb-1', cell_id: 'cell-1' }),
+      queryWidget({ id: 'w2', query: 'SELECT 2' }),
+    ])
+    expect(dashboardGets).toBe(1)
+
+    act(() => {
+      docStore.set({
+        widgets: [
+          widget({ id: 'w1', notebook_id: 'nb-2', cell_id: 'cell-1' }),
+          queryWidget({ id: 'w2', query: 'SELECT 2' }),
+        ],
+      })
+    })
+    await advance(AUTO_RERUN_DEBOUNCE_MS + 50)
+    expect(dashboardGets).toBe(2)
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  test('a doc update does not restart the auto-refresh interval', async () => {
+    let dashboardGets = 0
+    server.use(http.get('/api/v1/dashboards/d1', () => {
+      dashboardGets += 1
+      return HttpResponse.json(REST_DASHBOARD)
+    }))
+    await takeoverDoc(
+      [queryWidget({ id: 'w2', query: 'SELECT 2' })],
+      [],
+      { grid_cols: 12, auto_refresh_seconds: 30 },
+    )
+    expect(dashboardGets).toBe(1)
+
+    // 20s in (plus the takeover advance): the interval has not fired.
+    await advance(20_000)
+    expect(dashboardGets).toBe(1)
+
+    // A layout-only doc update mid-interval must not push the next run out:
+    // with a restarted interval it would fire at ~52s, not at the 30s mark.
+    act(() => {
+      docStore.set({
+        widgets: [queryWidget({ id: 'w2', query: 'SELECT 2', layout: { row: 4, col: 4, width: 6, height: 8 } })],
+      })
+    })
+    await advance(7_500)
+    expect(dashboardGets).toBe(1)
+
+    await advance(1_000)
+    expect(dashboardGets).toBe(2)
   })
 })

@@ -15,6 +15,13 @@ import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
+import {
+  createPerWidgetDebouncer,
+  diffVariableDefinitions,
+  diffWidgetRuns,
+  widgetsReferencingTokens,
+} from '../utils/dashboardRunSignature'
+import type { PerWidgetDebouncer, VariableDefinitionSnapshot, WidgetRunBaseline } from '../utils/dashboardRunSignature'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { useDashboardConnector } from '../hooks/useDashboardConnector'
@@ -300,6 +307,28 @@ function DashboardContent({ id }: { id: string }) {
     return () => { refreshersRef.current.delete(widgetId) }
   }, [])
 
+  // Cache-eligible re-run handles, registered by query widgets. Auto re-runs
+  // on live definition changes must flow through the shared query cache —
+  // only the manual Refresh action (refreshersRef) bypasses it.
+  const [rerunners] = useState(() => new Map<string, () => Promise<unknown>>())
+  const registerWidgetRerun = useCallback((widgetId: string, fn: () => Promise<unknown>) => {
+    rerunners.set(widgetId, fn)
+    return () => { rerunners.delete(widgetId) }
+  }, [rerunners])
+
+  // Per-widget debouncer for auto re-runs: a collaborator typing SQL fires a
+  // document update per keystroke, so runs are coalesced (~2s) per widget.
+  // Stable for the page's lifetime (useState initializer, not useRef writes).
+  const [runDebouncer] = useState<PerWidgetDebouncer>(() => createPerWidgetDebouncer((widgetId) => {
+    void rerunners.get(widgetId)?.()
+  }))
+
+  // Baselines for live-document change detection. `null` until the first
+  // sync seeds them, so the REST → doc handover itself never re-runs widgets.
+  const widgetRunBaselinesRef = useRef<Record<string, WidgetRunBaseline> | null>(null)
+  const variableDefinitionsRef = useRef<Record<string, VariableDefinitionSnapshot> | null>(null)
+  useEffect(() => () => runDebouncer.cancelAll(), [runDebouncer])
+
   const refreshingCount = useMemo(
     () => Object.values(fetchingWidgets).filter(Boolean).length,
     [fetchingWidgets],
@@ -324,12 +353,16 @@ function DashboardContent({ id }: { id: string }) {
     return () => { document.title = "Aether Notebooks" }
   }, [dashboard, liveTitle])
 
+  // Ref guard (not state): the stabilized auto-refresh interval captures this
+  // function once, so it must not close over a stale `isRunningAll`.
+  const runningAllRef = useRef(false)
   async function executeAllWidgets(widgetList: AnyWidget[]) {
-    if (isRunningAll) return
+    if (runningAllRef.current) return
     const token = localStorage.getItem('aether_token')
     const cellWidgets = widgetList.filter(w => !isQueryWidget(w) && w.notebook_id && w.cell_id)
     const queryWidgets = widgetList.filter(isQueryWidget)
     if (!cellWidgets.length && !queryWidgets.length) return
+    runningAllRef.current = true
     setIsRunningAll(true)
     try {
       // Query widgets refresh through their registered (cache-bypassing)
@@ -358,6 +391,7 @@ function DashboardContent({ id }: { id: string }) {
         notebookIds.forEach(nbId => qc.invalidateQueries({ queryKey: ['notebook', nbId] }))
       }
     } finally {
+      runningAllRef.current = false
       setIsRunningAll(false)
     }
   }
@@ -398,11 +432,63 @@ function DashboardContent({ id }: { id: string }) {
     setRefreshCustom(!PRESET_REFRESH.includes(autoRefreshSecs))
   }, [autoRefreshSecs])
 
+  // Stable inputs for the auto-refresh interval: doc updates produce a fresh
+  // `widgets` array on every collaborator keystroke, and depending on that
+  // identity used to restart (and postpone) the timer continuously. The
+  // interval now restarts only when the cadence or the widget id set changes,
+  // and reads the latest widgets from the ref when it fires.
+  const widgetsRef = useRef(widgets)
+  const executeAllRef = useRef(executeAllWidgets)
   useEffect(() => {
-    if (!refreshSeconds || refreshSeconds <= 0 || !widgets.length) return
-    const intervalId = setInterval(() => executeAllWidgets(widgets), refreshSeconds * 1000)
+    widgetsRef.current = widgets
+    executeAllRef.current = executeAllWidgets
+  })
+  const widgetIdsKey = useMemo(() => widgets.map(w => w.id).join('|'), [widgets])
+
+  useEffect(() => {
+    if (!refreshSeconds || refreshSeconds <= 0 || !widgetIdsKey) return
+    const intervalId = setInterval(() => { void executeAllRef.current(widgetsRef.current) }, refreshSeconds * 1000)
     return () => clearInterval(intervalId)
-  }, [refreshSeconds, widgets])
+  }, [refreshSeconds, widgetIdsKey])
+
+  // Live definition changes → re-run only the widgets that actually changed.
+  // The document projection gives every widget a new identity on any update,
+  // so this diffs per-widget run signatures against baselines seeded on the
+  // first sync (the REST → doc takeover itself must not re-run anything).
+  useEffect(() => {
+    if (!liveDoc.synced) {
+      // REST still paints the page; drop baselines so the handover seeds
+      // fresh ones instead of diffing against stale state.
+      widgetRunBaselinesRef.current = null
+      variableDefinitionsRef.current = null
+      runDebouncer.cancelAll()
+      return
+    }
+
+    const runDiff = diffWidgetRuns(widgetRunBaselinesRef.current, widgets)
+    widgetRunBaselinesRef.current = runDiff.next
+    for (const widgetId of runDiff.removed) runDebouncer.cancel(widgetId)
+    for (const widgetId of runDiff.rerun) runDebouncer.schedule(widgetId)
+    for (const change of runDiff.cellRefChanged) {
+      // Cell widgets render stored outputs: refresh the referenced data
+      // (embedded `widgets_data`, or the notebook when outputs are not
+      // inlined) instead of executing anything.
+      if (dashboard?.can_view_with_data) {
+        qc.invalidateQueries({ queryKey: ['dashboard', id] })
+      } else if (change.notebookId) {
+        qc.invalidateQueries({ queryKey: ['notebook', change.notebookId] })
+      }
+    }
+
+    // Variable definition/default edits only affect widgets that reference
+    // the changed token. A live-added variable re-runs referencing widgets so
+    // the server applies the declaration default for this viewer.
+    const variableDiff = diffVariableDefinitions(variableDefinitionsRef.current, liveDoc.variables)
+    variableDefinitionsRef.current = variableDiff.next
+    for (const widgetId of widgetsReferencingTokens(widgets, variableDiff.tokens)) {
+      runDebouncer.schedule(widgetId)
+    }
+  }, [liveDoc.synced, liveDoc.widgets, liveDoc.variables, widgets, dashboard?.can_view_with_data, id, qc, runDebouncer])
 
   if (isLoading) {
     return (
@@ -645,6 +731,7 @@ function DashboardContent({ id }: { id: string }) {
                       viewerConnectorId={viewerConnectorId}
                       onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
                       registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
+                      registerRerunner={(fn) => registerWidgetRerun(widget.id, fn)}
                     />
                   ) : (
                     <WidgetCard

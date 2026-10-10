@@ -48,5 +48,9 @@ export function useWidgetQuery(opts: {
     bypassRef.current = true
     return refetch()
   }, [refetch])
-  return { ...query, refresh }
+  // Cache-eligible re-run: does not set the bypass flag, so the server serves
+  // (or refreshes) the shared cache entry. Live definition changes use this;
+  // only the explicit Refresh action bypasses the cache.
+  const rerun = useCallback(() => refetch(), [refetch])
+  return { ...query, refresh, rerun }
 }
