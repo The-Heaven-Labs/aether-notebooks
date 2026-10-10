@@ -128,7 +128,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Description: "Remove a widget from a dashboard.",
 			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"}},"required":["widget_id","dashboard_id"]}`,
 		},
-		Handler: makeDeleteDashboardWidgetHandler(pool),
+		Handler: makeDeleteDashboardWidgetHandler(),
 		Timeout: 15 * time.Second,
 	})
 
@@ -142,7 +142,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Description: "Update a dashboard's title or grid settings (e.g., grid_cols: 12 for 12-column grid).",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string"},"grid_cols":{"type":"number","description":"Number of columns in the grid layout (default 12)"}},"required":["dashboard_id"]}`,
 		},
-		Handler: makeUpdateDashboardHandler(pool),
+		Handler: makeUpdateDashboardHandler(),
 		Timeout: 15 * time.Second,
 	})
 
@@ -277,6 +277,44 @@ func makeCreateDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 	}
 }
 
+// validDashboardWidgetType reports whether t is a widget type the dashboard
+// document supports (mirroring the widgets.type CHECK constraint). Validating
+// before the document write keeps a rejected request from lazily seeding the
+// dashboard document.
+func validDashboardWidgetType(t string) bool {
+	switch models.WidgetType(t) {
+	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric:
+		return true
+	default:
+		return false
+	}
+}
+
+// validateDashboardWidgetCellRef rejects a notebook/cell pair that does not
+// resolve to a real cell in that notebook. The document store accepts the
+// pair, but the materializer skips the widget (deleting its derived row), so
+// without this check a success response would commit a phantom widget that
+// never materializes. Mirrors the REST validateWidgetCellRef fix; shared by
+// create (the requested pair) and update (the merged widget's pair).
+func validateDashboardWidgetCellRef(ctx context.Context, pool *pgxpool.Pool, notebookID, cellID string) error {
+	if _, err := uuid.Parse(notebookID); err != nil {
+		return fmt.Errorf("cell not found")
+	}
+	if _, err := uuid.Parse(cellID); err != nil {
+		return fmt.Errorf("cell not found")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM cells WHERE id = $1 AND notebook_id = $2)`,
+		cellID, notebookID).Scan(&exists); err != nil {
+		return fmt.Errorf("check cell reference: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("cell not found")
+	}
+	return nil
+}
+
 func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
@@ -312,25 +350,16 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		if ctx.DashboardDocStore == nil {
 			return nil, fmt.Errorf("dashboard document store not configured")
 		}
+		if !validDashboardWidgetType(req.Type) {
+			return nil, fmt.Errorf("invalid widget type")
+		}
 
 		// A dangling cell reference must fail the request: the document store
 		// accepts the pair, but the materializer skips the widget (deleting its
 		// derived row), so a success response would commit a phantom widget
-		// that never materializes. Mirrors the REST validateWidgetCellRef fix.
-		if _, err := uuid.Parse(req.NotebookID); err != nil {
-			return nil, fmt.Errorf("cell not found")
-		}
-		if _, err := uuid.Parse(req.CellID); err != nil {
-			return nil, fmt.Errorf("cell not found")
-		}
-		var cellExists bool
-		if err := pool.QueryRow(ctx.Context,
-			`SELECT EXISTS(SELECT 1 FROM cells WHERE id = $1 AND notebook_id = $2)`,
-			req.CellID, req.NotebookID).Scan(&cellExists); err != nil {
-			return nil, fmt.Errorf("check cell reference: %w", err)
-		}
-		if !cellExists {
-			return nil, fmt.Errorf("cell not found")
+		// that never materializes.
+		if err := validateDashboardWidgetCellRef(ctx.Context, pool, req.NotebookID, req.CellID); err != nil {
+			return nil, err
 		}
 
 		// Validate layout bounds and overlap against the materialized rows
@@ -399,6 +428,15 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("dashboard document store not configured")
 		}
 
+		// A request with nothing updatable must not rewrite (or re-publish)
+		// the widget: report it like update_dashboard's no-op guard instead.
+		if req.Row == nil && req.Col == nil && req.Width == nil && req.Height == nil && req.WidgetType == "" {
+			return nil, fmt.Errorf("nothing to update")
+		}
+		if req.WidgetType != "" && !validDashboardWidgetType(req.WidgetType) {
+			return nil, fmt.Errorf("invalid widget type")
+		}
+
 		// Document widget keys are canonical lowercase UUIDs; canonicalize the
 		// requested ID so any UUID spelling addresses the same widget, and a
 		// non-UUID can never address one.
@@ -437,6 +475,16 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 		if req.WidgetType != "" {
 			existing.Type = req.WidgetType
+		}
+
+		// A merged notebook/cell pair (the request has no ref fields, so it
+		// comes from the existing widget) must still resolve to a real cell:
+		// the materializer would otherwise skip the widget and delete its
+		// derived row while the document keeps it.
+		if existing.NotebookID != nil && existing.CellID != nil {
+			if err := validateDashboardWidgetCellRef(ctx.Context, pool, *existing.NotebookID, *existing.CellID); err != nil {
+				return nil, err
+			}
 		}
 
 		// Validate layout bounds and overlap against the materialized rows
@@ -520,7 +568,7 @@ func makeGetDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 	}
 }
 
-func makeDeleteDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
+func makeDeleteDashboardWidgetHandler() ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
 			WidgetID    string `json:"widget_id"`
@@ -564,7 +612,7 @@ func makeDeleteDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 	}
 }
 
-func makeUpdateDashboardHandler(pool *pgxpool.Pool) ToolHandler {
+func makeUpdateDashboardHandler() ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
 			DashboardID string  `json:"dashboard_id"`

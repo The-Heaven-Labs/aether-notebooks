@@ -61,10 +61,11 @@ func TestUpdatePermissionsRejectsAgentSessions(t *testing.T) {
 
 // testDashboardDocStore is a real Postgres-backed agent.DashboardDocStore for
 // tool tests. LoadOrSeed reads the stored Yjs state, lazily seeding it from the
-// current dashboards/widgets rows when none exists yet (mirroring the API
-// server's seed projection for the shapes these tests use); Store runs
+// current dashboards/widgets rows when none exists yet; Store runs
 // dashboarddoc.MergeAndStore, the same merge + materialize path the API server
 // uses. No mocks: the tools are exercised against the real document and rows.
+// Keep the seed projection in sync with api.Server.dashboardDocProjection
+// (internal/api/dashboard_doc_service.go).
 type testDashboardDocStore struct{ pool *pgxpool.Pool }
 
 func (s testDashboardDocStore) LoadOrSeed(ctx context.Context, orgID, dashboardID string) ([]byte, error) {
@@ -191,15 +192,21 @@ func dashboardTool(t *testing.T, reg *agent.ToolRegistry, name string) agent.Too
 	return def.Handler
 }
 
+// storedDashboardDocState reads the raw stored Yjs state bytes.
+func storedDashboardDocState(t *testing.T, pool *pgxpool.Pool, dashID string) []byte {
+	t.Helper()
+	var state []byte
+	require.NoError(t, pool.QueryRow(context.Background(),
+		`SELECT state FROM dashboard_yjs_documents WHERE dashboard_id = $1`, dashID).Scan(&state))
+	return state
+}
+
 // storedDashboardDoc reads and projects the stored Yjs document state, so a
 // test can assert a write landed in the source of truth, not only in the
 // derived rows.
 func storedDashboardDoc(t *testing.T, pool *pgxpool.Pool, dashID string) *dashboarddoc.Projection {
 	t.Helper()
-	var state []byte
-	require.NoError(t, pool.QueryRow(context.Background(),
-		`SELECT state FROM dashboard_yjs_documents WHERE dashboard_id = $1`, dashID).Scan(&state))
-	proj, err := dashboarddoc.Project(state)
+	proj, err := dashboarddoc.Project(storedDashboardDocState(t, pool, dashID))
 	require.NoError(t, err)
 	return proj
 }
@@ -491,4 +498,193 @@ func TestAgentUpdateDashboardWritesDocAndRow(t *testing.T) {
 		Scan(&rowTitle, &settingsOut))
 	require.Equal(t, "New Title", rowTitle)
 	require.JSONEq(t, `{"grid_cols":6,"auto_refresh_seconds":60,"variables":[]}`, settingsOut)
+}
+
+// TestAgentUpdateDashboardWidgetRejectsDeletedCell pins the merged-reference
+// check: a widget whose cell was hard-deleted must fail the update (the
+// materializer would skip it), instead of reporting success for a document
+// entry that never materializes.
+func TestAgentUpdateDashboardWidgetRejectsDeletedCell(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	cellID := createTestCell(t, db.Pool, nbID, "SELECT 1", 0)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Deleted Cell")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+
+	createArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"notebook_id":  nbID,
+		"cell_id":      cellID,
+		"type":         "table",
+	})
+	require.NoError(t, err)
+	created, err := dashboardTool(t, reg, "create_dashboard_widget")(createArgs, ctx)
+	require.NoError(t, err)
+	widgetID := created.(map[string]any)["widget_id"].(string)
+
+	// Hard-delete the cell; the widgets row cascades away, while the document
+	// entry remains (only a later store would materialize its removal).
+	_, err = db.Pool.Exec(context.Background(), `DELETE FROM cells WHERE id = $1`, cellID)
+	require.NoError(t, err)
+
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	args, err := json.Marshal(map[string]any{
+		"widget_id":    widgetID,
+		"dashboard_id": dashID,
+		"row":          2,
+	})
+	require.NoError(t, err)
+	_, err = dashboardTool(t, reg, "update_dashboard_widget")(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "cell not found")
+
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected merged reference must not rewrite the document")
+}
+
+// TestAgentUpdateDashboardWidgetNoopLeavesDocUntouched pins the no-op guard: a
+// request with no updatable fields must error without rewriting (or
+// re-publishing) the stored document.
+func TestAgentUpdateDashboardWidgetNoopLeavesDocUntouched(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	cellID := createTestCell(t, db.Pool, nbID, "SELECT 1", 0)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Noop Dashboard")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+
+	createArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"notebook_id":  nbID,
+		"cell_id":      cellID,
+		"type":         "table",
+	})
+	require.NoError(t, err)
+	created, err := dashboardTool(t, reg, "create_dashboard_widget")(createArgs, ctx)
+	require.NoError(t, err)
+	widgetID := created.(map[string]any)["widget_id"].(string)
+
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	args, err := json.Marshal(map[string]any{"widget_id": widgetID, "dashboard_id": dashID})
+	require.NoError(t, err)
+	_, err = dashboardTool(t, reg, "update_dashboard_widget")(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "nothing to update")
+
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a no-op update must not rewrite the stored document")
+}
+
+// TestAgentDashboardWidgetRejectsInvalidTypeBeforeWrite pins the pre-write
+// type validation on both widget write tools: an invalid type must be rejected
+// without lazily seeding the document or rewriting it.
+func TestAgentDashboardWidgetRejectsInvalidTypeBeforeWrite(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	cellID := createTestCell(t, db.Pool, nbID, "SELECT 1", 0)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Invalid Type")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+
+	// Create: rejected before any write, so no document row appears.
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"notebook_id":  nbID,
+		"cell_id":      cellID,
+		"type":         "pie",
+	})
+	require.NoError(t, err)
+	_, err = dashboardTool(t, reg, "create_dashboard_widget")(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid widget type")
+	var docs int
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM dashboard_yjs_documents WHERE dashboard_id = $1`, dashID).Scan(&docs))
+	require.Zero(t, docs, "a rejected type must not seed or write the document")
+
+	// Update: rejected before the read-merge/write, so the document is
+	// byte-identical afterwards.
+	createArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"notebook_id":  nbID,
+		"cell_id":      cellID,
+		"type":         "table",
+	})
+	require.NoError(t, err)
+	created, err := dashboardTool(t, reg, "create_dashboard_widget")(createArgs, ctx)
+	require.NoError(t, err)
+	widgetID := created.(map[string]any)["widget_id"].(string)
+
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	args, err = json.Marshal(map[string]any{
+		"widget_id":    widgetID,
+		"dashboard_id": dashID,
+		"type":         "pie",
+	})
+	require.NoError(t, err)
+	_, err = dashboardTool(t, reg, "update_dashboard_widget")(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid widget type")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected type must not rewrite the document")
+}
+
+// TestAgentDashboardToolsFailClosedWithoutDocStore pins the fail-closed guard:
+// a ToolContext with no DashboardDocStore must return an error (never panic or
+// silently write through SQL) for every dashboard-mutating tool.
+func TestAgentDashboardToolsFailClosedWithoutDocStore(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	cellID := createTestCell(t, db.Pool, nbID, "SELECT 1", 0)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "No Store")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	// setupToolContext deliberately leaves DashboardDocStore nil.
+	ctx := setupToolContext(t, db, orgID, userID, "")
+
+	cases := []struct {
+		tool string
+		args map[string]any
+	}{
+		{"create_dashboard_widget", map[string]any{
+			"dashboard_id": dashID, "notebook_id": nbID, "cell_id": cellID, "type": "table",
+		}},
+		{"update_dashboard_widget", map[string]any{
+			"widget_id": uuid.NewString(), "dashboard_id": dashID, "row": 1,
+		}},
+		{"delete_dashboard_widget", map[string]any{
+			"widget_id": uuid.NewString(), "dashboard_id": dashID,
+		}},
+		{"update_dashboard", map[string]any{"dashboard_id": dashID, "title": "New"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.tool, func(t *testing.T) {
+			args, err := json.Marshal(tc.args)
+			require.NoError(t, err)
+			_, err = dashboardTool(t, reg, tc.tool)(args, ctx)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "dashboard document store not configured")
+		})
+	}
+
+	// Nothing was written by any rejected call.
+	var docs, widgets int
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM dashboard_yjs_documents WHERE dashboard_id = $1`, dashID).Scan(&docs))
+	require.Zero(t, docs)
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM widgets WHERE dashboard_id = $1`, dashID).Scan(&widgets))
+	require.Zero(t, widgets)
 }
