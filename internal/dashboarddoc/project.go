@@ -26,11 +26,9 @@ import (
 // the root-container-kind limitation. Warnings are ordered by sorted widget ID
 // (variables keep array order).
 func Project(state []byte) (*Projection, error) {
-	doc := crdt.New()
-	if len(state) > 0 {
-		if err := crdt.ApplyUpdateV1(doc, state, nil); err != nil {
-			return nil, fmt.Errorf("decode dashboard document: %w", err)
-		}
+	doc, err := decodeDoc(state)
+	if err != nil {
+		return nil, err
 	}
 
 	proj := &Projection{

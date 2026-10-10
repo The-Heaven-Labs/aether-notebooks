@@ -1,6 +1,8 @@
 // Package dashboarddoc defines the Yjs document format for live dashboard
-// co-editing and the seed/project pair that converts between the CRDT
-// document and the Go projection used by the REST and materialization layers.
+// co-editing, the seed/project pair that converts between the CRDT document
+// and the Go projection used by the REST and materialization layers, and the
+// backend-originated mutation operations (apply.go) that write widget and meta
+// changes into the document.
 //
 // # Document shape
 //

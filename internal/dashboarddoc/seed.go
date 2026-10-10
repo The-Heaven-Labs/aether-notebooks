@@ -48,35 +48,9 @@ func Seed(p Projection) ([]byte, error) {
 	}
 	prepared := make([]preparedWidget, 0, len(p.Widgets))
 	for id, w := range p.Widgets {
-		if _, err := uuid.Parse(id); err != nil {
-			return nil, fmt.Errorf("widget %q: key is not a valid UUID: %w", id, err)
-		}
-		if w.ID != "" && w.ID != id {
-			return nil, fmt.Errorf("widget %q: ID %q does not match its map key", id, w.ID)
-		}
-		if !widgetTypes[w.Type] {
-			return nil, fmt.Errorf("widget %q: unknown type %q", id, w.Type)
-		}
-		if !queryLanguages[w.Language] {
-			return nil, fmt.Errorf("widget %q: unsupported language %q", id, w.Language)
-		}
-		if w.Layout.Row < 0 || w.Layout.Col < 0 || w.Layout.Width < 0 || w.Layout.Height < 0 {
-			return nil, fmt.Errorf("widget %q: negative layout %+v", id, w.Layout)
-		}
-		config := "{}"
-		if len(w.Config) > 0 {
-			// normalizeForDoc rejects shared yjs types and non-finite
-			// numbers, which json.Marshal would otherwise encode silently
-			// (as {} or fail less clearly).
-			normalized, err := normalizeForDoc(w.Config)
-			if err != nil {
-				return nil, fmt.Errorf("widget %q: config: %w", id, err)
-			}
-			raw, err := json.Marshal(normalized)
-			if err != nil {
-				return nil, fmt.Errorf("widget %q: config: %w", id, err)
-			}
-			config = string(raw)
+		config, err := validateWidget(id, w)
+		if err != nil {
+			return nil, err
 		}
 		prepared = append(prepared, preparedWidget{id: id, w: w, config: config})
 	}
@@ -109,32 +83,78 @@ func Seed(p Projection) ([]byte, error) {
 		meta.Set(txn, keyVariables, variablesArr)
 
 		for _, pw := range prepared {
-			wm := crdt.NewMapPrelim()
-			wm.Set(txn, keyType, pw.w.Type)
-			wm.Set(txn, keyConnectorID, stringOrEmpty(pw.w.ConnectorID))
-			wm.Set(txn, keyLanguage, pw.w.Language)
-			wm.Set(txn, keyNotebookID, stringOrEmpty(pw.w.NotebookID))
-			wm.Set(txn, keyCellID, stringOrEmpty(pw.w.CellID))
-			wm.Set(txn, keyConfig, pw.config)
-
-			layout := crdt.NewMapPrelim()
-			layout.Set(txn, keyRow, int64(pw.w.Layout.Row))
-			layout.Set(txn, keyCol, int64(pw.w.Layout.Col))
-			layout.Set(txn, keyWidth, int64(pw.w.Layout.Width))
-			layout.Set(txn, keyHeight, int64(pw.w.Layout.Height))
-			wm.Set(txn, keyLayout, layout)
-
-			query := crdt.NewTextPrelim()
-			if pw.w.Query != nil && *pw.w.Query != "" {
-				query.Insert(txn, 0, *pw.w.Query, nil)
-			}
-			wm.Set(txn, keyQuery, query)
-
-			widgets.Set(txn, pw.id, wm)
+			widgets.Set(txn, pw.id, widgetPrelim(txn, pw.w, pw.config))
 		}
 	})
 
 	return doc.EncodeStateAsUpdate(), nil
+}
+
+// validateWidget checks a widget projection against the document's shape rules
+// and normalizes its config to the JSON string stored in the document. id is
+// the widgets-map key the widget will be stored under (for UpsertWidget, the
+// widget's own ID). Shared by Seed and UpsertWidget so both write paths accept
+// exactly the same widgets.
+func validateWidget(id string, w WidgetDoc) (string, error) {
+	if _, err := uuid.Parse(id); err != nil {
+		return "", fmt.Errorf("widget %q: key is not a valid UUID: %w", id, err)
+	}
+	if w.ID != "" && w.ID != id {
+		return "", fmt.Errorf("widget %q: ID %q does not match its map key", id, w.ID)
+	}
+	if !widgetTypes[w.Type] {
+		return "", fmt.Errorf("widget %q: unknown type %q", id, w.Type)
+	}
+	if !queryLanguages[w.Language] {
+		return "", fmt.Errorf("widget %q: unsupported language %q", id, w.Language)
+	}
+	if w.Layout.Row < 0 || w.Layout.Col < 0 || w.Layout.Width < 0 || w.Layout.Height < 0 {
+		return "", fmt.Errorf("widget %q: negative layout %+v", id, w.Layout)
+	}
+	config := "{}"
+	if len(w.Config) > 0 {
+		// normalizeForDoc rejects shared yjs types and non-finite
+		// numbers, which json.Marshal would otherwise encode silently
+		// (as {} or fail less clearly).
+		normalized, err := normalizeForDoc(w.Config)
+		if err != nil {
+			return "", fmt.Errorf("widget %q: config: %w", id, err)
+		}
+		raw, err := json.Marshal(normalized)
+		if err != nil {
+			return "", fmt.Errorf("widget %q: config: %w", id, err)
+		}
+		config = string(raw)
+	}
+	return config, nil
+}
+
+// widgetPrelim builds the detached widget Y.Map that the caller attaches under
+// a widget ID inside a transaction. config must be the JSON string produced by
+// validateWidget.
+func widgetPrelim(txn *crdt.Transaction, w WidgetDoc, config string) *crdt.YMap {
+	wm := crdt.NewMapPrelim()
+	wm.Set(txn, keyType, w.Type)
+	wm.Set(txn, keyConnectorID, stringOrEmpty(w.ConnectorID))
+	wm.Set(txn, keyLanguage, w.Language)
+	wm.Set(txn, keyNotebookID, stringOrEmpty(w.NotebookID))
+	wm.Set(txn, keyCellID, stringOrEmpty(w.CellID))
+	wm.Set(txn, keyConfig, config)
+
+	layout := crdt.NewMapPrelim()
+	layout.Set(txn, keyRow, int64(w.Layout.Row))
+	layout.Set(txn, keyCol, int64(w.Layout.Col))
+	layout.Set(txn, keyWidth, int64(w.Layout.Width))
+	layout.Set(txn, keyHeight, int64(w.Layout.Height))
+	wm.Set(txn, keyLayout, layout)
+
+	query := crdt.NewTextPrelim()
+	if w.Query != nil && *w.Query != "" {
+		query.Insert(txn, 0, *w.Query, nil)
+	}
+	wm.Set(txn, keyQuery, query)
+
+	return wm
 }
 
 // normalizeMap normalizes every value of a settings/variables map into the
