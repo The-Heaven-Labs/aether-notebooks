@@ -41,12 +41,14 @@
 //   - WidgetDoc pointer fields (ConnectorID, Query, NotebookID, CellID) map to
 //     the doc's string fields with nil ⇔ "". Seed canonicalizes a pointer to
 //     "" as unset; Project returns nil for "".
-//   - Project returns only plain JSON-domain Go values; no ygo encoding leaks
-//     out. Shared types nested in plain positions (settings/variables) are
-//     converted through their ToJSON payload (a nested Y.Text becomes its
-//     string) and normalized recursively; a value that cannot be converted is
-//     dropped with a warning. []byte becomes its base64 string, matching
-//     encoding/json.
+//   - Project returns only plain JSON-domain Go values; no yjs value class
+//     leaks out. Shared types nested in plain positions (settings/variables)
+//     are converted: YMap/YArray/YText through their ToJSON payload (a nested
+//     Y.Text becomes its string), XML types (YXmlFragment/YXmlElement/
+//     YXmlText) through their ToXML serialisation. A subdocument (*crdt.Doc),
+//     a non-finite float (NaN/±Inf), or a shared type whose serialisation
+//     fails cannot be represented and is dropped with a warning. []byte
+//     becomes its base64 string, matching encoding/json.
 //
 // # Number handling
 //
@@ -60,9 +62,10 @@
 // and float64: int64 → int when it fits (out-of-range values stay int64),
 // encoding.BigInt → int64, integral float32/float64 → int when they fit
 // (non-integral or out-of-range floats stay float64), float64 otherwise
-// unchanged. Layout is a plain Go int struct; readLayout accepts integral
-// floats with a fit check because Seed-written ints above int32 range arrive
-// as float64 on the wire.
+// unchanged. Non-finite floats (NaN/±Inf) are not JSON-representable and are
+// dropped with a warning; Seed rejects them. Layout is a plain Go int struct;
+// readLayout accepts integral floats with a fit check because Seed-written
+// ints above int32 range arrive as float64 on the wire.
 //
 // # Validation split
 //

@@ -19,10 +19,11 @@ import (
 // Seed fails fast on invalid input — a map key that is not a UUID, an unknown
 // widget type, an unsupported language, a negative layout, a widget ID that
 // disagrees with its map key, or a config/settings/variable value that is not
-// JSON-marshalable (including NaN/±Inf) — because the document is the source
-// of truth and a projection that cannot be represented should surface at the
-// write, not as a skipped widget during later materialization. An empty
-// projection seeds a valid empty document.
+// JSON-marshalable (including NaN/±Inf and shared yjs types such as
+// *crdt.YMap or *crdt.Doc) — because the document is the source of truth and
+// a projection that cannot be represented should surface at the write, not as
+// a skipped widget during later materialization. An empty projection seeds a
+// valid empty document.
 func Seed(p Projection) ([]byte, error) {
 	settings, err := normalizeMap("settings", p.Settings)
 	if err != nil {
@@ -64,7 +65,14 @@ func Seed(p Projection) ([]byte, error) {
 		}
 		config := "{}"
 		if len(w.Config) > 0 {
-			raw, err := json.Marshal(w.Config)
+			// normalizeForDoc rejects shared yjs types and non-finite
+			// numbers, which json.Marshal would otherwise encode silently
+			// (as {} or fail less clearly).
+			normalized, err := normalizeForDoc(w.Config)
+			if err != nil {
+				return nil, fmt.Errorf("widget %q: config: %w", id, err)
+			}
+			raw, err := json.Marshal(normalized)
 			if err != nil {
 				return nil, fmt.Errorf("widget %q: config: %w", id, err)
 			}
@@ -147,8 +155,9 @@ func normalizeMap(label string, m map[string]any) (map[string]any, error) {
 // []any / map[string]any containers pass through recursively; any other type
 // (structs, named slices/maps, json.Number, ...) is converted via
 // encoding/json, which yields JSON's own type domain (float64 numbers).
-// NaN and ±Inf are rejected: they are not valid JSON and cannot be represented
-// in the derived Postgres JSONB rows.
+// NaN/±Inf are rejected (not valid JSON, cannot be represented in the derived
+// Postgres JSONB rows), and so are shared yjs types — encoding/json would
+// silently turn those into {}.
 func normalizeForDoc(v any) (any, error) {
 	switch t := v.(type) {
 	case nil, string, bool,
@@ -185,6 +194,10 @@ func normalizeForDoc(v any) (any, error) {
 			out[k] = ne
 		}
 		return out, nil
+	case *crdt.YMap, *crdt.YArray, *crdt.YText,
+		*crdt.YXmlFragment, *crdt.YXmlElement, *crdt.YXmlText, *crdt.Doc:
+		// encoding/json would silently encode these as {} — reject instead.
+		return nil, fmt.Errorf("shared type %T is not a JSON value", v)
 	default:
 		raw, err := json.Marshal(v)
 		if err != nil {

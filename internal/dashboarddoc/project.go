@@ -56,10 +56,10 @@ func Project(state []byte) (*Projection, error) {
 		}
 		for _, k := range settings.Keys() {
 			val, _ := settings.Get(k)
-			nv, ok := normalizeDecoded(val)
-			if !ok {
+			nv, reason := normalizeDecoded(val)
+			if reason != "" {
 				proj.Warnings = append(proj.Warnings,
-					fmt.Sprintf("settings[%q]: cannot convert %T to a plain value", k, val))
+					fmt.Sprintf("settings[%q]: %s", k, reason))
 				continue
 			}
 			proj.Settings[k] = nv
@@ -82,10 +82,10 @@ func Project(state []byte) (*Projection, error) {
 			m := make(map[string]any, len(vm.Keys()))
 			for _, k := range vm.Keys() {
 				val, _ := vm.Get(k)
-				nv, ok := normalizeDecoded(val)
-				if !ok {
+				nv, reason := normalizeDecoded(val)
+				if reason != "" {
 					proj.Warnings = append(proj.Warnings,
-						fmt.Sprintf("variables[%d][%q]: cannot convert %T to a plain value", i, k, val))
+						fmt.Sprintf("variables[%d][%q]: %s", i, k, reason))
 					continue
 				}
 				m[k] = nv
@@ -305,77 +305,90 @@ func describeValue(m *crdt.YMap, key string) string {
 }
 
 // normalizeDecoded converts a value read out of the document into plain Go
-// types, so no ygo encoding leaks out of Project:
+// types, so no yjs value class leaks out of Project:
 //
 //   - int64 → int when it fits (otherwise int64)
 //   - encoding.BigInt → int64
 //   - integral float32/float64 → int when they fit, otherwise float64
 //   - []byte → its base64 string (matching encoding/json)
-//   - nested shared types (*crdt.YMap / *crdt.YArray / *crdt.YText) → their
-//     ToJSON payload, normalized recursively
+//   - shared types: YMap/YArray/YText through their ToJSON payload; XML types
+//     (YXmlFragment/YXmlElement/YXmlText) through their ToXML serialisation;
+//     results are normalized recursively
 //   - []any and map[string]any recurse
 //
-// ok is false when a shared type cannot be converted to plain values; callers
-// drop the entry and record a warning.
-func normalizeDecoded(v any) (any, bool) {
+// reason is non-empty when the value cannot be represented: a non-finite
+// float, a subdocument (*crdt.Doc), or a shared type whose serialisation
+// fails. Callers drop the entry and record a warning.
+func normalizeDecoded(v any) (any, string) {
 	switch t := v.(type) {
 	case int64:
 		if int64(int(t)) == t {
-			return int(t), true
+			return int(t), ""
 		}
-		return t, true
+		return t, ""
 	case encoding.BigInt:
-		return int64(t), true
+		return int64(t), ""
 	case float32:
 		return normalizeDecoded(float64(t))
 	case float64:
-		if n, ok := integralFloatToInt(t); ok {
-			return n, true
+		if math.IsNaN(t) || math.IsInf(t, 0) {
+			return nil, fmt.Sprintf("non-finite number %v is not JSON-representable", t)
 		}
-		return t, true
+		if n, ok := integralFloatToInt(t); ok {
+			return n, ""
+		}
+		return t, ""
 	case []byte:
-		return base64.StdEncoding.EncodeToString(t), true
+		return base64.StdEncoding.EncodeToString(t), ""
 	case *crdt.YMap:
 		return normalizeSharedJSON(t.ToJSON)
 	case *crdt.YArray:
 		return normalizeSharedJSON(t.ToJSON)
 	case *crdt.YText:
 		return normalizeSharedJSON(t.ToJSON)
+	case *crdt.YXmlFragment:
+		return t.ToXML(), ""
+	case *crdt.YXmlElement:
+		return t.ToXML(), ""
+	case *crdt.YXmlText:
+		return t.ToXML(), ""
+	case *crdt.Doc:
+		return nil, "subdocument is not convertible to a plain value"
 	case []any:
 		out := make([]any, len(t))
 		for i, e := range t {
-			ne, ok := normalizeDecoded(e)
-			if !ok {
-				return nil, false
+			ne, reason := normalizeDecoded(e)
+			if reason != "" {
+				return nil, reason
 			}
 			out[i] = ne
 		}
-		return out, true
+		return out, ""
 	case map[string]any:
 		out := make(map[string]any, len(t))
 		for k, e := range t {
-			ne, ok := normalizeDecoded(e)
-			if !ok {
-				return nil, false
+			ne, reason := normalizeDecoded(e)
+			if reason != "" {
+				return nil, reason
 			}
 			out[k] = ne
 		}
-		return out, true
+		return out, ""
 	default:
-		return v, true
+		return v, ""
 	}
 }
 
 // normalizeSharedJSON converts a nested shared type's ToJSON payload into
 // plain Go values. ygo's ToJSON unwraps nested shared types recursively.
-func normalizeSharedJSON(toJSON func() ([]byte, error)) (any, bool) {
+func normalizeSharedJSON(toJSON func() ([]byte, error)) (any, string) {
 	raw, err := toJSON()
 	if err != nil {
-		return nil, false
+		return nil, fmt.Sprintf("cannot serialize shared type: %v", err)
 	}
 	var out any
 	if err := json.Unmarshal(raw, &out); err != nil {
-		return nil, false
+		return nil, fmt.Sprintf("cannot decode shared type JSON: %v", err)
 	}
 	return normalizeDecoded(out)
 }

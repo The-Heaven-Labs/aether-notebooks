@@ -350,6 +350,31 @@ func TestSeed_RejectsInvalidProjection(t *testing.T) {
 			wantErr: "non-finite",
 		},
 		{
+			name: "shared type in settings",
+			mutate: func(p *Projection) {
+				p.Settings = map[string]any{"xml": crdt.NewYXmlElement("b")}
+			},
+			wantErr: "shared type",
+		},
+		{
+			name: "subdocument in variables",
+			mutate: func(p *Projection) {
+				p.Variables = []map[string]any{{"doc": crdt.New()}}
+			},
+			wantErr: "shared type",
+		},
+		{
+			name: "shared type in config",
+			mutate: func(p *Projection) {
+				p.Widgets[testUUID(1)] = WidgetDoc{
+					ID:     testUUID(1),
+					Type:   "table",
+					Config: map[string]any{"xml": crdt.NewYXmlText()},
+				}
+			},
+			wantErr: "shared type",
+		},
+		{
 			name: "unmarshalable variable value",
 			mutate: func(p *Projection) {
 				p.Variables = []map[string]any{{"fn": func() {}}}
@@ -489,6 +514,75 @@ func TestProject_LayoutIntegralFloats(t *testing.T) {
 	require.Equal(t, Layout{Row: 5_000_000_000, Col: 2, Width: 3, Height: 4}, got.Widgets[testUUID(1)].Layout)
 	require.Len(t, got.Warnings, 1)
 	require.Contains(t, got.Warnings[0], "is not an integer")
+}
+
+// TestProject_ConvertsXMLAndDropsSubdocs pins that the remaining yjs value
+// classes do not leak: XML values become their XML serialisation, and
+// subdocuments (which have no plain representation) are dropped with a
+// warning.
+func TestProject_ConvertsXMLAndDropsSubdocs(t *testing.T) {
+	state := buildState(t, func(txn *crdt.Transaction, meta, _ *crdt.YMap) {
+		settings := crdt.NewMapPrelim()
+
+		elem := crdt.NewYXmlElement("b")
+		elem.SetAttribute(txn, "class", "bold")
+		text := crdt.NewYXmlText()
+		text.Insert(txn, 0, "hi & bye", nil)
+		elem.InsertText(txn, 0, text)
+		settings.Set(txn, "xml_elem", elem)
+
+		bare := crdt.NewYXmlText()
+		bare.Insert(txn, 0, "plain & text", nil)
+		settings.Set(txn, "xml_text", bare)
+
+		settings.Set(txn, "subdoc", crdt.New())
+
+		meta.Set(txn, keySettings, settings)
+	})
+
+	got, err := Project(state)
+	require.NoError(t, err)
+
+	require.Equal(t, `<b class="bold">hi &amp; bye</b>`, got.Settings["xml_elem"])
+	require.Equal(t, "plain &amp; text", got.Settings["xml_text"])
+	require.NotContains(t, got.Settings, "subdoc")
+	require.Len(t, got.Warnings, 1)
+	require.Contains(t, got.Warnings[0], `settings["subdoc"]`)
+	require.Contains(t, got.Warnings[0], "subdocument")
+}
+
+// TestProject_DropsNonFiniteFloats pins that NaN/±Inf never reach the
+// projection (they are not JSON-representable and would break materialization).
+func TestProject_DropsNonFiniteFloats(t *testing.T) {
+	state := buildState(t, func(txn *crdt.Transaction, meta, _ *crdt.YMap) {
+		settings := crdt.NewMapPrelim()
+		settings.Set(txn, "nan", math.NaN())
+		settings.Set(txn, "pos_inf", math.Inf(1))
+		settings.Set(txn, "neg_inf", math.Inf(-1))
+		settings.Set(txn, "finite", 1.5)
+		meta.Set(txn, keySettings, settings)
+
+		variables := crdt.NewArrayPrelim()
+		v := crdt.NewMapPrelim()
+		v.Set(txn, "name", "threshold")
+		v.Set(txn, "default", math.Inf(1))
+		variables.PushType(txn, v)
+		meta.Set(txn, keyVariables, variables)
+	})
+
+	got, err := Project(state)
+	require.NoError(t, err)
+
+	require.Equal(t, float64(1.5), got.Settings["finite"])
+	for _, k := range []string{"nan", "pos_inf", "neg_inf"} {
+		require.NotContains(t, got.Settings, k)
+	}
+	require.Equal(t, map[string]any{"name": "threshold"}, got.Variables[0])
+
+	require.Len(t, got.Warnings, 4)
+	for _, w := range got.Warnings {
+		require.Contains(t, w, "non-finite")
+	}
 }
 
 // TestSeedProject_LargeLayoutRoundTrip proves Seed's large int layouts survive
