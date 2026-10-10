@@ -11,8 +11,25 @@ import (
 	"github.com/reearth/ygo/crdt"
 )
 
+// ErrStoreForbidden reports that a validated document store was rejected
+// because the acting user lacks the rights the store requires: dashboard edit
+// for changed state, or notebook view for an added/changed widget cell
+// reference. The internal relay PUT maps it to 403.
+var ErrStoreForbidden = errors.New("document store forbidden")
+
 // MergeAndStore merges an incoming document update onto the dashboard's stored
 // state and materializes the result, all in one transaction.
+//
+// It is MergeAndStoreValidated without a validator, for backend-originated
+// writes that were already validated by the REST/agent layers.
+func MergeAndStore(ctx context.Context, pool *pgxpool.Pool, dashboardID string, incoming []byte) error {
+	return MergeAndStoreValidated(ctx, pool, dashboardID, incoming, nil)
+}
+
+// MergeAndStoreValidated is MergeAndStore with an optional validator, used by
+// the internal relay PUT to enforce the store actor's rights inside the same
+// transaction as the merge (so no concurrent store can slip between the
+// permission decision and the write).
 //
 // incoming is the relay's full state for "dashboard:{id}" (PUT
 // /internal/dashboard-yjs/{id}). Merging with ApplyUpdateV1 instead of
@@ -32,13 +49,21 @@ import (
 // atomic on its own) and keeps a concurrent purge from deleting the row between
 // the existence check and the state upsert.
 //
+// validate, when non-nil, runs after the stored state is read (and decoded)
+// and before anything is written. It receives the merge transaction (so
+// permission checks can run on the same connection instead of acquiring a
+// second pool connection while this transaction holds one), the raw stored
+// state (nil when none), and the incoming state bytes. A non-nil return
+// aborts the store and commits nothing; ErrStoreForbidden is returned as-is
+// so callers can map it to a 403, and any other error means the store failed.
+//
 // An undecodable incoming update, or an undecodable stored state, returns an
 // error and commits nothing: corrupt bytes fail closed rather than being
 // silently replaced, and a corrupt document can never partially materialize.
 // Project-level and reference-level problems do not fail the store: bad
 // widgets are skipped with warnings (see Materialize), and every warning is
 // logged once per store.
-func MergeAndStore(ctx context.Context, pool *pgxpool.Pool, dashboardID string, incoming []byte) error {
+func MergeAndStoreValidated(ctx context.Context, pool *pgxpool.Pool, dashboardID string, incoming []byte, validate func(ctx context.Context, tx pgx.Tx, storedState, incomingState []byte) error) error {
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("merge dashboard document %s: begin: %w", dashboardID, err)
@@ -68,6 +93,13 @@ func MergeAndStore(ctx context.Context, pool *pgxpool.Pool, dashboardID string, 
 	if err != nil {
 		return fmt.Errorf("merge dashboard document %s: decode stored state: %w", dashboardID, err)
 	}
+
+	if validate != nil {
+		if err := validate(ctx, tx, stored, incoming); err != nil {
+			return err
+		}
+	}
+
 	if err := crdt.ApplyUpdateV1(doc, incoming, nil); err != nil {
 		return fmt.Errorf("merge dashboard document %s: apply incoming state: %w", dashboardID, err)
 	}

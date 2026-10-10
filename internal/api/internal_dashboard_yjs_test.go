@@ -181,6 +181,138 @@ func TestInternalDashboardYjsPutStoresAndMaterializes(t *testing.T) {
 	require.Equal(t, 1, widgetCount)
 }
 
+// TestInternalDashboardYjsPutValidatesStoreActor pins the C1 store-actor
+// validation: the internal PUT (the relay's document write path) must enforce
+// dashboard edit for any content change and notebook view for every
+// added/changed widget cell reference, while idempotent stores stay allowed
+// for read-only tokens. Cross-org dashboard IDs are indistinguishable from
+// missing ones.
+func TestInternalDashboardYjsPutValidatesStoreActor(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	ts := time.Now().UnixNano()
+
+	ownerToken := registerAndGetToken(t, srv, fmt.Sprintf("dash-yjs-actor-owner-%d@example.com", ts), "Dash Yjs Actor Org")
+	dashID := createDashWithSettings(t, srv, ownerToken, nil)
+	var orgID string
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+
+	connID := createConnector(t, srv, ownerToken)
+	nbID := createNotebook(t, srv, ownerToken, "Actor Notebook")
+	cellID := createCell(t, srv, ownerToken, nbID, "sql", "SELECT 1", connID)
+
+	// An editor with dashboard edit but no view on the notebook.
+	editorNoViewID := insertUser(t, srv, fmt.Sprintf("dash-yjs-actor-editor-%d@example.com", ts), "Editor No View")
+	addOrgMember(t, srv, orgID, editorNoViewID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", editorNoViewID, "edit")
+	editorNoViewToken := issueToken(t, editorNoViewID, orgID, "non-admin")
+
+	// An editor with both dashboard edit and notebook view.
+	editorViewID := insertUser(t, srv, fmt.Sprintf("dash-yjs-actor-editor-view-%d@example.com", ts), "Editor With View")
+	addOrgMember(t, srv, orgID, editorViewID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", editorViewID, "edit")
+	grantACL(t, srv, orgID, "notebook", nbID, "user", editorViewID, "view")
+	editorViewToken := issueToken(t, editorViewID, orgID, "non-admin")
+
+	// A view-only member.
+	viewerID := insertUser(t, srv, fmt.Sprintf("dash-yjs-actor-viewer-%d@example.com", ts), "Viewer")
+	addOrgMember(t, srv, orgID, viewerID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", viewerID, "view")
+	viewerToken := issueToken(t, viewerID, orgID, "non-admin")
+
+	// The owner stores the base document (title, no widgets).
+	base, err := dashboarddoc.Seed(dashboarddoc.Projection{Title: "Query Dash"})
+	require.NoError(t, err)
+	rec := internalDashboardDocRequest(t, srv, ownerToken, "PUT", dashID, base)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	storedBase := dashboardDocState(t, srv, dashID)
+
+	widgetID := uuid.NewString()
+	withCellWidget := func() []byte {
+		state, err := dashboarddoc.Seed(dashboarddoc.Projection{
+			Title: "Query Dash",
+			Widgets: map[string]dashboarddoc.WidgetDoc{
+				widgetID: {
+					ID:         widgetID,
+					Type:       "table",
+					Layout:     dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 4},
+					NotebookID: &nbID,
+					CellID:     &cellID,
+					Language:   "sql",
+				},
+			},
+		})
+		require.NoError(t, err)
+		return state
+	}
+
+	t.Run("editor without notebook view is forbidden", func(t *testing.T) {
+		rec := internalDashboardDocRequest(t, srv, editorNoViewToken, "PUT", dashID, withCellWidget())
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+		require.Equal(t, storedBase, dashboardDocState(t, srv, dashID),
+			"a rejected store must not change the stored state")
+		var widgetCount int
+		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM widgets WHERE dashboard_id = $1`, dashID).Scan(&widgetCount))
+		require.Zero(t, widgetCount, "a rejected store must not materialize the widget")
+	})
+
+	t.Run("editor with notebook view stores and materializes", func(t *testing.T) {
+		rec := internalDashboardDocRequest(t, srv, editorViewToken, "PUT", dashID, withCellWidget())
+		require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+
+		var (
+			gotNotebook, gotCell *string
+			widgetCount          int
+		)
+		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM widgets WHERE dashboard_id = $1`, dashID).Scan(&widgetCount))
+		require.Equal(t, 1, widgetCount)
+		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+			`SELECT notebook_id, cell_id FROM widgets WHERE id = $1`, widgetID).
+			Scan(&gotNotebook, &gotCell))
+		require.NotNil(t, gotNotebook)
+		require.Equal(t, nbID, *gotNotebook)
+		require.NotNil(t, gotCell)
+		require.Equal(t, cellID, *gotCell)
+	})
+
+	t.Run("viewer changing the title is forbidden", func(t *testing.T) {
+		viewerState, err := dashboarddoc.Seed(dashboarddoc.Projection{Title: "Viewer Edit"})
+		require.NoError(t, err)
+		rec := internalDashboardDocRequest(t, srv, viewerToken, "PUT", dashID, viewerState)
+		require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+		var title string
+		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+			`SELECT title FROM dashboards WHERE id = $1`, dashID).Scan(&title))
+		require.Equal(t, "Query Dash", title, "a rejected store must not change the title")
+	})
+
+	t.Run("viewer idempotent store is allowed", func(t *testing.T) {
+		stored := dashboardDocState(t, srv, dashID)
+		rec := internalDashboardDocRequest(t, srv, viewerToken, "PUT", dashID, stored)
+		require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	})
+
+	t.Run("cross-org dashboard id is 404", func(t *testing.T) {
+		otherToken := registerAndGetToken(t, srv,
+			fmt.Sprintf("dash-yjs-actor-other-%d@example.com", ts), "Dash Yjs Actor Other Org")
+		otherDashID := createDashWithSettings(t, srv, otherToken, nil)
+
+		rec := internalDashboardDocRequest(t, srv, ownerToken, "PUT", otherDashID, base)
+		require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+		var count int
+		require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+			`SELECT COUNT(*) FROM dashboard_yjs_documents WHERE dashboard_id = $1`, otherDashID).Scan(&count))
+		require.Zero(t, count, "a cross-org store must not write state")
+	})
+}
+
 // TestInternalDashboardYjsMissingTrashedAndEmptyBody pins the explicit error
 // answers: unknown/trashed dashboards are 404 (never a silent seed or store),
 // and an empty PUT body is a 400.

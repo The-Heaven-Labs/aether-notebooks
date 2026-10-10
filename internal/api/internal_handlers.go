@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"io"
 	"log/slog"
@@ -153,17 +154,19 @@ func (s *Server) handleInternalDashboardYjsGet(w http.ResponseWriter, r *http.Re
 }
 
 // @Summary Update dashboard Yjs document
-// @Description Merges and stores the Yjs document state for a dashboard (internal relay endpoint)
+// @Description Merges and stores the Yjs document state for a dashboard, validating the store actor's dashboard edit / notebook view rights (internal relay endpoint)
 // @Tags internal
 // @Accept octet-stream
 // @Param dashboard_id path string true "Dashboard ID"
 // @Success 204 {string} string
 // @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
 // @Failure 404 {object} map[string]string
 // @Failure 500 {object} map[string]string
 // @Router /internal/dashboard-yjs/{dashboard_id} [put]
 func (s *Server) handleInternalDashboardYjsPut(w http.ResponseWriter, r *http.Request) {
-	if _, ok := s.requireInternalToken(w, r); !ok {
+	claims, ok := s.requireInternalToken(w, r)
+	if !ok {
 		return
 	}
 
@@ -182,11 +185,13 @@ func (s *Server) handleInternalDashboardYjsPut(w http.ResponseWriter, r *http.Re
 
 	// MergeAndStore treats a missing or trashed dashboard as a silent no-op
 	// (so a stale relay can never resurrect one); the endpoint must answer 404
-	// explicitly, so check liveness first.
+	// explicitly, so check liveness first. The org filter makes a cross-org
+	// dashboard ID indistinguishable from a missing one, exactly like the
+	// authorize endpoint.
 	var locked string
 	err = s.db.Pool.QueryRow(ctx,
-		`SELECT id FROM dashboards WHERE id = $1 AND deleted_at IS NULL`,
-		dashID).Scan(&locked)
+		`SELECT id FROM dashboards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		dashID, claims.OrgID).Scan(&locked)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "dashboard not found")
 		return
@@ -196,7 +201,19 @@ func (s *Server) handleInternalDashboardYjsPut(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	if err := dashboarddoc.MergeAndStore(ctx, s.db.Pool, dashID, state); err != nil {
+	// The validator runs inside the merge transaction: the actor must hold
+	// dashboard edit for any content change and notebook view for every
+	// added/changed widget cell reference. A denied store is a 403 the relay
+	// abandons (no retry loop); idempotent stores skip the checks so a viewer
+	// token can flush an unchanged document.
+	validate := func(vctx context.Context, tx pgx.Tx, stored, incoming []byte) error {
+		return s.validateDashboardDocStore(vctx, tx, claims, dashID, stored, incoming)
+	}
+	if err := dashboarddoc.MergeAndStoreValidated(ctx, s.db.Pool, dashID, state, validate); err != nil {
+		if errors.Is(err, dashboarddoc.ErrStoreForbidden) {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 		slog.Error("internal dashboard yjs: merge and store", "dashboard_id", dashID, "error", err)
 		writeError(w, http.StatusInternalServerError, "store failed")
 		return

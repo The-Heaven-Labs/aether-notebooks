@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -283,6 +284,87 @@ func (s *Server) loadOrSeedDashboardDoc(ctx context.Context, orgID, dashID strin
 		return nil, fmt.Errorf("load dashboard document %s: commit seed: %w", dashID, err)
 	}
 	return winner, nil
+}
+
+// validateDashboardDocStore enforces the store actor's rights on a relay
+// document store. It runs inside the merge transaction (see
+// dashboarddoc.MergeAndStoreValidated), so the stored state it compares
+// against cannot change between the check and the write.
+//
+// The stored and incoming states are projected and compared:
+//
+//   - Identical content (an idempotent store: a fan-in re-store, or a
+//     read-only viewer flushing an unchanged document on unload) skips every
+//     check, so a viewer token can always store state that changes nothing.
+//   - Any content difference (title, settings, variables, widgets) requires
+//     dashboard edit, so a view-only connection can never persist an edit.
+//   - Every widget whose (notebook_id, cell_id) pair is added or changed
+//     relative to the stored state additionally requires notebook view on the
+//     new notebook, so the document write path can never surface a cell the
+//     actor could not already read through the REST API (the C1 IDOR: the
+//     materializer then serves widget-referenced cell outputs through GET
+//     /dashboards/{id}).
+//
+// A denied check returns dashboarddoc.ErrStoreForbidden, which the internal
+// PUT maps to 403. The materializer independently scopes references to the
+// dashboard's org and skips soft-deleted rows, so cross-org or trashed
+// references are dropped with a warning even if they reach materialization.
+//
+// The permission checks run on the merge transaction's connection
+// (checkPermissionQ), not the pool: the transaction is already holding a pool
+// connection, and acquiring another from inside it could stall a saturated
+// pool behind transactions waiting for one.
+func (s *Server) validateDashboardDocStore(ctx context.Context, tx pgx.Tx, claims *auth.Claims, dashID string, stored, incoming []byte) error {
+	storedProj, err := dashboarddoc.Project(stored)
+	if err != nil {
+		return fmt.Errorf("project stored state: %w", err)
+	}
+	incomingProj, err := dashboarddoc.Project(incoming)
+	if err != nil {
+		return fmt.Errorf("project incoming state: %w", err)
+	}
+	if dashboarddoc.ProjectionsEqual(storedProj, incomingProj) {
+		return nil
+	}
+
+	canEdit, err := checkPermissionQ(ctx, tx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+	if err != nil {
+		return fmt.Errorf("check dashboard edit: %w", err)
+	}
+	if !canEdit {
+		return dashboarddoc.ErrStoreForbidden
+	}
+
+	for id, w := range incomingProj.Widgets {
+		if w.NotebookID == nil {
+			continue
+		}
+		if prev, ok := storedProj.Widgets[id]; ok && widgetRefPairEqual(prev, w) {
+			continue
+		}
+		canView, err := checkPermissionQ(ctx, tx, claims.UserID, claims.OrgID, claims.Role, "notebook", *w.NotebookID, "view")
+		if err != nil {
+			return fmt.Errorf("check notebook view for widget %s: %w", id, err)
+		}
+		if !canView {
+			return dashboarddoc.ErrStoreForbidden
+		}
+	}
+	return nil
+}
+
+// widgetRefPairEqual reports whether two widgets carry the same
+// (notebook_id, cell_id) reference pair.
+func widgetRefPairEqual(a, b dashboarddoc.WidgetDoc) bool {
+	return stringPtrEqual(a.NotebookID, b.NotebookID) && stringPtrEqual(a.CellID, b.CellID)
+}
+
+// stringPtrEqual compares two optional strings by value.
+func stringPtrEqual(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }
 
 // storeAndMaterializeDashboardDoc persists a backend-originated document

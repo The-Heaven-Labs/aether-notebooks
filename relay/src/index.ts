@@ -201,11 +201,13 @@ const server = new Server<RelayContext>({
     const disposition = storeResponseDisposition(res.status)
     if (disposition === 'ok') return
     if (disposition === 'terminal') {
-      // The notebook/dashboard is trashed or gone: no retry can succeed, and
+      // Terminal rejection: the notebook/dashboard is trashed or gone (404),
+      // or the store was rejected on its merits (400 malformed body, 403 the
+      // store actor lacks the required rights). No retry can succeed, and
       // throwing would keep the document resident forever because the pinned
       // server treats every non-SkipFurtherHooksError throw as "stay in
       // memory". Dashboard invalidation unloads the document separately.
-      console.warn(`[relay] store ${route.kind} document "${route.id}" is gone (status ${res.status}); abandoning store`)
+      console.warn(`[relay] store ${route.kind} document "${route.id}" rejected (status ${res.status}); abandoning store`)
       return
     }
     // Throw so Hocuspocus keeps the document in memory and retries on the

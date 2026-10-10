@@ -536,6 +536,165 @@ func TestMergeAndStore_OneBadWidgetDoesNotAbortStore(t *testing.T) {
 		"unrelated edits in the same store persist")
 }
 
+// insertNotebookCell inserts one notebook and one cell into orgID (owned by
+// userID) and returns their IDs. The notebook/cell rows are cleaned up by the
+// org cascade when the org is deleted.
+func insertNotebookCell(t *testing.T, db *database.DB, orgID, userID string) (notebookID, cellID string) {
+	t.Helper()
+	notebookID = uuid.NewString()
+	cellID = uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(),
+		`INSERT INTO notebooks (id, org_id, title, created_by) VALUES ($1, $2, 'Fixture Notebook', $3)`,
+		notebookID, orgID, userID)
+	require.NoError(t, err)
+	_, err = db.Pool.Exec(context.Background(),
+		`INSERT INTO cells (id, notebook_id, position, type, language) VALUES ($1, $2, 0, 'code', 'sql')`,
+		cellID, notebookID)
+	require.NoError(t, err)
+	return notebookID, cellID
+}
+
+// TestMaterialize_ScopesReferencesToDashboardOrg pins the C1 fix: a widget
+// referencing another org's connector/notebook/cell, or a same-org cell whose
+// notebook does not match the widget's notebook_id, is treated as dangling —
+// skipped with a warning and never materialized — so the derived rows can
+// never surface another org's data (or another notebook's cell) through the
+// dashboard read paths.
+func TestMaterialize_ScopesReferencesToDashboardOrg(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	// A second org with its own connector, notebook and cell.
+	otherOrgID := uuid.NewString()
+	otherConnectorID := uuid.NewString()
+	_, err := db.Pool.Exec(ctx,
+		`INSERT INTO orgs (id, name, slug) VALUES ($1, 'Dashboarddoc Other Org', $2)`,
+		otherOrgID, "ddoc-other-"+otherOrgID[:8])
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM orgs WHERE id = $1`, otherOrgID)
+	})
+	_, err = db.Pool.Exec(ctx,
+		`INSERT INTO connectors (id, org_id, name, type, config_encrypted) VALUES ($1, $2, 'Other Connector', 'postgres', '\x00')`,
+		otherConnectorID, otherOrgID)
+	require.NoError(t, err)
+	otherNotebookID, otherCellID := insertNotebookCell(t, db, otherOrgID, f.userID)
+
+	// Two same-org notebooks: the cell of one must not materialize through a
+	// widget that names the other.
+	notebookA, cellA := insertNotebookCell(t, db, f.orgID, f.userID)
+	_, cellB := insertNotebookCell(t, db, f.orgID, f.userID)
+
+	query := "SELECT 1"
+	proj := &Projection{
+		Title: "Scoped",
+		Widgets: map[string]WidgetDoc{
+			testUUID(1): {ID: testUUID(1), Type: "table", ConnectorID: &otherConnectorID, Query: &query, Language: "sql"},
+			testUUID(2): {ID: testUUID(2), Type: "table", NotebookID: &otherNotebookID, CellID: &otherCellID, Language: "sql"},
+			testUUID(3): {ID: testUUID(3), Type: "table", NotebookID: &notebookA, CellID: &cellB, Language: "sql"},
+			testUUID(4): {ID: testUUID(4), Type: "table", ConnectorID: &f.connectorID, Query: &query, Language: "sql"},
+			testUUID(5): {ID: testUUID(5), Type: "table", NotebookID: &notebookA, CellID: &cellA, Language: "sql"},
+		},
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	warnings, err := Materialize(ctx, tx, f.dashID, proj)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	require.Len(t, warnings, 3, "cross-org and mismatched-pair widgets must warn")
+	require.Contains(t, warnings[0], testUUID(1))
+	require.Contains(t, warnings[0], "connector_id "+otherConnectorID+" does not exist")
+	require.Contains(t, warnings[1], testUUID(2))
+	require.Contains(t, warnings[1], "notebook_id "+otherNotebookID+" does not exist")
+	require.Contains(t, warnings[1], "cell_id "+otherCellID+" does not exist")
+	require.Contains(t, warnings[2], testUUID(3))
+	require.Contains(t, warnings[2], "cell_id "+cellB+" does not belong to notebook_id "+notebookA)
+
+	after := loadStoreTestWidgets(t, db, f.dashID)
+	require.Len(t, after, 2)
+	require.Contains(t, after, testUUID(4), "the same-org connector widget survives")
+	require.Contains(t, after, testUUID(5), "the same-org notebook/cell pair survives")
+}
+
+// TestMaterialize_SoftDeletedReferencesAreDangling pins that soft-deleted
+// connectors and notebooks (deleted_at IS NOT NULL) are skipped like missing
+// references: a trashed row must never be resurrected through a widget's
+// derived row.
+func TestMaterialize_SoftDeletedReferencesAreDangling(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	notebookID, cellID := insertNotebookCell(t, db, f.orgID, f.userID)
+	_, err := db.Pool.Exec(ctx, `UPDATE connectors SET deleted_at = NOW() WHERE id = $1`, f.connectorID)
+	require.NoError(t, err)
+	_, err = db.Pool.Exec(ctx, `UPDATE notebooks SET deleted_at = NOW() WHERE id = $1`, notebookID)
+	require.NoError(t, err)
+
+	query := "SELECT 1"
+	proj := &Projection{
+		Title: "Soft Deleted",
+		Widgets: map[string]WidgetDoc{
+			testUUID(1): {ID: testUUID(1), Type: "table", ConnectorID: &f.connectorID, Query: &query, Language: "sql"},
+			testUUID(2): {ID: testUUID(2), Type: "table", NotebookID: &notebookID, CellID: &cellID, Language: "sql"},
+		},
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(ctx)
+	warnings, err := Materialize(ctx, tx, f.dashID, proj)
+	require.NoError(t, err)
+	require.NoError(t, tx.Commit(ctx))
+
+	require.Len(t, warnings, 2)
+	require.Contains(t, warnings[0], "connector_id "+f.connectorID+" does not exist")
+	require.Contains(t, warnings[1], "notebook_id "+notebookID+" does not exist")
+	require.Empty(t, loadStoreTestWidgets(t, db, f.dashID))
+}
+
+// TestMergeAndStore_ScopesCrossOrgReferencesEndToEnd pins the same C1 fix
+// through the full store path: a document carrying a widget for another org's
+// notebook/cell stores and materializes its valid widgets, while the cross-org
+// widget is skipped and never gains a derived row.
+func TestMergeAndStore_ScopesCrossOrgReferencesEndToEnd(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	otherOrgID := uuid.NewString()
+	_, err := db.Pool.Exec(ctx,
+		`INSERT INTO orgs (id, name, slug) VALUES ($1, 'Dashboarddoc Cross Org', $2)`,
+		otherOrgID, "ddoc-cross-"+otherOrgID[:8])
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_, _ = db.Pool.Exec(context.Background(), `DELETE FROM orgs WHERE id = $1`, otherOrgID)
+	})
+	otherNotebookID, otherCellID := insertNotebookCell(t, db, otherOrgID, f.userID)
+
+	base := storeTestBaseState(t, f.connectorID)
+	state, err := UpsertWidget(base, WidgetDoc{
+		ID:         testUUID(3),
+		Type:       "table",
+		Layout:     Layout{Row: 4, Col: 0, Width: 6, Height: 4},
+		NotebookID: &otherNotebookID,
+		CellID:     &otherCellID,
+		Language:   "sql",
+	})
+	require.NoError(t, err)
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, state))
+
+	after := loadStoreTestWidgets(t, db, f.dashID)
+	require.Len(t, after, 2, "only the same-org widgets materialize")
+	require.NotContains(t, after, testUUID(3), "the cross-org widget must never gain a row")
+	require.Contains(t, after, testUUID(1))
+	require.Contains(t, after, testUUID(2))
+}
+
 // TestMaterialize_SkipsDanglingWidgetReferences pins that missing (or
 // malformed) connector/notebook/cell references skip only their widget, with
 // a materialization warning, instead of failing the FK insert.
@@ -721,6 +880,47 @@ func TestMergeAndStore_IdempotentRestore(t *testing.T) {
 		require.Equal(t, before.Layout, got.Layout)
 		require.Equal(t, before.Config, got.Config)
 	}
+}
+
+// TestMergeAndStoreValidated_ValidatorAbortsWithoutWriting pins the validated
+// store contract: the validator sees the stored state read under the row lock
+// and the incoming bytes, and a non-nil return aborts the store with nothing
+// written or materialized.
+func TestMergeAndStoreValidated_ValidatorAbortsWithoutWriting(t *testing.T) {
+	db := setupStoreTestDB(t)
+	f := seedStoreTestFixture(t, db)
+	ctx := context.Background()
+
+	base := storeTestBaseState(t, f.connectorID)
+	require.NoError(t, MergeAndStore(ctx, db.Pool, f.dashID, base))
+	storedBefore := dashboardDocState(t, db, f.dashID)
+	widgetsBefore := loadStoreTestWidgets(t, db, f.dashID)
+
+	title := "Rejected"
+	state, err := UpdateMeta(base, &title, nil, nil)
+	require.NoError(t, err)
+
+	var (
+		gotStored   []byte
+		gotIncoming []byte
+		ran         bool
+	)
+	err = MergeAndStoreValidated(ctx, db.Pool, f.dashID, state,
+		func(_ context.Context, _ pgx.Tx, stored, incoming []byte) error {
+			ran = true
+			gotStored = stored
+			gotIncoming = incoming
+			return ErrStoreForbidden
+		})
+	require.ErrorIs(t, err, ErrStoreForbidden)
+	require.True(t, ran)
+	require.Equal(t, storedBefore, gotStored, "the validator must see the stored state read under the lock")
+	require.Equal(t, state, gotIncoming)
+
+	require.Equal(t, storedBefore, dashboardDocState(t, db, f.dashID),
+		"a rejected store must not change the stored state")
+	require.Equal(t, widgetsBefore, loadStoreTestWidgets(t, db, f.dashID))
+	require.Equal(t, "Base Title", dashboardTitle(t, db, f.dashID))
 }
 
 // TestMergeAndStore_CorruptStoredStateErrors pins the fail-closed decision:

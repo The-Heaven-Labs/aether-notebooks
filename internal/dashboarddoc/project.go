@@ -1,6 +1,7 @@
 package dashboarddoc
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -134,6 +135,48 @@ func Project(state []byte) (*Projection, error) {
 	}
 
 	return proj, nil
+}
+
+// projectionContent is the content-only view of a Projection used by
+// ProjectionsEqual. Warnings are deliberately excluded: they describe entries
+// that were skipped and are not document content.
+type projectionContent struct {
+	Title     string
+	Settings  map[string]any
+	Variables []map[string]any
+	Widgets   map[string]WidgetDoc
+}
+
+// ProjectionsEqual reports whether two projections carry the same dashboard
+// content (title, settings, variables, widgets), ignoring warnings.
+//
+// Values are compared through their canonical JSON encoding (map keys sorted,
+// numbers in JSON's own form), so numeric type differences between encodings
+// of the same value (int64 vs float64) do not count as changes. Content that
+// cannot be encoded is conservatively treated as different, so callers that
+// gate writes on this comparison fail closed. Both sides are expected to come
+// from Project (or Seed of a Projection), which guarantees the JSON-domain
+// values this comparison relies on.
+func ProjectionsEqual(a, b *Projection) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	ja, errA := json.Marshal(projectionContent{
+		Title:     a.Title,
+		Settings:  a.Settings,
+		Variables: a.Variables,
+		Widgets:   a.Widgets,
+	})
+	jb, errB := json.Marshal(projectionContent{
+		Title:     b.Title,
+		Settings:  b.Settings,
+		Variables: b.Variables,
+		Widgets:   b.Widgets,
+	})
+	if errA != nil || errB != nil {
+		return false
+	}
+	return bytes.Equal(ja, jb)
 }
 
 // canonicalWidgetID parses id as a UUID and returns its canonical lowercase

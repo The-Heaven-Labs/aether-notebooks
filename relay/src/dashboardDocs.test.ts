@@ -94,6 +94,11 @@ test('store 404 is terminal (no retry for a trashed or deleted document)', () =>
   assert.equal(storeResponseDisposition(404), 'terminal')
 })
 
+test('store 400/403 are terminal (rejected stores must not retry forever)', () => {
+  assert.equal(storeResponseDisposition(400), 'terminal')
+  assert.equal(storeResponseDisposition(403), 'terminal')
+})
+
 test('store 401/500/502 failures must throw so the doc stays in memory', () => {
   assert.equal(storeResponseDisposition(401), 'retry')
   assert.equal(storeResponseDisposition(500), 'retry')

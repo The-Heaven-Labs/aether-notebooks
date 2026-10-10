@@ -108,16 +108,21 @@ export type StoreResponseDisposition = 'ok' | 'terminal' | 'retry'
  * - 404: the notebook/dashboard row is gone or trashed, so no retry can ever
  *   succeed; the store is abandoned (terminal) and invalidation/unload drops
  *   the document separately.
+ * - 400/403: the store was rejected on its merits (a malformed body, or the
+ *   store actor lacks dashboard edit / notebook view). Retrying the same
+ *   bytes can only fail again, so the store is abandoned (terminal) and the
+ *   rejection is logged; the document unloads with its last synced state.
  * - anything else (401, 5xx, ...): uncertain or transient. The hook must
  *   throw so Hocuspocus keeps the document in memory instead of unloading it
  *   ("Document stays in memory to avoid data loss" in storeDocumentHooks).
- *   Throwing is deliberately not used for 404: the pinned server treats every
- *   non-SkipFurtherHooksError throw identically (keep in memory), which would
- *   turn a terminal 404 into an endless resident document.
+ *   Throwing is deliberately not used for terminal statuses: the pinned
+ *   server treats every non-SkipFurtherHooksError throw identically (keep in
+ *   memory), which would turn a terminal 403/404 into an endless resident
+ *   document.
  */
 export function storeResponseDisposition(status: number): StoreResponseDisposition {
   if (status >= 200 && status < 300) return 'ok'
-  if (status === 404) return 'terminal'
+  if (status === 400 || status === 403 || status === 404) return 'terminal'
   return 'retry'
 }
 

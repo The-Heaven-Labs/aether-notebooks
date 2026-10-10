@@ -43,8 +43,14 @@ import (
 //
 // Per-widget isolation: widgets whose connector/notebook/cell references do
 // not exist (or are not UUIDs) are skipped with a warning instead of aborting
-// the store on an FK violation. The diff then deletes the skipped widget's
-// derived row, so a widget that is invalid in the document loses its
+// the store on an FK violation. References are scoped to the dashboard's org
+// and exclude soft-deleted rows: a document can never materialize a widget
+// pointing at another org's data or at a trashed connector/notebook, so the
+// derived rows can never become a cross-org read surface. A cell widget's
+// (notebook_id, cell_id) pair must also resolve to that cell inside the named
+// notebook, mirroring the REST path's pair validation; a mismatched pair is
+// skipped like any other dangling reference. The diff then deletes the skipped
+// widget's derived row, so a widget that is invalid in the document loses its
 // materialized row until the document entry is valid again. Likewise, widgets
 // that failed Project validation are absent from the projection and their
 // rows are removed.
@@ -83,14 +89,15 @@ func Materialize(ctx context.Context, tx pgx.Tx, dashboardID string, proj *Proje
 
 	// Liveness (and current content, for guard 2) comes first so a missing or
 	// trashed dashboard is a strict no-op even for a projection the guards
-	// below would reject.
+	// below would reject. org_id scopes the reference checks below.
 	var currentTitle string
 	var currentSettings []byte
 	var currentWidgets int
+	var orgID string
 	err = tx.QueryRow(ctx, `
-		SELECT d.title, d.settings, (SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id = d.id)
+		SELECT d.title, d.settings, d.org_id, (SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id = d.id)
 		FROM dashboards d WHERE d.id = $1 AND d.deleted_at IS NULL`,
-		dashboardID).Scan(&currentTitle, &currentSettings, &currentWidgets)
+		dashboardID).Scan(&currentTitle, &currentSettings, &orgID, &currentWidgets)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -151,7 +158,7 @@ func Materialize(ctx context.Context, tx pgx.Tx, dashboardID string, proj *Proje
 		return nil, nil
 	}
 
-	existing, err := widgetReferencesExist(ctx, tx, proj.Widgets)
+	existing, cellNotebooks, err := widgetReferencesExist(ctx, tx, orgID, proj.Widgets)
 	if err != nil {
 		return nil, fmt.Errorf("materialize dashboard %s: validate widget references: %w", dashboardID, err)
 	}
@@ -168,7 +175,7 @@ func Materialize(ctx context.Context, tx pgx.Tx, dashboardID string, proj *Proje
 	ids := make([]string, 0, len(widgetIDs))
 	for _, id := range widgetIDs {
 		w := proj.Widgets[id]
-		if missing := danglingWidgetReferences(w, existing); len(missing) > 0 {
+		if missing := danglingWidgetReferences(w, existing, cellNotebooks); len(missing) > 0 {
 			warnings = append(warnings, fmt.Sprintf("widget %s: %s", id, strings.Join(missing, "; ")))
 			continue
 		}
@@ -225,10 +232,14 @@ func Materialize(ctx context.Context, tx pgx.Tx, dashboardID string, proj *Proje
 }
 
 // widgetReferencesExist returns the set of existing (kind, canonical UUID)
-// pairs among the widgets' connector/notebook/cell references, in one query.
-// References that do not parse as UUIDs are never queried and therefore never
-// reported as existing.
-func widgetReferencesExist(ctx context.Context, tx pgx.Tx, widgets map[string]WidgetDoc) (map[string]bool, error) {
+// pairs among the widgets' connector/notebook/cell references, in one query,
+// plus the canonical notebook UUID of each existing cell. References are
+// scoped to the dashboard's org and exclude soft-deleted connectors and
+// notebooks, so the materializer can never write a derived row that points at
+// another org's data or at a trashed row (which the REST read paths would
+// otherwise serve). References that do not parse as UUIDs are never queried
+// and therefore never reported as existing.
+func widgetReferencesExist(ctx context.Context, tx pgx.Tx, orgID string, widgets map[string]WidgetDoc) (map[string]bool, map[string]string, error) {
 	connectorIDs := map[string]bool{}
 	notebookIDs := map[string]bool{}
 	cellIDs := map[string]bool{}
@@ -247,36 +258,50 @@ func widgetReferencesExist(ctx context.Context, tx pgx.Tx, widgets map[string]Wi
 	}
 
 	existing := make(map[string]bool, len(connectorIDs)+len(notebookIDs)+len(cellIDs))
+	cellNotebooks := make(map[string]string, len(cellIDs))
 	if len(connectorIDs) == 0 && len(notebookIDs) == 0 && len(cellIDs) == 0 {
-		return existing, nil
+		return existing, cellNotebooks, nil
 	}
 	rows, err := tx.Query(ctx, `
-		SELECT 'connector', id::text FROM connectors WHERE id = ANY($1::uuid[])
+		SELECT 'connector', id::text, NULL::text FROM connectors
+		 WHERE id = ANY($1::uuid[]) AND org_id = $4 AND deleted_at IS NULL
 		UNION ALL
-		SELECT 'notebook', id::text FROM notebooks WHERE id = ANY($2::uuid[])
+		SELECT 'notebook', id::text, NULL::text FROM notebooks
+		 WHERE id = ANY($2::uuid[]) AND org_id = $4 AND deleted_at IS NULL
 		UNION ALL
-		SELECT 'cell', id::text FROM cells WHERE id = ANY($3::uuid[])`,
-		uuidKeys(connectorIDs), uuidKeys(notebookIDs), uuidKeys(cellIDs))
+		SELECT 'cell', c.id::text, c.notebook_id::text FROM cells c
+		 JOIN notebooks n ON n.id = c.notebook_id
+		 WHERE c.id = ANY($3::uuid[]) AND n.org_id = $4 AND n.deleted_at IS NULL`,
+		uuidKeys(connectorIDs), uuidKeys(notebookIDs), uuidKeys(cellIDs), orgID)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var kind, id string
-		if err := rows.Scan(&kind, &id); err != nil {
-			return nil, err
+		var cellNotebook *string
+		if err := rows.Scan(&kind, &id, &cellNotebook); err != nil {
+			return nil, nil, err
 		}
 		existing[refKey(kind, id)] = true
+		if kind == "cell" && cellNotebook != nil {
+			cellNotebooks[id] = *cellNotebook
+		}
 	}
 	if err := rows.Err(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return existing, nil
+	return existing, cellNotebooks, nil
 }
 
 // danglingWidgetReferences returns the human-readable list of a widget's
-// references that are not valid UUIDs or do not exist.
-func danglingWidgetReferences(w WidgetDoc, existing map[string]bool) []string {
+// references that are not valid UUIDs, do not exist, or are not accessible
+// from the dashboard's org (missing, another org's, or soft-deleted rows all
+// count as "does not exist"). cellNotebooks maps each existing cell to its
+// canonical notebook UUID, so a cell widget's (notebook_id, cell_id) pair can
+// be required to resolve to that cell inside the named notebook, matching the
+// REST path's pair validation.
+func danglingWidgetReferences(w WidgetDoc, existing map[string]bool, cellNotebooks map[string]string) []string {
 	var missing []string
 	check := func(kind string, ref *string) {
 		if ref == nil {
@@ -294,6 +319,17 @@ func danglingWidgetReferences(w WidgetDoc, existing map[string]bool) []string {
 	check("connector", w.ConnectorID)
 	check("notebook", w.NotebookID)
 	check("cell", w.CellID)
+
+	if w.CellID != nil && w.NotebookID != nil {
+		cellUUID, cellErr := uuid.Parse(*w.CellID)
+		notebookUUID, notebookErr := uuid.Parse(*w.NotebookID)
+		if cellErr == nil && notebookErr == nil {
+			if got, ok := cellNotebooks[cellUUID.String()]; ok && got != notebookUUID.String() {
+				missing = append(missing, fmt.Sprintf(
+					"cell_id %s does not belong to notebook_id %s", cellUUID.String(), notebookUUID.String()))
+			}
+		}
+	}
 	return missing
 }
 
