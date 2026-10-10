@@ -54,6 +54,46 @@ func writeConnectorRefError(w http.ResponseWriter, err error) {
 	writeError(w, http.StatusInternalServerError, "connector lookup failed")
 }
 
+// errDashboardCellNotFound reports that a widget write referenced a
+// notebook/cell pair that does not resolve to a real cell. REST handlers
+// translate it into a 404 "cell not found".
+var errDashboardCellNotFound = errors.New("cell not found")
+
+// validateWidgetCellRef rejects widget writes whose notebook/cell pair does
+// not resolve to a cell in that notebook. The document store does not check
+// reference existence, and the materializer skips widgets with dangling
+// references (deleting their derived rows), so without this check a success
+// response would commit a phantom widget to the document that never
+// materializes.
+func (s *Server) validateWidgetCellRef(ctx context.Context, notebookID, cellID string) error {
+	if _, err := uuid.Parse(notebookID); err != nil {
+		return errDashboardCellNotFound
+	}
+	if _, err := uuid.Parse(cellID); err != nil {
+		return errDashboardCellNotFound
+	}
+	var exists bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM cells WHERE id = $1 AND notebook_id = $2)`,
+		cellID, notebookID).Scan(&exists); err != nil {
+		return fmt.Errorf("check cell reference: %w", err)
+	}
+	if !exists {
+		return errDashboardCellNotFound
+	}
+	return nil
+}
+
+// writeCellRefError maps a validateWidgetCellRef failure onto an HTTP
+// response: 404 for a missing reference, 500 otherwise.
+func writeCellRefError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errDashboardCellNotFound) {
+		writeError(w, http.StatusNotFound, "cell not found")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "cell lookup failed")
+}
+
 // dashboardDocQuerier is the read surface shared by *pgxpool.Pool and pgx.Tx,
 // so the projection builder can run standalone or inside the transaction that
 // holds the dashboard's FOR UPDATE lock.

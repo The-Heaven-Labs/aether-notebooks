@@ -614,6 +614,18 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A dangling cell reference must fail the request: the document store
+	// accepts the pair, but the materializer skips the widget (deleting its
+	// derived row), so a success response would commit a phantom widget that
+	// never materializes. The notebook view check above already established
+	// the notebook is in the caller's org.
+	if req.NotebookID != nil && req.CellID != nil {
+		if err := s.validateWidgetCellRef(ctx, *req.NotebookID, *req.CellID); err != nil {
+			writeCellRefError(w, err)
+			return
+		}
+	}
+
 	// A dangling connector reference must fail the request: the document
 	// store accepts it, but the materializer skips the widget (deleting its
 	// derived row), so a success response would silently drop it.
@@ -824,6 +836,17 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		existing.Language = *req.Language
 	}
 
+	// A merged notebook/cell pair (the request has no ref fields, so it
+	// comes from the existing widget) must still resolve to a real cell: the
+	// materializer would otherwise skip the widget and delete its derived
+	// row while the document keeps it.
+	if existing.NotebookID != nil && existing.CellID != nil {
+		if err := s.validateWidgetCellRef(r.Context(), *existing.NotebookID, *existing.CellID); err != nil {
+			writeCellRefError(w, err)
+			return
+		}
+	}
+
 	// Enforce the source invariant on the merged result before the document
 	// write: a connector widget without a query or with a notebook/cell link
 	// cannot be materialized (the row would be dropped, or the write would
@@ -882,6 +905,16 @@ func (s *Server) handleDeleteWidget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusForbidden, "you don't have permission to edit this dashboard")
 		return
 	}
+
+	// Path IDs are canonicalized before any lookup, matching update and
+	// convert: a non-UUID path can never address a widget, so it is a 404
+	// rather than a document-store parse error.
+	widgetUUID, err := uuid.Parse(widgetID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	widgetID = widgetUUID.String()
 
 	state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
 	if errors.Is(err, errDashboardDocNotFound) {

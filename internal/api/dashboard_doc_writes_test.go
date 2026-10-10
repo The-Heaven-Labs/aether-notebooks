@@ -542,3 +542,120 @@ func TestDashboardUpdateOnTrashedDashboardIs404(t *testing.T) {
 		`SELECT title FROM dashboards WHERE id = $1`, dashID).Scan(&title))
 	require.Equal(t, "Query Dash", title)
 }
+
+// TestWidgetWriteRejectsDanglingCellRef pins cell-pair validation on widget
+// writes: a notebook_id/cell_id pair that does not resolve to a real cell is
+// a 404 before the document write, so no phantom widget is committed to the
+// document (the materializer would skip it and delete its derived row). Also
+// pins the delete path's UUID parse: a non-UUID widget ID is a 404, not a
+// store parse error.
+func TestWidgetWriteRejectsDanglingCellRef(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	token := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-doc-cell-ref-%d@example.com", time.Now().UnixNano()), "Dash Doc Cell Ref Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+
+	// A real widget first: it seeds the document and gives the failed writes
+	// something to leave untouched.
+	widget := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"connector_id": connID,
+		"query":        "SELECT 1",
+		"type":         "table",
+		"layout":       map[string]int{"row": 0, "col": 0, "width": 6, "height": 6},
+	})
+	widgetID := widget["id"].(string)
+	nbID := createNotebook(t, srv, token, "Dangling Cell NB")
+
+	countWidgets := func() int {
+		t.Helper()
+		var count int
+		require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT COUNT(*) FROM widgets WHERE dashboard_id = $1`, dashID).Scan(&count))
+		return count
+	}
+
+	t.Run("add with dangling cell", func(t *testing.T) {
+		before := dashboardDocState(t, srv, dashID)
+		rec := postWidgetRaw(t, srv, token, dashID, map[string]any{
+			"notebook_id": nbID,
+			"cell_id":     uuid.NewString(),
+			"type":        "table",
+			"layout":      map[string]int{"row": 6, "col": 0, "width": 6, "height": 6},
+		})
+		require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "cell not found")
+
+		// No row and no document mutation: the phantom widget was never
+		// committed.
+		require.Equal(t, 1, countWidgets())
+		require.Equal(t, before, dashboardDocState(t, srv, dashID))
+		proj := projectDashboardDoc(t, srv, dashID)
+		require.Len(t, proj.Widgets, 1)
+		require.Contains(t, proj.Widgets, widgetID)
+	})
+
+	t.Run("delete with non-UUID path", func(t *testing.T) {
+		before := dashboardDocState(t, srv, dashID)
+		req := httptest.NewRequest("DELETE", "/api/v1/dashboards/"+dashID+"/widgets/not-a-uuid", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "widget not found")
+		require.Equal(t, 1, countWidgets())
+		require.Equal(t, before, dashboardDocState(t, srv, dashID))
+	})
+}
+
+// TestWidgetUpdateRejectsDanglingCellPair pins the merged-pair check on
+// update: when the document's widget references a cell that no longer exists
+// (a hard-deleted cell cascades the derived row away while the document keeps
+// the widget), an update is a 404 and neither the document nor the derived
+// table changes. Without the check the update would report success while the
+// materializer silently dropped the widget.
+func TestWidgetUpdateRejectsDanglingCellPair(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	token := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-doc-cell-pair-%d@example.com", time.Now().UnixNano()), "Dash Doc Cell Pair Org")
+	connID := createConnector(t, srv, token)
+	nbID := createNotebook(t, srv, token, "Dangling Pair NB")
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT 1", connID)
+	dashID := createDashWithSettings(t, srv, token, nil)
+
+	widget := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"notebook_id": nbID,
+		"cell_id":     cellID,
+		"type":        "table",
+		"layout":      map[string]int{"row": 0, "col": 0, "width": 6, "height": 6},
+	})
+	widgetID := widget["id"].(string)
+
+	// Hard-delete the cell: the widgets.cell_id FK cascades the derived row
+	// away, but the document (the source of truth) keeps the widget.
+	_, err := srv.DB().Pool.Exec(context.Background(), `DELETE FROM cells WHERE id = $1`, cellID)
+	require.NoError(t, err)
+	var count int
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM widgets WHERE id = $1`, widgetID).Scan(&count))
+	require.Zero(t, count)
+
+	before := dashboardDocState(t, srv, dashID)
+	rec := putWidgetRaw(t, srv, token, dashID, widgetID, map[string]any{
+		"layout": map[string]int{"row": 2, "col": 0, "width": 6, "height": 4},
+	})
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "cell not found")
+
+	// Nothing changed: no row materialized, the document keeps the widget
+	// with its old layout.
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM widgets WHERE id = $1`, widgetID).Scan(&count))
+	require.Zero(t, count)
+	require.Equal(t, before, dashboardDocState(t, srv, dashID))
+	proj := projectDashboardDoc(t, srv, dashID)
+	require.Equal(t, dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 6}, proj.Widgets[widgetID].Layout)
+}
