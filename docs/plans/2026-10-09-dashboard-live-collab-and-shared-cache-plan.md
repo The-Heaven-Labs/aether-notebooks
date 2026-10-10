@@ -557,6 +557,24 @@ Verified against the pinned build (`relay/node_modules/@hocuspocus/server` 4.4.0
 
 Throwaway probe/verification modules from the investigation live in `/tmp/opencode/ygo-spike-1390` and `/tmp/opencode/ygo-spike-1515` (not committed).
 
+### Execution finding (Task 11 review): relay internal-auth bug
+
+The relay (`relay/src/index.ts`) calls `GET/PUT /internal/yjs/{doc}` **without an
+`Authorization` header**, while the Go internal handlers require a Bearer session JWT
+(added in the security-audit remediation). Verified empirically against the dev stack:
+a raw request without auth returns 401, and a live edit through
+`@hocuspocus/provider` left the notebook's `yjs_documents` row unchanged
+(`updated_at`/state identical). **Notebook Yjs persistence is silently broken today**;
+dashboards cannot work without fixing it.
+
+**Task 15 must:** stash the session token from `onAuthenticate` into `context`, send
+`Authorization: Bearer <token>` on both load and store calls for notebook *and*
+dashboard documents, and keep a per-document token cache (keyed by document name,
+cleared on unload) so `onStoreDocument` (payload carries `lastContext`) and
+Redis fan-in stores still authenticate after disconnects. Verify with an end-to-end
+persistence probe: edit via a provider, then assert the `yjs_documents` /
+`dashboard_yjs_documents` row changed.
+
 ## Notes / risks carried from design
 
 - Grant-lag window for the shared cache is accepted (documented in the design doc).
