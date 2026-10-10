@@ -238,6 +238,102 @@ func TestDashboardQueryCacheSharedAcrossIdenticalAccess(t *testing.T) {
 	require.Equal(t, rowsOf(respC), rowsOf(respC2))
 }
 
+// TestDashboardQueryCacheRefreshWriteBack pins the write-back semantics of
+// bypass_cache: an explicit refresh must execute fresh AND replace the shared
+// entry, so the next viewer with identical access observes the refreshed
+// result instead of the stale one.
+func TestDashboardQueryCacheRefreshWriteBack(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	email := fmt.Sprintf("dash-refresh-owner-%d@example.com", time.Now().UnixNano())
+	tokenA := registerAndGetToken(t, srv, email, "Dash Refresh Org")
+	connID := createConnector(t, srv, tokenA)
+
+	dashID := createDashWithSettings(t, srv, tokenA, nil)
+	// clock_timestamp() advances on every execution, so the refreshed run
+	// deterministically differs from the cached value (random() could collide).
+	widgetID := addQueryWidget(t, srv, tokenA, dashID, connID, "SELECT clock_timestamp()::text AS t")
+
+	var orgID string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+
+	// Two more org members with view_with_data on the dashboard and use on the
+	// unmanaged connector: the same effective access as A, so all three share
+	// one cache entry.
+	grantViewer := func(label string) string {
+		t.Helper()
+		userID := insertUser(t, srv,
+			fmt.Sprintf("dash-refresh-%s-%d@example.com", label, time.Now().UnixNano()), "Refresh Viewer")
+		addOrgMember(t, srv, orgID, userID, "non-admin")
+		grantACL(t, srv, orgID, "dashboard", dashID, "user", userID, "view", "view_with_data")
+		grantACL(t, srv, orgID, "connector", connID, "user", userID, "view", "use")
+		return issueToken(t, userID, orgID, "non-admin")
+	}
+	tokenB := grantViewer("b")
+	tokenC := grantViewer("c")
+
+	execute := func(token string, body map[string]any) map[string]any {
+		t.Helper()
+		rec := executeDashboardWidget(t, srv, token, dashID, body)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var resp map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+		return resp
+	}
+	cachedFlag := func(resp map[string]any) bool {
+		t.Helper()
+		cached, ok := resp["cached"].(bool)
+		require.True(t, ok, "cached flag missing from response: %v", resp)
+		return cached
+	}
+	rowsOf := func(resp map[string]any) []any {
+		t.Helper()
+		outputs, ok := resp["outputs"].([]any)
+		require.True(t, ok && len(outputs) > 0, "expected outputs, got %v", resp)
+		data, ok := outputs[0].(map[string]any)["data"].(map[string]any)
+		require.True(t, ok, "expected table data, got %v", outputs[0])
+		rows, ok := data["rows"].([]any)
+		require.True(t, ok, "expected rows, got %v", data)
+		return rows
+	}
+	requireCacheExpiry := func(resp map[string]any, want bool) {
+		t.Helper()
+		v, ok := resp["cache_expires_at"].(string)
+		require.Equal(t, want, ok && v != "", "cache_expires_at presence mismatch (want %v): %v", want, resp)
+	}
+
+	body := map[string]any{"widget_id": widgetID}
+
+	// 1. A's fresh run warms the shared entry.
+	respR1 := execute(tokenA, body)
+	require.False(t, cachedFlag(respR1), "the first run must be a cache miss")
+	requireCacheExpiry(respR1, false)
+	rowsR1 := rowsOf(respR1)
+
+	// 2. B shares A's entry and observes R1.
+	respB := execute(tokenB, body)
+	require.True(t, cachedFlag(respB), "identical access must share the entry")
+	require.Equal(t, rowsR1, rowsOf(respB), "B must observe A's cached rows")
+	requireCacheExpiry(respB, true)
+
+	// 3. A's bypass_cache run executes fresh.
+	respR2 := execute(tokenA, map[string]any{"widget_id": widgetID, "bypass_cache": true})
+	require.False(t, cachedFlag(respR2), "bypass_cache must skip the cache read")
+	requireCacheExpiry(respR2, false)
+	rowsR2 := rowsOf(respR2)
+	require.NotEqual(t, rowsR1, rowsR2, "a fresh run of a clock query must return a new value")
+
+	// 4. C must observe R2: the bypass run wrote the fresh result back to the
+	// shared key instead of leaving R1 behind.
+	respC := execute(tokenC, body)
+	require.True(t, cachedFlag(respC), "C must hit the entry refreshed by A")
+	require.Equal(t, rowsR2, rowsOf(respC), "C must observe the post-bypass result, not the stale one")
+	requireCacheExpiry(respC, true)
+}
+
 // TestDashboardQueryCacheHitStillRequiresConnectorUse pins that a shared cache
 // hit cannot bypass the connector `use` gate: a viewer with view_with_data on
 // the dashboard but no `use` on the connector is denied even after another
