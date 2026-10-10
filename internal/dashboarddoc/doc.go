@@ -41,28 +41,46 @@
 //   - WidgetDoc pointer fields (ConnectorID, Query, NotebookID, CellID) map to
 //     the doc's string fields with nil ⇔ "". Seed canonicalizes a pointer to
 //     "" as unset; Project returns nil for "".
+//   - Project returns only plain JSON-domain Go values; no ygo encoding leaks
+//     out. Shared types nested in plain positions (settings/variables) are
+//     converted through their ToJSON payload (a nested Y.Text becomes its
+//     string) and normalized recursively; a value that cannot be converted is
+//     dropped with a warning. []byte becomes its base64 string, matching
+//     encoding/json.
 //
 // # Number handling
 //
-// ygo decodes integers as int64 and (because WriteAny narrows lossless float64
-// values to float32 on the wire) may decode floats as float32. Project
-// normalizes decoded values recursively: int64 → int when it fits (out-of-range
-// values stay int64; layout overflow skips the widget) and float32 → float64.
-// float64 values are returned unchanged, so a float64 written by Seed
-// round-trips exactly (the narrowing is lossless by definition). Layout is a
-// plain Go int struct.
+// ygo's WriteAny/lib0 encoding does not preserve Go integer types. Verified
+// against ygo v1.51.5: integers within int32 range decode as int64 (tag 125);
+// integers outside int32 range but within ±2^53 decode as float64 (tag 123);
+// integers beyond ±2^53 decode as encoding.BigInt (tag 122); a float64 that is
+// float32-lossless decodes as float32 (tag 124), otherwise float64.
+//
+// Project normalizes decoded values recursively so callers see only int, int64
+// and float64: int64 → int when it fits (out-of-range values stay int64),
+// encoding.BigInt → int64, integral float32/float64 → int when they fit
+// (non-integral or out-of-range floats stay float64), float64 otherwise
+// unchanged. Layout is a plain Go int struct; readLayout accepts integral
+// floats with a fit check because Seed-written ints above int32 range arrive
+// as float64 on the wire.
 //
 // # Validation split
 //
-// Project returns an error only for unrecoverable document corruption: state
-// bytes that fail to decode, or wrong root types (a non-string meta.title, a
-// meta.settings that is not a Y.Map, a meta.variables that is not a Y.Array).
-// Per-widget problems — unknown type, invalid or negative layout, config that
-// is not a JSON object, unsupported language, non-Y.Map widget values — skip
-// that widget and are recorded in Projection.Warnings, so one bad widget can
-// never block materialization. Malformed individual variable entries are
-// likewise skipped with a warning. Warnings are emitted in sorted widget-ID
-// order for determinism.
+// Project returns an error only for state bytes that fail to decode or for
+// wrong field types in the root meta map: a non-string meta.title, a
+// meta.settings that is not a Y.Map, or a meta.variables that is not a Y.Array.
+// A wrong root container kind (for example state whose "meta" root is actually
+// a Y.Text) is NOT detected: ygo's typed root getters return an empty
+// container for it, so such state projects as an empty projection without an
+// error. Task 10's materializer must not treat a non-empty state that projects
+// empty as "delete all rows" without an explicit guard.
+//
+// Per-widget problems — unknown type, a map key that is not a UUID, invalid or
+// negative layout, config that is not a JSON object, unsupported language,
+// non-Y.Map widget values — skip that widget and are recorded in
+// Projection.Warnings, so one bad widget can never block materialization.
+// Malformed individual variable entries are likewise skipped with a warning.
+// Warnings are emitted in sorted widget-ID order for determinism.
 //
 // A missing layout map (or missing layout fields) defaults to zero values;
 // only present-but-invalid fields skip the widget.
@@ -119,9 +137,10 @@ type Layout struct {
 
 // WidgetDoc is the projection of one widget in the dashboard document.
 //
-// ID is the widget UUID (the widgets map key). Seed uses the map key as the
-// document key and rejects a non-empty ID that disagrees with it; Project
-// always sets ID from the key.
+// ID is the widget UUID (the widgets map key). Seed requires the map key to be
+// a valid UUID and rejects a non-empty ID that disagrees with it; Project sets
+// ID from the key and skips + warns widgets whose key is not a UUID (the
+// materializer writes keys into a UUID column).
 //
 // ConnectorID, Query, NotebookID and CellID are nil when unset, mapping to/from
 // the document's "" placeholder. Config is stored as a JSON string in the

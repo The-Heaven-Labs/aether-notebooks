@@ -75,73 +75,62 @@ func compatRepoRoot(t *testing.T) string {
 	return filepath.Dir(filepath.Dir(compatSourceDir(t)))
 }
 
-// compatBuildSeed builds the exact planned dashboard document:
+// Fixed widget UUIDs shared with testdata/compat-mutate.cjs.
+const (
+	compatWidget1  = "11111111-1111-4111-8111-111111111111"
+	compatWidget2  = "22222222-2222-4222-8222-222222222222"
+	compatWidgetJS = "33333333-3333-4333-8333-333333333333"
+)
+
+// compatBuildSeed builds the exact planned dashboard document through the
+// production Seed path (not hand-rolled ygo calls), so this gate fails if Seed
+// ever regresses the Go<->JS representation:
 //
 //	meta    Y.Map { title, settings Y.Map, variables Y.Array<Y.Map> }
 //	widgets Y.Map<uuid, Y.Map { type, config, layout Y.Map, query Y.Text }>
 func compatBuildSeed(t *testing.T) []byte {
 	t.Helper()
-	doc := crdt.New()
+	connectorID := "conn-1"
+	query1 := "SELECT 1"
+	query2 := "SELECT 2"
 
-	// Root containers must be resolved before Transact (Doc.GetMap locks).
-	meta := doc.GetMap("meta")
-	widgets := doc.GetMap("widgets")
-
-	doc.Transact(func(txn *crdt.Transaction) {
-		meta.Set(txn, "title", "Untitled Dashboard")
-
-		settings := crdt.NewMapPrelim()
-		settings.Set(txn, "grid_cols", int64(12))
-		settings.Set(txn, "auto_refresh_seconds", int64(0))
-		settings.Set(txn, "query_cache_seconds", int64(30))
-		settings.Set(txn, "public_live", false)
-		meta.Set(txn, "settings", settings)
-
-		variables := crdt.NewArrayPrelim()
-		region := crdt.NewMapPrelim()
-		region.Set(txn, "name", "region")
-		region.Set(txn, "label", "Region")
-		region.Set(txn, "type", "select")
-		region.Set(txn, "default", "us")
-		region.Set(txn, "options", []any{"us", "eu"})
-		region.Set(txn, "depends_on", []any{})
-		variables.PushType(txn, region)
-		meta.Set(txn, "variables", variables)
-
-		w1 := crdt.NewMapPrelim()
-		w1.Set(txn, "type", "chart")
-		w1.Set(txn, "connector_id", "conn-1")
-		w1.Set(txn, "language", "sql")
-		w1.Set(txn, "notebook_id", "nb-1")
-		w1.Set(txn, "cell_id", "cell-1")
-		w1.Set(txn, "config", `{"kind":"bar"}`)
-		layout1 := crdt.NewMapPrelim()
-		layout1.Set(txn, "row", int64(0))
-		layout1.Set(txn, "col", int64(0))
-		layout1.Set(txn, "width", int64(6))
-		layout1.Set(txn, "height", int64(4))
-		w1.Set(txn, "layout", layout1)
-		query1 := crdt.NewTextPrelim()
-		query1.Insert(txn, 0, "SELECT 1", nil)
-		w1.Set(txn, "query", query1)
-		widgets.Set(txn, "w-1", w1)
-
-		w2 := crdt.NewMapPrelim()
-		w2.Set(txn, "type", "text")
-		w2.Set(txn, "config", "{}")
-		layout2 := crdt.NewMapPrelim()
-		layout2.Set(txn, "row", int64(4))
-		layout2.Set(txn, "col", int64(0))
-		layout2.Set(txn, "width", int64(12))
-		layout2.Set(txn, "height", int64(2))
-		w2.Set(txn, "layout", layout2)
-		query2 := crdt.NewTextPrelim()
-		query2.Insert(txn, 0, "SELECT 2", nil)
-		w2.Set(txn, "query", query2)
-		widgets.Set(txn, "w-2", w2)
+	state, err := Seed(Projection{
+		Title: "Untitled Dashboard",
+		Settings: map[string]any{
+			"grid_cols":            12,
+			"auto_refresh_seconds": 0,
+			"query_cache_seconds":  30,
+			"public_live":          false,
+		},
+		Variables: []map[string]any{{
+			"name":       "region",
+			"label":      "Region",
+			"type":       "select",
+			"default":    "us",
+			"options":    []any{"us", "eu"},
+			"depends_on": []any{},
+		}},
+		Widgets: map[string]WidgetDoc{
+			compatWidget1: {
+				ID:          compatWidget1,
+				Type:        "chart",
+				Layout:      Layout{Row: 0, Col: 0, Width: 6, Height: 4},
+				ConnectorID: &connectorID,
+				Query:       &query1,
+				Language:    "sql",
+				Config:      map[string]any{"kind": "bar"},
+			},
+			compatWidget2: {
+				ID:     compatWidget2,
+				Type:   "text",
+				Layout: Layout{Row: 4, Col: 0, Width: 12, Height: 2},
+				Query:  &query2,
+				Config: map[string]any{},
+			},
+		},
 	})
-
-	return doc.EncodeStateAsUpdate()
+	require.NoError(t, err, "seed compat document")
+	return state
 }
 
 // compatAssertProjection loads a state produced by the JS peer (seed + its
@@ -180,11 +169,11 @@ func compatAssertProjection(t *testing.T, state []byte) {
 	require.Equal(t, []any{}, compatMapValue(t, region, "depends_on"))
 
 	widgets := doc.GetMap("widgets")
-	require.ElementsMatch(t, []string{"w-1", "w-2", "w-js-1"}, widgets.Keys(),
+	require.ElementsMatch(t, []string{compatWidget1, compatWidget2, compatWidgetJS}, widgets.Keys(),
 		"widgets must contain the two seeded widgets plus the JS-added one")
 
 	// Seeded widget, including the JS-appended Y.Text mutation.
-	w1 := compatMap(t, widgets, "w-1")
+	w1 := compatMap(t, widgets, compatWidget1)
 	require.Equal(t, "chart", compatMapValue(t, w1, "type"))
 	require.Equal(t, `{"kind":"bar"}`, compatMapValue(t, w1, "config"))
 	layout1 := compatMap(t, w1, "layout")
@@ -192,17 +181,37 @@ func compatAssertProjection(t *testing.T, state []byte) {
 	require.Equal(t, "SELECT 1\n-- mutated", compatText(t, w1, "query"))
 
 	// Second seeded widget: untouched by the JS peer.
-	w2 := compatMap(t, widgets, "w-2")
+	w2 := compatMap(t, widgets, compatWidget2)
 	require.Equal(t, "text", compatMapValue(t, w2, "type"))
 	require.Equal(t, "SELECT 2", compatText(t, w2, "query"))
 
 	// Widget created entirely by the JS peer, with nested layout + Y.Text.
-	wjs := compatMap(t, widgets, "w-js-1")
+	wjs := compatMap(t, widgets, compatWidgetJS)
 	require.Equal(t, "table", compatMapValue(t, wjs, "type"))
 	layoutJS := compatMap(t, wjs, "layout")
 	require.Equal(t, int64(2), compatMapValue(t, layoutJS, "row"))
 	require.Equal(t, int64(6), compatMapValue(t, layoutJS, "width"))
 	require.Equal(t, "SELECT 3", compatText(t, wjs, "query"))
+
+	// The production projection must accept the JS-mutated state without
+	// warnings: this pins that Seed and Project agree with the JS peer.
+	proj, err := Project(state)
+	require.NoError(t, err, "Project on JS-mutated state")
+	require.Empty(t, proj.Warnings, "JS-mutated state must project without warnings")
+	require.Equal(t, "Untitled Dashboard", proj.Title)
+	require.Len(t, proj.Widgets, 3)
+	require.Contains(t, proj.Widgets, compatWidgetJS)
+
+	pw1 := proj.Widgets[compatWidget1]
+	require.NotNil(t, pw1.Query)
+	require.Equal(t, "SELECT 1\n-- mutated", *pw1.Query)
+	pw2 := proj.Widgets[compatWidget2]
+	require.NotNil(t, pw2.Query)
+	require.Equal(t, "SELECT 2", *pw2.Query)
+	pwjs := proj.Widgets[compatWidgetJS]
+	require.NotNil(t, pwjs.Query)
+	require.Equal(t, "SELECT 3", *pwjs.Query)
+	require.Equal(t, Layout{Row: 2, Col: 0, Width: 6, Height: 4}, pwjs.Layout)
 }
 
 // compatMap returns the nested Y.Map stored under key, failing the test if the

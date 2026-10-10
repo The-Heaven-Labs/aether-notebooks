@@ -1,12 +1,20 @@
 package dashboarddoc
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
 	"github.com/reearth/ygo/crdt"
 	"github.com/stretchr/testify/require"
 )
+
+// testUUID returns a deterministic, valid UUID for widget map keys. The
+// zero-padded decimal suffix keeps lexical order equal to numeric order, so
+// warning-order assertions stay readable.
+func testUUID(n int) string {
+	return fmt.Sprintf("00000000-0000-4000-8000-%012d", n)
+}
 
 // buildState builds a document state from raw ygo operations. Tests use it to
 // author shapes Seed would never produce (corruption / hand-written docs).
@@ -85,8 +93,8 @@ func TestSeedProject_RoundTrip(t *testing.T) {
 			},
 		},
 		Widgets: map[string]WidgetDoc{
-			"w-1": {
-				ID:          "w-1",
+			testUUID(1): {
+				ID:          testUUID(1),
 				Type:        "chart",
 				Layout:      Layout{Row: 0, Col: 0, Width: 6, Height: 4},
 				ConnectorID: &connectorID,
@@ -94,8 +102,8 @@ func TestSeedProject_RoundTrip(t *testing.T) {
 				Language:    "sql",
 				Config:      map[string]any{"kind": "bar", "stacked": true},
 			},
-			"w-2": {
-				ID:         "w-2",
+			testUUID(2): {
+				ID:         testUUID(2),
 				Type:       "table",
 				Layout:     Layout{Row: 0, Col: 6, Width: 6, Height: 4},
 				NotebookID: &notebookID,
@@ -103,8 +111,8 @@ func TestSeedProject_RoundTrip(t *testing.T) {
 				Language:   "sql",
 				Config:     map[string]any{},
 			},
-			"w-3": {
-				ID:     "w-3",
+			testUUID(3): {
+				ID:     testUUID(3),
 				Type:   "text",
 				Layout: Layout{Row: 4, Col: 0, Width: 12, Height: 2},
 				Config: map[string]any{"markdown": "# Notes"},
@@ -184,17 +192,17 @@ func TestProject_RejectsWrongRootTypes(t *testing.T) {
 
 func TestProject_SkipsInvalidWidgets(t *testing.T) {
 	state := buildState(t, func(txn *crdt.Transaction, _, widgets *crdt.YMap) {
-		putRawWidget(txn, widgets, "w-ok", nil)
-		putRawWidget(txn, widgets, "w-bad-type", func(txn *crdt.Transaction, w *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(1), nil)
+		putRawWidget(txn, widgets, testUUID(2), func(txn *crdt.Transaction, w *crdt.YMap) {
 			w.Set(txn, keyType, "pie")
 		})
-		putRawWidget(txn, widgets, "w-missing-type", func(txn *crdt.Transaction, w *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(3), func(txn *crdt.Transaction, w *crdt.YMap) {
 			w.Delete(txn, keyType)
 		})
-		putRawWidget(txn, widgets, "w-bad-lang", func(txn *crdt.Transaction, w *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(4), func(txn *crdt.Transaction, w *crdt.YMap) {
 			w.Set(txn, keyLanguage, "python")
 		})
-		putRawWidget(txn, widgets, "w-neg-layout", func(txn *crdt.Transaction, w *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(5), func(txn *crdt.Transaction, w *crdt.YMap) {
 			l := crdt.NewMapPrelim()
 			l.Set(txn, keyRow, int64(-1))
 			l.Set(txn, keyCol, int64(0))
@@ -202,34 +210,36 @@ func TestProject_SkipsInvalidWidgets(t *testing.T) {
 			l.Set(txn, keyHeight, int64(4))
 			w.Set(txn, keyLayout, l)
 		})
-		putRawWidget(txn, widgets, "w-layout-string", func(txn *crdt.Transaction, w *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(6), func(txn *crdt.Transaction, w *crdt.YMap) {
 			w.Set(txn, keyLayout, "nope")
 		})
-		putRawWidget(txn, widgets, "w-bad-config", func(txn *crdt.Transaction, w *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(7), func(txn *crdt.Transaction, w *crdt.YMap) {
 			w.Set(txn, keyConfig, "{oops")
 		})
-		putRawWidget(txn, widgets, "w-config-int", func(txn *crdt.Transaction, w *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(8), func(txn *crdt.Transaction, w *crdt.YMap) {
 			w.Set(txn, keyConfig, int64(3))
 		})
-		putRawWidget(txn, widgets, "w-query-string", func(txn *crdt.Transaction, w *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(9), func(txn *crdt.Transaction, w *crdt.YMap) {
 			w.Set(txn, keyQuery, "SELECT 1")
 		})
-		widgets.Set(txn, "w-nonmap", "oops")
+		widgets.Set(txn, testUUID(10), "oops")
+		// Valid shape under a non-UUID key: must be skipped, never materialized.
+		putRawWidget(txn, widgets, "legacy-widget", nil)
 
 		// Minimal valid widget: no layout/language/query/config at all.
 		min := crdt.NewMapPrelim()
 		min.Set(txn, keyType, "text")
-		widgets.Set(txn, "w-min", min)
+		widgets.Set(txn, testUUID(11), min)
 	})
 
 	got, err := Project(state)
 	require.NoError(t, err)
 
 	require.Len(t, got.Widgets, 2)
-	require.Contains(t, got.Widgets, "w-ok")
-	require.Contains(t, got.Widgets, "w-min")
+	require.Contains(t, got.Widgets, testUUID(1))
+	require.Contains(t, got.Widgets, testUUID(11))
 
-	wmin := got.Widgets["w-min"]
+	wmin := got.Widgets[testUUID(11)]
 	require.Equal(t, "text", wmin.Type)
 	require.Equal(t, Layout{}, wmin.Layout)
 	require.Nil(t, wmin.ConnectorID)
@@ -239,15 +249,17 @@ func TestProject_SkipsInvalidWidgets(t *testing.T) {
 	require.Equal(t, "", wmin.Language)
 	require.Equal(t, map[string]any{}, wmin.Config)
 
-	// One warning per skipped widget, in sorted widget-ID order.
+	// One warning per skipped widget, in sorted widget-ID order. UUID keys
+	// sort before the non-UUID "legacy-widget".
 	wantOrder := []string{
-		"w-bad-config", "w-bad-lang", "w-bad-type", "w-config-int", "w-layout-string",
-		"w-missing-type", "w-neg-layout", "w-nonmap", "w-query-string",
+		testUUID(2), testUUID(3), testUUID(4), testUUID(5), testUUID(6),
+		testUUID(7), testUUID(8), testUUID(9), testUUID(10), "legacy-widget",
 	}
 	require.Len(t, got.Warnings, len(wantOrder))
 	for i, id := range wantOrder {
 		require.Contains(t, got.Warnings[i], id, "warning %d", i)
 	}
+	require.Contains(t, got.Warnings[len(got.Warnings)-1], "not a valid UUID")
 }
 
 func TestProject_SkipsInvalidVariables(t *testing.T) {
@@ -271,7 +283,7 @@ func TestSeed_RejectsInvalidProjection(t *testing.T) {
 	valid := func() Projection {
 		return Projection{
 			Widgets: map[string]WidgetDoc{
-				"w-1": {ID: "w-1", Type: "table", Config: map[string]any{}},
+				testUUID(1): {ID: testUUID(1), Type: "table", Config: map[string]any{}},
 			},
 		}
 	}
@@ -284,42 +296,49 @@ func TestSeed_RejectsInvalidProjection(t *testing.T) {
 		{
 			name: "unknown widget type",
 			mutate: func(p *Projection) {
-				p.Widgets["w-1"] = WidgetDoc{ID: "w-1", Type: "pie"}
+				p.Widgets[testUUID(1)] = WidgetDoc{ID: testUUID(1), Type: "pie"}
 			},
 			wantErr: "unknown type",
 		},
 		{
 			name: "unsupported language",
 			mutate: func(p *Projection) {
-				p.Widgets["w-1"] = WidgetDoc{ID: "w-1", Type: "table", Language: "python"}
+				p.Widgets[testUUID(1)] = WidgetDoc{ID: testUUID(1), Type: "table", Language: "python"}
 			},
 			wantErr: "unsupported language",
 		},
 		{
 			name: "negative layout",
 			mutate: func(p *Projection) {
-				p.Widgets["w-1"] = WidgetDoc{ID: "w-1", Type: "table", Layout: Layout{Row: -1}}
+				p.Widgets[testUUID(1)] = WidgetDoc{ID: testUUID(1), Type: "table", Layout: Layout{Row: -1}}
 			},
 			wantErr: "negative layout",
 		},
 		{
 			name: "ID disagrees with map key",
 			mutate: func(p *Projection) {
-				p.Widgets["w-1"] = WidgetDoc{ID: "other", Type: "table"}
+				p.Widgets[testUUID(1)] = WidgetDoc{ID: "other", Type: "table"}
 			},
 			wantErr: "does not match",
+		},
+		{
+			name: "non-UUID widget key",
+			mutate: func(p *Projection) {
+				p.Widgets = map[string]WidgetDoc{"w-1": {Type: "table"}}
+			},
+			wantErr: "not a valid UUID",
 		},
 		{
 			name: "empty widget map key",
 			mutate: func(p *Projection) {
 				p.Widgets = map[string]WidgetDoc{"": {Type: "table"}}
 			},
-			wantErr: "empty ID",
+			wantErr: "not a valid UUID",
 		},
 		{
 			name: "unmarshalable config",
 			mutate: func(p *Projection) {
-				p.Widgets["w-1"] = WidgetDoc{ID: "w-1", Type: "table", Config: map[string]any{"ch": make(chan int)}}
+				p.Widgets[testUUID(1)] = WidgetDoc{ID: testUUID(1), Type: "table", Config: map[string]any{"ch": make(chan int)}}
 			},
 			wantErr: "config",
 		},
@@ -353,8 +372,8 @@ func TestSeedProject_EmptyStringsAreUnset(t *testing.T) {
 	empty := ""
 	state, err := Seed(Projection{
 		Widgets: map[string]WidgetDoc{
-			"w-1": {
-				ID:          "w-1",
+			testUUID(1): {
+				ID:          testUUID(1),
 				Type:        "text",
 				ConnectorID: &empty,
 				Query:       &empty,
@@ -368,7 +387,7 @@ func TestSeedProject_EmptyStringsAreUnset(t *testing.T) {
 	got, err := Project(state)
 	require.NoError(t, err)
 	require.Empty(t, got.Warnings)
-	w := got.Widgets["w-1"]
+	w := got.Widgets[testUUID(1)]
 	require.Nil(t, w.ConnectorID)
 	require.Nil(t, w.Query)
 	require.Nil(t, w.NotebookID)
@@ -390,7 +409,7 @@ func TestProject_NormalizesDecodedNumbers(t *testing.T) {
 		layout.Set(txn, keyRow, int64(3))
 		layout.Set(txn, keyCol, int64(2))
 		w.Set(txn, keyLayout, layout)
-		widgets.Set(txn, "w-1", w)
+		widgets.Set(txn, testUUID(1), w)
 	})
 
 	got, err := Project(state)
@@ -402,7 +421,91 @@ func TestProject_NormalizesDecodedNumbers(t *testing.T) {
 	require.Equal(t, float64(1e300), got.Settings["big"])
 	require.Equal(t, []any{int(7), float64(0.25), map[string]any{"n": int(-2)}}, got.Settings["list"])
 
-	require.Equal(t, Layout{Row: 3, Col: 2}, got.Widgets["w-1"].Layout)
+	require.Equal(t, Layout{Row: 3, Col: 2}, got.Widgets[testUUID(1)].Layout)
+}
+
+// TestProject_ConvertsYgoEncodings pins that Project never leaks ygo's
+// non-standard encodings or shared types out of a projection.
+func TestProject_ConvertsYgoEncodings(t *testing.T) {
+	state := buildState(t, func(txn *crdt.Transaction, meta, _ *crdt.YMap) {
+		settings := crdt.NewMapPrelim()
+		// > int32, within 2^53: decodes as float64.
+		settings.Set(txn, "mid", int64(5_000_000_000))
+		// > 2^53: decodes as encoding.BigInt.
+		settings.Set(txn, "big", int64(1<<53+1))
+		// Wire tag 116: raw bytes.
+		settings.Set(txn, "bytes", []byte{1, 2, 3})
+
+		sharedMap := crdt.NewMapPrelim()
+		sharedMap.Set(txn, "a", int64(1))
+		sharedMap.Set(txn, "text", "hello")
+		settings.Set(txn, "shared_map", sharedMap)
+
+		sharedArr := crdt.NewArrayPrelim()
+		sharedArr.Push(txn, []any{"x", int64(2)})
+		settings.Set(txn, "shared_arr", sharedArr)
+
+		sharedText := crdt.NewTextPrelim()
+		sharedText.Insert(txn, 0, "nested text", nil)
+		settings.Set(txn, "shared_text", sharedText)
+
+		meta.Set(txn, keySettings, settings)
+	})
+
+	got, err := Project(state)
+	require.NoError(t, err)
+	require.Empty(t, got.Warnings)
+
+	require.Equal(t, int(5_000_000_000), got.Settings["mid"])
+	require.Equal(t, int64(1<<53+1), got.Settings["big"])
+	require.Equal(t, "AQID", got.Settings["bytes"])
+	// The nested Y.Map must surface its content, not a ygo type and not {}.
+	require.Equal(t, map[string]any{"a": 1, "text": "hello"}, got.Settings["shared_map"])
+	require.Equal(t, []any{"x", 2}, got.Settings["shared_arr"])
+	require.Equal(t, "nested text", got.Settings["shared_text"])
+}
+
+// TestProject_LayoutIntegralFloats covers the wire asymmetry where ints above
+// int32 range arrive as float64 (Fix 4).
+func TestProject_LayoutIntegralFloats(t *testing.T) {
+	state := buildState(t, func(txn *crdt.Transaction, _, widgets *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(1), func(txn *crdt.Transaction, w *crdt.YMap) {
+			l := crdt.NewMapPrelim()
+			l.Set(txn, keyRow, float64(5_000_000_000))
+			l.Set(txn, keyCol, float64(2))
+			l.Set(txn, keyWidth, float32(3))
+			l.Set(txn, keyHeight, int64(4))
+			w.Set(txn, keyLayout, l)
+		})
+		putRawWidget(txn, widgets, testUUID(2), func(txn *crdt.Transaction, w *crdt.YMap) {
+			l := crdt.NewMapPrelim()
+			l.Set(txn, keyRow, 1.5)
+			w.Set(txn, keyLayout, l)
+		})
+	})
+
+	got, err := Project(state)
+	require.NoError(t, err)
+	require.Equal(t, Layout{Row: 5_000_000_000, Col: 2, Width: 3, Height: 4}, got.Widgets[testUUID(1)].Layout)
+	require.Len(t, got.Warnings, 1)
+	require.Contains(t, got.Warnings[0], "is not an integer")
+}
+
+// TestSeedProject_LargeLayoutRoundTrip proves Seed's large int layouts survive
+// the float64 wire encoding and project back as ints.
+func TestSeedProject_LargeLayoutRoundTrip(t *testing.T) {
+	big := Layout{Row: 5_000_000_000, Col: 0, Width: 6, Height: 4}
+	state, err := Seed(Projection{
+		Widgets: map[string]WidgetDoc{
+			testUUID(1): {ID: testUUID(1), Type: "table", Layout: big},
+		},
+	})
+	require.NoError(t, err)
+
+	got, err := Project(state)
+	require.NoError(t, err)
+	require.Empty(t, got.Warnings)
+	require.Equal(t, big, got.Widgets[testUUID(1)].Layout)
 }
 
 func TestSeed_AcceptsJSONCompatibleTypes(t *testing.T) {

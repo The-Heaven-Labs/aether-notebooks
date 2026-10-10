@@ -6,6 +6,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/google/uuid"
 	"github.com/reearth/ygo/crdt"
 )
 
@@ -15,13 +16,13 @@ import (
 // variables changes, and lazy seeding from the dashboards/widgets rows all
 // produce a doc through Seed.
 //
-// Seed fails fast on invalid input — an unknown widget type, an unsupported
-// language, a negative layout, a widget ID that disagrees with its map key, or
-// a config/settings/variable value that is not JSON-marshalable (including
-// NaN/±Inf) — because the document is the source of truth and a projection
-// that cannot be represented should surface at the write, not as a skipped
-// widget during later materialization. An empty projection seeds a valid empty
-// document.
+// Seed fails fast on invalid input — a map key that is not a UUID, an unknown
+// widget type, an unsupported language, a negative layout, a widget ID that
+// disagrees with its map key, or a config/settings/variable value that is not
+// JSON-marshalable (including NaN/±Inf) — because the document is the source
+// of truth and a projection that cannot be represented should surface at the
+// write, not as a skipped widget during later materialization. An empty
+// projection seeds a valid empty document.
 func Seed(p Projection) ([]byte, error) {
 	settings, err := normalizeMap("settings", p.Settings)
 	if err != nil {
@@ -46,8 +47,8 @@ func Seed(p Projection) ([]byte, error) {
 	}
 	prepared := make([]preparedWidget, 0, len(p.Widgets))
 	for id, w := range p.Widgets {
-		if id == "" {
-			return nil, fmt.Errorf("widget map contains an empty ID key")
+		if _, err := uuid.Parse(id); err != nil {
+			return nil, fmt.Errorf("widget %q: key is not a valid UUID: %w", id, err)
 		}
 		if w.ID != "" && w.ID != id {
 			return nil, fmt.Errorf("widget %q: ID %q does not match its map key", id, w.ID)

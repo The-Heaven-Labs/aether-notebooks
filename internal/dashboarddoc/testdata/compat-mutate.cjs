@@ -17,6 +17,12 @@ if (!inPath || !outPath) {
   process.exit(2)
 }
 
+// Fixed widget UUIDs shared with ../compat_test.go (widget keys must be UUIDs
+// so the materializer can write them into the widgets.id UUID column).
+const WIDGET_1 = '11111111-1111-4111-8111-111111111111'
+const WIDGET_2 = '22222222-2222-4222-8222-222222222222'
+const WIDGET_JS = '33333333-3333-4333-8333-333333333333'
+
 const doc = new Y.Doc()
 Y.applyUpdate(doc, new Uint8Array(fs.readFileSync(inPath)))
 
@@ -43,8 +49,8 @@ assert.deepEqual(v0.get('options'), ['us', 'eu'])
 assert.deepEqual(v0.get('depends_on'), [])
 
 const widgets = doc.getMap('widgets')
-const w1 = widgets.get('w-1')
-assert.ok(w1 instanceof Y.Map, 'widgets.w-1 must be a Y.Map')
+const w1 = widgets.get(WIDGET_1)
+assert.ok(w1 instanceof Y.Map, `widgets.${WIDGET_1} must be a Y.Map`)
 assert.equal(w1.get('type'), 'chart')
 assert.equal(w1.get('connector_id'), 'conn-1')
 assert.equal(w1.get('config'), '{"kind":"bar"}')
@@ -57,7 +63,7 @@ assert.deepEqual(
 const q1 = w1.get('query')
 assert.ok(q1 instanceof Y.Text, 'widget query must be a Y.Text')
 assert.equal(q1.toString(), 'SELECT 1')
-assert.ok(widgets.get('w-2') instanceof Y.Map, 'widgets.w-2 must be a Y.Map')
+assert.ok(widgets.get(WIDGET_2) instanceof Y.Map, `widgets.${WIDGET_2} must be a Y.Map`)
 
 // --- mutate the way the editor would ---
 doc.transact(() => {
@@ -75,7 +81,7 @@ doc.transact(() => {
   const query = new Y.Text()
   query.insert(0, 'SELECT 3')
   wjs.set('query', query)
-  widgets.set('w-js-1', wjs)
+  widgets.set(WIDGET_JS, wjs)
 })
 
 fs.writeFileSync(outPath, Y.encodeStateAsUpdate(doc))
