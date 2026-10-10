@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"net"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -143,11 +145,92 @@ func TestDashboardDocEventsPublishSurvivesCancelledContext(t *testing.T) {
 
 // TestDashboardDocEventsNilCacheNoop proves a Server without Redis (tests,
 // single-node setups without a cache) neither panics nor needs a subscriber:
-// the publishers are simply no-ops.
+// the publishers are simply no-ops. An empty dashboard ID is also a no-op, so
+// a buggy caller can never publish on a channel named after the bare prefix.
 func TestDashboardDocEventsNilCacheNoop(t *testing.T) {
 	s := &Server{}
 	require.NotPanics(t, func() {
 		s.publishDashboardDocUpdate(context.Background(), uuid.NewString(), []byte{0x00, 0x01})
 		s.publishDashboardDocInvalidate(context.Background(), uuid.NewString(), "purged")
+		s.publishDashboardDocUpdate(context.Background(), "", []byte{0x00, 0x01})
+		s.publishDashboardDocInvalidate(context.Background(), "", "purged")
 	})
+}
+
+// TestDashboardDocEventsEmptyUpdatePublishesNothing proves a zero-length Yjs
+// update is never fanned out: Y.applyUpdate throws on an empty payload, so the
+// relay must not receive one.
+func TestDashboardDocEventsEmptyUpdatePublishesNothing(t *testing.T) {
+	s := newDashboardDocEventsTestServer(t)
+	ctx := context.Background()
+
+	dashboardID := uuid.NewString()
+	channel := dashboardDocChannel(dashboardID)
+
+	sub := s.Cache.Client().Subscribe(ctx, channel)
+	t.Cleanup(func() { sub.Close() })
+	waitForDashboardDocEventsSubscriber(t, s, channel)
+
+	s.publishDashboardDocUpdate(ctx, dashboardID, nil)
+	s.publishDashboardDocUpdate(ctx, dashboardID, []byte{})
+
+	// If either call wrongly published, the message lands within milliseconds
+	// of the synchronous Publish; the short window keeps the test fast.
+	select {
+	case msg := <-sub.Channel():
+		t.Fatalf("an empty update must not be published, got %d bytes on %s", len(msg.Payload), msg.Channel)
+	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// TestDashboardDocEventsPublishFailsOpenWithoutRedis proves both publishers
+// are bounded by their 1s deadline when Redis is unresponsive, instead of
+// stalling the request path: publishing is additive on top of the durable
+// document state.
+func TestDashboardDocEventsPublishFailsOpenWithoutRedis(t *testing.T) {
+	// Black-hole Redis: the listener accepts TCP so the client dials
+	// successfully, then never answers, forcing the publish to wait for its
+	// deadline instead of failing fast with connection refused.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	var (
+		connMu sync.Mutex
+		conns  []net.Conn
+	)
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			connMu.Lock()
+			conns = append(conns, c)
+			connMu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		ln.Close()
+		connMu.Lock()
+		defer connMu.Unlock()
+		for _, c := range conns {
+			c.Close()
+		}
+	})
+
+	blackhole, err := cache.New("redis://" + ln.Addr().String())
+	require.NoError(t, err)
+	t.Cleanup(func() { blackhole.Close() })
+	s := &Server{Cache: blackhole}
+
+	dashboardID := uuid.NewString()
+
+	start := time.Now()
+	s.publishDashboardDocUpdate(context.Background(), dashboardID, []byte{0x00, 0x01})
+	require.Less(t, time.Since(start), 2*time.Second,
+		"the update publish must fail open instead of blocking the caller")
+
+	start = time.Now()
+	s.publishDashboardDocInvalidate(context.Background(), dashboardID, "trashed")
+	require.Less(t, time.Since(start), 2*time.Second,
+		"the invalidate publish must fail open instead of blocking the caller")
 }

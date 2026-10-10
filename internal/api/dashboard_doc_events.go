@@ -47,10 +47,12 @@ func dashboardDocInvalidateChannel(dashboardID string) string {
 // every relay replica. It is best-effort: the caller has already persisted and
 // materialized the new state, so a Redis failure is logged and swallowed and
 // never fails the request. The payload is raw Yjs update bytes and is
-// published as-is. A nil cache (no Redis configured) or empty dashboard ID
-// skips the broadcast entirely.
+// published as-is. A nil cache (no Redis configured), empty dashboard ID, or
+// zero-length update skips the broadcast entirely.
 func (s *Server) publishDashboardDocUpdate(ctx context.Context, dashboardID string, update []byte) {
-	if s.Cache == nil || dashboardID == "" {
+	// A zero-length update is not valid Yjs state (Y.applyUpdate throws on the
+	// relay), so it is never fanned out.
+	if s.Cache == nil || dashboardID == "" || len(update) == 0 {
 		return
 	}
 	// Detach from the caller's cancellation so a client disconnect cannot skip
@@ -75,7 +77,7 @@ func (s *Server) publishDashboardDocInvalidate(ctx context.Context, dashboardID,
 	payload, err := json.Marshal(dashboardDocInvalidatePayload{Reason: reason})
 	if err != nil {
 		slog.Warn("dashboard doc invalidate marshal failed",
-			"error", err, "dashboard_id", dashboardID)
+			"error", err, "dashboard_id", dashboardID, "reason", reason)
 		return
 	}
 	// Detach from the caller's cancellation so a client disconnect cannot skip
@@ -84,6 +86,6 @@ func (s *Server) publishDashboardDocInvalidate(ctx context.Context, dashboardID,
 	defer cancel()
 	if err := s.Cache.Client().Publish(pubCtx, dashboardDocInvalidateChannel(dashboardID), payload).Err(); err != nil {
 		slog.Warn("dashboard doc invalidate publish failed",
-			"error", err, "dashboard_id", dashboardID)
+			"error", err, "dashboard_id", dashboardID, "reason", reason)
 	}
 }
