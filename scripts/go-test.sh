@@ -46,4 +46,6 @@ export AETHER_REDIS_URL="redis://localhost:6379/1"
 export AETHER_RATE_LIMIT_REGISTER="${AETHER_RATE_LIMIT_REGISTER:-500}"
 export AETHER_RATE_LIMIT_LOGIN="${AETHER_RATE_LIMIT_LOGIN:-500}"
 
-exec go test -timeout 3m "$@"
+# -p 1 matches CI's heavy-package runs: the api package alone takes ~160s of its
+# 3-minute budget, and running packages concurrently pushes it over the limit.
+exec go test -timeout 3m -p 1 "$@"
