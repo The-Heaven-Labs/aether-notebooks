@@ -208,7 +208,7 @@ Dark mode is a first-class theme, not a filter: the full mapping lives in `web/s
 
 ### Reading Role (approved 2026-10-11)
 
-The metric value role for the App surface: JetBrains Mono with tabular numerals at `clamp(20px, 9cqw, 32px)`, 700 weight, tracking -0.5px. Each reading is introduced by an Instrument Label — 10px uppercase mono, 0.08em tracking, muted ink — and a comparison delta is 12px/600 tabular mono with a direction icon and semantic color. This is the one place mono is set large; the reading scales with its widget container (container-query units) and caps at 32px.
+The metric value role for the App surface: JetBrains Mono with tabular numerals at `clamp(20px, 9cqw, 32px)`, 700 weight, tracking -0.5px. Each reading is introduced by an Instrument Label — 10px uppercase mono, 0.08em tracking, muted ink — and a comparison delta is 12px/600 tabular mono in semantic color, with a direction icon on up/down moves. This is the one place mono is set large; the reading scales with its widget container (container-query units) and caps at 32px.
 
 ## Layout
 

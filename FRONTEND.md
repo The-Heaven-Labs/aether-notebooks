@@ -570,9 +570,9 @@ summary rail on the left, configuration fields on the right, and a full-screen t
 
 **Widgets**:
 - Cell-linked (table/chart output from a notebook cell) or query-backed (`widgets.connector_id/query/language`)
-- **metric** — one reading computed client-side over the query's returned rows (`config.metric`: `value_column`, `aggregation`, `format`, optional `comparison` delta/percent, optional `sparkline`). Values use the reading type role (see DESIGN.md): JetBrains Mono, tabular numerals, `clamp(20px, 9cqw, 32px)` at 700 with -0.5px tracking, above a 10px uppercase tracked mono label; comparison deltas take semantic color + a direction icon
+- **metric** — one reading computed client-side over the query's returned rows (`config.metric`: `value_column`, `aggregation`, `format`, optional `comparison` delta/percent, optional `sparkline`). Values use the reading type role (see DESIGN.md): JetBrains Mono, tabular numerals, `clamp(20px, 9cqw, 32px)` at 700 with -0.5px tracking, above a 10px uppercase tracked mono label; comparison deltas take semantic color + a direction icon on up/down moves
 - **text** — markdown panel with `{{variable}}` interpolation; values insert as plain text and raw HTML never renders (no `rehypeRaw`), so interpolation cannot become a rendering surface
-- **Table column formats** — `config.table.columns` maps a column name to `{ style: number | currency | percent, currency, decimals, compact }`, applied in `OutputRenderer`'s table
+- **Table column formats** — `config.table.columns` stores an array of `{ name, format: { style: number | currency | percent, currency, decimals, compact } }` entries; `tableConfigFrom` parses them into the name→format map applied in `OutputRenderer`'s table
 - **Appearance** — every widget accepts `config.appearance`: `background` (`card` | `transparent`), `border` (drawn only on cards), outer `padding` (`none` | `sm` | `md`), `align` (`left` | `center` | `right`). The defaults reproduce the standard widget card exactly
 
 **Component**: `web/src/pages/DashboardPage.tsx`
