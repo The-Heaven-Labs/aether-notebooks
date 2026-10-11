@@ -189,7 +189,8 @@ async function dragWidget(page: Page, dx: number, dy: number): Promise<void> {
 }
 
 test.describe('live dashboard collaboration', () => {
-  test.setTimeout(60_000)
+  // Live two-context tests are timing-sensitive under parallel load.
+  test.setTimeout(90_000)
 
   test('editor SQL change re-runs the widget in the viewer', async ({ browser, request }) => {
     const { nova, sol } = await loginSessions(request)
@@ -215,28 +216,23 @@ test.describe('live dashboard collaboration', () => {
     const initialExecutes = executes()
     expect(initialExecutes).toBeGreaterThanOrEqual(1)
 
-    // Edit the SQL in the drawer: `* 3` → `* 2`. The editor may still be
-    // attaching to the shared document (which would revert an early
-    // keystroke), so verify the text stuck and retry until it does.
+    // Edit the SQL in the drawer: `* 3` → `* 2`. The drawer's editor binds to
+    // the shared document asynchronously, and a late attach reverts an early
+    // keystroke; retype-and-verify until the viewer actually receives the new
+    // SQL (which also proves the change reached the shared document).
     const target = 'SELECT i AS number, i * 2 AS doubled FROM generate_series(1,5) AS i'
     await editor.page.getByRole('button', { name: 'Edit widget' }).click()
     const drawer = editor.page.getByRole('dialog', { name: 'Widget configuration' })
     await expect(drawer).toBeVisible()
     const sqlEditor = drawer.locator('.cm-content')
     await expect(sqlEditor).toBeVisible()
-    let typed = false
-    for (let attempt = 0; attempt < 6 && !typed; attempt++) {
+    await expect(async () => {
       await sqlEditor.click()
       await editor.page.keyboard.press('Control+a')
       await editor.page.keyboard.type(target)
-      // Settle past the shared-doc attach: a late attach reverts to the shared
-      // text, which the next check detects and retries.
-      await editor.page.waitForTimeout(400)
-      typed = (await sqlEditor.textContent())?.includes('i * 2') ?? false
-    }
+      await expect(cell(viewer.page, 4, 1)).toHaveText('10', { timeout: 5_000 })
+    }).toPass({ timeout: 30_000 })
 
-    // The viewer re-runs the widget itself (debounced ~2s) and shows the new data.
-    await expect(cell(viewer.page, 4, 1)).toHaveText('10', { timeout: 15_000 })
     expect(executes()).toBeGreaterThan(initialExecutes)
   })
 

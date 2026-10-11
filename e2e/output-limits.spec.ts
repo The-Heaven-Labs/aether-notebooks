@@ -135,7 +135,8 @@ test.describe('Bounded cell outputs', () => {
     expect(disableResp.ok()).toBeTruthy()
 
     await page.goto(`/notebooks/${fixture.notebookId}`)
-    await expect(page.getByText(/1 row · 1 columns/)).toBeVisible({ timeout: 20_000 })
+    // OutputRenderer pluralizes the summary ("1 row · 1 column").
+    await expect(page.getByText(/1 row · 1 column/)).toBeVisible({ timeout: 20_000 })
     await expect(page.getByLabel('Download as JSON')).toHaveCount(0)
     await expect(page.getByLabel('Download as CSV')).toHaveCount(0)
     await expect(page.getByLabel('Download full result')).toHaveCount(0)
