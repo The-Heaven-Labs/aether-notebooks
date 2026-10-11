@@ -5,6 +5,7 @@ import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
+import { buildAddWidgetPayload } from '../utils/addWidgetPayload'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -137,12 +138,13 @@ const markSaved = useCallback(() => {
 
   const [showPicker, setShowPicker] = useState(false)
   const [showPermissions, setShowPermissions] = useState(false)
-  const [pickerSource, setPickerSource] = useState<'cell' | 'query'>('cell')
+  const [pickerSource, setPickerSource] = useState<'cell' | 'query' | 'none'>('cell')
   const [pickerNotebookId, setPickerNotebookId] = useState('')
   const [pickerCellId, setPickerCellId] = useState('')
   const [pickerConnectorId, setPickerConnectorId] = useState<string | null>(null)
   const [pickerQuery, setPickerQuery] = useState('SELECT 1')
-  const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
+  const [pickerType, setPickerType] = useState<'table' | 'chart' | 'metric' | 'text'>('table')
+  const [pickerMarkdown, setPickerMarkdown] = useState('')
   const [pickerError, setPickerError] = useState<string | null>(null)
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showVariables, setShowVariables] = useState(false)
@@ -221,14 +223,16 @@ const markSaved = useCallback(() => {
 
   const addWidget = useMutation({
     mutationFn: () => {
-      const base = {
+      const payload = buildAddWidgetPayload({
+        source: pickerSource,
         type: pickerType,
         layout: nextWidgetLayout(dashboard?.widgets ?? []),
-        config: {},
-      }
-      const payload = pickerSource === 'query'
-        ? { ...base, connector_id: pickerConnectorId, query: pickerQuery, language: 'sql' }
-        : { ...base, notebook_id: pickerNotebookId, cell_id: pickerCellId }
+        notebookId: pickerNotebookId,
+        cellId: pickerCellId,
+        connectorId: pickerConnectorId,
+        query: pickerQuery,
+        markdown: pickerMarkdown,
+      })
       return api.post<Widget>(`/api/v1/dashboards/${id}/widgets`, payload)
     },
     onSuccess: () => {
@@ -240,6 +244,7 @@ const markSaved = useCallback(() => {
       setPickerConnectorId(null)
       setPickerQuery('SELECT 1')
       setPickerType('table')
+      setPickerMarkdown('')
       setPickerError(null)
     },
     onError: (err: Error) => setPickerError(err.message),
@@ -327,6 +332,21 @@ const markSaved = useCallback(() => {
 
   const widgets = dashboard.widgets ?? []
   const pickerCells = pickerNotebook?.cells ?? []
+
+  // The picker can only add valid source/type combinations:
+  // none→text; cell→table|chart; query→table|chart|metric.
+  const pickerSourceComplete =
+    pickerSource === 'cell'
+      ? !!pickerNotebookId && !!pickerCellId
+      : pickerSource === 'query'
+        ? !!pickerConnectorId && !!pickerQuery.trim()
+        : true
+  const pickerTypeValid =
+    pickerSource === 'none'
+      ? pickerType === 'text'
+      : pickerSource === 'query'
+        ? pickerType !== 'text'
+        : pickerType === 'table' || pickerType === 'chart'
 
   const variables = dashboard.settings?.variables ?? []
 
@@ -461,6 +481,7 @@ const markSaved = useCallback(() => {
                   setPickerConnectorId(null)
                   setPickerQuery('SELECT 1')
                   setPickerType('table')
+                  setPickerMarkdown('')
                   setPickerError(null)
                 }}
               >
@@ -474,10 +495,19 @@ const markSaved = useCallback(() => {
                 style={styles.pickerSelect}
                 aria-label="Widget source"
                 value={pickerSource}
-                onChange={(e) => setPickerSource(e.target.value as 'cell' | 'query')}
+                onChange={(e) => {
+                  const source = e.target.value as 'cell' | 'query' | 'none'
+                  setPickerSource(source)
+                  if (source === 'none') {
+                    setPickerType('text')
+                  } else if (pickerType === 'text' || (source === 'cell' && pickerType === 'metric')) {
+                    setPickerType('table')
+                  }
+                }}
               >
                 <option value="cell">Notebook cell</option>
                 <option value="query">Query</option>
+                <option value="none">None — text panel</option>
               </select>
 
               {pickerSource === 'cell' ? (
@@ -512,23 +542,38 @@ const markSaved = useCallback(() => {
                     ))}
                   </select>
                 </>
-              ) : (
+              ) : pickerSource === 'query' ? (
                 <>
                   <label style={styles.pickerLabel}>Connector</label>
                   <ConnectorSelector value={pickerConnectorId} onChange={setPickerConnectorId} />
                   <label style={styles.pickerLabel}>SQL</label>
                   <SqlEditor value={pickerQuery} onChange={setPickerQuery} minHeight={120} />
                 </>
+              ) : (
+                <>
+                  <label style={styles.pickerLabel}>Markdown</label>
+                  <textarea
+                    style={styles.pickerTextarea}
+                    aria-label="Text panel markdown"
+                    placeholder={'## Title\n\nWrite markdown here…'}
+                    value={pickerMarkdown}
+                    onChange={(e) => setPickerMarkdown(e.target.value)}
+                  />
+                </>
               )}
 
               <label style={styles.pickerLabel}>Widget Type</label>
               <select
                 style={styles.pickerSelect}
+                aria-label="Widget type"
                 value={pickerType}
-                onChange={(e) => setPickerType(e.target.value as 'table' | 'chart')}
+                onChange={(e) => setPickerType(e.target.value as 'table' | 'chart' | 'metric' | 'text')}
+                disabled={pickerSource === 'none'}
               >
                 <option value="table">Table</option>
                 <option value="chart">Chart</option>
+                <option value="metric" disabled={pickerSource === 'cell'}>Metric</option>
+                <option value="text" disabled={pickerSource !== 'none'}>Text</option>
               </select>
 
               {pickerError && (
@@ -538,12 +583,7 @@ const markSaved = useCallback(() => {
               <button
                 type="button"
                 style={styles.pickerAddBtn}
-                disabled={
-                  addWidget.isPending ||
-                  (pickerSource === 'cell'
-                    ? !pickerNotebookId || !pickerCellId
-                    : !pickerConnectorId || !pickerQuery.trim())
-                }
+                disabled={addWidget.isPending || !pickerSourceComplete || !pickerTypeValid}
                 onClick={() => addWidget.mutate()}
               >
                 {addWidget.isPending ? 'Adding…' : 'Add Widget'}
@@ -858,6 +898,20 @@ const styles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-sans)',
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
+  },
+  pickerTextarea: {
+    width: '100%',
+    minHeight: 120,
+    padding: '8px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 13,
+    fontFamily: 'var(--font-sans)',
+    lineHeight: 1.6,
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    resize: 'vertical',
+    boxSizing: 'border-box',
   },
   pickerError: {
     color: 'var(--error)',
