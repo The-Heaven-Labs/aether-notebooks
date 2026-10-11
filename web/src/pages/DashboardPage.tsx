@@ -16,6 +16,7 @@ import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
+import { isTextPanel } from '../utils/widgetKind'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { WidgetFrame } from '../components/WidgetFrame'
 import { TextWidget } from '../components/TextWidget'
@@ -43,11 +44,6 @@ type AnyWidget = Widget & { type: string; config: any }
 
 function isQueryWidget(w: AnyWidget): w is AnyWidget & { connector_id: string; query: string } {
   return !!w.connector_id && !!w.query
-}
-
-/** Source-less text panel (no cell, no query): rendered by TextWidget. */
-function isTextPanel(w: AnyWidget): boolean {
-  return w.type === 'text' && !w.notebook_id && !w.connector_id
 }
 
 function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; loading?: boolean; onRun?: () => void; onEdit?: () => void }) {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isQueryWidget, widgetKindLabel } from './widgetKind'
+import { isQueryWidget, isTextPanel, widgetKindLabel } from './widgetKind'
 import type { Widget } from '../types'
 
 const base: Widget = {
@@ -36,5 +36,20 @@ describe('isQueryWidget', () => {
     expect(isQueryWidget(widget({ connector_id: 'c1' }))).toBe(false)
     expect(isQueryWidget(widget({ query: 'SELECT 1' }))).toBe(false)
     expect(isQueryWidget(widget())).toBe(false)
+  })
+})
+
+describe('isTextPanel', () => {
+  it('accepts a source-less text panel', () => {
+    expect(isTextPanel(widget({ type: 'text' }))).toBe(true)
+  })
+  it('rejects a cell-linked text cell', () => {
+    expect(isTextPanel(widget({ type: 'text', notebook_id: 'n1', cell_id: 'k1' }))).toBe(false)
+  })
+  it('rejects a query widget', () => {
+    expect(isTextPanel(widget({ connector_id: 'c1', query: 'SELECT 1' }))).toBe(false)
+  })
+  it('rejects a table cell widget', () => {
+    expect(isTextPanel(widget({ notebook_id: 'n1', cell_id: 'k1' }))).toBe(false)
   })
 })

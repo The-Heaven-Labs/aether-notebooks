@@ -7,7 +7,7 @@ import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPayload'
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
-import { isQueryWidget, widgetKindLabel } from '../utils/widgetKind'
+import { isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { EmptyState } from '../components/EmptyState'
@@ -66,11 +66,6 @@ function widgetDisplayName(widget: Widget): string {
   const cfg = widget.config as Record<string, unknown> | undefined
   const t = typeof cfg?.title === 'string' ? cfg.title : typeof cfg?.label === 'string' ? cfg.label : ''
   return t || 'widget'
-}
-
-/** Source-less text panel (no cell, no query): rendered by TextWidget. */
-function isTextPanel(widget: Widget): boolean {
-  return widget.type === 'text' && !widget.notebook_id && !widget.connector_id
 }
 
 function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
