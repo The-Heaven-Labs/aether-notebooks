@@ -104,6 +104,59 @@ describe('WidgetConfigDrawer', () => {
     expect(await screen.findByText('42')).toBeInTheDocument()
   })
 
+  test('previews on open without clicking Run, and offers Configure chart', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push(await request.json() as Record<string, unknown>)
+        return HttpResponse.json({ outputs: [tableOutput], metrics: {}, cached: true })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget({ type: 'chart' })} onClose={() => {}} onSaved={() => {}} />,
+    )
+    // The chart preview is a lazy-loaded chunk; under full-suite load the
+    // import can take longer than the 1s default wait.
+    expect(await screen.findByRole('button', { name: 'Configure chart' }, { timeout: 5000 })).toBeInTheDocument()
+    expect(bodies).toHaveLength(1)
+    // The open preview goes through the cache; Run is the fresh fetch.
+    expect(bodies[0].bypass_cache).toBe(false)
+  })
+
+  test('Run bypasses the cache after the open preview', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push(await request.json() as Record<string, unknown>)
+        return HttpResponse.json({ outputs: [tableOutput], metrics: {}, cached: false })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    await waitFor(() => expect(bodies).toHaveLength(2))
+    expect(bodies[0].bypass_cache).toBe(false)
+    expect(bodies[1].bypass_cache).toBe(true)
+  })
+
+  test('does not preview on open without view_with_data', async () => {
+    let calls = 0
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () => {
+        calls++
+        return HttpResponse.json({ outputs: [tableOutput], metrics: {}, cached: false })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={{ ...dashboard, can_view_with_data: false }} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    await new Promise(r => setTimeout(r, 50))
+    expect(calls).toBe(0)
+    expect(screen.getByRole('button', { name: /Run/ })).toBeDisabled()
+  })
+
   test('shows a Run error from the execute endpoint', async () => {
     server.use(
       http.post('/api/v1/dashboards/d1/execute', () =>

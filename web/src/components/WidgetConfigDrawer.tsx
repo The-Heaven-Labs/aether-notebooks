@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { X, Play, Loader2 } from 'lucide-react'
 import { api } from '../api/client'
@@ -437,14 +437,14 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     saveTableColumn(name, next)
   }
 
-  const runQuery = async () => {
+  const runQuery = useCallback(async (bypassCache: boolean) => {
     setRunning(true)
     setRunError(null)
     try {
       const resp = await api.post<WidgetQueryResult>(`/api/v1/dashboards/${dashboardId}/execute`, {
         widget_id: widget.id,
         variables: values,
-        bypass_cache: true,
+        bypass_cache: bypassCache,
       })
       setRunResult(resp)
     } catch (e) {
@@ -452,7 +452,22 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     } finally {
       setRunning(false)
     }
-  }
+  }, [dashboardId, widget.id, values])
+
+  // Preview on open: the preview — and with it the Configure chart button —
+  // is the point of the drawer, so run once when it opens instead of making
+  // the author click Run first. This run goes through the cache (the
+  // dashboard's own widgets usually just executed), so it is instant; the
+  // Run button still bypasses the cache for fresh data.
+  const autoRan = useRef(false)
+  useEffect(() => {
+    if (autoRan.current) return
+    if (!isQuery || !canRun || runResult || running) return
+    autoRan.current = true
+    // Deferred to a microtask: runQuery sets `running` synchronously, and
+    // setting state during effect execution is what the lint rule guards.
+    void Promise.resolve().then(() => runQuery(false))
+  }, [isQuery, canRun, runResult, running, runQuery])
 
   const convertToQuery = async () => {
     setConverting(true)
@@ -511,7 +526,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                   ))}
                 </div>
               )}
-              <button type="button" style={styles.runBtn} onClick={runQuery} disabled={running || !canRun}>
+              <button type="button" style={styles.runBtn} onClick={() => void runQuery(true)} disabled={running || !canRun}>
                 {running ? <Loader2 size={12} style={{ animation: 'spin 1s linear infinite' }} /> : <Play size={12} />}
                 {running ? 'Running…' : 'Run'}
               </button>
