@@ -19,11 +19,11 @@ const widget: Widget = {
   created_at: '2026-01-01T00:00:00Z',
 }
 
-function mockExecute(rows: unknown[][]) {
+function mockExecute(rows: unknown[][], column: { name: string; type: string } = { name: 'x', type: 'String' }) {
   server.use(
     http.post('/api/v1/dashboards/d1/execute', () =>
       HttpResponse.json({
-        outputs: [{ type: 'table', data: { columns: [{ name: 'x', type: 'String' }], rows } }],
+        outputs: [{ type: 'table', data: { columns: [column], rows } }],
         metrics: {},
         cached: false,
       }),
@@ -31,10 +31,10 @@ function mockExecute(rows: unknown[][]) {
   )
 }
 
-function renderWidget(variables: DashboardVariable[], initialPath: string) {
+function renderWidget(variables: DashboardVariable[], initialPath: string, w: Widget = widget) {
   return renderWithProviders(
     <DashboardVariablesProvider dashboardId="d1" variables={variables} storageId="qdw-test">
-      <QueryDataWidget dashboardId="d1" widget={widget} canViewWithData />
+      <QueryDataWidget dashboardId="d1" widget={w} canViewWithData />
     </DashboardVariablesProvider>,
     { initialPath },
   )
@@ -73,5 +73,29 @@ describe('QueryDataWidget zero states', () => {
     mockExecute([[1]])
     renderWidget([], '/d1')
     expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+  })
+})
+
+describe('QueryDataWidget metric widgets', () => {
+  const metricWidget: Widget = {
+    ...widget,
+    type: 'metric',
+    config: { metric: { value_column: 'v', aggregation: 'none' } },
+  }
+
+  test('a metric widget renders the computed value instead of a table', async () => {
+    mockExecute([[42]], { name: 'v', type: 'Int32' })
+    renderWidget([], '/d1', metricWidget)
+    // The reading is the metric group, not a table cell that happens to say 42.
+    expect(await screen.findByRole('group', { name: '42' })).toBeInTheDocument()
+    expect(screen.queryByText(/1 row · 1 column/)).not.toBeInTheDocument()
+    // The refresh/freshness footer stays available on metric widgets.
+    expect(screen.getByRole('button', { name: 'Refresh widget data' })).toBeInTheDocument()
+  })
+
+  test('a metric widget with zero rows still reads as no data', async () => {
+    mockExecute([], { name: 'v', type: 'Int32' })
+    renderWidget([], '/d1', metricWidget)
+    expect(await screen.findByText('No data returned')).toBeInTheDocument()
   })
 })

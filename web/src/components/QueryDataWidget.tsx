@@ -4,8 +4,10 @@ import { ApiError } from '../api/client'
 import { useDashboardVariables, isVariableDefault } from '../contexts/DashboardVariablesContext'
 import { useWidgetQuery } from '../hooks/useWidgetQuery'
 import { OutputRenderer } from './OutputRenderer'
+import { MetricWidget } from './MetricWidget'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
+import { metricConfigFrom } from '../utils/metric'
 import type { DashboardVariable, ResultSet, Widget } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
@@ -56,6 +58,19 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+  },
+  // Mirrors OutputRenderer's output bar chrome so metric widgets keep the
+  // same refresh/freshness footer as table and chart widgets, pinned below
+  // the reading instead of above a table.
+  metricFooter: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '6px 16px',
+    background: 'var(--bg-secondary)',
+    borderTop: '1px solid var(--border-light)',
+    gap: 8,
+    flexWrap: 'wrap',
   },
   // Compact version of the product's empty-state pattern for widget-sized space.
   zero: {
@@ -291,14 +306,23 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     </div>
   )
 
+  const metric = metricConfigFrom(widget.config)
+
   return (
     <div style={{ ...styles.root, opacity: isFetching ? 0.55 : 1 }} aria-busy={isFetching}>
-      <OutputRenderer
-        outputs={outputs}
-        fixedView={widget.type === 'chart' ? 'chart' : 'table'}
-        chartConfig={normalizeChartConfig(widget.config)}
-        footerExtra={footerExtra}
-      />
+      {widget.type === 'metric' && resultSet ? (
+        <>
+          <MetricWidget result={resultSet} config={metric} />
+          <div style={styles.metricFooter}>{footerExtra}</div>
+        </>
+      ) : (
+        <OutputRenderer
+          outputs={outputs}
+          fixedView={widget.type === 'chart' ? 'chart' : 'table'}
+          chartConfig={normalizeChartConfig(widget.config)}
+          footerExtra={footerExtra}
+        />
+      )}
     </div>
   )
 }
