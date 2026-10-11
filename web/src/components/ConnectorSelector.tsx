@@ -17,6 +17,7 @@ interface ConnectorSelectorProps {
   style?: React.CSSProperties
   /** When set, only connectors of these types render. */
   types?: string[]
+  disabled?: boolean
 }
 
 export function ConnectorSelector({
@@ -26,6 +27,7 @@ export function ConnectorSelector({
   allowClear = false,
   style,
   types,
+  disabled = false,
 }: ConnectorSelectorProps) {
   // Shares the ['connectors'] query with the sidebar and page queries so the
   // list is fetched once per cache window instead of once per consumer.
@@ -50,6 +52,7 @@ export function ConnectorSelector({
           ...style,
         }}
         value={value ?? ''}
+        disabled={disabled}
         onChange={e => onChange(e.target.value || null)}
       >
         <option value="" disabled={!allowClear || !value}>{allowClear && value ? 'Clear selection' : placeholder}</option>

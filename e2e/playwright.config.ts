@@ -4,6 +4,10 @@ export default defineConfig({
   testDir: '.',
   testMatch: '**/*.spec.ts',
   fullyParallel: false,
+  // The suite drives a single Vite dev server, Go API, relay, and dev database.
+  // Uncapped parallelism (one worker per file) starves app boot and WS fan-out,
+  // which flakes timing-sensitive specs; four workers keeps runs deterministic.
+  workers: 4,
   retries: 0,
   timeout: 30_000,
   use: {

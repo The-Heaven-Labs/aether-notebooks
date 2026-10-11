@@ -28,6 +28,10 @@ const Ctx = createContext<DashboardVariablesContextValue>({
 
 function storageKey(dashboardId: string) { return `aether_dashvars_${dashboardId}` }
 
+/** Names the viewer explicitly chose; kept apart from the values map so live
+ * definition changes never overwrite an explicit choice. */
+function touchedStorageKey(dashboardId: string) { return `aether_dashvars_touched_${dashboardId}` }
+
 // A multi_select with no choices is an explicit "(none)" filter, not the
 // absence of one: `IN (NULL)` matches no rows by design. It round-trips
 // through the URL as an empty value (`?country=`) so shared links keep the
@@ -47,14 +51,19 @@ function parseSearchValue(v: DashboardVariable, search: URLSearchParams): unknow
   }
 }
 
+/** Deep equality for a variable's value; multi_select compares as a set. */
+function sameVariableValue(v: DashboardVariable, a: unknown, b: unknown): boolean {
+  if (v.type === 'multi_select') {
+    const la = Array.isArray(a) ? a.map(String).sort() : []
+    const lb = Array.isArray(b) ? b.map(String).sort() : []
+    return la.length === lb.length && la.every((item, i) => item === lb[i])
+  }
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null)
+}
+
 /** True when the current value carries the same meaning as the variable's default. */
 export function isVariableDefault(v: DashboardVariable, value: unknown): boolean {
-  if (v.type === 'multi_select') {
-    const a = Array.isArray(value) ? value.map(String).sort() : []
-    const b = Array.isArray(v.default) ? (v.default as unknown[]).map(String).sort() : []
-    return a.length === b.length && a.every((item, i) => item === b[i])
-  }
-  return JSON.stringify(value ?? null) === JSON.stringify(v.default ?? null)
+  return sameVariableValue(v, value, v.default)
 }
 
 function loadInitial(dashboardId: string, variables: DashboardVariable[], search: URLSearchParams): Record<string, unknown> {
@@ -68,6 +77,23 @@ function loadInitial(dashboardId: string, variables: DashboardVariable[], search
     if (v.default !== undefined) out[v.name] = v.default
   }
   return out
+}
+
+/** Explicit choices from a previous visit plus this visit's URL pins. */
+function loadTouched(dashboardId: string, variables: DashboardVariable[], search: URLSearchParams): Set<string> {
+  const out = new Set<string>()
+  try {
+    const stored: unknown = JSON.parse(localStorage.getItem(touchedStorageKey(dashboardId)) ?? '[]')
+    if (Array.isArray(stored)) for (const name of stored) if (typeof name === 'string') out.add(name)
+  } catch { /* ignore malformed storage */ }
+  for (const v of variables) {
+    if (parseSearchValue(v, search) !== undefined) out.add(v.name)
+  }
+  return out
+}
+
+function persistTouched(dashboardId: string, touched: ReadonlySet<string>) {
+  try { localStorage.setItem(touchedStorageKey(dashboardId), JSON.stringify([...touched])) } catch { /* ignore quota */ }
 }
 
 function serializeValue(v: DashboardVariable, value: unknown): string[] {
@@ -98,6 +124,14 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
   const optionsBase = endpointBase ?? `/api/v1/dashboards/${dashboardId}`
   const [searchParams, setSearchParams] = useSearchParams()
   const [values, setValuesState] = useState<Record<string, unknown>>(() => loadInitial(storageNamespace, variables, searchParams))
+  // Names the viewer explicitly chose (URL pins at mount + setter calls).
+  // Persisted next to the values so explicit choices survive a reload and are
+  // never overwritten when a definition's default changes live.
+  const [touched] = useState<Set<string>>(() => {
+    const set = loadTouched(storageNamespace, variables, searchParams)
+    persistTouched(storageNamespace, set)
+    return set
+  })
   const [optionState, setOptionState] = useState<Record<string, VariableOptionsState>>({})
   const valuesRef = useRef(values)
   valuesRef.current = values
@@ -118,25 +152,64 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     // Persist outside the state updater: calling setSearchParams while React
     // renders another component triggers a "cannot update during render"
     // warning, and updaters may run twice under StrictMode.
+    touched.add(name)
+    persistTouched(storageNamespace, touched)
     const next = { ...valuesRef.current, [name]: value }
     valuesRef.current = next
     setValuesState(next)
     persist(next)
-  }, [persist])
+  }, [persist, storageNamespace, touched])
 
   const setValues = useCallback((next: Record<string, unknown>) => {
+    for (const name of Object.keys(next)) touched.add(name)
+    persistTouched(storageNamespace, touched)
     valuesRef.current = next
     setValuesState(next)
     persist(next)
-  }, [persist])
+  }, [persist, storageNamespace, touched])
 
   const resetAll = useCallback(() => {
+    // Clearing touched returns every variable to "follow the default": the
+    // values below are the current defaults, and later default changes apply.
+    touched.clear()
+    persistTouched(storageNamespace, touched)
     const next: Record<string, unknown> = {}
     for (const v of variables) next[v.name] = v.default
     valuesRef.current = next
     setValuesState(next)
     persist(next)
-  }, [variables, persist])
+  }, [variables, persist, storageNamespace, touched])
+
+  // Live definition changes: a variable the viewer never explicitly chose
+  // adopts its new default when the current value is unset or still matches
+  // the previous definition's default. Explicit choices, URL pins, and values
+  // diverging from the previous default are left alone. This is what makes an
+  // auto re-run after a live default edit actually return the new data.
+  const previousVariablesRef = useRef<DashboardVariable[] | null>(null)
+  useEffect(() => {
+    const previous = previousVariablesRef.current
+    previousVariablesRef.current = variables
+    if (previous === null) return
+    const previousByName = new Map(previous.map(v => [v.name, v]))
+    const current = valuesRef.current
+    let next: Record<string, unknown> | null = null
+    for (const v of variables) {
+      if (touched.has(v.name)) continue
+      const value = current[v.name]
+      const previousDef = previousByName.get(v.name)
+      const mayAdoptDefault = value === undefined
+        || (previousDef !== undefined && sameVariableValue(previousDef, value, previousDef.default))
+      if (!mayAdoptDefault) continue
+      if (sameVariableValue(v, value, v.default)) continue
+      next ??= { ...current }
+      next[v.name] = v.default
+    }
+    if (next) {
+      valuesRef.current = next
+      setValuesState(next)
+      persist(next)
+    }
+  }, [variables, persist, touched])
 
   const loadOptions = useCallback(async (name: string) => {
     setOptionState(prev => ({ ...prev, [name]: { ...(prev[name] ?? { options: [] }), loading: true, error: null } }))

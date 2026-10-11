@@ -139,6 +139,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 				ConnPool:                e.ConnPool,
 				CheckPermissionFunc:     e.CheckPermissionFunc,
 				RecordConnectorActivity: e.RecordConnectorActivity,
+				DashboardDocStore:       e.DashboardDocStore,
 			})
 
 			if err != nil {
@@ -441,6 +442,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 				ConnPool:                e.ConnPool,
 				CheckPermissionFunc:     e.CheckPermissionFunc,
 				RecordConnectorActivity: e.RecordConnectorActivity,
+				DashboardDocStore:       e.DashboardDocStore,
 			})
 			toolDuration := int(time.Since(toolStart).Milliseconds())
 

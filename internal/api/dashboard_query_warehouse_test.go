@@ -15,7 +15,8 @@ import (
 
 // resolveWidgetConnector decides which connector serves a dashboard widget:
 // the viewer's dashboard-selector choice wins only inside the widget's own
-// warehouse; otherwise the widget's saved connector serves.
+// warehouse; otherwise the widget's saved connector serves. The returned
+// warehouse id is the served connector's (nil for unmanaged connectors).
 func TestResolveWidgetConnector(t *testing.T) {
 	ctx := context.Background()
 	fx := setupExecutionTargetFixture(t)
@@ -67,32 +68,38 @@ func TestResolveWidgetConnector(t *testing.T) {
 		[]byte("unused"), fx.warehouseID.String())
 	require.NoError(t, err)
 
+	warehouse := fx.warehouseID.String()
 	cases := []struct {
 		name          string
 		widgetConn    string
 		viewerConn    string
 		wantConnector string
+		wantWarehouse *string
 		wantErr       bool
 	}{
-		{"same warehouse serves the viewer selection", fx.connA.String(), fx.connB.String(), fx.connB.String(), false},
-		{"cross warehouse keeps the widget connector", fx.connA.String(), otherConn.String(), fx.connA.String(), false},
-		{"unknown viewer connector keeps the widget connector", fx.connA.String(), uuid.NewString(), fx.connA.String(), false},
-		{"soft-deleted viewer connector keeps the widget connector", fx.connA.String(), deletedConn.String(), fx.connA.String(), false},
-		{"malformed viewer connector keeps the widget connector", fx.connA.String(), "not-a-uuid", fx.connA.String(), false},
-		{"cross-org viewer connector keeps the widget connector", fx.connA.String(), foreignConn.String(), fx.connA.String(), false},
-		{"empty viewer keeps the widget connector", fx.connA.String(), "", fx.connA.String(), false},
-		{"viewer equal to widget keeps the widget connector", fx.connA.String(), fx.connA.String(), fx.connA.String(), false},
-		{"missing widget connector errors", uuid.NewString(), fx.connB.String(), "", true},
+		{"same warehouse serves the viewer selection", fx.connA.String(), fx.connB.String(), fx.connB.String(), &warehouse, false},
+		{"cross warehouse keeps the widget connector", fx.connA.String(), otherConn.String(), fx.connA.String(), &warehouse, false},
+		{"unknown viewer connector keeps the widget connector", fx.connA.String(), uuid.NewString(), fx.connA.String(), &warehouse, false},
+		{"soft-deleted viewer connector keeps the widget connector", fx.connA.String(), deletedConn.String(), fx.connA.String(), &warehouse, false},
+		{"malformed viewer connector keeps the widget connector", fx.connA.String(), "not-a-uuid", fx.connA.String(), &warehouse, false},
+		{"cross-org viewer connector keeps the widget connector", fx.connA.String(), foreignConn.String(), fx.connA.String(), &warehouse, false},
+		{"empty viewer keeps the widget connector", fx.connA.String(), "", fx.connA.String(), &warehouse, false},
+		{"viewer equal to widget keeps the widget connector", fx.connA.String(), fx.connA.String(), fx.connA.String(), &warehouse, false},
+		{"viewer without warehouse keeps the widget connector", fx.connA.String(), fx.unmanagedID.String(), fx.connA.String(), &warehouse, false},
+		{"unmanaged widget connector returns a nil warehouse", fx.unmanagedID.String(), "", fx.unmanagedID.String(), nil, false},
+		{"missing widget connector errors", uuid.NewString(), fx.connB.String(), "", nil, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := fx.s.resolveWidgetConnector(ctx, fx.orgID.String(), tc.widgetConn, tc.viewerConn)
+			got, gotWarehouse, err := fx.s.resolveWidgetConnector(ctx, fx.orgID.String(), tc.widgetConn, tc.viewerConn)
 			if tc.wantErr {
 				require.Error(t, err)
+				require.Nil(t, gotWarehouse)
 				return
 			}
 			require.NoError(t, err)
 			require.Equal(t, tc.wantConnector, got)
+			require.Equal(t, tc.wantWarehouse, gotWarehouse)
 		})
 	}
 }

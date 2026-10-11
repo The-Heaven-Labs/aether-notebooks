@@ -117,3 +117,48 @@ func TestPurgeTrashRemovesSessionACLsOfPurgedNotebooks(t *testing.T) {
 		`SELECT COUNT(*) FROM acl_entries WHERE resource_type = 'agent_session' AND resource_id = $1`, liveSession),
 		"live notebooks must keep their session ACL rows")
 }
+
+// TestPurgeTrashReportsPurgedDashboardsToInvalidator pins the relay-facing
+// callback: every dashboard hard-deleted by the purge is reported exactly
+// once, within-retention and live dashboards are not, and the callback runs
+// after the delete statement completes (so a relay reload after the notice
+// cannot find the row).
+func TestPurgeTrashReportsPurgedDashboardsToInvalidator(t *testing.T) {
+	db := setupPurgeTestDB(t)
+	ctx := context.Background()
+	f := seedPurgeTestOrg(t, db)
+
+	pastRetention := time.Now().Add(-8 * 24 * time.Hour)
+	withinRetention := time.Now().Add(-24 * time.Hour)
+
+	seedDashboard := func(deletedAt *time.Time) string {
+		id := uuid.NewString()
+		_, err := db.Pool.Exec(ctx, `
+			INSERT INTO dashboards (id, org_id, title, created_by, deleted_at)
+			VALUES ($1, $2, 'Purge Dashboard', $3, $4)`, id, f.orgID, f.userID, deletedAt)
+		require.NoError(t, err)
+		return id
+	}
+
+	purgedID := seedDashboard(&pastRetention)
+	trashedID := seedDashboard(&withinRetention)
+	liveID := seedDashboard(nil)
+
+	var reported []string
+	s := New(db, nil)
+	s.SetTrashInvalidator(func(_ context.Context, dashboardID string) {
+		require.Zero(t, countPurgeRows(t, db, `SELECT COUNT(*) FROM dashboards WHERE id = $1`, dashboardID),
+			"the purged row must already be gone when the invalidator runs")
+		reported = append(reported, dashboardID)
+	})
+	s.purgeTrash(ctx)
+
+	require.Equal(t, []string{purgedID}, reported,
+		"only the past-retention dashboard is reported")
+	require.Zero(t, countPurgeRows(t, db, `SELECT COUNT(*) FROM dashboards WHERE id = $1`, purgedID),
+		"past-retention dashboard must be purged")
+	require.Equal(t, 1, countPurgeRows(t, db, `SELECT COUNT(*) FROM dashboards WHERE id = $1`, trashedID),
+		"within-retention trash must survive the purge")
+	require.Equal(t, 1, countPurgeRows(t, db, `SELECT COUNT(*) FROM dashboards WHERE id = $1`, liveID),
+		"live dashboards must survive the purge")
+}

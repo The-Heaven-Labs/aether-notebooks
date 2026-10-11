@@ -287,6 +287,16 @@ func TestOAuthTokenRejectedOnInternalEndpoints(t *testing.T) {
 
 	rec = doJSON(t, srv, "PUT", "/internal/yjs/00000000-0000-0000-0000-000000000000", access, "state")
 	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	rec = doJSON(t, srv, "GET", "/internal/dashboard-yjs/00000000-0000-0000-0000-000000000000", access, "")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	rec = doJSON(t, srv, "PUT", "/internal/dashboard-yjs/00000000-0000-0000-0000-000000000000", access, "state")
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
+
+	rec = doJSON(t, srv, "POST", "/internal/collab/authorize", access,
+		`{"document_name":"dashboard:00000000-0000-0000-0000-000000000000"}`)
+	require.Equal(t, http.StatusUnauthorized, rec.Code)
 }
 
 // TestOAuthTokenRejectedOnMCPServersAPI pins the exact-path MCP check: the

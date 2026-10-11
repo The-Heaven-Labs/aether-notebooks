@@ -14,11 +14,15 @@ test.describe('Platform admin panel', () => {
 
   test('visual: /admin as non-admin (should be empty or redirect)', async ({ page }) => {
     const ts = Date.now().toString()
-    await registerAndOnboard(page, ts)
+    const { orgName } = await registerAndOnboard(page, ts)
     await page.goto('/admin')
     await expect(page.locator('h1:has-text("Platform Admin")')).toBeVisible()
-    // The top bar shows the unique org name; tolerate its glyph-width drift.
-    await expect(page).toHaveScreenshot('admin-non-admin.png', { maxDiffPixelRatio: 0.002 })
+    // The top bar shows the unique per-run org name; mask it so its
+    // glyph-width drift cannot push the diff over the tolerance.
+    await expect(page).toHaveScreenshot('admin-non-admin.png', {
+      maxDiffPixelRatio: 0.002,
+      mask: [page.getByText(orgName)],
+    })
   })
 
   // Platform admin credentials are seeded by the dev stack

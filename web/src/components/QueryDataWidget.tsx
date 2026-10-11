@@ -185,7 +185,7 @@ function NoDataState({ onRun }: { onRun: () => void }) {
   )
 }
 
-export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, viewerConnectorId, endpointBase, onFetchingChange, onFetched, registerRefresher }: {
+export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, viewerConnectorId, endpointBase, onFetchingChange, onFetched, registerRefresher, registerRerunner }: {
   dashboardId: string
   widget: Widget
   canViewWithData: boolean
@@ -201,9 +201,11 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
   onFetched?: () => void
   /** Registers an awaitable refresher; return value unregisters on unmount. */
   registerRefresher?: (refresh: () => Promise<unknown>) => (() => void) | void
+  /** Registers a cache-eligible re-run handle used by live definition changes. */
+  registerRerunner?: (rerun: () => Promise<unknown>) => (() => void) | void
 }) {
   const { variables, values, resetAll } = useDashboardVariables()
-  const { data, error, isPending, isFetching, refresh } = useWidgetQuery({
+  const { data, error, isPending, isFetching, refresh, rerun } = useWidgetQuery({
     dashboardId,
     widget,
     values,
@@ -241,6 +243,15 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     return result
   }, [])
   useEffect(() => registerRefresher?.(stableRefresh), [registerRefresher, stableRefresh])
+
+  // Stable cache-eligible handle for auto re-runs on live definition changes
+  // (`rerun` is a stable useCallback over React Query's stable refetch). Only
+  // registered while the query may actually run: `refetch()` ignores the
+  // `enabled` option, so a gated widget must not receive auto re-runs.
+  useEffect(() => {
+    if (!canViewWithData || !queryEnabled) return
+    return registerRerunner?.(rerun)
+  }, [registerRerunner, rerun, canViewWithData, queryEnabled])
 
   // Report fetching state upward (header progress). Effects run the ref so
   // unstable parent callbacks never retrigger the report.

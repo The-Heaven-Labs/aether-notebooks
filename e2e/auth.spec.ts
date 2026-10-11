@@ -66,11 +66,16 @@ test.describe('Authentication', () => {
 
   test('visual: login page', async ({ page }) => {
     await page.goto('/login')
+    // Wait for the app to paint before capturing: update mode takes the
+    // screenshot immediately, and a lazy-booted SPA can still be blank.
+    await expect(page.getByRole('button', { name: /create account/i })).toBeVisible()
     await expect(page).toHaveScreenshot('login-page.png')
   })
 
   test('visual: onboarding page', async ({ page }) => {
     await page.goto('/onboarding')
+    // Wait for the app to paint before capturing (see the login test note).
+    await expect(page.getByRole('heading', { name: 'Welcome to Aether Notebooks' })).toBeVisible()
     await expect(page).toHaveScreenshot('onboarding-page.png')
   })
 })

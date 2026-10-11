@@ -7,6 +7,7 @@ import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
+import type { SqlEditorCollab } from './SqlEditor'
 import { OutputRenderer } from './OutputRenderer'
 import { MetricWidget } from './MetricWidget'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
@@ -273,7 +274,7 @@ export function mergeChartConfigInto(
     : { ...config, ...withWidgetOverride(chartConfig) }
 }
 
-export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true }: {
+export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true, editingEnabled = true, docSynced = false }: {
   dashboardId: string
   dashboard: Dashboard
   widget: Widget
@@ -281,6 +282,10 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   onSaved: () => void
   onDefineVariable?: (name: string, suggestedType?: DashboardVariableType) => void
   closeOnEscape?: boolean
+  /** When false every mutating control is disabled (editing is paused). */
+  editingEnabled?: boolean
+  /** True once the dashboard document has synced; enables the live SQL binding. */
+  docSynced?: boolean
 }) {
   const isQuery = isQueryWidget(widget)
   const canRun = dashboard.can_view_with_data !== false
@@ -306,25 +311,70 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const [convertError, setConvertError] = useState<string | null>(null)
   const drawerRef = useRef<HTMLDivElement>(null)
 
+  // Live document binding for the SQL editor. The runtime is imported on
+  // demand (same lazy pattern as useDashboardDoc) and peeked without creating
+  // a provider: when the page holds the dashboard document there is an entry,
+  // otherwise the editor falls back to local state + REST.
+  const [sqlCollab, setSqlCollab] = useState<SqlEditorCollab | null>(null)
+  // True once the live-document lookup has settled. Until then the SQL editor
+  // stays read-only: typing before the binding attaches would be reverted when
+  // y-codemirror adopts the shared text.
+  const [collabLookupDone, setCollabLookupDone] = useState(false)
+  const collabPending = docSynced && !collabLookupDone
+  useEffect(() => {
+    if (!docSynced) {
+      setCollabLookupDone(false)
+      return
+    }
+    let cancelled = false
+    void import('./dashboardCollabRuntime')
+      .then((mod) => {
+        if (cancelled) return
+        const entry = mod.peekDashboardCollab(dashboardId)
+        setSqlCollab(prev => {
+          if (!entry) return null
+          return prev && prev.collab === entry && prev.widgetId === widget.id
+            ? prev
+            : { collab: entry, widgetId: widget.id }
+        })
+      })
+      .catch(() => { /* fall back to local editing + REST */ })
+      .finally(() => {
+        if (!cancelled) setCollabLookupDone(true)
+      })
+    return () => { cancelled = true }
+  }, [docSynced, dashboardId, widget.id])
+
   const lastSaved = useRef({ connector: widget.connector_id ?? '', query: widget.query ?? '' })
 
-  // Debounced persistence of the SQL source and connector.
+  // Debounced persistence of the connector (REST) and — without a bound
+  // document — the SQL source. When the editor is bound to the shared
+  // document the query text is persisted by the relay, so it must not be
+  // sent over REST (the request would clobber concurrent doc edits); the
+  // connector has no document mutator yet, so it always goes over REST and
+  // the server merges it into the document.
   useEffect(() => {
     if (!isQuery) return
-    if ((connectorId ?? '') === lastSaved.current.connector && query === lastSaved.current.query) return
+    const connectorChanged = (connectorId ?? '') !== lastSaved.current.connector
+    const queryChanged = !sqlCollab && query !== lastSaved.current.query
+    if (!connectorChanged && !queryChanged) return
     const timer = setTimeout(() => {
-      const payload: Record<string, unknown> = { query }
-      if (connectorId) payload.connector_id = connectorId
+      const payload: Record<string, unknown> = {}
+      if (connectorChanged) payload.connector_id = connectorId
+      if (queryChanged) payload.query = query
       api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, payload)
         .then(() => {
-          lastSaved.current = { connector: connectorId ?? '', query }
+          if (connectorChanged) lastSaved.current.connector = connectorId ?? ''
+          if (queryChanged) lastSaved.current.query = query
           setSaveError(null)
-          onSaved()
+          // Doc-bound writes propagate through the live document; only the
+          // local-state fallback needs the REST refresh.
+          if (!sqlCollab) onSaved()
         })
         .catch((e: unknown) => setSaveError(e instanceof Error ? e.message : 'Failed to save widget'))
     }, 600)
     return () => clearTimeout(timer)
-  }, [connectorId, query, dashboardId, widget.id, isQuery, onSaved])
+  }, [connectorId, query, dashboardId, widget.id, isQuery, onSaved, sqlCollab])
 
   const definedVariables = useMemo(() => {
     const names = new Set<string>()
@@ -355,6 +405,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const resultColumns = runResultSet?.columns.map(c => c.name) ?? []
 
   const handleTypeChange = async (next: Widget['type']) => {
+    if (!editingEnabled) return
     setWidgetType(next)
     try {
       await api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, { type: next })
@@ -366,8 +417,17 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   }
 
   const putWidgetConfig = (next: Record<string, unknown>) => {
+    if (!editingEnabled) return Promise.resolve()
     configRef.current = next
     setConfig(next)
+    if (sqlCollab) {
+      // The config lives in the shared document; the relay persists it and
+      // no REST refresh is needed.
+      return import('./dashboardCollabRuntime').then(({ setWidgetConfig }) => {
+        setWidgetConfig(sqlCollab.collab, widget.id, configRef.current)
+        setSaveError(null)
+      })
+    }
     // Append to the chain and send the latest merged config at execution time,
     // so a queued save still writes the freshest payload (last-write-wins).
     // The catch keeps one failed request from breaking every later save, and
@@ -470,6 +530,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   }, [isQuery, canRun, runResult, running, runQuery])
 
   const convertToQuery = async () => {
+    if (!editingEnabled) return
     setConverting(true)
     setConvertError(null)
     try {
@@ -500,8 +561,15 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
           <span style={styles.sectionLabel}>Source</span>
           {isQuery ? (
             <>
-              <ConnectorSelector value={connectorId} onChange={setConnectorId} />
-              <SqlEditor value={query} onChange={setQuery} connectorType={undefined} />
+              <ConnectorSelector value={connectorId} onChange={setConnectorId} disabled={!editingEnabled} />
+              <SqlEditor
+                value={query}
+                onChange={setQuery}
+                connectorType={undefined}
+                collab={sqlCollab}
+                editable={editingEnabled && !collabPending}
+                onCollabUnavailable={() => setSqlCollab(null)}
+              />
               {references.length > 0 && (
                 <div style={styles.chipRow}>
                   {references.map(name => (
@@ -564,7 +632,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                 Notebook cell widget. Convert it to a query widget to own its SQL and reference
                 dashboard variables.
               </div>
-              <button type="button" style={styles.runBtn} onClick={convertToQuery} disabled={converting}>
+              <button type="button" style={styles.runBtn} onClick={convertToQuery} disabled={converting || !editingEnabled}>
                 {converting ? 'Converting…' : 'Convert to query widget'}
               </button>
               {convertError && <div style={styles.error} role="alert">{convertError}</div>}
@@ -577,6 +645,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             aria-label="Widget type"
             style={styles.select}
             value={widgetType}
+            disabled={!editingEnabled}
             onChange={(e) => { void handleTypeChange(e.target.value as Widget['type']) }}
           >
             <option value="table">Table</option>

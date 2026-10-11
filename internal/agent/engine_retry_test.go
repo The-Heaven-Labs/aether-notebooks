@@ -230,6 +230,18 @@ func TestProcessMessage_ToolTimeoutSurfaced(t *testing.T) {
 	}
 }
 
+// stubDashboardDocStore satisfies agent.DashboardDocStore for propagation
+// tests; behavior is exercised against the real store in tools_manage_test.go.
+type stubDashboardDocStore struct{}
+
+func (stubDashboardDocStore) LoadOrSeed(context.Context, string, string) ([]byte, error) {
+	return nil, nil
+}
+
+func (stubDashboardDocStore) Store(context.Context, string, []byte) error { return nil }
+
+func (stubDashboardDocStore) Invalidate(context.Context, string) {}
+
 // The engine must propagate running-state hooks into every ToolContext, the
 // same way BroadcastFunc is propagated.
 func TestProcessMessage_PropagatesRunningHooks(t *testing.T) {
@@ -241,12 +253,13 @@ func TestProcessMessage_PropagatesRunningHooks(t *testing.T) {
 	engine.SetCancelFunc = func(cellID string, cancel context.CancelFunc) {}
 	engine.DeleteCancelFunc = func(cellID string) {}
 	engine.BroadcastFunc = func(notebookID string, msg any) {}
+	engine.DashboardDocStore = stubDashboardDocStore{}
 
 	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
 	nbID := createTestNotebook(t, db, orgID, userID)
 	sid := createTestSession(t, db, agentID, nbID, userID)
 
-	var sawBroadcast, sawSetRunning, sawUnsetRunning, sawSetCancel, sawDeleteCancel bool
+	var sawBroadcast, sawSetRunning, sawUnsetRunning, sawSetCancel, sawDeleteCancel, sawDashboardDocStore bool
 	probe := &ToolDef{
 		Type: "function",
 		Handler: func(args json.RawMessage, ctx *ToolContext) (any, error) {
@@ -255,6 +268,7 @@ func TestProcessMessage_PropagatesRunningHooks(t *testing.T) {
 			sawUnsetRunning = ctx.UnsetRunningFunc != nil
 			sawSetCancel = ctx.SetCancelFunc != nil
 			sawDeleteCancel = ctx.DeleteCancelFunc != nil
+			sawDashboardDocStore = ctx.DashboardDocStore != nil
 			return map[string]any{"ok": true}, nil
 		},
 	}
@@ -299,9 +313,9 @@ func TestProcessMessage_PropagatesRunningHooks(t *testing.T) {
 	if _, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "probe", nil, []*ToolDef{probe}, masterKey, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
 	}
-	if !sawBroadcast || !sawSetRunning || !sawUnsetRunning || !sawSetCancel || !sawDeleteCancel {
-		t.Fatalf("hooks not propagated: broadcast=%v setRunning=%v unsetRunning=%v setCancel=%v deleteCancel=%v",
-			sawBroadcast, sawSetRunning, sawUnsetRunning, sawSetCancel, sawDeleteCancel)
+	if !sawBroadcast || !sawSetRunning || !sawUnsetRunning || !sawSetCancel || !sawDeleteCancel || !sawDashboardDocStore {
+		t.Fatalf("hooks not propagated: broadcast=%v setRunning=%v unsetRunning=%v setCancel=%v deleteCancel=%v dashboardDocStore=%v",
+			sawBroadcast, sawSetRunning, sawUnsetRunning, sawSetCancel, sawDeleteCancel, sawDashboardDocStore)
 	}
 }
 

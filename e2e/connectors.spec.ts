@@ -9,7 +9,9 @@ test.describe('Connectors', () => {
 
   test('create postgres connector with database field', async ({ page }) => {
     await page.goto('/connectors')
-    await page.getByRole('button', { name: '+ New Connector' }).click()
+    // An empty org renders the empty state's own "+ New Connector" action in
+    // addition to the header button; .first() picks the header deterministically.
+    await page.getByRole('button', { name: '+ New Connector' }).first().click()
     await page.getByLabel('Type').selectOption('postgres')
     await page.getByLabel('Name').fill('Test PG')
     await page.getByLabel('Host').fill('localhost')
@@ -23,7 +25,7 @@ test.describe('Connectors', () => {
 
   test('create ClickHouse connector without database field', async ({ page }) => {
     await page.goto('/connectors')
-    await page.getByRole('button', { name: '+ New Connector' }).click()
+    await page.getByRole('button', { name: '+ New Connector' }).first().click()
     await page.getByLabel('Type').selectOption('clickhouse')
     await page.getByLabel('Name').fill('Test CH')
     await page.getByLabel('Host').fill('localhost')

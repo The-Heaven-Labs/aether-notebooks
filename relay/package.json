@@ -3,14 +3,19 @@
   "version": "1.0.0",
   "description": "Hocuspocus Yjs relay for Aether Notebooks",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=22.18"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "dev": "ts-node src/index.ts",
+    "test": "tsc -p tsconfig.test.json && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test src/dashboardDocs.test.ts"
   },
   "dependencies": {
     "@hocuspocus/extension-redis": "^4.4.0",
-    "@hocuspocus/server": "^4.4.0"
+    "@hocuspocus/server": "^4.4.0",
+    "ioredis": "~5.6.1"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
