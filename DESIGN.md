@@ -60,6 +60,12 @@ typography:
     fontWeight: 700
     lineHeight: 1.4
     letterSpacing: "0.08em"
+  reading:
+    fontFamily: "JetBrains Mono, Fira Code, ui-monospace, monospace"
+    fontSize: "clamp(20px, 9cqw, 32px)"
+    fontWeight: 700
+    lineHeight: 1.1
+    letterSpacing: "-0.5px"
   code:
     fontFamily: "JetBrains Mono, Fira Code, ui-monospace, monospace"
     fontSize: "13px"
@@ -200,6 +206,10 @@ Dark mode is a first-class theme, not a filter: the full mapping lives in `web/s
 
 **The Instrument Label Rule.** Micro-labels are engraved, not spoken: 10–11px, uppercase, letter-spaced mono. They label instruments (badges, counts, types) and never form sentences.
 
+### Reading Role (approved 2026-10-11)
+
+The metric value role for the App surface: JetBrains Mono with tabular numerals at `clamp(20px, 9cqw, 32px)`, 700 weight, tracking -0.5px. Each reading is introduced by an Instrument Label — 10px uppercase mono, 0.08em tracking, muted ink — and a comparison delta is 12px/600 tabular mono with a direction icon and semantic color. This is the one place mono is set large; the reading scales with its widget container (container-query units) and caps at 32px.
+
 ## Layout
 
 The app is a fixed viewport shell. A 52px top bar spans the top; a left rail sits beneath it at 48px collapsed or 200px expanded (width transitions 0.2s ease, state persisted per user), and the content canvas fills the rest with 32px padding. File-browser and settings surfaces use a two-panel layout: a 240px tree panel on the left (collapsible to a 7px edge handle) and a content area padded at 20px.
@@ -268,6 +278,15 @@ Create/edit for every resource list (connectors, models, tools, skills, MCP serv
 - **Shadow strategy:** none at rest (see Elevation) — a single hairline border does the work.
 - **Border:** 1px `--border`, with `--border-light` dividers between meta bar, editor, and output.
 - **Internal padding:** 24px for standalone form cards; cell internals use 6px 16px (meta bar) and 14px 16px (editor); list rows 12–16px. `overflow: hidden` clips content to the radius.
+
+### Widget Appearance (approved 2026-10-11)
+Every dashboard widget carries an appearance block (`widget.config.appearance`). The vocabulary is deliberately tiny, and its defaults reproduce the standard widget card exactly:
+- **Background:** `card` (surface fill + hairline) or `transparent` (no fill, no border) — the transparent panel is the "blend into the page" workhorse.
+- **Border:** on/off, drawn only on `card` backgrounds; transparent widgets are always borderless.
+- **Padding:** outer breathing room around widget content — `none` (default), `sm` (8px), `md` (16px). Content widgets keep their own inner padding.
+- **Align:** `left` (default), `center`, `right`.
+
+Absent or malformed fields fall back per-field to the defaults, so opting in can never break a widget.
 
 ### Inputs / Fields
 - **Style:** 1px hairline border, 6px radius for form fields (4px for inline notebook controls), canvas or surface background, 13–14px DM Sans text (mono for parameter names, connector selectors, and code-adjacent inputs).
