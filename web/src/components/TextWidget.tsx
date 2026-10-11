@@ -27,14 +27,14 @@ export function TextWidget({ markdown, values, variables }: TextWidgetProps) {
   }
 
   return (
-    <div style={styles.markdown}>
+    <div className="text-panel-markdown" style={styles.markdown}>
       <ReactMarkdown remarkPlugins={[remarkGfm]}>{rendered}</ReactMarkdown>
     </div>
   )
 }
 
-// Same treatment as DashboardPage/DashboardEditorPage's cell-linked text
-// cells, so a text panel reads exactly like a markdown cell.
+// The `text-panel-markdown` class carries the chapter heading scale
+// (theme.css); the container matches DashboardPage's cell-linked text cells.
 const styles: Record<string, React.CSSProperties> = {
   markdown: {
     padding: '16px',

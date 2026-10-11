@@ -1164,6 +1164,28 @@ input[type="color"] {
   }
 }
 
+/* ── Text panel headings (TextWidget) ──────────────────────────────────── */
+/* Chapter headings in text panels (The Story). Markdown headings previously
+   fell back to browser defaults inside the 14px body; panels get a real
+   scale: h1 = chapter opener, h2 = chapter heading, h3/h4 = sub-headings. */
+.text-panel-markdown h1,
+.text-panel-markdown h2,
+.text-panel-markdown h3,
+.text-panel-markdown h4 {
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  line-height: 1.2;
+  margin: 20px 0 8px;
+}
+
+.text-panel-markdown h1 { font-size: 32px; font-weight: 700; letter-spacing: -0.5px; }
+.text-panel-markdown h2 { font-size: 26px; font-weight: 700; letter-spacing: -0.35px; }
+.text-panel-markdown h3 { font-size: 20px; font-weight: 700; letter-spacing: -0.2px; }
+.text-panel-markdown h4 { font-size: 16px; font-weight: 600; letter-spacing: -0.1px; }
+.text-panel-markdown h5,
+.text-panel-markdown h6 { font-size: 14px; font-weight: 700; margin: 16px 0 6px; }
+.text-panel-markdown > :first-child { margin-top: 0; }
+
 /* ── Dashboard variable bar (DashboardVariableBar) ─────────────────────── */
 /* The parameter strip: a recessed panel under the header that reads as the
    board's filter rack — labeled, hairline-bordered, controls sitting on the

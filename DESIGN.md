@@ -210,6 +210,10 @@ Dark mode is a first-class theme, not a filter: the full mapping lives in `web/s
 
 The metric value role for the App surface: JetBrains Mono with tabular numerals at `clamp(20px, 9cqw, 32px)`, 700 weight, tracking -0.5px. Each reading is introduced by an Instrument Label — 10px uppercase mono, 0.08em tracking, muted ink — and a comparison delta is 12px/600 tabular mono in semantic color, with a direction icon on up/down moves. This is the one place mono is set large; the reading scales with its widget container (container-query units) and caps at 32px.
 
+### Panel Headings (approved 2026-10-11)
+
+Markdown headings inside text panels carry an app's chapter structure: h1 (32px/700/-0.5px) opens a chapter, h2 (26px/700/-0.35px) is a chapter heading, h3 (20px/700/-0.2px) and h4 (16px/600) are sub-headings — DM Sans at 1.2 line-height in primary ink, with the first block in a panel flush to the top. Before this role, panel headings fell back to browser-default sizes inside the 14px body; headings never render in mono.
+
 ## Layout
 
 The app is a fixed viewport shell. A 52px top bar spans the top; a left rail sits beneath it at 48px collapsed or 200px expanded (width transitions 0.2s ease, state persisted per user), and the content canvas fills the rest with 32px padding. File-browser and settings surfaces use a two-panel layout: a 240px tree panel on the left (collapsible to a 7px edge handle) and a content area padded at 20px.

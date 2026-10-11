@@ -37,4 +37,8 @@ describe('TextWidget', () => {
     render(<TextWidget markdown={'  '} />)
     expect(screen.getByText('Empty text panel — edit it in the dashboard editor.')).toBeInTheDocument()
   })
+  it('scopes markdown to the text-panel heading scale', () => {
+    const { container } = render(<TextWidget markdown={'## Volume over time'} />)
+    expect(container.querySelector('.text-panel-markdown')).toBeTruthy()
+  })
 })
