@@ -21,6 +21,10 @@ func TestLogAndQuery(t *testing.T) {
 	}
 	defer db.Close()
 
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migrate: %v", err)
+	}
+
 	// Seed an org and user to satisfy FK constraints
 	var orgID, userID string
 	err = db.Pool.QueryRow(context.Background(),

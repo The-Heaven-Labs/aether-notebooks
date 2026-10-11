@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
+import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
@@ -17,12 +17,14 @@ import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
 import { Skeleton } from '../components/Skeleton'
+import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
 import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
+import { useDashboardDoc } from '../hooks/useDashboardDoc'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 
@@ -65,7 +67,7 @@ function widgetDisplayName(widget: Widget): string {
   return t || 'widget'
 }
 
-function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
+function WidgetContent({ widget, editingEnabled, onConfigSave, onConfigReset }: { widget: Widget; editingEnabled: boolean; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
   const { data: notebook, isLoading } = useQuery({
     queryKey: ['notebook', widget.notebook_id],
     queryFn: () => api.get<NotebookWithCells>(`/api/v1/notebooks/${widget.notebook_id}`),
@@ -96,9 +98,11 @@ function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget
       outputs={cell.outputs}
       fixedView={fixedView}
       chartConfig={chartConfig}
-      onChartConfigChange={(config) => onConfigSave(widget.id, config)}
+      // Chart config edits are document writes; omit the callbacks entirely
+      // while editing is paused so the config UI never opens.
+      onChartConfigChange={editingEnabled ? (config) => onConfigSave(widget.id, config) : undefined}
       chartConfigOverridden={chartOverridden}
-      onChartConfigReset={() => onConfigReset(widget.id)}
+      onChartConfigReset={editingEnabled ? () => onConfigReset(widget.id) : undefined}
     />
   )
 }
@@ -189,16 +193,38 @@ const markSaved = useCallback(() => {
     refetchOnMount: true,
   })
 
-  const gridCols = dashboard?.settings?.grid_cols ?? 12
+  // Live dashboard document: connects as soon as the page mounts and becomes
+  // the source of truth for title/settings/widgets once synced. Mutators arm
+  // only after the document has synced and the relay is connected, so a
+  // disconnected editor can never write to a stale local copy. (Adjusted
+  // during render: the hook result is only known after it runs.)
+  const [editingArmed, setEditingArmed] = useState(false)
+  const canEdit = dashboard?.can_edit !== false
+  const liveDoc = useDashboardDoc(id, { enabled: canEdit && editingArmed })
+  const userEmail = localStorage.getItem('aether_user_email') ?? ''
+  const { updateLayout: updateDocLayout, setConfig: setDocConfig } = liveDoc
+  const editingEnabled = canEdit && liveDoc.synced && liveDoc.connected
+  if (editingArmed !== editingEnabled) setEditingArmed(editingEnabled)
+
+  const liveTitle = liveDoc.synced && liveDoc.title ? liveDoc.title : (dashboard?.title ?? '')
 
   useEffect(() => {
-    if (dashboard) {
-      document.title = `${dashboard.title} — Aether Notebooks`
-      const el = gridContainerRef.current
-      if (el) setContainerWidth(el.clientWidth)
-    }
+    document.title = liveTitle ? `${liveTitle} — Aether Notebooks` : 'Aether Notebooks'
     return () => { document.title = "Aether Notebooks" }
+  }, [liveTitle])
+
+  useEffect(() => {
+    if (!dashboard) return
+    const el = gridContainerRef.current
+    if (el) setContainerWidth(el.clientWidth)
   }, [dashboard])
+
+  // Once the document has synced it is the source of truth for the widget
+  // list; until then the REST payload paints the page.
+  const widgets = useMemo(
+    () => (liveDoc.synced ? liveDoc.widgets : (dashboard?.widgets ?? [])),
+    [liveDoc.synced, liveDoc.widgets, dashboard?.widgets],
+  )
 
   const { data: notebooks = [] } = useQuery({
     queryKey: ['notebooks'],
@@ -212,18 +238,11 @@ const markSaved = useCallback(() => {
     enabled: !!pickerNotebookId,
   })
 
-  const renameBoard = useMutation({
-    mutationFn: (title: string) =>
-      api.put(`/api/v1/dashboards/${id}`, { title }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
-    onError: (err: Error) => setMutationError(err.message),
-  })
-
   const addWidget = useMutation({
     mutationFn: () => {
       const base = {
         type: pickerType,
-        layout: nextWidgetLayout(dashboard?.widgets ?? []),
+        layout: nextWidgetLayout(widgets),
         config: {},
       }
       const payload = pickerSource === 'query'
@@ -252,55 +271,43 @@ const markSaved = useCallback(() => {
     onError: (err: Error) => setMutationError(err.message),
   })
 
-  const saveWidgetConfig = useMutation({
-    mutationFn: ({ widgetId, config }: { widgetId: string; config: ChartConfig }) =>
-      api.put(`/api/v1/dashboards/${id}/widgets/${widgetId}`, {
-        config: withWidgetOverride(config),
-      }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
-    onError: (err: Error) => setMutationError(err.message),
-  })
+  // Chart config is a document field: write it straight to the shared doc
+  // (the relay persists it) instead of a per-save REST round-trip.
+  const saveWidgetConfig = useCallback((widgetId: string, config: ChartConfig) => {
+    setDocConfig(widgetId, withWidgetOverride(config) as unknown as Record<string, unknown>)
+  }, [setDocConfig])
 
-  const resetWidgetConfig = useMutation({
-    mutationFn: (widgetId: string) =>
-      api.put(`/api/v1/dashboards/${id}/widgets/${widgetId}`, { config: {} }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['dashboard', id] }),
-    onError: (err: Error) => setMutationError(err.message),
-  })
+  const resetWidgetConfig = useCallback((widgetId: string) => {
+    setDocConfig(widgetId, {})
+  }, [setDocConfig])
 
-  const saveLayout = useCallback((item: LayoutItem) => {
-    if (!dashboard) return
-    const widget = dashboard.widgets?.find((w: Widget) => w.id === item.i)
-    if (!widget) return
-    const prev = widget.layout
-    if (prev.col === item.x && prev.row === item.y &&
-        prev.width === item.w && prev.height === item.h) return
-    markSaving()
-    api.put(`/api/v1/dashboards/${dashboard.id}/widgets/${item.i}`, {
-      layout: { row: item.y, col: item.x, width: item.w, height: item.h },
-    }).then(() => {
-      qc.invalidateQueries({ queryKey: ['dashboard', id] })
-      markSaved()
-    }).catch(() => {
-      setMutationError('Failed to save widget layout')
-      markSaved()
+  // Drag/resize stops write the layout straight to the shared document (the
+  // source of truth); the relay persists it and every replica sees the move
+  // live. No REST call and no cache invalidation — the doc is live.
+  const applyLayoutStop = useCallback((layout: Layout) => {
+    if (!editingEnabled) return
+    // The compactor may have moved other widgets too: write every changed
+    // widget's layout so overlapping changes merge instead of being lost.
+    layout.forEach(item => {
+      const widget = widgets.find((w: Widget) => w.id === item.i)
+      if (!widget) return
+      const prev = widget.layout
+      if (prev.col === item.x && prev.row === item.y &&
+          prev.width === item.w && prev.height === item.h) return
+      updateDocLayout(item.i, { row: item.y, col: item.x, width: item.w, height: item.h })
     })
-  }, [dashboard, qc, id])
+  }, [editingEnabled, widgets, updateDocLayout])
 
   const onResizeStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
-    if (newItem && layout) {
-      // The compactor may have moved other widgets. Save all widgets whose
-      // position changed, so the backend doesn't reject based on stale data.
-      layout.forEach(item => saveLayout(item))
-    }
-  }, [saveLayout])
+    if (!newItem || !layout) return
+    applyLayoutStop(layout)
+  }, [applyLayoutStop])
 
   const onDragStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
     if (!newItem || !layout) return
     // The library's compactor handles overlap prevention.
-    // Save all widgets whose position changed.
-    layout.forEach(item => saveLayout(item))
-  }, [saveLayout])
+    applyLayoutStop(layout)
+  }, [applyLayoutStop])
 
   if (isLoading) {
     return (
@@ -325,10 +332,20 @@ const markSaved = useCallback(() => {
     )
   }
 
-  const widgets = dashboard.widgets ?? []
   const pickerCells = pickerNotebook?.cells ?? []
 
-  const variables = dashboard.settings?.variables ?? []
+  // Live-merged dashboard for the panels and header: when the doc has synced,
+  // title/settings/variables come from it (the REST row is a derived cache).
+  const liveDashboard: DashboardWithWidgets = liveDoc.synced
+    ? {
+        ...dashboard,
+        title: liveTitle,
+        settings: { ...dashboard.settings, ...liveDoc.settings, variables: liveDoc.variables },
+      }
+    : dashboard
+  const displayTitle = liveDashboard.title
+  const variables = liveDashboard.settings?.variables ?? []
+  const gridCols = liveDashboard.settings?.grid_cols ?? 12
 
   return (
     <DashboardVariablesProvider dashboardId={id!} variables={variables}>
@@ -345,13 +362,12 @@ const markSaved = useCallback(() => {
             <input
               style={styles.titleInput}
               value={titleDraft}
-              onChange={(e) => setTitleDraft(e.target.value)}
-              onBlur={() => {
-                setEditingTitle(false)
-                if (titleDraft.trim() && titleDraft.trim() !== dashboard.title) {
-                  renameBoard.mutate(titleDraft.trim())
-                }
+              onChange={(e) => {
+                setTitleDraft(e.target.value)
+                // The title is a document field; the hook debounces the write.
+                if (e.target.value.trim()) liveDoc.setTitle(e.target.value.trim())
               }}
+              onBlur={() => setEditingTitle(false)}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
                 if (e.key === 'Escape') setEditingTitle(false)
@@ -360,15 +376,20 @@ const markSaved = useCallback(() => {
             />
           ) : (
             <span
-              style={styles.dashboardTitle}
-              onClick={() => { setTitleDraft(dashboard.title); setEditingTitle(true) }}
-              title="Click to rename"
+              style={{ ...styles.dashboardTitle, cursor: editingEnabled ? 'pointer' : 'default' }}
+              onClick={() => {
+                if (!editingEnabled) return
+                setTitleDraft(displayTitle)
+                setEditingTitle(true)
+              }}
+              title={editingEnabled ? 'Click to rename' : undefined}
             >
-              {dashboard.title}
+              {displayTitle}
             </span>
           )}
         </div>
         <div style={styles.headerRight}>
+          <CollaboratorAvatars awareness={liveDoc.awareness} currentUserEmail={userEmail} />
           {!isMobileLayout && (
             <div className="nav-seg" role="group" aria-label="Grid columns">
               <span style={{ fontSize: 10, color: 'var(--nav-text-muted)', fontWeight: 700, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '0 4px' }}>Cols</span>
@@ -379,19 +400,22 @@ const markSaved = useCallback(() => {
                   title={`${c} grid columns — ${c <= 8 ? 'compact' : c <= 12 ? 'standard' : 'wide'} layout`}
                   aria-label={`${c} columns`}
                   aria-pressed={gridCols === c}
+                  disabled={!editingEnabled}
                   onClick={async () => {
+                    if (!editingEnabled) return
                     markSaving()
-                    const oldCols = dashboard?.settings?.grid_cols ?? 12
+                    const oldCols = gridCols
+                    // Settings live in the document; the server merges this
+                    // partial update into it and materializes the row.
                     await api.put(`/api/v1/dashboards/${id}`, {
-                      settings: { ...dashboard?.settings, grid_cols: c },
+                      settings: { grid_cols: c },
                     })
                     if (oldCols !== c) {
                       // Reflow layouts with the new column count so widgets
                       // stay inside the grid instead of overflowing the canvas.
-                      const updates = rescaleWidgetLayouts(dashboard?.widgets ?? [], oldCols, c)
-                      await Promise.allSettled(
-                        updates.map(u => api.put(`/api/v1/dashboards/${id}/widgets/${u.id}`, { layout: u.layout })),
-                      )
+                      // Layouts are document fields, so write them to the doc.
+                      const updates = rescaleWidgetLayouts(widgets, oldCols, c)
+                      updates.forEach(u => updateDocLayout(u.id, u.layout))
                     }
                     qc.invalidateQueries({ queryKey: ['dashboard', id] })
                     markSaved()
@@ -406,7 +430,8 @@ const markSaved = useCallback(() => {
             type="button"
             className="nav-btn"
             onClick={() => setShowVariables(true)}
-            title="Manage dashboard variables and filters"
+            disabled={!editingEnabled}
+            title={editingEnabled ? 'Manage dashboard variables and filters' : 'Editing is paused'}
           >
             Variables
           </button>
@@ -431,14 +456,23 @@ const markSaved = useCallback(() => {
           </button>
           <button
             type="button"
-            style={{ ...styles.addWidgetBtn, ...(isMobileLayout ? styles.addWidgetBtnMobile : {}) }}
+            style={{
+              ...styles.addWidgetBtn,
+              ...(isMobileLayout ? styles.addWidgetBtnMobile : {}),
+              ...(editingEnabled ? {} : styles.disabledControl),
+            }}
             onClick={() => setShowPicker(true)}
-            title="Add Widget"
+            disabled={!editingEnabled}
+            title={editingEnabled ? 'Add Widget' : 'Editing is paused'}
           >
             {isMobileLayout ? <Plus size={16} /> : '+ Add Widget'}
           </button>
         </div>
       </header>
+
+      {liveDoc.synced && !liveDoc.connected && (
+        <ErrorBanner variant="warning" message="Reconnecting — editing is paused" />
+      )}
 
       {mutationError && (
         <ErrorBanner message={mutationError} onDismiss={() => setMutationError(null)} />
@@ -539,12 +573,13 @@ const markSaved = useCallback(() => {
                 type="button"
                 style={styles.pickerAddBtn}
                 disabled={
+                  !editingEnabled ||
                   addWidget.isPending ||
                   (pickerSource === 'cell'
                     ? !pickerNotebookId || !pickerCellId
                     : !pickerConnectorId || !pickerQuery.trim())
                 }
-                onClick={() => addWidget.mutate()}
+                onClick={() => { if (editingEnabled) addWidget.mutate() }}
               >
                 {addWidget.isPending ? 'Adding…' : 'Add Widget'}
               </button>
@@ -560,7 +595,7 @@ const markSaved = useCallback(() => {
           <EmptyState
             title="No widgets yet"
             text="Add widgets to display notebook cell outputs in this dashboard."
-            action={{ label: '+ Add Widget', onClick: () => setShowPicker(true) }}
+            action={editingEnabled ? { label: '+ Add Widget', onClick: () => setShowPicker(true) } : undefined}
           />
         ) : (
           // One persistent measured wrapper: the mobile/desktop branch is
@@ -570,7 +605,7 @@ const markSaved = useCallback(() => {
           <div ref={gridRef} style={{ minHeight: 240 }}>
             {containerWidth === 0 ? null : isMobileLayout ? (
               <div style={styles.mobileGrid}>
-                {dashboard.widgets?.map((widget: Widget) => (
+                {widgets.map((widget: Widget) => (
                   <div key={widget.id} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
                       <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
@@ -587,8 +622,9 @@ const markSaved = useCallback(() => {
                         <button
                           type="button"
                           className="dash-widget-ctl"
-                          title="Remove widget"
+                          title={editingEnabled ? 'Remove widget' : 'Editing is paused'}
                           aria-label={`Remove ${widgetDisplayName(widget)}`}
+                          disabled={!editingEnabled}
                           onClick={() => setDeleteWidgetTarget(widget.id)}
                         >
                           <X size={12} />
@@ -599,7 +635,7 @@ const markSaved = useCallback(() => {
                       {isQueryWidget(widget) ? (
                         <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
                       ) : (
-                        <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                        <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                       )}
                     </div>
                   </div>
@@ -607,19 +643,20 @@ const markSaved = useCallback(() => {
               </div>
             ) : (
               <GridLayout
-                layout={dashboard.widgets?.map(toGridItem) ?? []}
+                layout={widgets.map(toGridItem)}
                 width={containerWidth}
                 gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
                 // Whole-card drag: any non-interactive part of the widget moves
                 // it. Buttons/links/fields and the chart canvas (tooltips,
-                // dataZoom) are excluded.
-                dragConfig={{ enabled: true, cancel: 'button, a, input, select, textarea, canvas, .react-resizable-handle' }}
-                resizeConfig={{ enabled: true }}
+                // dataZoom) are excluded. Drag/resize are off while editing is
+                // paused (document not synced or relay disconnected).
+                dragConfig={{ enabled: editingEnabled, cancel: 'button, a, input, select, textarea, canvas, .react-resizable-handle' }}
+                resizeConfig={{ enabled: editingEnabled }}
                 onResizeStop={onResizeStop}
                 onDragStop={onDragStop}
                 style={{ minHeight: 240 }}
               >
-                {dashboard.widgets?.map((widget: Widget) => (
+                {widgets.map((widget: Widget) => (
                   <div key={widget.id} style={{ position: 'relative' }}>
                     <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
                     <div className="dash-widget-card" style={styles.widgetCard}>
@@ -638,8 +675,9 @@ const markSaved = useCallback(() => {
                           <button
                             type="button"
                             className="dash-widget-ctl"
-                            title="Remove widget"
+                            title={editingEnabled ? 'Remove widget' : 'Editing is paused'}
                             aria-label={`Remove ${widgetDisplayName(widget)}`}
+                            disabled={!editingEnabled}
                             onClick={() => setDeleteWidgetTarget(widget.id)}
                           >
                             <X size={12} />
@@ -650,7 +688,7 @@ const markSaved = useCallback(() => {
                         {isQueryWidget(widget) ? (
                           <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
                         ) : (
-                          <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
+                          <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                         )}
                       </div>
                     </div>
@@ -665,7 +703,7 @@ const markSaved = useCallback(() => {
         <PermissionsPanel
           resourceType="dashboard"
           resourceId={id!}
-          resourceName={dashboard.title}
+          resourceName={displayTitle}
           parentFolderId={undefined}
           resourceOwnerId={dashboard.created_by}
           onClose={() => setShowPermissions(false)}
@@ -677,16 +715,21 @@ const markSaved = useCallback(() => {
         message="Remove this widget from the dashboard?"
         confirmLabel="Remove"
         destructive
-        onConfirm={() => { if (deleteWidgetTarget) deleteWidget.mutate(deleteWidgetTarget); setDeleteWidgetTarget(null) }}
+        onConfirm={() => {
+          if (deleteWidgetTarget && editingEnabled) deleteWidget.mutate(deleteWidgetTarget)
+          setDeleteWidgetTarget(null)
+        }}
         onCancel={() => setDeleteWidgetTarget(null)}
       />
       {editingWidget && (
         <WidgetConfigDrawer
           key={editingWidget.id}
           dashboardId={id!}
-          dashboard={dashboard}
+          dashboard={liveDashboard}
           widget={editingWidget}
           closeOnEscape={!showVariables}
+          editingEnabled={editingEnabled}
+          docSynced={liveDoc.synced}
           onClose={() => setEditingWidget(null)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
           onDefineVariable={(name, suggestedType) => {
@@ -700,7 +743,7 @@ const markSaved = useCallback(() => {
         <DashboardVariablesPanel
           key={variablePrefill ?? 'variables'}
           dashboardId={id!}
-          dashboard={dashboard}
+          dashboard={liveDashboard}
           initialNewName={variablePrefill}
           initialNewType={variablePrefillType}
           onClose={() => { setShowVariables(false); setVariablePrefill(null); setVariablePrefillType(null) }}
@@ -797,6 +840,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 12,
     fontWeight: 600,
     cursor: 'pointer',
+  },
+  disabledControl: {
+    opacity: 0.5,
+    cursor: 'not-allowed',
   },
   pickerOverlay: {
     position: 'fixed',

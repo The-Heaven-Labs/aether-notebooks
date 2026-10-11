@@ -11,12 +11,21 @@ import { formatExecutedAt } from '../utils/formatDateTime'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
+import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
+import {
+  createPerWidgetDebouncer,
+  diffVariableDefinitions,
+  diffWidgetRuns,
+  widgetsReferencingTokens,
+} from '../utils/dashboardRunSignature'
+import type { PerWidgetDebouncer, VariableDefinitionSnapshot, WidgetRunBaseline } from '../utils/dashboardRunSignature'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { useDashboardConnector } from '../hooks/useDashboardConnector'
+import { useDashboardDoc } from '../hooks/useDashboardDoc'
 import { useAuth } from '../hooks/useAuth'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem } from 'react-grid-layout'
@@ -230,6 +239,7 @@ const toGridItem = (w: Widget): LayoutItem => ({
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
   const { user } = useAuth()
+  const userEmail = localStorage.getItem('aether_user_email') ?? ''
   const { selected, suggestion, select, resolving } = useDashboardConnector(id, user?.user_id ?? '')
   // The live default (viewer's sole warehouse preference) is preselected;
   // an explicit pick persists and overrides it.
@@ -274,6 +284,13 @@ function DashboardContent({ id }: { id: string }) {
     enabled: !!id,
   })
 
+  // Live dashboard document: connects as soon as the page mounts and becomes
+  // the source of truth for title/settings/widgets once synced. The viewer is
+  // read-only (mutators stay disabled); when the relay is unreachable the
+  // document never syncs and the REST snapshot keeps painting the page.
+  const liveDoc = useDashboardDoc(id)
+  const liveTitle = liveDoc.synced && liveDoc.title ? liveDoc.title : (dashboard?.title ?? '')
+
   // Per-widget fetch state, reported by the widgets themselves, so the header
   // can show one honest "Refreshing n/m" signal instead of a button that goes
   // idle before the widgets actually finish.
@@ -289,6 +306,28 @@ function DashboardContent({ id }: { id: string }) {
     refreshersRef.current.set(widgetId, fn)
     return () => { refreshersRef.current.delete(widgetId) }
   }, [])
+
+  // Cache-eligible re-run handles, registered by query widgets. Auto re-runs
+  // on live definition changes must flow through the shared query cache —
+  // only the manual Refresh action (refreshersRef) bypasses it.
+  const [rerunners] = useState(() => new Map<string, () => Promise<unknown>>())
+  const registerWidgetRerun = useCallback((widgetId: string, fn: () => Promise<unknown>) => {
+    rerunners.set(widgetId, fn)
+    return () => { rerunners.delete(widgetId) }
+  }, [rerunners])
+
+  // Per-widget debouncer for auto re-runs: a collaborator typing SQL fires a
+  // document update per keystroke, so runs are coalesced (~2s) per widget.
+  // Stable for the page's lifetime (useState initializer, not useRef writes).
+  const [runDebouncer] = useState<PerWidgetDebouncer>(() => createPerWidgetDebouncer((widgetId) => {
+    void rerunners.get(widgetId)?.()
+  }))
+
+  // Baselines for live-document change detection. `null` until the first
+  // sync seeds them, so the REST → doc handover itself never re-runs widgets.
+  const widgetRunBaselinesRef = useRef<Record<string, WidgetRunBaseline> | null>(null)
+  const variableDefinitionsRef = useRef<Record<string, VariableDefinitionSnapshot> | null>(null)
+  useEffect(() => () => runDebouncer.cancelAll(), [runDebouncer])
 
   const refreshingCount = useMemo(
     () => Object.values(fetchingWidgets).filter(Boolean).length,
@@ -307,19 +346,23 @@ function DashboardContent({ id }: { id: string }) {
 
   useEffect(() => {
     if (dashboard) {
-      document.title = `${dashboard.title} — Aether Notebooks`
+      document.title = liveTitle ? `${liveTitle} — Aether Notebooks` : 'Aether Notebooks'
       const el = gridContainerRef.current
       if (el) setContainerWidth(el.clientWidth)
     }
     return () => { document.title = "Aether Notebooks" }
-  }, [dashboard])
+  }, [dashboard, liveTitle])
 
+  // Ref guard (not state): the stabilized auto-refresh interval captures this
+  // function once, so it must not close over a stale `isRunningAll`.
+  const runningAllRef = useRef(false)
   async function executeAllWidgets(widgetList: AnyWidget[]) {
-    if (isRunningAll) return
+    if (runningAllRef.current) return
     const token = localStorage.getItem('aether_token')
     const cellWidgets = widgetList.filter(w => !isQueryWidget(w) && w.notebook_id && w.cell_id)
     const queryWidgets = widgetList.filter(isQueryWidget)
     if (!cellWidgets.length && !queryWidgets.length) return
+    runningAllRef.current = true
     setIsRunningAll(true)
     try {
       // Query widgets refresh through their registered (cache-bypassing)
@@ -348,15 +391,38 @@ function DashboardContent({ id }: { id: string }) {
         notebookIds.forEach(nbId => qc.invalidateQueries({ queryKey: ['notebook', nbId] }))
       }
     } finally {
+      runningAllRef.current = false
       setIsRunningAll(false)
     }
   }
 
-  const widgets = (dashboard?.widgets ?? []) as AnyWidget[]
+  // Once the document has synced it is the source of truth for the widget
+  // list; until then the REST payload paints the page. Timestamps are not
+  // document fields, so doc widgets inherit `created_at` from their REST rows.
+  const widgets = useMemo<AnyWidget[]>(() => {
+    const rest = dashboard?.widgets ?? []
+    if (!liveDoc.synced) return rest as AnyWidget[]
+    const restById = new Map(rest.map(w => [w.id, w]))
+    return liveDoc.widgets.map(w => {
+      const restWidget = restById.get(w.id)
+      return (restWidget?.created_at ? { ...w, created_at: restWidget.created_at } : w) as AnyWidget
+    })
+  }, [liveDoc.synced, liveDoc.widgets, dashboard?.widgets])
+
+  // Live-merged settings: the document is authoritative for title, settings,
+  // and variables once synced. `can_*` flags and cell outputs (`widgets_data`)
+  // are not document fields and stay on the REST row.
+  const settings = useMemo(
+    () => (liveDoc.synced
+      ? { ...(dashboard?.settings ?? {}), ...liveDoc.settings, variables: liveDoc.variables }
+      : dashboard?.settings),
+    [liveDoc.synced, liveDoc.settings, liveDoc.variables, dashboard?.settings],
+  )
+
   // Grid density and the refresh cadence are persisted dashboard settings, so
   // they are edit actions — viewers don't get to restyle the shared board.
   const canEdit = dashboard?.can_edit === true
-  const autoRefreshSecs = dashboard?.settings?.auto_refresh_seconds ?? 0
+  const autoRefreshSecs = settings?.auto_refresh_seconds ?? 0
   const PRESET_REFRESH = [0, 30, 60, 300, 600]
   const customRefreshText = refreshCustom && refreshSeconds > 0 ? ` — ${refreshSeconds}s` : ''
 
@@ -366,11 +432,63 @@ function DashboardContent({ id }: { id: string }) {
     setRefreshCustom(!PRESET_REFRESH.includes(autoRefreshSecs))
   }, [autoRefreshSecs])
 
+  // Stable inputs for the auto-refresh interval: doc updates produce a fresh
+  // `widgets` array on every collaborator keystroke, and depending on that
+  // identity used to restart (and postpone) the timer continuously. The
+  // interval now restarts only when the cadence or the widget id set changes,
+  // and reads the latest widgets from the ref when it fires.
+  const widgetsRef = useRef(widgets)
+  const executeAllRef = useRef(executeAllWidgets)
   useEffect(() => {
-    if (!refreshSeconds || refreshSeconds <= 0 || !widgets.length) return
-    const intervalId = setInterval(() => executeAllWidgets(widgets), refreshSeconds * 1000)
+    widgetsRef.current = widgets
+    executeAllRef.current = executeAllWidgets
+  })
+  const widgetIdsKey = useMemo(() => widgets.map(w => w.id).join('|'), [widgets])
+
+  useEffect(() => {
+    if (!refreshSeconds || refreshSeconds <= 0 || !widgetIdsKey) return
+    const intervalId = setInterval(() => { void executeAllRef.current(widgetsRef.current) }, refreshSeconds * 1000)
     return () => clearInterval(intervalId)
-  }, [refreshSeconds, widgets])
+  }, [refreshSeconds, widgetIdsKey])
+
+  // Live definition changes → re-run only the widgets that actually changed.
+  // The document projection gives every widget a new identity on any update,
+  // so this diffs per-widget run signatures against baselines seeded on the
+  // first sync (the REST → doc takeover itself must not re-run anything).
+  useEffect(() => {
+    if (!liveDoc.synced) {
+      // REST still paints the page; drop baselines so the handover seeds
+      // fresh ones instead of diffing against stale state.
+      widgetRunBaselinesRef.current = null
+      variableDefinitionsRef.current = null
+      runDebouncer.cancelAll()
+      return
+    }
+
+    const runDiff = diffWidgetRuns(widgetRunBaselinesRef.current, widgets)
+    widgetRunBaselinesRef.current = runDiff.next
+    for (const widgetId of runDiff.removed) runDebouncer.cancel(widgetId)
+    for (const widgetId of runDiff.rerun) runDebouncer.schedule(widgetId)
+    for (const change of runDiff.cellRefChanged) {
+      // Cell widgets render stored outputs: refresh the referenced data
+      // (embedded `widgets_data`, or the notebook when outputs are not
+      // inlined) instead of executing anything.
+      if (dashboard?.can_view_with_data) {
+        qc.invalidateQueries({ queryKey: ['dashboard', id] })
+      } else if (change.notebookId) {
+        qc.invalidateQueries({ queryKey: ['notebook', change.notebookId] })
+      }
+    }
+
+    // Variable definition/default edits only affect widgets that reference
+    // the changed token. A live-added variable re-runs referencing widgets so
+    // the server applies the declaration default for this viewer.
+    const variableDiff = diffVariableDefinitions(variableDefinitionsRef.current, liveDoc.variables)
+    variableDefinitionsRef.current = variableDiff.next
+    for (const widgetId of widgetsReferencingTokens(widgets, variableDiff.tokens)) {
+      runDebouncer.schedule(widgetId)
+    }
+  }, [liveDoc.synced, liveDoc.widgets, liveDoc.variables, widgets, dashboard?.can_view_with_data, id, qc, runDebouncer])
 
   if (isLoading) {
     return (
@@ -390,7 +508,7 @@ function DashboardContent({ id }: { id: string }) {
     )
   }
 
-  const variables = dashboard.settings?.variables ?? []
+  const variables = settings?.variables ?? []
 
   return (
     <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId}>
@@ -403,10 +521,25 @@ function DashboardContent({ id }: { id: string }) {
             <span>Dashboards</span>
           </Link>
           <span style={styles.breadcrumbSep}>/</span>
-          <span className="dash-title" style={styles.dashboardTitle}>{dashboard.title}</span>
+          <span className="dash-title" style={styles.dashboardTitle}>{liveTitle}</span>
         </div>
         {/* Run all + auto-refresh */}
         <div className="dash-header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Presence + live state: avatars come from the document's awareness
+              and the indicator lights while the relay is connected. When the
+              relay is unavailable nothing renders here and the page keeps
+              serving the REST snapshot. */}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <CollaboratorAvatars
+              awareness={liveDoc.awareness}
+              currentUserEmail={userEmail}
+            />
+            {liveDoc.connected && (
+              <span style={styles.liveIndicator} title="Live updates from collaborators">
+                <span style={styles.liveDot} /> Live
+              </span>
+            )}
+          </span>
           {/* Per-viewer connector selection: query widgets in the same
               warehouse run on the selected service; others keep their own.
               allowClear is off while a live default exists — clearing would
@@ -480,11 +613,11 @@ function DashboardContent({ id }: { id: string }) {
               <button
                 key={cols}
                 type="button"
-                aria-pressed={(dashboard?.settings?.grid_cols ?? 12) === cols}
+                aria-pressed={(settings?.grid_cols ?? 12) === cols}
                 onClick={async () => {
-                  const oldCols = dashboard?.settings?.grid_cols ?? 12
+                  const oldCols = settings?.grid_cols ?? 12
                   await api.put(`/api/v1/dashboards/${id}`, {
-                    settings: { ...dashboard?.settings, grid_cols: cols },
+                    settings: { ...(settings ?? {}), grid_cols: cols },
                   })
                   if (oldCols !== cols) {
                     // Reflow widget layouts so nothing falls outside the new
@@ -519,7 +652,7 @@ function DashboardContent({ id }: { id: string }) {
                 setRefreshSeconds(secs)
                 if (secs === autoRefreshSecs) return
                 await api.put(`/api/v1/dashboards/${id}`, {
-                  settings: { ...dashboard?.settings, auto_refresh_seconds: secs },
+                  settings: { ...(settings ?? {}), auto_refresh_seconds: secs },
                 })
                 qc.invalidateQueries({ queryKey: ['dashboard', id] })
               }}
@@ -553,7 +686,7 @@ function DashboardContent({ id }: { id: string }) {
                 onBlur={async () => {
                   if (refreshSeconds === autoRefreshSecs) return
                   await api.put(`/api/v1/dashboards/${id}`, {
-                    settings: { ...dashboard?.settings, auto_refresh_seconds: refreshSeconds },
+                    settings: { ...(settings ?? {}), auto_refresh_seconds: refreshSeconds },
                   })
                   qc.invalidateQueries({ queryKey: ['dashboard', id] })
                 }}
@@ -582,7 +715,7 @@ function DashboardContent({ id }: { id: string }) {
             <GridLayout
               layout={widgets.map(toGridItem)}
               width={containerWidth}
-              gridConfig={{ cols: dashboard.settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
+              gridConfig={{ cols: settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
               dragConfig={{ enabled: false }}
               resizeConfig={{ enabled: false }}
               style={{ minHeight: 240 }}
@@ -598,6 +731,7 @@ function DashboardContent({ id }: { id: string }) {
                       viewerConnectorId={viewerConnectorId}
                       onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
                       registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
+                      registerRerunner={(fn) => registerWidgetRerun(widget.id, fn)}
                     />
                   ) : (
                     <WidgetCard
@@ -689,6 +823,24 @@ const styles: Record<string, React.CSSProperties> = {
     overflow: 'hidden',
     textOverflow: 'ellipsis',
     maxWidth: 400,
+  },
+  liveIndicator: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    color: 'var(--nav-text-muted)',
+    whiteSpace: 'nowrap',
+  },
+  liveDot: {
+    display: 'inline-block',
+    width: 6,
+    height: 6,
+    borderRadius: '50%',
+    background: 'var(--success, #10b981)',
   },
   body: {
     flex: 1,

@@ -65,7 +65,7 @@ jobs:
       # never sets, so this fetches what vet/test actually need.
       - run: go list -deps -test ./... > /dev/null
       - run: go vet ./...
-      - run: go test -timeout 3m ./internal/api/... ./internal/agent/... ./internal/executor/... ./internal/database/... -v -count=1 -p 1
+      - run: go test -timeout 3m ./internal/api/... ./internal/agent/... ./internal/executor/... ./internal/database/... ./internal/dashboarddoc/... -v -count=1 -p 1
         env:
           AETHER_DATABASE_URL: postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable
           AETHER_REDIS_URL: redis://localhost:6379
@@ -97,6 +97,7 @@ jobs:
           cache-dependency-path: relay/package-lock.json
       - run: cd relay && npm ci
       - run: cd relay && npm run build
+      - run: cd relay && npm test
 
   e2e-smoke:
     runs-on: ubuntu-latest

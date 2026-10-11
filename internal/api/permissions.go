@@ -32,11 +32,25 @@ var resourceTable = map[string]string{
 	"tool":         "tools",
 }
 
+// permissionQuerier is the read surface shared by *pgxpool.Pool and pgx.Tx.
+// Permission checks run on the pool by default; callers that already hold a
+// transaction (the internal dashboard store validator) pass the transaction so
+// the check does not acquire a second pool connection, which could stall a
+// saturated pool behind transactions waiting for one.
+type permissionQuerier interface {
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // resourceOrgID resolves the org that owns a resource for the admin-mode
 // bypass. Folders, resourceTable types, and agent_session (via its agent) are
 // supported; unknown resource types fail closed with an error, and a missing
 // resource resolves to the empty string (no bypass).
 func (s *Server) resourceOrgID(ctx context.Context, resourceType, resourceID string) (string, error) {
+	return resourceOrgIDQ(ctx, s.db.Pool, resourceType, resourceID)
+}
+
+func resourceOrgIDQ(ctx context.Context, q permissionQuerier, resourceType, resourceID string) (string, error) {
 	var query string
 	switch resourceType {
 	case "folder":
@@ -52,7 +66,7 @@ func (s *Server) resourceOrgID(ctx context.Context, resourceType, resourceID str
 	}
 
 	var resourceOrg string
-	err := s.db.Pool.QueryRow(ctx, query, resourceID).Scan(&resourceOrg)
+	err := q.QueryRow(ctx, query, resourceID).Scan(&resourceOrg)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", nil
 	}
@@ -116,8 +130,12 @@ func (s *Server) checkSessionPermission(ctx context.Context, userID, orgID, orgR
 // visibility filter both build their subject set from this helper so group
 // resolution exists in exactly one place.
 func (s *Server) callerGroupIDs(ctx context.Context, userID, orgID string) ([]string, error) {
+	return callerGroupIDsQ(ctx, s.db.Pool, userID, orgID)
+}
+
+func callerGroupIDsQ(ctx context.Context, q permissionQuerier, userID, orgID string) ([]string, error) {
 	groupIDs := []string{}
-	rows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, userID)
+	rows, err := q.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, userID)
 	if err != nil {
 		return nil, fmt.Errorf("caller group query: %w", err)
 	}
@@ -135,7 +153,7 @@ func (s *Server) callerGroupIDs(ctx context.Context, userID, orgID string) ([]st
 	}
 
 	// Include "Everyone" groups: any org member implicitly belongs to these.
-	everyoneRows, err := s.db.Pool.Query(ctx, `SELECT id FROM groups WHERE org_id = $1 AND name = 'Everyone'`, orgID)
+	everyoneRows, err := q.Query(ctx, `SELECT id FROM groups WHERE org_id = $1 AND name = 'Everyone'`, orgID)
 	if err != nil {
 		return nil, fmt.Errorf("everyone group query: %w", err)
 	}
@@ -156,15 +174,21 @@ func (s *Server) callerGroupIDs(ctx context.Context, userID, orgID string) ([]st
 
 // checkPermission returns true if userID has action on resourceType/resourceID within orgID.
 func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error) {
+	return checkPermissionQ(ctx, s.db.Pool, userID, orgID, orgRole, resourceType, resourceID, action)
+}
+
+// checkPermissionQ is checkPermission against an explicit querier, so callers
+// that already hold a transaction can run the check on that connection.
+func checkPermissionQ(ctx context.Context, q permissionQuerier, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error) {
 	// 1. Collect user's group memberships
-	groupIDs, err := s.callerGroupIDs(ctx, userID, orgID)
+	groupIDs, err := callerGroupIDsQ(ctx, q, userID, orgID)
 	if err != nil {
 		return false, err
 	}
 
 	// Org admins bypass ACLs only when admin mode is enabled — scoped to their org
 	if orgRole == "admin" && adminModeFromContext(ctx) {
-		resourceOrg, err := s.resourceOrgID(ctx, resourceType, resourceID)
+		resourceOrg, err := resourceOrgIDQ(ctx, q, resourceType, resourceID)
 		if err != nil {
 			return false, fmt.Errorf("admin bypass org resolve: %w", err)
 		}
@@ -175,7 +199,7 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 
 	// 2. ACL entries directly on the resource (specificity = -1)
 	var candidates []aclCandidate
-	resRows, err := s.db.Pool.Query(ctx,
+	resRows, err := q.Query(ctx,
 		`SELECT subject_type, subject_id, actions FROM acl_entries
 		 WHERE resource_type = $1 AND resource_id = $2::uuid AND org_id = $3`,
 		resourceType, resourceID, orgID)
@@ -198,7 +222,7 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 	var ancestorFolderID *string
 	if resourceType == "folder" {
 		var pid *string
-		err := s.db.Pool.QueryRow(ctx,
+		err := q.QueryRow(ctx,
 			`SELECT parent_id FROM folders WHERE id = $1 AND org_id = $2`,
 			resourceID, orgID,
 		).Scan(&pid)
@@ -208,7 +232,7 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 		ancestorFolderID = pid
 	} else if table, ok := resourceTable[resourceType]; ok {
 		var fid *string
-		err := s.db.Pool.QueryRow(ctx,
+		err := q.QueryRow(ctx,
 			fmt.Sprintf(`SELECT folder_id FROM %s WHERE id = $1 AND org_id = $2`, table),
 			resourceID, orgID,
 		).Scan(&fid)
@@ -220,7 +244,7 @@ func (s *Server) checkPermission(ctx context.Context, userID, orgID, orgRole, re
 
 	// 4. Walk ancestor folders collecting ACL entries
 	if ancestorFolderID != nil {
-		folderRows, err := s.db.Pool.Query(ctx, `
+		folderRows, err := q.Query(ctx, `
 			WITH RECURSIVE ancestors AS (
 				SELECT id, parent_id, 0 AS depth FROM folders WHERE id = $1
 				UNION ALL

@@ -57,7 +57,9 @@ function viewerDialog(page: Page) {
 }
 
 function permissionsDialog(page: Page) {
-  return page.getByRole('dialog', { name: /permissions/ })
+  // The dialog's accessible name is "Permissions" (capital P); regex name
+  // matching is case-sensitive, so the /i flag is required.
+  return page.getByRole('dialog', { name: /permissions/i })
 }
 
 // openAgentHistory selects the agent in the global agent panel and switches to
@@ -138,12 +140,16 @@ test.describe('Agent session sharing', () => {
     const panel = permissionsDialog(page)
     await expect(panel).toBeVisible()
 
-    // Add the member with view-only access.
-    await panel.getByRole('button', { name: /Select user, group, or Everyone/ }).click()
-    await panel.getByPlaceholder('Search…').fill(recipientEmail)
-    await panel.getByRole('option', { name: recipientName }).click()
-    await panel.getByRole('checkbox', { name: 'view', exact: true }).check()
-    await panel.getByRole('button', { name: 'Add', exact: true }).click()
+    // Add the member with view-only access. The panel's composer is an inline
+    // picker: trigger → search combobox → option → Add. Picking a subject
+    // pre-selects the view capability chip, so assert it instead of clicking
+    // (clicking would toggle it off and keep Add disabled).
+    const composer = panel.getByRole('group', { name: 'Add access' })
+    await composer.getByRole('button', { name: /Add people or groups/ }).click()
+    await composer.getByRole('combobox', { name: 'Search people and groups' }).fill(recipientEmail)
+    await composer.getByRole('option', { name: recipientName }).click()
+    await expect(composer.getByRole('button', { name: 'view', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await composer.getByRole('button', { name: 'Add', exact: true }).click()
     await panel.getByRole('button', { name: 'Save' }).click()
     // Draft actions disappear only after the PUT resolves; without this the
     // ACL read below can race the in-flight save.

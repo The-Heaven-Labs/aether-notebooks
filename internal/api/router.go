@@ -24,6 +24,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/oauth"
 	"github.com/the-heaven-labs/aether/internal/storage"
+	"golang.org/x/sync/singleflight"
 )
 
 // warehouseSyncer schedules reconciliation of one warehouse's ClickHouse
@@ -86,6 +87,12 @@ type Server struct {
 	// owned by connPoolLoop.
 	connPool     *executor.ConnPool
 	connPoolLoop backgroundLoop
+	// dashboardCacheSF dedupes concurrent dashboard query executions per cache
+	// key, so identical misses share one query even without Redis.
+	dashboardCacheSF singleflight.Group
+	// dashboardQueryCompute overrides the real query computation in tests
+	// (nil = production path). Guarded by the single flight when a cache key exists.
+	dashboardQueryCompute func(context.Context, dashboardQueryParams) (*dashboardQueryResponse, error)
 	// warehouseInvalidationLoop runs the Redis subscriber that applies other
 	// replicas' pooled-identity invalidations. It stops from Close; it is a
 	// no-op when no Redis client is configured.
@@ -128,6 +135,10 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.ConnPool = s.connPool
 	s.agentEngine.CheckPermissionFunc = s.checkPermission
 	s.agentEngine.RecordConnectorActivity = s.recordConnectorActivity
+	// Dashboard-mutating agent tools write through the dashboard Yjs document
+	// (the same seed/store path REST uses) so their edits are live and cannot
+	// be clobbered by the next relay store.
+	s.agentEngine.DashboardDocStore = agentDashboardDocStore{s: s}
 	// Running-state/cancel lifecycle for agent-driven cell runs (mirrors the
 	// user-triggered execute path so badges, refresh-safe sync, and the Cancel
 	// endpoint all work for agent runs).
@@ -526,7 +537,10 @@ func (s *Server) routes() {
 	// Internal routes (called by Hocuspocus relay only)
 	s.mux.HandleFunc("GET /internal/yjs/{notebook_id}", s.handleInternalYjsGet)
 	s.mux.HandleFunc("PUT /internal/yjs/{notebook_id}", s.handleInternalYjsPut)
+	s.mux.HandleFunc("GET /internal/dashboard-yjs/{dashboard_id}", s.handleInternalDashboardYjsGet)
+	s.mux.HandleFunc("PUT /internal/dashboard-yjs/{dashboard_id}", s.handleInternalDashboardYjsPut)
 	s.mux.HandleFunc("GET /internal/auth/validate", s.handleInternalAuthValidate)
+	s.mux.HandleFunc("POST /internal/collab/authorize", s.handleInternalCollabAuthorize)
 
 	// Attachment routes
 	s.mux.Handle("POST /api/v1/notebooks/{notebook_id}/attachments", authMW(http.HandlerFunc(s.handleUploadAttachment)))

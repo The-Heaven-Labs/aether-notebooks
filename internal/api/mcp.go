@@ -403,6 +403,7 @@ func (s *Server) mcpToolContext(claims *auth.Claims, r *http.Request) *agent.Too
 		ConnPool:                s.connPool,
 		CheckPermissionFunc:     s.checkPermission,
 		RecordConnectorActivity: s.recordConnectorActivity,
+		DashboardDocStore:       agentDashboardDocStore{s: s},
 		QueryTimeoutCeiling:     s.mcpSQLTimeout,
 	}
 }

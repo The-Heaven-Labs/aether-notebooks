@@ -5,14 +5,16 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
-	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/validate"
 )
@@ -24,9 +26,13 @@ type createDashboardRequest struct {
 }
 
 type updateDashboardRequest struct {
-	Title    *string                   `json:"title,omitempty"`
-	Settings *models.DashboardSettings `json:"settings,omitempty"`
-	FolderID *string                   `json:"folder_id,omitempty"`
+	Title *string `json:"title,omitempty"`
+	// Settings is decoded as a raw map (not models.DashboardSettings) so an
+	// explicit variables: [] clears the list and every provided key can be
+	// shallow-merged over the document's current settings; the typed struct's
+	// omitempty would silently drop both.
+	Settings map[string]any `json:"settings,omitempty"`
+	FolderID *string        `json:"folder_id,omitempty"`
 }
 
 type widgetCellData struct {
@@ -137,46 +143,95 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		req.FolderID = nil
 	}
 
-	ctx := r.Context()
-
-	// Build dynamic UPDATE query
-	updates := []string{}
-	args := []interface{}{}
-	argIdx := 1
-
-	if req.Title != nil {
-		updates = append(updates, fmt.Sprintf("title=$%d", argIdx))
-		args = append(args, *req.Title)
-		argIdx++
-	}
-	if req.Settings != nil {
-		settingsJSON, _ := json.Marshal(req.Settings)
-		updates = append(updates, fmt.Sprintf("settings=$%d", argIdx))
-		args = append(args, settingsJSON)
-		argIdx++
-	}
-	if req.FolderID != nil {
-		updates = append(updates, fmt.Sprintf("folder_id=$%d", argIdx))
-		args = append(args, *req.FolderID)
-		argIdx++
-	}
-
-	if len(updates) == 0 {
+	if req.Title == nil && req.Settings == nil && req.FolderID == nil {
 		writeError(w, http.StatusBadRequest, "no fields to update")
 		return
 	}
 
-	updates = append(updates, "updated_at=NOW()")
-	query := fmt.Sprintf("UPDATE dashboards SET %s WHERE id=$%d AND org_id=$%d RETURNING id, org_id, title, settings, folder_id, created_by, created_at, updated_at",
-		strings.Join(updates, ", "), argIdx, argIdx+1)
-	args = append(args, dashID, claims.OrgID)
+	ctx := r.Context()
 
+	// Title and settings live in the Yjs document (the source of truth), so
+	// they are read-merged there and stored through MergeAndStore. The
+	// settings merge is shallow: provided keys replace their projected
+	// counterparts and absent keys stay, while variables are split out into
+	// the document's separate ordered array.
+	if req.Title != nil || req.Settings != nil {
+		state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
+		if errors.Is(err, errDashboardDocNotFound) {
+			writeError(w, http.StatusNotFound, "dashboard not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+		proj, err := dashboarddoc.Project(state)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+
+		var mergedSettings map[string]any
+		var variables []map[string]any
+		if req.Settings != nil {
+			mergedSettings = make(map[string]any, len(proj.Settings)+len(req.Settings))
+			for k, v := range proj.Settings {
+				mergedSettings[k] = v
+			}
+			for k, v := range req.Settings {
+				if k == "variables" {
+					continue
+				}
+				mergedSettings[k] = v
+			}
+			if v, ok := req.Settings["variables"]; ok {
+				variables, err = dashboardVariablesFromJSON(v)
+				if err != nil {
+					writeError(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
+		}
+
+		newState, err := dashboarddoc.UpdateMeta(state, req.Title, mergedSettings, variables)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+		if err := s.storeAndMaterializeDashboardDoc(ctx, dashID, newState); err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+	}
+
+	// folder_id is not part of the document; it stays a direct derived-row
+	// write (folder moves have no doc impact).
+	if req.FolderID != nil {
+		tag, err := s.db.Pool.Exec(ctx,
+			`UPDATE dashboards SET folder_id = $1, updated_at = NOW()
+			 WHERE id = $2 AND org_id = $3 AND deleted_at IS NULL`,
+			*req.FolderID, dashID, claims.OrgID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "update failed")
+			return
+		}
+		if tag.RowsAffected() == 0 {
+			writeError(w, http.StatusNotFound, "dashboard not found")
+			return
+		}
+	}
+
+	// The response is the materialized row, so title/settings reflect the
+	// document store and updated_at is the stored value.
 	var dash models.Dashboard
 	var settingsOut []byte
-	err := s.db.Pool.QueryRow(ctx, query, args...).Scan(
-		&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.FolderID,
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, org_id, title, settings, folder_id, created_by, created_at, updated_at
+		 FROM dashboards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		dashID, claims.OrgID,
+	).Scan(&dash.ID, &dash.OrgID, &dash.Title, &settingsOut, &dash.FolderID,
 		&dash.CreatedBy, &dash.CreatedAt, &dash.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "dashboard not found")
 		return
 	}
@@ -436,6 +491,11 @@ func (s *Server) handleDeleteDashboard(w http.ResponseWriter, r *http.Request) {
 		Action: "dashboard.delete", ResourceType: "dashboard", ResourceID: dashID,
 	})
 
+	// The dashboard is trashed: relay replicas must disconnect viewers and
+	// drop any in-memory copy so a stale document cannot outlive the row.
+	// Best-effort fan-out; a Redis outage never fails the delete.
+	s.publishDashboardDocInvalidate(ctx, dashID, "trashed")
+
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -529,8 +589,20 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	// The document format only carries known types and SQL; reject anything
+	// else up front instead of failing inside the document write.
+	switch req.Type {
+	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric:
+	default:
+		writeError(w, http.StatusBadRequest, "invalid widget type")
+		return
+	}
 	lang := "sql"
 	if req.Language != nil && *req.Language != "" {
+		if *req.Language != "sql" {
+			writeError(w, http.StatusBadRequest, "only sql widgets are supported")
+			return
+		}
 		lang = *req.Language
 	}
 
@@ -547,6 +619,28 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// A dangling cell reference must fail the request: the document store
+	// accepts the pair, but the materializer skips the widget (deleting its
+	// derived row), so a success response would commit a phantom widget that
+	// never materializes. The notebook view check above already established
+	// the notebook is in the caller's org.
+	if req.NotebookID != nil && req.CellID != nil {
+		if err := s.validateWidgetCellRef(ctx, *req.NotebookID, *req.CellID); err != nil {
+			writeCellRefError(w, err)
+			return
+		}
+	}
+
+	// A dangling connector reference must fail the request: the document
+	// store accepts it, but the materializer skips the widget (deleting its
+	// derived row), so a success response would silently drop it.
+	if req.ConnectorID != nil {
+		if err := s.validateWidgetConnectorRef(ctx, claims.OrgID, *req.ConnectorID); err != nil {
+			writeConnectorRefError(w, err)
+			return
+		}
+	}
+
 	// Validate widget layout bounds and overlap.
 	if err := s.validateWidgetLayout(ctx, dashID, req.Layout, ""); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -556,24 +650,46 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	if req.Config == nil {
 		req.Config = map[string]interface{}{}
 	}
-	layoutJSON, _ := json.Marshal(req.Layout)
-	configJSON, _ := json.Marshal(req.Config)
 
-	var widget models.Widget
-	var layoutOut, configOut []byte
-	err = s.db.Pool.QueryRow(ctx,
-		`INSERT INTO widgets (dashboard_id, notebook_id, cell_id, connector_id, query, language, type, layout, config)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-		 RETURNING id, dashboard_id, notebook_id, cell_id, connector_id, query, language, type, layout, config, created_at, updated_at`,
-		dashID, req.NotebookID, req.CellID, req.ConnectorID, req.Query, lang, req.Type, layoutJSON, configJSON,
-	).Scan(&widget.ID, &widget.DashboardID, &widget.NotebookID, &widget.CellID,
-		&widget.ConnectorID, &widget.Query, &widget.Language, &widget.Type, &layoutOut, &configOut, &widget.CreatedAt, &widget.UpdatedAt)
+	// The widget is written through the dashboard document (the source of
+	// truth); Postgres is a derived read cache materialized by the store.
+	widgetID := uuid.NewString()
+	state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
+	if errors.Is(err, errDashboardDocNotFound) {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to add widget")
 		return
 	}
-	json.Unmarshal(layoutOut, &widget.Layout)
-	json.Unmarshal(configOut, &widget.Config)
+	newState, err := dashboarddoc.UpsertWidget(state, dashboarddoc.WidgetDoc{
+		ID:          widgetID,
+		Type:        string(req.Type),
+		Layout:      dashboarddoc.Layout{Row: req.Layout.Row, Col: req.Layout.Col, Width: req.Layout.Width, Height: req.Layout.Height},
+		ConnectorID: req.ConnectorID,
+		Query:       req.Query,
+		Language:    lang,
+		NotebookID:  req.NotebookID,
+		CellID:      req.CellID,
+		Config:      req.Config,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add widget")
+		return
+	}
+	if err := s.storeAndMaterializeDashboardDoc(ctx, dashID, newState); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add widget")
+		return
+	}
+
+	// Build the response from the materialized row so id/timestamps are the
+	// stored values.
+	widget, err := s.loadQueryWidget(ctx, dashID, widgetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add widget")
+		return
+	}
 
 	s.audit.Log(ctx, audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
@@ -612,6 +728,16 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Path IDs are canonicalized before any lookup: document widget keys are
+	// canonical lowercase UUIDs, so an uppercase or braced spelling must
+	// address the same widget instead of 404ing.
+	widgetUUID, err := uuid.Parse(widgetID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	widgetID = widgetUUID.String()
+
 	var req struct {
 		Layout *struct {
 			Row    int `json:"row"`
@@ -645,9 +771,12 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "connector_id cannot be empty")
 		return
 	}
-
-	setParts := []string{}
-	args := []interface{}{}
+	if req.ConnectorID != nil {
+		if err := s.validateWidgetConnectorRef(r.Context(), claims.OrgID, *req.ConnectorID); err != nil {
+			writeConnectorRefError(w, err)
+			return
+		}
+	}
 
 	if req.Layout != nil {
 		// Validate widget layout bounds only (overlap is handled by the frontend compactor
@@ -656,58 +785,154 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-
-		layoutJSON, err := json.Marshal(req.Layout)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to encode layout")
-			return
-		}
-		setParts = append(setParts, fmt.Sprintf("layout=$%d", len(args)+1))
-		args = append(args, layoutJSON)
-	}
-
-	if req.Config != nil {
-		configJSON, err := json.Marshal(req.Config)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to encode config")
-			return
-		}
-		setParts = append(setParts, fmt.Sprintf("config=$%d", len(args)+1))
-		args = append(args, configJSON)
-	}
-
-	if req.Type != nil {
-		setParts = append(setParts, fmt.Sprintf("type=$%d", len(args)+1))
-		args = append(args, *req.Type)
-	}
-	if req.ConnectorID != nil {
-		setParts = append(setParts, fmt.Sprintf("connector_id=$%d", len(args)+1))
-		args = append(args, *req.ConnectorID)
-	}
-	if req.Query != nil {
-		setParts = append(setParts, fmt.Sprintf("query=$%d", len(args)+1))
-		args = append(args, *req.Query)
 	}
 	if req.Language != nil {
 		if *req.Language != "sql" {
 			writeError(w, http.StatusBadRequest, "only sql widgets are supported")
 			return
 		}
-		setParts = append(setParts, fmt.Sprintf("language=$%d", len(args)+1))
-		args = append(args, *req.Language)
 	}
 
-	setParts = append(setParts, "updated_at=NOW()")
-	args = append(args, widgetID, dashID, claims.OrgID)
-
-	sql := fmt.Sprintf(
-		`UPDATE widgets SET %s WHERE id=$%d AND dashboard_id=$%d AND dashboard_id IN (SELECT id FROM dashboards WHERE org_id=$%d) RETURNING id`,
-		strings.Join(setParts, ", "),
-		len(args)-2, len(args)-1, len(args),
-	)
-
-	if err := s.db.Pool.QueryRow(r.Context(), sql, args...).Scan(new(string)); err != nil {
+	// The document is the source of truth and can be ahead of the derived
+	// rows (the relay store debounces), so partial updates apply only the
+	// fields the request carries, through field-level ops that mutate the
+	// widget in place. UpsertWidget would replace the whole widget map,
+	// dropping concurrent editor changes to fields the request does not
+	// touch (for example SQL typed while this request was in flight).
+	state, err := s.loadOrSeedDashboardDoc(r.Context(), claims.OrgID, dashID)
+	if errors.Is(err, errDashboardDocNotFound) {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update widget")
+		return
+	}
+	proj, err := dashboarddoc.Project(state)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update widget")
+		return
+	}
+	existing, ok := proj.Widgets[widgetID]
+	if !ok {
 		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+
+	// Merged view for validation only: the projected widget with the
+	// request's fields overwritten, exactly as the field ops below will write
+	// them. It never reaches the document.
+	merged := existing
+	if req.Layout != nil {
+		merged.Layout = dashboarddoc.Layout{
+			Row:    req.Layout.Row,
+			Col:    req.Layout.Col,
+			Width:  req.Layout.Width,
+			Height: req.Layout.Height,
+		}
+	}
+	if req.Config != nil {
+		merged.Config = req.Config
+	}
+	if req.Type != nil {
+		merged.Type = string(*req.Type)
+	}
+	if req.ConnectorID != nil {
+		merged.ConnectorID = req.ConnectorID
+	}
+	if req.Query != nil {
+		merged.Query = req.Query
+	}
+	if req.Language != nil {
+		merged.Language = *req.Language
+	}
+
+	// A merged notebook/cell pair (the request has no ref fields, so it
+	// comes from the existing widget) must still resolve to a real cell: the
+	// materializer would otherwise skip the widget and delete its derived
+	// row while the document keeps it.
+	if merged.NotebookID != nil && merged.CellID != nil {
+		if err := s.validateWidgetCellRef(r.Context(), *merged.NotebookID, *merged.CellID); err != nil {
+			writeCellRefError(w, err)
+			return
+		}
+	}
+
+	// Enforce the source invariant on the merged result before the document
+	// write: a connector widget without a query or with a notebook/cell link
+	// cannot be materialized (the row would be dropped, or the write would
+	// fail), so answer 400 instead of a silent success or a 500.
+	if merged.ConnectorID != nil {
+		if merged.NotebookID != nil || merged.CellID != nil {
+			writeError(w, http.StatusBadRequest, "widget cannot reference both a notebook cell and a query connector")
+			return
+		}
+		if merged.Query == nil || *merged.Query == "" {
+			writeError(w, http.StatusBadRequest, "query is required for query widgets")
+			return
+		}
+	}
+
+	// One field-level op per request field, applied in sequence: each mutates
+	// a single field of the live widget map, so every other field (and the
+	// query Y.Text) keeps its CRDT identity.
+	var ops []func([]byte) ([]byte, error)
+	if req.Layout != nil {
+		layout := dashboarddoc.Layout{
+			Row:    req.Layout.Row,
+			Col:    req.Layout.Col,
+			Width:  req.Layout.Width,
+			Height: req.Layout.Height,
+		}
+		ops = append(ops, func(state []byte) ([]byte, error) {
+			return dashboarddoc.UpdateLayout(state, widgetID, layout)
+		})
+	}
+	if req.Config != nil {
+		config := req.Config
+		ops = append(ops, func(state []byte) ([]byte, error) {
+			return dashboarddoc.SetWidgetConfig(state, widgetID, config)
+		})
+	}
+	if req.Type != nil {
+		widgetType := string(*req.Type)
+		ops = append(ops, func(state []byte) ([]byte, error) {
+			return dashboarddoc.SetWidgetType(state, widgetID, widgetType)
+		})
+	}
+	if req.ConnectorID != nil {
+		connectorID := *req.ConnectorID
+		ops = append(ops, func(state []byte) ([]byte, error) {
+			return dashboarddoc.SetWidgetConnector(state, widgetID, connectorID)
+		})
+	}
+	if req.Query != nil {
+		query := *req.Query
+		ops = append(ops, func(state []byte) ([]byte, error) {
+			return dashboarddoc.SetQuery(state, widgetID, query)
+		})
+	}
+	if req.Language != nil {
+		language := *req.Language
+		ops = append(ops, func(state []byte) ([]byte, error) {
+			return dashboarddoc.SetWidgetLanguage(state, widgetID, language)
+		})
+	}
+
+	newState := state
+	for _, apply := range ops {
+		newState, err = apply(newState)
+		if errors.Is(err, dashboarddoc.ErrWidgetNotFound) {
+			writeError(w, http.StatusNotFound, "widget not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update widget")
+			return
+		}
+	}
+	if err := s.storeAndMaterializeDashboardDoc(r.Context(), dashID, newState); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update widget")
 		return
 	}
 
@@ -745,17 +970,36 @@ func (s *Server) handleDeleteWidget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, err := s.db.Pool.Exec(ctx,
-		`DELETE FROM widgets WHERE id = $1 AND dashboard_id = $2
-		 AND dashboard_id IN (SELECT id FROM dashboards WHERE org_id = $3)`,
-		widgetID, dashID, claims.OrgID,
-	)
+	// Path IDs are canonicalized before any lookup, matching update and
+	// convert: a non-UUID path can never address a widget, so it is a 404
+	// rather than a document-store parse error.
+	widgetUUID, err := uuid.Parse(widgetID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	widgetID = widgetUUID.String()
+
+	state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
+	if errors.Is(err, errDashboardDocNotFound) {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
-	if result.RowsAffected() == 0 {
+	newState, err := dashboarddoc.DeleteWidget(state, widgetID)
+	if errors.Is(err, dashboarddoc.ErrWidgetNotFound) {
 		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
+		return
+	}
+	if err := s.storeAndMaterializeDashboardDoc(ctx, dashID, newState); err != nil {
+		writeError(w, http.StatusInternalServerError, "delete failed")
 		return
 	}
 

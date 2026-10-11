@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/dashboard"
+	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -25,6 +26,13 @@ const (
 	dashboardOptionTimeout            = 30 * time.Second
 	dashboardCachePrefix              = "dashq:"
 )
+
+// dashboardQueryDefaultTimeout bounds a dashboard query when neither the
+// connector's timeout_seconds nor a caller override provides a budget. It
+// mirrors the agent run_cell default (defaultCellTimeoutMs, 5 minutes) so a
+// detached shared flight can never run unbounded. This deliberately diverges
+// from HTTP cell execution, which treats timeout_seconds = 0 as unlimited.
+const dashboardQueryDefaultTimeout = 5 * time.Minute
 
 type dashboardExecuteRequest struct {
 	WidgetID    string         `json:"widget_id"`
@@ -63,12 +71,17 @@ type dashboardQueryParams struct {
 	OrgID           string
 	Identity        dashboardIdentity
 	ConnectorID     string
+	WarehouseID     *string
 	SQL             string
 	BypassCache     bool
 	CacheSeconds    *int
 	MaxRowsOverride int
 	Timeout         time.Duration
 	CacheScope      string // public token; empty for authenticated runs
+	// AccessFingerprint discriminates cache entries by the viewer's effective
+	// data access, not their identity. runDashboardQuery computes it before
+	// the cache lookup; callers must leave it empty.
+	AccessFingerprint string
 }
 
 // @Summary Execute a dashboard query widget
@@ -133,7 +146,7 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	servedConnector, err := s.resolveWidgetConnector(ctx, claims.OrgID, *widget.ConnectorID, req.ConnectorID)
+	servedConnector, warehouseID, err := s.resolveWidgetConnector(ctx, claims.OrgID, *widget.ConnectorID, req.ConnectorID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -153,6 +166,7 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		OrgID:        claims.OrgID,
 		Identity:     dashboardIdentity{UserID: claims.UserID, Role: claims.Role},
 		ConnectorID:  servedConnector,
+		WarehouseID:  warehouseID,
 		SQL:          sqlText,
 		BypassCache:  req.BypassCache,
 		CacheSeconds: dash.Settings.QueryCacheSeconds,
@@ -246,7 +260,7 @@ func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	servedConnector, err := s.resolveWidgetConnector(ctx, claims.OrgID, v.Options.Query.ConnectorID, req.ConnectorID)
+	servedConnector, warehouseID, err := s.resolveWidgetConnector(ctx, claims.OrgID, v.Options.Query.ConnectorID, req.ConnectorID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "connector not found")
 		return
@@ -256,6 +270,7 @@ func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.R
 		OrgID:           claims.OrgID,
 		Identity:        dashboardIdentity{UserID: claims.UserID, Role: claims.Role},
 		ConnectorID:     servedConnector,
+		WarehouseID:     warehouseID,
 		SQL:             sqlText,
 		CacheSeconds:    dash.Settings.QueryCacheSeconds,
 		MaxRowsOverride: dashboardOptionMaxRows,
@@ -348,8 +363,32 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	widget, err := s.loadQueryWidget(ctx, dashID, widgetID)
+	// Path IDs are canonicalized before any lookup: document widget keys are
+	// canonical lowercase UUIDs, so an uppercase or braced spelling must
+	// address the same widget instead of 404ing.
+	widgetUUID, err := uuid.Parse(widgetID)
 	if err != nil {
+		writeError(w, http.StatusNotFound, "widget not found")
+		return
+	}
+	widgetID = widgetUUID.String()
+
+	state, err := s.loadOrSeedDashboardDoc(ctx, claims.OrgID, dashID)
+	if errors.Is(err, errDashboardDocNotFound) {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to convert widget")
+		return
+	}
+	proj, err := dashboarddoc.Project(state)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to convert widget")
+		return
+	}
+	widget, found := proj.Widgets[widgetID]
+	if !found {
 		writeError(w, http.StatusNotFound, "widget not found")
 		return
 	}
@@ -398,6 +437,13 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, "cell has no connector assigned")
 		return
 	}
+	// The cell's connector becomes the converted widget's own reference; a
+	// missing or soft-deleted connector would make the materializer drop the
+	// widget, so validate it before the document write.
+	if err := s.validateWidgetConnectorRef(ctx, claims.OrgID, *cellConnID); err != nil {
+		writeConnectorRefError(w, err)
+		return
+	}
 
 	// Parameters: notebook defaults win over cell defaults, as in execution.
 	var notebookParamsJSON []byte
@@ -437,15 +483,22 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	dash, err := s.loadDashboardSettings(ctx, claims.OrgID, dashID)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "dashboard not found")
+	if resolved == "" {
+		// An empty cell source would produce a connector widget with no
+		// query, which the document store rejects; fail with the same 400
+		// as an explicitly cleared query instead of a 500.
+		writeError(w, http.StatusBadRequest, "query is required for query widgets")
 		return
 	}
+
+	// Variables: the document's ordered array is the base, and each resolved
+	// {{slug}} backed by a notebook/cell parameter is appended once.
+	vars := make([]map[string]any, 0, len(proj.Variables))
+	vars = append(vars, proj.Variables...)
 	existing := map[string]bool{}
-	for _, v := range dash.Settings.Variables {
-		existing[v.Name] = true
+	for _, v := range vars {
+		name, _ := v["name"].(string)
+		existing[name] = true
 	}
 	for _, m := range slugRefRe.FindAllStringSubmatch(source, -1) {
 		name := m[1]
@@ -456,54 +509,55 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		if !ok {
 			continue
 		}
-		dash.Settings.Variables = append(dash.Settings.Variables, variableFromParameter(p))
+		vm, err := dashboardVariableFromParameter(p)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update dashboard settings")
+			return
+		}
+		vars = append(vars, vm)
 		existing[name] = true
 	}
-	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+	typedVars, err := dashboardVariablesFromMaps(vars)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid dashboard variables")
+		return
+	}
+	if typedVars == nil {
+		typedVars = []models.DashboardVariable{}
+	}
+	if err := dashboard.ValidateVariables(typedVars); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
-	tx, err := s.db.Pool.Begin(ctx)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to convert widget")
-		return
-	}
-	defer tx.Rollback(ctx)
-
-	var updated models.Widget
-	var layoutOut, configOut []byte
-	err = tx.QueryRow(ctx,
-		`UPDATE widgets SET notebook_id = NULL, cell_id = NULL, connector_id = $1, query = $2, language = 'sql', updated_at = NOW()
-		 WHERE id = $3 AND dashboard_id = $4
-		 RETURNING id, dashboard_id, notebook_id, cell_id, connector_id, query, language, type, layout, config, created_at, updated_at`,
-		*cellConnID, resolved, widgetID, dashID,
-	).Scan(&updated.ID, &updated.DashboardID, &updated.NotebookID, &updated.CellID,
-		&updated.ConnectorID, &updated.Query, &updated.Language, &updated.Type,
-		&layoutOut, &configOut, &updated.CreatedAt, &updated.UpdatedAt)
+	// One document write carries both the widget change (query fields set,
+	// notebook/cell cleared) and the appended variables; the store merges and
+	// materializes them together and publishes the state once.
+	cellID := *widget.CellID
+	notebookID := *widget.NotebookID
+	widget.ConnectorID = cellConnID
+	widget.Query = &resolved
+	widget.NotebookID = nil
+	widget.CellID = nil
+	widget.Language = "sql"
+	newState, err := dashboarddoc.UpsertWidget(state, widget)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update widget")
 		return
 	}
-	json.Unmarshal(layoutOut, &updated.Layout)
-	json.Unmarshal(configOut, &updated.Config)
-
-	if dash.Settings.Variables == nil {
-		dash.Settings.Variables = []models.DashboardVariable{}
-	}
-	settingsJSON, err := json.Marshal(dash.Settings)
+	newState, err = dashboarddoc.UpdateMeta(newState, nil, nil, vars)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update dashboard settings")
 		return
 	}
-	if _, err := tx.Exec(ctx,
-		`UPDATE dashboards SET settings = $1, updated_at = NOW() WHERE id = $2`,
-		settingsJSON, dashID); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update dashboard settings")
+	if err := s.storeAndMaterializeDashboardDoc(ctx, dashID, newState); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to convert widget")
 		return
 	}
-	if err := tx.Commit(ctx); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to convert widget")
+
+	updated, err := s.loadQueryWidget(ctx, dashID, widgetID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update widget")
 		return
 	}
 
@@ -512,12 +566,12 @@ func (s *Server) handleConvertWidgetToQuery(w http.ResponseWriter, r *http.Reque
 		Action: "widget.convert_to_query", ResourceType: "widget", ResourceID: widgetID,
 		Metadata: map[string]any{
 			"dashboard_id": dashID,
-			"cell_id":      *widget.CellID,
-			"notebook_id":  *widget.NotebookID,
+			"cell_id":      cellID,
+			"notebook_id":  notebookID,
 			"connector_id": *cellConnID,
 		},
 	})
-	writeJSON(w, http.StatusOK, map[string]any{"widget": updated, "variables": dash.Settings.Variables})
+	writeJSON(w, http.StatusOK, map[string]any{"widget": updated, "variables": typedVars})
 }
 
 // variableFromParameter maps a notebook/cell parameter onto a dashboard
@@ -752,39 +806,52 @@ func (s *Server) loadQueryWidget(ctx context.Context, dashID, widgetID string) (
 // do not exist on the selected service). An unknown or deleted viewer
 // selection falls back to the widget connector so stale per-viewer UI state
 // never breaks a widget; the served connector's `use` grant is enforced later
-// by openQuery/resolveExecutionTarget, not here.
-func (s *Server) resolveWidgetConnector(ctx context.Context, orgID, widgetConnectorID, viewerConnectorID string) (string, error) {
+// by openQuery/resolveExecutionTarget, not here. The returned warehouse id is
+// the served connector's (nil for unmanaged connectors), used by callers as
+// routing context for the shared query cache.
+func (s *Server) resolveWidgetConnector(ctx context.Context, orgID, widgetConnectorID, viewerConnectorID string) (servedConnectorID string, warehouseID *string, err error) {
+	// The widget connector is the fallback for every viewer selection that
+	// does not win, so its warehouse is needed on all paths.
+	var whW *string
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT warehouse_id FROM connectors WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
+		widgetConnectorID, orgID).Scan(&whW); err != nil {
+		return "", nil, err
+	}
 	if viewerConnectorID == "" || viewerConnectorID == widgetConnectorID {
-		return widgetConnectorID, nil
+		return widgetConnectorID, whW, nil
 	}
 	// A malformed viewer selection is stale UI state, not a DB error: it must
 	// never turn a working widget into a 404 (the lookup below would fail on
 	// the uuid cast before reaching the ErrNoRows fallback).
 	if _, err := uuid.Parse(viewerConnectorID); err != nil {
-		return widgetConnectorID, nil
+		return widgetConnectorID, whW, nil
 	}
-	var whW, whV *string
-	if err := s.db.Pool.QueryRow(ctx,
-		`SELECT warehouse_id FROM connectors WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
-		widgetConnectorID, orgID).Scan(&whW); err != nil {
-		return "", err
-	}
-	err := s.db.Pool.QueryRow(ctx,
+	var whV *string
+	err = s.db.Pool.QueryRow(ctx,
 		`SELECT warehouse_id FROM connectors WHERE id=$1 AND org_id=$2 AND deleted_at IS NULL`,
 		viewerConnectorID, orgID).Scan(&whV)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return widgetConnectorID, nil // unknown viewer selection: the widget connector serves
+		return widgetConnectorID, whW, nil // unknown viewer selection: the widget connector serves
 	}
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if whW != nil && whV != nil && *whW == *whV {
-		return viewerConnectorID, nil
+		return viewerConnectorID, whV, nil
 	}
-	return widgetConnectorID, nil
+	return widgetConnectorID, whW, nil
 }
 
 func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) (*dashboardQueryResponse, error) {
+	// The cache key carries the viewer's effective-access fingerprint instead
+	// of their identity, so viewers whose runs return identical data share
+	// entries. The resolver fails closed to a per-user key whenever sharing
+	// cannot be proven safe. It deliberately covers authorization (`use`), not
+	// operational readiness (`sync_status`, provisioner gates), which a cache
+	// hit may bypass for the TTL — a documented accepted class.
+	p.AccessFingerprint = s.dashboardQueryAccessFingerprint(ctx, p)
+
 	ttl := defaultDashboardQueryCacheSeconds
 	if p.CacheSeconds != nil {
 		ttl = *p.CacheSeconds
@@ -795,7 +862,43 @@ func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) 
 			return dashboardQueryResult(rs, 0, true, &expires), nil
 		}
 	}
+	if cacheKey == "" {
+		// Empty SQL cannot produce a discriminating key; execute directly.
+		return s.executeDashboardQuery(ctx, p, cacheKey, ttl)
+	}
+	// Concurrent identical misses share one execution per cache key. The
+	// computation is intentionally detached from every caller's cancellation:
+	// one client aborting (refresh, filter change) must not cancel the shared
+	// run and spuriously fail its followers. A solo client abort therefore no
+	// longer cancels the server-side query — it runs to completion (bounded by
+	// the connector timeout, or dashboardQueryDefaultTimeout) and warms the
+	// shared cache. A bypass skips only the cache read, so it either leads a
+	// fresh run or rides a genuinely in-flight (fresh) one.
+	computeCtx := context.WithoutCancel(ctx)
+	v, err, _ := s.dashboardCacheSF.Do(cacheKey, func() (any, error) {
+		if s.dashboardQueryCompute != nil {
+			return s.dashboardQueryCompute(computeCtx, p)
+		}
+		return s.executeDashboardQuery(computeCtx, p, cacheKey, ttl)
+	})
+	if err != nil {
+		return nil, err
+	}
+	// The *dashboardQueryResponse is shared across every caller that joined
+	// this flight and must be treated as immutable.
+	resp, ok := v.(*dashboardQueryResponse)
+	if !ok || resp == nil {
+		return nil, fmt.Errorf("dashboard query single flight returned %T", v)
+	}
+	return resp, nil
+}
 
+// executeDashboardQuery performs the real work of one dashboard query run:
+// resolve the execution target, execute under the row/byte/time limits, record
+// connector health, and warm the shared cache. It runs under the per-key
+// single flight when a discriminating cache key exists, so a shared
+// computation stores its result once.
+func (s *Server) executeDashboardQuery(ctx context.Context, p dashboardQueryParams, cacheKey string, ttl int) (*dashboardQueryResponse, error) {
 	opened, err := s.openQuery(ctx, p.OrgID, p.Identity.UserID, p.Identity.Role, p.ConnectorID, false)
 	if err != nil {
 		return nil, err
@@ -809,6 +912,11 @@ func (s *Server) runDashboardQuery(ctx context.Context, p dashboardQueryParams) 
 	timeout := time.Duration(opened.TimeoutSecs) * time.Second
 	if p.Timeout > 0 && (timeout <= 0 || p.Timeout < timeout) {
 		timeout = p.Timeout
+	}
+	if timeout <= 0 {
+		// A detached shared flight must always be bounded, so the cell
+		// execution house default applies when the connector sets none.
+		timeout = dashboardQueryDefaultTimeout
 	}
 	maxBytes, err := s.orgCellOutputMaxBytes(ctx, p.OrgID)
 	if err != nil {
@@ -882,7 +990,7 @@ func dashboardQueryCacheKey(p dashboardQueryParams) string {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(strings.Join([]string{
-		p.OrgID, p.Identity.UserID, p.CacheScope, p.ConnectorID, p.SQL,
+		p.OrgID, p.AccessFingerprint, p.CacheScope, p.ConnectorID, p.SQL,
 		fmt.Sprintf("%d", p.MaxRowsOverride),
 	}, "\x00")))
 	return dashboardCachePrefix + hex.EncodeToString(sum[:])
