@@ -4,22 +4,6 @@ import { interpolateText } from '../utils/interpolateText'
 import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
 import type { DashboardVariable } from '../types'
 
-/**
- * Reads a text panel's markdown out of a widget config. Absent or malformed
- * `config.text.markdown` yields `''` so callers can render the empty hint.
- */
-// The public page (Task 15) imports this from the component module by design;
-// the component itself still hot-reloads cleanly.
-// eslint-disable-next-line react-refresh/only-export-components
-export function textConfigFrom(config: Record<string, unknown> | undefined): { markdown: string } {
-  const text = config?.text
-  if (text && typeof text === 'object') {
-    const markdown = (text as Record<string, unknown>).markdown
-    if (typeof markdown === 'string') return { markdown }
-  }
-  return { markdown: '' }
-}
-
 interface TextWidgetProps {
   markdown: string
   /** Overrides the dashboard variables context; used by tests and the public page. */
