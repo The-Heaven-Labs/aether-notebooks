@@ -8,10 +8,16 @@ import { useFocusTrap } from '../hooks/useFocusTrap'
 import { ConnectorSelector } from './ConnectorSelector'
 import { SqlEditor } from './SqlEditor'
 import { OutputRenderer } from './OutputRenderer'
+import { MetricWidget } from './MetricWidget'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 import type { ChartConfig } from '../charts/types'
 import { withWidgetOverride } from '../charts/widgetChartConfig'
-import type { Dashboard, DashboardVariableType, Widget, WidgetQueryResult } from '../types'
+import { metricConfigFrom, type MetricConfig } from '../utils/metric'
+import type { ValueFormat } from '../utils/valueFormat'
+import { textConfigFrom } from '../utils/textConfig'
+import { appearanceFrom, type WidgetAppearance } from '../utils/widgetAppearance'
+import { isTextPanel } from '../utils/widgetKind'
+import type { Dashboard, DashboardVariableType, ResultSet, Widget, WidgetQueryResult } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
   // The drawer covers the top bar (z-index 1550/1600), so it must sit above it:
@@ -130,6 +136,37 @@ const styles: Record<string, React.CSSProperties> = {
     color: 'var(--text-primary)',
     width: '100%',
   },
+  input: {
+    padding: '7px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 13,
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    width: '100%',
+  },
+  textarea: {
+    padding: '8px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 13,
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    width: '100%',
+    minHeight: 160,
+    resize: 'vertical',
+    fontFamily: 'var(--font-mono)',
+  },
+  field: { display: 'flex', flexDirection: 'column', gap: 4 },
+  fieldLabel: { fontSize: 12, color: 'var(--text-secondary)' },
+  fieldPair: { display: 'flex', gap: 8 },
+  checkboxRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    fontSize: 13,
+    color: 'var(--text-secondary)',
+  },
 }
 
 function detectedTokens(query: string): string[] {
@@ -138,6 +175,53 @@ function detectedTokens(query: string): string[] {
     if (!out.includes(match[1])) out.push(match[1])
   }
   return out
+}
+
+/**
+ * Text control that keeps a local draft and commits 600ms after the last
+ * keystroke — the same debounce as the SQL source editor. The save callback
+ * goes through a ref so parent re-renders never restart the timer mid-typing.
+ */
+function DebouncedTextInput({ label, value, onSave, listId, placeholder, multiline = false }: {
+  label: string
+  value: string
+  onSave: (next: string) => void
+  listId?: string
+  placeholder?: string
+  multiline?: boolean
+}) {
+  const [draft, setDraft] = useState(value)
+  const saveRef = useRef(onSave)
+  useEffect(() => {
+    saveRef.current = onSave
+  }, [onSave])
+  useEffect(() => {
+    if (draft === value) return
+    const timer = setTimeout(() => saveRef.current(draft), 600)
+    return () => clearTimeout(timer)
+  }, [draft, value])
+  if (multiline) {
+    return (
+      <textarea
+        aria-label={label}
+        style={styles.textarea}
+        value={draft}
+        placeholder={placeholder}
+        onChange={e => setDraft(e.target.value)}
+      />
+    )
+  }
+  return (
+    <input
+      aria-label={label}
+      type="text"
+      style={styles.input}
+      value={draft}
+      list={listId}
+      placeholder={placeholder}
+      onChange={e => setDraft(e.target.value)}
+    />
+  )
 }
 
 export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true }: {
@@ -156,6 +240,11 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const [query, setQuery] = useState(widget.query ?? '')
   const [widgetType, setWidgetType] = useState<Widget['type']>(widget.type)
   const [saveError, setSaveError] = useState<string | null>(null)
+  // The latest saved config. The `widget` prop is a snapshot, so merging every
+  // field edit into this (instead of `widget.config`) keeps sequential saves
+  // from clobbering each other while the drawer stays open.
+  const [config, setConfig] = useState<Record<string, unknown>>(widget.config ?? {})
+  const configRef = useRef<Record<string, unknown>>(widget.config ?? {})
 
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState<WidgetQueryResult | null>(null)
@@ -199,6 +288,17 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   }, [dashboard.settings?.variables])
   const references = useMemo(() => (isQuery ? detectedTokens(query) : []), [query, isQuery])
 
+  const metric = metricConfigFrom(config)
+  const text = textConfigFrom(config)
+  const appearance = appearanceFrom(config)
+  // First table output of the last run: source for the metric preview and the
+  // value-column suggestions. Null until a run has happened.
+  const runResultSet = useMemo(() => {
+    const data = runResult?.outputs.find(o => o.type === 'table')?.data as ResultSet | undefined
+    return data && Array.isArray(data.columns) ? data : null
+  }, [runResult])
+  const metricColumns = runResultSet?.columns.map(c => c.name) ?? []
+
   const handleTypeChange = async (next: Widget['type']) => {
     setWidgetType(next)
     try {
@@ -210,17 +310,37 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     }
   }
 
-  const saveChartConfig = async (config: ChartConfig) => {
+  const putWidgetConfig = async (next: Record<string, unknown>) => {
+    configRef.current = next
+    setConfig(next)
     try {
-      await api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, {
-        config: isQuery ? config : withWidgetOverride(config),
-      })
+      await api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, { config: next })
       setSaveError(null)
       onSaved()
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : 'Failed to save chart config')
+      setSaveError(e instanceof Error ? e.message : 'Failed to save widget config')
     }
   }
+
+  const saveWidgetConfig = (patch: Record<string, unknown>) =>
+    putWidgetConfig({ ...configRef.current, ...patch })
+
+  const saveChartConfig = (chartConfig: ChartConfig) => {
+    if (isQuery) {
+      // Query widgets store the chart config raw, alongside metric/text/
+      // appearance blocks — merge so a chart edit keeps them.
+      return putWidgetConfig({ ...configRef.current, ...chartConfig })
+    }
+    // Cell widgets keep the override-marker semantics; merging the current
+    // config in means appearance/text blocks survive a chart edit too.
+    return putWidgetConfig({ ...configRef.current, ...withWidgetOverride(chartConfig) })
+  }
+
+  const saveMetric = (patch: Partial<MetricConfig>) =>
+    saveWidgetConfig({ metric: { ...metricConfigFrom(configRef.current), ...patch } })
+
+  const saveAppearance = (patch: Partial<WidgetAppearance>) =>
+    saveWidgetConfig({ appearance: { ...appearanceFrom(configRef.current), ...patch } })
 
   const runQuery = async () => {
     setRunning(true)
@@ -309,15 +429,24 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
               {runError && <div style={styles.error} role="alert">{runError}</div>}
               {runResult && (
                 <div style={styles.preview}>
-                  <OutputRenderer
-                    outputs={runResult.outputs}
-                    fixedView={widgetType === 'chart' ? 'chart' : 'table'}
-                    chartConfig={normalizeChartConfig(widget.config)}
-                    onChartConfigChange={saveChartConfig}
-                  />
+                  {widgetType === 'metric' && runResultSet ? (
+                    <MetricWidget result={runResultSet} config={metric} />
+                  ) : (
+                    <OutputRenderer
+                      outputs={runResult.outputs}
+                      fixedView={widgetType === 'chart' ? 'chart' : 'table'}
+                      chartConfig={normalizeChartConfig(config)}
+                      onChartConfigChange={saveChartConfig}
+                    />
+                  )}
                 </div>
               )}
             </>
+          ) : isTextPanel(widget) ? (
+            <div style={styles.muted} role="note">
+              Text widget — its content is authored as markdown in the Text section below.
+              No notebook cell or query is needed.
+            </div>
           ) : (
             <>
               <div style={styles.muted}>
@@ -344,6 +473,213 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             <option value="metric">Metric</option>
             <option value="text">Text</option>
           </select>
+
+          {widgetType === 'metric' && (
+            <>
+              <span style={styles.sectionLabel}>Metric</span>
+              <div style={styles.field}>
+                <span style={styles.fieldLabel}>Value column</span>
+                <DebouncedTextInput
+                  label="Value column"
+                  value={metric.value_column ?? ''}
+                  listId={metricColumns.length > 0 ? 'metric-value-columns' : undefined}
+                  placeholder="column"
+                  onSave={v => void saveMetric({ value_column: v })}
+                />
+              </div>
+              {metricColumns.length > 0 && (
+                <datalist id="metric-value-columns">
+                  {metricColumns.map(name => <option key={name} value={name} />)}
+                </datalist>
+              )}
+              <div style={styles.field}>
+                <span style={styles.fieldLabel}>Aggregation</span>
+                <select
+                  aria-label="Aggregation"
+                  style={styles.select}
+                  value={metric.aggregation ?? 'none'}
+                  onChange={e => void saveMetric({ aggregation: e.target.value as MetricConfig['aggregation'] })}
+                >
+                  <option value="none">None (first row)</option>
+                  <option value="sum">Sum</option>
+                  <option value="avg">Average</option>
+                  <option value="min">Min</option>
+                  <option value="max">Max</option>
+                  <option value="median">Median</option>
+                  <option value="count">Count</option>
+                  <option value="count_distinct">Count distinct</option>
+                  <option value="first">First</option>
+                </select>
+              </div>
+              <div style={styles.field}>
+                <span style={styles.fieldLabel}>Label</span>
+                <DebouncedTextInput
+                  label="Label"
+                  value={metric.label ?? ''}
+                  placeholder="Total revenue"
+                  onSave={v => void saveMetric({ label: v })}
+                />
+              </div>
+              <div style={styles.field}>
+                <span style={styles.fieldLabel}>Format</span>
+                <select
+                  aria-label="Format"
+                  style={styles.select}
+                  value={metric.format?.style ?? 'number'}
+                  onChange={e => void saveMetric({ format: { ...metric.format, style: e.target.value as ValueFormat['style'] } })}
+                >
+                  <option value="number">Number</option>
+                  <option value="currency">Currency</option>
+                  <option value="percent">Percent</option>
+                </select>
+              </div>
+              {metric.format?.style === 'currency' && (
+                <div style={styles.field}>
+                  <span style={styles.fieldLabel}>Currency</span>
+                  <DebouncedTextInput
+                    label="Currency"
+                    value={metric.format?.currency ?? ''}
+                    placeholder="USD"
+                    onSave={v => void saveMetric({ format: { ...metric.format, currency: v } })}
+                  />
+                </div>
+              )}
+              <div style={styles.field}>
+                <span style={styles.fieldLabel}>Decimals</span>
+                <input
+                  aria-label="Decimals"
+                  type="number"
+                  min={0}
+                  style={styles.input}
+                  value={metric.format?.decimals ?? ''}
+                  onChange={e => {
+                    const raw = e.target.value
+                    const parsed = raw === '' ? undefined : Number(raw)
+                    const decimals = parsed !== undefined && Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : undefined
+                    void saveMetric({ format: { ...metric.format, decimals } })
+                  }}
+                />
+              </div>
+              <div style={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  aria-label="Compact"
+                  checked={metric.format?.compact ?? false}
+                  onChange={e => void saveMetric({ format: { ...metric.format, compact: e.target.checked } })}
+                />
+                <span>Compact (1.2M)</span>
+              </div>
+              <div style={styles.field}>
+                <span style={styles.fieldLabel}>Comparison column</span>
+                <DebouncedTextInput
+                  label="Comparison column"
+                  value={metric.comparison?.column ?? ''}
+                  placeholder="revenue_prev"
+                  onSave={v => void saveMetric({ comparison: { ...metric.comparison, column: v } })}
+                />
+              </div>
+              <div style={styles.field}>
+                <span style={styles.fieldLabel}>Comparison mode</span>
+                <select
+                  aria-label="Comparison mode"
+                  style={styles.select}
+                  value={metric.comparison?.mode ?? 'percent'}
+                  onChange={e => void saveMetric({ comparison: { ...metric.comparison, mode: e.target.value as 'delta' | 'percent' } })}
+                >
+                  <option value="percent">Percent</option>
+                  <option value="delta">Delta</option>
+                </select>
+              </div>
+              <span style={styles.fieldLabel}>Sparkline</span>
+              <div style={styles.fieldPair}>
+                <div style={{ ...styles.field, flex: 1 }}>
+                  <span style={styles.fieldLabel}>X column</span>
+                  <DebouncedTextInput
+                    label="Sparkline x column"
+                    value={metric.sparkline?.x_column ?? ''}
+                    onSave={v => void saveMetric({ sparkline: { ...metric.sparkline, x_column: v } })}
+                  />
+                </div>
+                <div style={{ ...styles.field, flex: 1 }}>
+                  <span style={styles.fieldLabel}>Y column</span>
+                  <DebouncedTextInput
+                    label="Sparkline y column"
+                    value={metric.sparkline?.y_column ?? ''}
+                    onSave={v => void saveMetric({ sparkline: { ...metric.sparkline, y_column: v } })}
+                  />
+                </div>
+              </div>
+            </>
+          )}
+
+          {widgetType === 'text' && (
+            <>
+              <span style={styles.sectionLabel}>Text</span>
+              <DebouncedTextInput
+                label="Markdown"
+                value={text.markdown}
+                multiline
+                placeholder={'## Heading\n\nMarkdown text…'}
+                onSave={markdown => void saveWidgetConfig({ text: { markdown } })}
+              />
+              <div style={styles.muted}>
+                {'{{variable}}'} tokens are interpolated with dashboard variable values for display.
+              </div>
+            </>
+          )}
+
+          <span style={styles.sectionLabel}>Appearance</span>
+          <div style={styles.field}>
+            <span style={styles.fieldLabel}>Background</span>
+            <select
+              aria-label="Background"
+              style={styles.select}
+              value={appearance.background}
+              onChange={e => void saveAppearance({ background: e.target.value as WidgetAppearance['background'] })}
+            >
+              <option value="card">Card</option>
+              <option value="transparent">Transparent</option>
+            </select>
+          </div>
+          <div style={styles.checkboxRow}>
+            <input
+              type="checkbox"
+              aria-label="Border"
+              checked={appearance.border}
+              disabled={appearance.background === 'transparent'}
+              onChange={e => void saveAppearance({ border: e.target.checked })}
+            />
+            <span>Border</span>
+          </div>
+          {appearance.background === 'transparent' && (
+            <div style={styles.muted}>Transparent widgets never draw a border.</div>
+          )}
+          <div style={styles.field}>
+            <span style={styles.fieldLabel}>Padding</span>
+            <select
+              aria-label="Padding"
+              style={styles.select}
+              value={appearance.padding}
+              onChange={e => void saveAppearance({ padding: e.target.value as WidgetAppearance['padding'] })}
+            >
+              <option value="none">None</option>
+              <option value="sm">Small</option>
+              <option value="md">Medium</option>
+            </select>
+          </div>
+          <div style={styles.field}>
+            <span style={styles.fieldLabel}>Align</span>
+            <select
+              aria-label="Align"
+              style={styles.select}
+              value={appearance.align}
+              onChange={e => void saveAppearance({ align: e.target.value as WidgetAppearance['align'] })}
+            >
+              <option value="left">Left</option>
+              <option value="center">Center</option>
+              <option value="right">Right</option>
+            </select>
+          </div>
 
           {saveError && <div style={styles.error} role="alert">{saveError}</div>}
         </div>

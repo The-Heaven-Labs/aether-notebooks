@@ -39,6 +39,13 @@ function queryWidget(overrides: Partial<Widget> = {}): Widget {
   }
 }
 
+/** Config bodies from captured widget PUTs, in request order. */
+function savedConfigs(bodies: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return bodies
+    .map(b => b.config)
+    .filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null)
+}
+
 const tableOutput = {
   type: 'table',
   data: {
@@ -257,5 +264,119 @@ describe('WidgetConfigDrawer', () => {
     )
     expect(screen.getByRole('button', { name: /Run/ })).toBeDisabled()
     expect(screen.getByRole('note')).toHaveTextContent('view_with_data')
+  })
+
+  test('saves the metric value column and aggregation', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    fireEvent.change(screen.getByLabelText('Widget type'), { target: { value: 'metric' } })
+    fireEvent.change(await screen.findByLabelText('Value column'), { target: { value: 'x' } })
+    fireEvent.change(screen.getByLabelText('Aggregation'), { target: { value: 'sum' } })
+    // The value column commits after the 600ms debounce; both fields must end
+    // up in the same metric block (each save merges the previous one).
+    await waitFor(
+      () => expect(savedConfigs(bodies).at(-1)?.metric).toEqual({ value_column: 'x', aggregation: 'sum' }),
+      { timeout: 3000 },
+    )
+  })
+
+  test('renders the metric preview and column suggestions after a run', async () => {
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ type: 'metric', config: { metric: { value_column: 'x', aggregation: 'none' } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    // MetricWidget replaces the table fallback so authors see the reading.
+    expect(await screen.findByRole('group', { name: '42' })).toBeInTheDocument()
+    expect(document.querySelector('#metric-value-columns option[value="x"]')).not.toBeNull()
+  })
+
+  test('editing the text markdown saves config.text.markdown', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ connector_id: null, query: null, type: 'text' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: '## Hello' } })
+    await waitFor(
+      () => expect(savedConfigs(bodies).at(-1)?.text).toEqual({ markdown: '## Hello' }),
+      { timeout: 3000 },
+    )
+  })
+
+  test('a source-less text widget authors markdown without the cell convert affordance', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ connector_id: null, query: null, type: 'text' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'Convert to query widget' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Notebook cell widget/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Markdown')).toBeInTheDocument()
+  })
+
+  test('changing the appearance background saves config.appearance.background', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    fireEvent.change(screen.getByLabelText('Background'), { target: { value: 'transparent' } })
+    await waitFor(() => {
+      const appearance = savedConfigs(bodies).at(-1)?.appearance as Record<string, unknown> | undefined
+      expect(appearance?.background).toBe('transparent')
+    })
+  })
+
+  test('disables the border checkbox on transparent backgrounds', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { appearance: { background: 'transparent' } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.getByLabelText('Border')).toBeDisabled()
+    expect(screen.getByText(/never draw a border/i)).toBeInTheDocument()
   })
 })
