@@ -103,6 +103,11 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 		req.FolderID = nil
 	}
 
+	if err := validateDashboardAppSettings(req.Settings.App); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	settingsJSON, _ := json.Marshal(req.Settings)
 	ctx := r.Context()
 

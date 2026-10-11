@@ -241,6 +241,21 @@ func TestDashboardAppSettings(t *testing.T) {
 	email := fmt.Sprintf("dash-app-%d@example.com", ts)
 	token := registerAndGetToken(t, srv, email, "Dash App Org")
 
+	// Invalid app settings on create → 400 (the invariant must hold on every write path).
+	badBody, _ := json.Marshal(map[string]interface{}{
+		"title":    "Bad App Settings",
+		"settings": map[string]interface{}{"app": map[string]interface{}{"width": "wide"}},
+	})
+	badReq := httptest.NewRequest("POST", "/api/v1/dashboards", bytes.NewReader(badBody))
+	badReq.Header.Set("Content-Type", "application/json")
+	badReq.Header.Set("Authorization", "Bearer "+token)
+	badReq.Header.Set("X-AETHER-Admin-Mode", "true")
+	badRec := httptest.NewRecorder()
+	srv.ServeHTTP(badRec, badReq)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid create: expected 400, got %d: %s", badRec.Code, badRec.Body.String())
+	}
+
 	body, _ := json.Marshal(map[string]interface{}{"title": "App Settings"})
 	req := httptest.NewRequest("POST", "/api/v1/dashboards", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
@@ -281,32 +296,61 @@ func TestDashboardAppSettings(t *testing.T) {
 		t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	req = httptest.NewRequest("GET", "/api/v1/dashboards/"+dashID, nil)
-	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-AETHER-Admin-Mode", "true")
-	rec = httptest.NewRecorder()
-	srv.ServeHTTP(rec, req)
-	var got struct {
-		Settings struct {
-			App struct {
-				Title       string `json:"title"`
-				Subtitle    string `json:"subtitle"`
-				Width       string `json:"width"`
-				ShowRefresh *bool  `json:"show_refresh"`
-			} `json:"app"`
-		} `json:"settings"`
+	type appSettings struct {
+		Title       string `json:"title"`
+		Subtitle    string `json:"subtitle"`
+		Width       string `json:"width"`
+		ShowRefresh *bool  `json:"show_refresh"`
 	}
-	json.NewDecoder(rec.Body).Decode(&got)
-	if got.Settings.App.Title != "Q3 Revenue Review" || got.Settings.App.Width != "full" {
-		t.Fatalf("app settings did not round-trip: %+v", got.Settings.App)
-	}
-	if got.Settings.App.ShowRefresh == nil || *got.Settings.App.ShowRefresh {
-		t.Fatalf("expected show_refresh=false to survive, got %+v", got.Settings.App.ShowRefresh)
+	getApp := func() appSettings {
+		r := httptest.NewRequest("GET", "/api/v1/dashboards/"+dashID, nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-AETHER-Admin-Mode", "true")
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("get: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Settings struct {
+				App appSettings `json:"app"`
+			} `json:"settings"`
+		}
+		json.NewDecoder(w.Body).Decode(&resp)
+		return resp.Settings.App
 	}
 
-	// Invalid width → 400.
+	got := getApp()
+	if got.Title != "Q3 Revenue Review" || got.Width != "full" {
+		t.Fatalf("app settings did not round-trip: %+v", got)
+	}
+	if got.ShowRefresh == nil || *got.ShowRefresh {
+		t.Fatalf("expected show_refresh=false to survive, got %+v", got.ShowRefresh)
+	}
+
+	// Invalid width → 400, and the rejected update must leave stored settings untouched.
 	if rec = put(map[string]interface{}{"app": map[string]interface{}{"width": "wide"}}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid width: expected 400, got %d", rec.Code)
+	}
+	if got := getApp(); got.Title != "Q3 Revenue Review" || got.Width != "full" {
+		t.Fatalf("rejected update changed stored settings: %+v", got)
+	}
+
+	// Invalid layout → 400.
+	if rec = put(map[string]interface{}{"app": map[string]interface{}{"layout": "nonsense"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid layout: expected 400, got %d", rec.Code)
+	}
+
+	// Subtitle boundary: 200 characters pass, 201 are rejected.
+	subtitle := strings.Repeat("s", 200)
+	if rec = put(map[string]interface{}{"app": map[string]interface{}{"subtitle": subtitle}}); rec.Code != http.StatusOK {
+		t.Fatalf("200-char subtitle: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := getApp(); got.Subtitle != subtitle {
+		t.Fatalf("200-char subtitle did not round-trip, got %d chars", len(got.Subtitle))
+	}
+	if rec = put(map[string]interface{}{"app": map[string]interface{}{"subtitle": subtitle + "s"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("201-char subtitle: expected 400, got %d", rec.Code)
 	}
 
 	// Overlong title → 400.
