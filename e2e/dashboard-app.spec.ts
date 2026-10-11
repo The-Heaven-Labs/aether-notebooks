@@ -13,9 +13,9 @@ import { registerAndOnboard } from './helpers'
  */
 const PG_CONNECTOR_HOST = process.env.E2E_PG_CONNECTOR_HOST ?? 'localhost'
 
-// Pin timezone + locale and freeze the page clock below, so the masthead
-// freshness line and the widget "Executed at" footer render the same
-// timestamp on every run — otherwise the visual snapshot can never match.
+// Pin timezone + locale and freeze the page clock below: the footer mask
+// hides the live timestamps, and the freeze keeps the masthead's visible
+// "Updated …" line from drifting between runs.
 test.use({ timezoneId: 'UTC', locale: 'en-US' })
 
 async function authHeaders(page: Page): Promise<{ Authorization: string }> {
@@ -101,8 +101,8 @@ test.describe('Dashboard App surface', () => {
     await page.getByRole('button', { name: 'Save app settings' }).click()
     await expect(page.getByText('App settings saved')).toBeVisible()
 
-    // Freeze the clock before the app surface loads so both freshness lines
-    // show a fixed instant in the snapshot.
+    // Freeze the clock before the app surface loads: the masthead's visible
+    // "Updated …" line must not drift between runs (the footer row is masked).
     await page.clock.setFixedTime(new Date('2026-06-01T12:00:00Z'))
     await page.goto(`/dashboards/${dashboardId}/view`)
 
@@ -120,12 +120,18 @@ test.describe('Dashboard App surface', () => {
     // Text panel markdown.
     await expect(page.getByRole('heading', { name: 'What changed' })).toBeVisible()
 
+    // Guard the mask locator: if the footer text ever changes, this fails
+    // loudly here instead of silently dropping the mask and letting the
+    // pixel comparison swallow a live-timestamp diff.
+    await expect(page.getByText(/^Executed at /)).toBeVisible()
+
     await expect(page).toHaveScreenshot('dashboard-app.png', {
-      // The widget footer's "Executed at … · Nms" is the only live reading
-      // left after the clock freeze; mask it so the snapshot covers layout,
-      // not query timing.
-      mask: [page.getByText(/^Executed at /)],
-      maxDiffPixelRatio: 0.002,
+      // Mask the footer's parent row: it is fixed-size, while the "Executed
+      // at …" span's width drifts with the live `cached`/`Nms` tail, which
+      // would move the mask box. Exact comparison — the clock freeze keeps
+      // the remaining pixels stable.
+      mask: [page.getByText(/^Executed at /).locator('..')],
+      maxDiffPixelRatio: 0,
     })
   })
 })
