@@ -13,6 +13,7 @@ import { TextWidget } from '../components/TextWidget'
 import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { textConfigFrom } from '../utils/textConfig'
+import { visibleWidgets, variableDefaults } from '../utils/publicDashboard'
 import { isQueryWidget, isTextPanel } from '../utils/widgetKind'
 import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
@@ -78,25 +79,14 @@ export function PublicDashboardPage() {
   // A non-live page doesn't mount the variables provider (its option loads are
   // live-only and would 403), so text panels interpolate against the
   // variables' configured defaults instead of an empty context.
-  const variableDefaults: Record<string, unknown> = {}
-  for (const v of variables) {
-    if (v.default !== undefined) variableDefaults[v.name] = v.default
-  }
+  const defaults = variableDefaults(variables)
   const endpointBase = `/api/v1/public/${token}`
-  // Query widgets only render when the owner opted into live queries; cell
-  // widgets need stored outputs to render at all; source-less text panels
-  // always render — except empty ones, which have nothing to show (the
-  // editor's "empty text panel" hint is wrong on a public surface).
-  const visibleWidgets = widgets.filter((w) => {
-    if (isQueryWidget(w)) return publicLive
-    if (isTextPanel(w)) return textConfigFrom(w.config).markdown.trim().length > 0
-    return !!(w.cell_id && widgetsData[w.cell_id]?.outputs?.length)
-  })
+  const shownWidgets = visibleWidgets(widgets, widgetsData, publicLive)
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
   // Widgets are never shorter than 6 rows here either: below that the chart
   // area collapses under the widget chrome (~40px plots).
-  const totalHeight = visibleWidgets.reduce((max, w) => {
+  const totalHeight = shownWidgets.reduce((max, w) => {
     return Math.max(max, (w.layout?.row ?? 0) + Math.max(w.layout?.height ?? 4, 6))
   }, 0) * (ROW_HEIGHT + gap)
 
@@ -122,14 +112,14 @@ export function PublicDashboardPage() {
             <DashboardVariableBar />
           </div>
         )}
-        {visibleWidgets.length === 0 ? (
+        {shownWidgets.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
             <p style={{ fontSize: 14, fontWeight: 600, margin: '0 0 4px' }}>No widgets in this dashboard</p>
             <p style={{ fontSize: 13, margin: 0 }}>The dashboard owner hasn't added any widgets yet.</p>
           </div>
         ) : (
           <div ref={measureRef} style={{ minHeight: totalHeight, position: 'relative' }}>
-            {visibleWidgets.map((widget) => {
+            {shownWidgets.map((widget) => {
               const l = widget.layout
               const left = l.col * (colWidth + gap)
               const top = l.row * (ROW_HEIGHT + gap)
@@ -168,7 +158,7 @@ export function PublicDashboardPage() {
                         configured defaults so `{{tokens}}` never render raw. */}
                     <TextWidget
                       markdown={textConfigFrom(widget.config).markdown}
-                      values={publicLive ? undefined : variableDefaults}
+                      values={publicLive ? undefined : defaults}
                       variables={variables}
                     />
                   </div>

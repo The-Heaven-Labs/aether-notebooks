@@ -45,7 +45,10 @@ export function formatValue(value: number | string | null | undefined, format?: 
   if (format?.style === 'currency') {
     opts.style = 'currency'
     opts.currency = format.currency || 'USD'
-  } else if (format?.compact) {
+  }
+  // Compact is independent of style: Intl natively supports compact currency
+  // ("$1.3M"), and the drawer exposes the two options separately.
+  if (format?.compact) {
     opts.notation = 'compact'
     opts.maximumFractionDigits = decimals ?? 1
   }
