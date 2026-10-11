@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, RefreshCw, FilterX, BarChart3 } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useDashboardVariables, isVariableDefault } from '../contexts/DashboardVariablesContext'
@@ -209,6 +209,9 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     viewerConnectorId,
     endpointBase,
   })
+  // Stable identity so OutputRenderer's memo is not defeated by a fresh map on
+  // every render. Must stay above the early returns below (rules of hooks).
+  const columnFormats = useMemo(() => tableConfigFrom(widget.config).columns, [widget.config])
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
 
   useEffect(() => {
@@ -321,7 +324,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
           outputs={outputs}
           fixedView={widget.type === 'chart' ? 'chart' : 'table'}
           chartConfig={normalizeChartConfig(widget.config)}
-          columnFormats={tableConfigFrom(widget.config).columns}
+          columnFormats={columnFormats}
           footerExtra={footerExtra}
         />
       )}

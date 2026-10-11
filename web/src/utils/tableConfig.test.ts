@@ -35,4 +35,20 @@ describe('tableConfigFrom', () => {
     expect(Object.hasOwn(cfg.columns, '__proto__')).toBe(true)
     expect(cfg.columns['__proto__']).toEqual({ style: 'number' })
   })
+  it('normalizes valid currency codes and drops invalid ones', () => {
+    const cfg = tableConfigFrom({
+      table: {
+        columns: [
+          { name: 'invalid', format: { style: 'currency', currency: 'EURO' } },
+          { name: 'padded', format: { style: 'currency', currency: 'usd ' } },
+          { name: 'symbol', format: { style: 'currency', currency: '€' } },
+          { name: 'valid', format: { style: 'currency', currency: 'eur' } },
+        ],
+      },
+    })
+    expect(cfg.columns.invalid).toEqual({ style: 'currency' })
+    expect(cfg.columns.padded).toEqual({ style: 'currency', currency: 'USD' })
+    expect(cfg.columns.symbol).toEqual({ style: 'currency' })
+    expect(cfg.columns.valid).toEqual({ style: 'currency', currency: 'EUR' })
+  })
 })

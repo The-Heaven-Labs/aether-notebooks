@@ -548,7 +548,117 @@ describe('WidgetConfigDrawer', () => {
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(await screen.findByLabelText('Format x')).toHaveValue('currency')
     fireEvent.change(screen.getByLabelText('Format x'), { target: { value: 'default' } })
-    await waitFor(() => expect(savedConfigs(bodies).at(-1)?.table).toEqual({ columns: [] }))
+    // With no formats left the whole table block is dropped, not persisted as
+    // { columns: [] }.
+    await waitFor(() => {
+      const last = savedConfigs(bodies).at(-1)
+      expect(last).toBeDefined()
+      expect(last?.table).toBeUndefined()
+    })
+  })
+
+  test('normalizes the currency code when saving a table column format', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { columns: [{ name: 'x', format: { style: 'currency' } }] } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Currency for x'), { target: { value: ' eur ' } })
+    await waitFor(
+      () =>
+        expect(savedConfigs(bodies).at(-1)?.table).toEqual({
+          columns: [{ name: 'x', format: { style: 'currency', currency: 'EUR' } }],
+        }),
+      { timeout: 3000 },
+    )
+  })
+
+  test('switching a column away from currency clears the currency code', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { columns: [{ name: 'x', format: { style: 'currency', currency: 'USD' } }] } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Format x'), { target: { value: 'number' } })
+    await waitFor(() =>
+      expect(savedConfigs(bodies).at(-1)?.table).toEqual({ columns: [{ name: 'x', format: { style: 'number' } }] }),
+    )
+  })
+
+  test('preserves sibling keys under config.table when saving column formats', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { keep: 'me' } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Format x'), { target: { value: 'percent' } })
+    await waitFor(() =>
+      expect(savedConfigs(bodies).at(-1)?.table).toEqual({
+        keep: 'me',
+        columns: [{ name: 'x', format: { style: 'percent' } }],
+      }),
+    )
+  })
+
+  test('omits the table columns section for cell widgets', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ id: 'w2', connector_id: null, query: null, notebook_id: 'nb-1', cell_id: 'cell-1' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.queryByText('Table columns')).not.toBeInTheDocument()
+    expect(screen.queryByText('Run the query to configure columns.')).not.toBeInTheDocument()
+    // The convert affordance for cell widgets remains.
+    expect(screen.getByRole('button', { name: 'Convert to query widget' })).toBeInTheDocument()
   })
 
   test('currency and decimals edits merge into the column format', async () => {

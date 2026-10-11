@@ -697,4 +697,15 @@ describe('TableOutput column formats', () => {
     // and silently applied default number formatting.
     expect(cellText(container, 0, 0)).toBe('1234.567')
   })
+
+  it('falls back to plain numbers when a format carries an invalid currency', async () => {
+    const { container } = renderWithQuery(
+      <OutputRenderer
+        outputs={[{ type: 'table', data: { columns: [{ name: 'revenue', type: 'float' }], rows: [[1200.5]] } }]}
+        columnFormats={{ revenue: { style: 'currency', currency: 'EURO', decimals: 1 } }}
+      />,
+    )
+    await waitFor(() => expect(container.querySelector('td[data-row="0"][data-col="0"]')).toBeTruthy())
+    expect(cellText(container, 0, 0)).toBe('1,200.5')
+  })
 })

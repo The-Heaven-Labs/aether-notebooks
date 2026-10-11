@@ -17,7 +17,7 @@ import type { ValueFormat } from '../utils/valueFormat'
 import { tableConfigFrom } from '../utils/tableConfig'
 import { textConfigFrom } from '../utils/textConfig'
 import { appearanceFrom, type WidgetAppearance } from '../utils/widgetAppearance'
-import { isTextPanel } from '../utils/widgetKind'
+import { isQueryWidget, isTextPanel } from '../utils/widgetKind'
 import type { Dashboard, DashboardVariableType, ResultSet, Widget, WidgetQueryResult } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
@@ -178,6 +178,13 @@ function detectedTokens(query: string): string[] {
   return out
 }
 
+// Currency fields accept free text; trim + uppercase before persisting so
+// obvious mistakes ("usd ") never reach the config. Invalid codes are dropped
+// by tableConfigFrom and tolerated by formatValue's fallback.
+function normalizeCurrency(value: string): string {
+  return value.trim().toUpperCase()
+}
+
 /**
  * Text control that keeps a local draft and commits 600ms after the last
  * keystroke — the same debounce as the SQL source editor. The save callback
@@ -275,7 +282,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   onDefineVariable?: (name: string, suggestedType?: DashboardVariableType) => void
   closeOnEscape?: boolean
 }) {
-  const isQuery = !!widget.connector_id && !!widget.query
+  const isQuery = isQueryWidget(widget)
   const canRun = dashboard.can_view_with_data !== false
   const { values } = useDashboardVariables()
   const [connectorId, setConnectorId] = useState<string | null>(widget.connector_id ?? null)
@@ -345,7 +352,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     const data = runResult?.outputs.find(o => o.type === 'table')?.data as ResultSet | undefined
     return data && Array.isArray(data.columns) ? data : null
   }, [runResult])
-  const metricColumns = runResultSet?.columns.map(c => c.name) ?? []
+  const resultColumns = runResultSet?.columns.map(c => c.name) ?? []
 
   const handleTypeChange = async (next: Widget['type']) => {
     setWidgetType(next)
@@ -389,9 +396,11 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const saveAppearance = (patch: Partial<WidgetAppearance>) =>
     saveWidgetConfig({ appearance: { ...appearanceFrom(configRef.current), ...patch } })
 
-  // Writes the whole table block: only columns with a format are listed, so
-  // setting a column back to Default removes its entry. Entries are edited as
-  // an array (never by record assignment) so prototype-named columns survive.
+  // Writes the table block, preserving any sibling keys under it: only columns
+  // with a format are listed, so setting a column back to Default removes its
+  // entry — dropping the columns list, and the whole table key when it has no
+  // other content. Entries are edited as an array (never by record assignment)
+  // so prototype-named columns survive.
   const saveTableColumn = (name: string, format: ValueFormat | null) => {
     const entries = Object.entries(tableConfigFrom(configRef.current).columns)
     const idx = entries.findIndex(([column]) => column === name)
@@ -403,9 +412,18 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     } else {
       return
     }
-    void saveWidgetConfig({
-      table: { columns: entries.map(([column, columnFormat]) => ({ name: column, format: columnFormat })) },
-    })
+    const current = configRef.current
+    const existing = current.table
+    const table: Record<string, unknown> = existing && typeof existing === 'object' ? { ...(existing as Record<string, unknown>) } : {}
+    if (entries.length > 0) {
+      table.columns = entries.map(([column, columnFormat]) => ({ name: column, format: columnFormat }))
+    } else {
+      delete table.columns
+    }
+    const next = { ...current }
+    if (Object.keys(table).length > 0) next.table = table
+    else delete next.table
+    void putWidgetConfig(next)
   }
 
   const saveTableColumnStyle = (name: string, style: ValueFormat['style'] | 'default') => {
@@ -413,7 +431,10 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
       saveTableColumn(name, null)
       return
     }
-    saveTableColumn(name, { ...tableConfigFrom(configRef.current).columns[name], style })
+    const next: ValueFormat = { ...tableConfigFrom(configRef.current).columns[name], style }
+    // A currency code only means something for the currency style.
+    if (style !== 'currency') delete next.currency
+    saveTableColumn(name, next)
   }
 
   const runQuery = async () => {
@@ -557,14 +578,14 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                 <DebouncedTextInput
                   label="Value column"
                   value={metric.value_column ?? ''}
-                  listId={metricColumns.length > 0 ? 'metric-value-columns' : undefined}
+                  listId={resultColumns.length > 0 ? 'metric-value-columns' : undefined}
                   placeholder="column"
                   onSave={v => void saveMetric({ value_column: v })}
                 />
               </div>
-              {metricColumns.length > 0 && (
+              {resultColumns.length > 0 && (
                 <datalist id="metric-value-columns">
-                  {metricColumns.map(name => <option key={name} value={name} />)}
+                  {resultColumns.map(name => <option key={name} value={name} />)}
                 </datalist>
               )}
               <div style={styles.field}>
@@ -615,7 +636,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                     label="Currency"
                     value={metric.format?.currency ?? ''}
                     placeholder="USD"
-                    onSave={v => void saveMetric({ format: { ...metric.format, currency: v } })}
+                    onSave={v => void saveMetric({ format: { ...metric.format, currency: normalizeCurrency(v) } })}
                   />
                 </div>
               )}
@@ -704,13 +725,13 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             </>
           )}
 
-          {widgetType === 'table' && (
+          {isQuery && widgetType === 'table' && (
             <>
               <span style={styles.sectionLabel}>Table columns</span>
-              {metricColumns.length === 0 ? (
+              {resultColumns.length === 0 ? (
                 <div style={styles.muted}>Run the query to configure columns.</div>
               ) : (
-                metricColumns.map(name => {
+                resultColumns.map(name => {
                   const format = tableColumns[name]
                   return (
                     <div key={name} style={styles.field}>
@@ -733,7 +754,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                             label={`Currency for ${name}`}
                             value={format.currency ?? ''}
                             placeholder="USD"
-                            onSave={v => saveTableColumn(name, { ...format, currency: v })}
+                            onSave={v => saveTableColumn(name, { ...format, currency: normalizeCurrency(v) })}
                           />
                         </div>
                       )}

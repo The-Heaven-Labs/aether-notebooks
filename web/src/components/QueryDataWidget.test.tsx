@@ -1,4 +1,4 @@
-import { describe, test, expect, beforeEach } from 'vitest'
+import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import { screen, fireEvent } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
@@ -97,5 +97,27 @@ describe('QueryDataWidget metric widgets', () => {
     mockExecute([], { name: 'v', type: 'Int32' })
     renderWidget([], '/d1', metricWidget)
     expect(await screen.findByText('No data returned')).toBeInTheDocument()
+  })
+})
+
+describe('QueryDataWidget table column formats', () => {
+  // jsdom reports zero element sizes, which makes @tanstack/react-virtual treat
+  // the table viewport as empty and render no cells.
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 300 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  })
+  afterEach(() => {
+    delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight
+    delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth
+  })
+
+  test('formats table cells from the widget config', async () => {
+    mockExecute([[1200]], { name: 'revenue', type: 'Float64' })
+    renderWidget([], '/d1', {
+      ...widget,
+      config: { table: { columns: [{ name: 'revenue', format: { style: 'currency', currency: 'USD', decimals: 0 } }] } },
+    })
+    expect(await screen.findByText('$1,200')).toBeInTheDocument()
   })
 })

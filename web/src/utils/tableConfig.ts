@@ -8,15 +8,20 @@ export interface TableConfig {
 const STYLES: ReadonlySet<string> = new Set(['number', 'currency', 'percent'])
 
 // Copies only the recognized ValueFormat keys so a hand-edited or stale config
-// can never smuggle junk into the renderer. A format that normalizes to no
-// keys at all is dropped along with its column.
+// can never smuggle junk into the renderer. Currency codes are normalized
+// (trim + uppercase) and must look like an ISO 4217 code — anything else is
+// dropped rather than handed to Intl, which throws on invalid codes. A format
+// that normalizes to no keys at all is dropped along with its column.
 function normalizeFormat(raw: unknown): ValueFormat | null {
   if (!raw || typeof raw !== 'object') return null
   const src = raw as Record<string, unknown>
   if (src.style !== undefined && !(typeof src.style === 'string' && STYLES.has(src.style))) return null
   const out: ValueFormat = {}
   if (typeof src.style === 'string') out.style = src.style as ValueFormat['style']
-  if (typeof src.currency === 'string') out.currency = src.currency
+  if (typeof src.currency === 'string') {
+    const currency = src.currency.trim().toUpperCase()
+    if (/^[A-Z]{3}$/.test(currency)) out.currency = currency
+  }
   if (typeof src.decimals === 'number' && Number.isFinite(src.decimals)) out.decimals = src.decimals
   if (typeof src.compact === 'boolean') out.compact = src.compact
   return Object.keys(out).length > 0 ? out : null
