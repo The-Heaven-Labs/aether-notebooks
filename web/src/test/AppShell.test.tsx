@@ -50,10 +50,12 @@ describe('AppShell', () => {
     expect(screen.queryByTitle('Close agent panel')).toBeNull()
   })
 
-  it('renders children alone in bare mode: no shell chrome', () => {
+  it('renders children in a bare main landmark: no shell chrome', () => {
     renderWithProviders(<AppShell bare><div>App surface</div></AppShell>)
     expect(screen.getByText('App surface')).toBeInTheDocument()
-    // No skip link, no shell frame, no agent FAB.
+    // The app surface keeps a main landmark but no skip link, shell frame,
+    // or agent FAB.
+    expect(document.querySelector('main#main-content')).not.toBeNull()
     expect(screen.queryByText('Skip to content')).toBeNull()
     expect(document.querySelector('.app-shell')).toBeNull()
     expect(screen.queryByTitle('Open AI Agent (Ctrl+K)')).toBeNull()

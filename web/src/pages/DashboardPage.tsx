@@ -46,6 +46,11 @@ function isQueryWidget(w: AnyWidget): w is AnyWidget & { connector_id: string; q
   return !!w.connector_id && !!w.query
 }
 
+/** TanStack's refetch resolves even on an errored query; detect that shape. */
+function refreshErrored(result: unknown): boolean {
+  return !!result && typeof result === 'object' && 'isError' in result && !!(result as { isError?: boolean }).isError
+}
+
 function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; loading?: boolean; onRun?: () => void; onEdit?: () => void }) {
   const handleChartConfigChange = useCallback((config: ChartConfig) => {
     if (!dashboardId) return
@@ -321,23 +326,36 @@ function DashboardContent({ id }: { id: string }) {
       // Query widgets refresh through their registered (cache-bypassing)
       // refreshers; awaiting them means the batch is actually done when the
       // button resets, instead of a nonce bump that finishes before the data.
+      // Each run settles as fulfilled only on success (a failed cell execute
+      // or an errored query refresh rejects), so the fulfilled entries are
+      // the runs that actually produced data.
+      const cellRuns = cellWidgets.map(async w => {
+        const resp = await fetch(`/api/v1/notebooks/${w.notebook_id}/cells/${w.cell_id}/execute`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ parameters: {} }),
+        })
+        if (!resp.ok) throw new Error(`Cell run failed (${resp.status})`)
+        return resp
+      })
       const queryRuns = queryWidgets
-        .map(w => refreshersRef.current.get(w.id)?.())
-        .filter((p): p is Promise<unknown> => !!p)
-      await Promise.allSettled([
-        ...cellWidgets.map(w =>
-          fetch(`/api/v1/notebooks/${w.notebook_id}/cells/${w.cell_id}/execute`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({ parameters: {} }),
-          }),
-        ),
-        ...queryRuns,
-      ])
-      setLastFetchedAt(new Date())
+        .map(w => refreshersRef.current.get(w.id))
+        .filter((run): run is () => Promise<unknown> => !!run)
+        .map(async run => {
+          const result = await run()
+          // The refresher resolves with TanStack's result even on an errored
+          // refetch; surface that as a rejection for the tally below.
+          if (refreshErrored(result)) throw new Error('Widget refresh failed')
+          return result
+        })
+      const results = await Promise.allSettled([...cellRuns, ...queryRuns])
+      // Never claim freshness for data that did not arrive.
+      if (results.some(r => r.status === 'fulfilled')) {
+        setLastFetchedAt(new Date())
+      }
       if (dashboard?.can_view_with_data) {
         qc.invalidateQueries({ queryKey: ['dashboard', id] })
       } else {
@@ -428,7 +446,9 @@ function DashboardContent({ id }: { id: string }) {
               types={['clickhouse']}
               allowClear={!suggestion}
               placeholder="Run widgets on…"
-              style={{ fontSize: 12, maxWidth: 220, minHeight: 36 }}
+              // minWidth 0 lets the select shrink below its intrinsic width
+              // when the wrapped action row is tight (tablet widths).
+              style={{ fontSize: 12, maxWidth: 220, minHeight: 36, minWidth: 0 }}
             />
           </span>
           <Link to={`/dashboards/${id}`} className="app-action" title="Edit dashboard layout">

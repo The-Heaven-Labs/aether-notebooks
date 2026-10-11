@@ -1,5 +1,5 @@
-import { describe, test, expect, beforeEach, afterEach } from 'vitest'
-import { screen, fireEvent } from '@testing-library/react'
+import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
+import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
@@ -73,6 +73,46 @@ describe('QueryDataWidget zero states', () => {
     mockExecute([[1]])
     renderWidget([], '/d1')
     expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+  })
+})
+
+describe('QueryDataWidget onFetched', () => {
+  function renderWithOnFetched(onFetched: () => void) {
+    return renderWithProviders(
+      <DashboardVariablesProvider dashboardId="d1" variables={[]} storageId="qdw-test">
+        <QueryDataWidget dashboardId="d1" widget={widget} canViewWithData onFetched={onFetched} />
+      </DashboardVariablesProvider>,
+      { initialPath: '/d1' },
+    )
+  }
+
+  test('fires on the first fetch and again on an identical refetch', async () => {
+    mockExecute([[1]])
+    const onFetched = vi.fn()
+    renderWithOnFetched(onFetched)
+    expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+    expect(onFetched).toHaveBeenCalledTimes(1)
+
+    // Same rows again: TanStack's structural sharing keeps the data reference,
+    // so the data effect cannot re-fire — the refresh wrapper must report.
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh widget data' }))
+    await waitFor(() => expect(onFetched).toHaveBeenCalledTimes(2))
+  })
+
+  test('does not report freshness when the refetch fails', async () => {
+    mockExecute([[1]])
+    const onFetched = vi.fn()
+    renderWithOnFetched(onFetched)
+    expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+    expect(onFetched).toHaveBeenCalledTimes(1)
+
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () => new HttpResponse(null, { status: 500 })),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh widget data' }))
+    // The failure surfaces as the widget's error state; freshness stays put.
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(onFetched).toHaveBeenCalledTimes(1)
   })
 })
 

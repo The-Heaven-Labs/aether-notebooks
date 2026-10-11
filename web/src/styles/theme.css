@@ -1032,9 +1032,10 @@ input[type="color"] {
 
 /* ── App surface (DashboardPage's /view composition — The Story) ───────── */
 /* The masthead: a full-bleed hairline strip whose content row is constrained
-   to the shared app width (APP_CONTENT_MAX_WIDTH). On desktop the row does
-   not wrap; below 768px it wraps so title and actions coexist, the freshness
-   line demotes to the end of the action row, and side padding tightens. */
+   to the shared app width (APP_CONTENT_MAX_WIDTH). On desktop (≥1200px) the
+   row does not wrap; below the app's content width it wraps so title and
+   actions coexist, the freshness line demotes to the end of the action row,
+   and below 768px side padding tightens. */
 .app-header {
   padding: 16px 32px;
 }
@@ -1057,9 +1058,18 @@ input[type="color"] {
   display: none;
 }
 
-/* The freshness line's own styles live here (not inline) so the mobile rule
-   can demote it. */
+/* The freshness line's own styles live here (not inline) so the responsive
+   rules can demote it and reserve its space.
+   min-width: the span renders empty until the first fetch; reserving the
+   longest realistic "Updated <date> <time> <offset>" string (12-hour clock +
+   half-hour offset, 39ch in the mono face) keeps the masthead from shifting
+   — the h1 would otherwise re-truncate the moment freshness appears.
+   min-height + line-height: the empty span must also occupy its line box, or
+   the wrapped action row would grow a line the moment the text lands. */
 .app-header-freshness {
+  min-width: 39ch;
+  min-height: 1.5em;
+  line-height: 1.5;
   font-size: 11px;
   font-family: var(--font-mono);
   color: var(--text-muted);
@@ -1111,18 +1121,19 @@ input[type="color"] {
   border-color: var(--text-muted);
 }
 
-@media (max-width: 767px) {
-  .app-header {
-    padding: 16px;
-  }
-
+/* The action set (connector + refresh + freshness + Edit/Share + auto-refresh)
+   is wider than the title can share below the app's content width, so the row
+   wraps there: the actions take their own line(s) and the title keeps the
+   first line. (Below 1200px viewport the single-row masthead would collapse
+   the title to a few characters — e.g. 73px at 1024px.) */
+@media (max-width: 1199px) {
   .app-header-content {
     flex-wrap: wrap;
     row-gap: 8px;
   }
 
   /* Actions take their own row(s); the freshness line demotes behind the
-     controls so title + actions coexist at 375px. */
+     controls so the title leads the wrapped masthead. */
   .app-header-actions {
     flex-basis: 100%;
     flex-wrap: wrap;
@@ -1132,6 +1143,15 @@ input[type="color"] {
 
   .app-header-freshness {
     order: 2;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-header {
+    padding: 16px;
+  }
+
+  .app-header-freshness {
     font-size: 10px;
   }
 

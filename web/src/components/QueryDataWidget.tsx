@@ -227,10 +227,19 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     }
   }, [data])
 
-  // Stable refresher handle: the dashboard header can await "Refresh" runs.
+  // Stable refresher handle: the dashboard header can await "Refresh" runs,
+  // and the widget's own refresh/retry controls share it. TanStack's
+  // structural sharing keeps the same `data` reference for an identical
+  // refetch, so the effect above cannot be the only onFetched trigger —
+  // every successful completion reports here too. An errored refetch still
+  // resolves; it must not claim freshness.
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
-  const stableRefresh = useCallback(() => refreshRef.current(), [])
+  const stableRefresh = useCallback(async () => {
+    const result = await refreshRef.current()
+    if (!result.isError) onFetchedRef.current?.()
+    return result
+  }, [])
   useEffect(() => registerRefresher?.(stableRefresh), [registerRefresher, stableRefresh])
 
   // Report fetching state upward (header progress). Effects run the ref so
@@ -256,7 +265,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
       <div style={styles.error}>
         <span>{error instanceof Error ? error.message : 'Query failed'}</span>
         {!forbidden && (
-          <button style={styles.retry} onClick={() => refreshRef.current()}>Retry</button>
+          <button style={styles.retry} onClick={stableRefresh}>Retry</button>
         )}
       </div>
     )
@@ -284,7 +293,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
         {filtersExclude ? (
           <FilteredZeroState active={activeFilters} values={values} emptyMulti={emptyMulti} onReset={resetAll} />
         ) : (
-          <NoDataState onRun={() => refreshRef.current()} />
+          <NoDataState onRun={stableRefresh} />
         )}
       </div>
     )
@@ -300,7 +309,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     <div style={styles.footer}>
       <button
         style={styles.footerBtn}
-        onClick={() => refreshRef.current()}
+        onClick={stableRefresh}
         disabled={isFetching}
         title={widgetTitle ? `Refresh ${widgetTitle}` : 'Refresh widget data'}
         aria-label={widgetTitle ? `Refresh ${widgetTitle}` : 'Refresh widget data'}

@@ -86,10 +86,12 @@ export function AppShell({ children, noPadding, bare }: Props) {
   })
 
   useEffect(() => {
+    // The app surface renders no MOTD banners, so skip the fetch entirely.
+    if (bare) return
     api.get<Array<{id: string; title: string; content: string; visibility: string; pages: string[]}>>('/api/v1/motd')
       .then(setMotds)
       .catch(() => {})
-  }, [])
+  }, [bare])
 
   const dismissMotd = (id: string) => {
     setDismissedMotds(prev => {
@@ -131,6 +133,9 @@ export function AppShell({ children, noPadding, bare }: Props) {
   })
 
   useEffect(() => {
+    // No shell chrome renders in bare mode, so the shortcuts modal and the
+    // global agent panel would have nothing to open — don't swallow the keys.
+    if (bare) return
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
@@ -141,11 +146,11 @@ export function AppShell({ children, noPadding, bare }: Props) {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [bare])
 
   useEffect(() => {
+    if (bare || isChatPage) return
     const handler = (e: KeyboardEvent) => {
-      if (isChatPage) return
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -156,7 +161,7 @@ export function AppShell({ children, noPadding, bare }: Props) {
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [isChatPage])
+  }, [isChatPage, bare])
 
   // The notebook Chats drawer's "New chat" action opens the panel; the panel
   // itself listens for the same event to reset the session (and start a fresh
@@ -180,8 +185,9 @@ export function AppShell({ children, noPadding, bare }: Props) {
   }, [showGlobalAgent, globalAgentMinimized, globalAgentDocked])
 
   // All hooks above: the bare early return below is the last statement before
-  // the shell markup, so hook order is stable across both modes.
-  if (bare) return <>{children}</>
+  // the shell markup, so hook order is stable across both modes. The app
+  // surface keeps a main landmark, just no shell chrome.
+  if (bare) return <main id="main-content">{children}</main>
 
   return (
     <AgentPanelLayoutContext.Provider value={layoutVersion}>
