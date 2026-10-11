@@ -389,11 +389,16 @@ export function sparklinePoints(result: ResultSet, cfg: MetricConfig): Array<[nu
   const xi = result.columns.findIndex(c => c.name === x_column)
   const yi = result.columns.findIndex(c => c.name === y_column)
   if (xi < 0 || yi < 0) return null
-  const points = result.rows
-    .map(row => [row[xi], row[yi]] as const)
-    .filter(([, y]) => typeof y === 'number')
-  if (points.length < 2) return null
-  return points.map(([x, y]) => [new Date(String(x)).getTime() || 0, y as number])
+  const rows = result.rows.filter(row => typeof row[yi] === 'number')
+  if (rows.length < 2) return null
+  // x is only used for ordering: numeric values sort numerically, date-like
+  // strings sort by parsed time, anything else keeps the row order.
+  const xs = rows.map(row => row[xi])
+  const numeric = xs.every(v => typeof v === 'number')
+  const dateLike = !numeric && xs.every(v => !Number.isNaN(new Date(String(v)).getTime()))
+  if (numeric) rows.sort((a, b) => (a[xi] as number) - (b[xi] as number))
+  else if (dateLike) rows.sort((a, b) => new Date(String(a[xi])).getTime() - new Date(String(b[xi])).getTime())
+  return rows.map((row, i) => [i, row[yi] as number])
 }
 
 export { formatValue }
