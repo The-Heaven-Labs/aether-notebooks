@@ -14,6 +14,7 @@ import type { ChartConfig } from '../charts/types'
 import { withWidgetOverride } from '../charts/widgetChartConfig'
 import { metricConfigFrom, type MetricConfig } from '../utils/metric'
 import type { ValueFormat } from '../utils/valueFormat'
+import { tableConfigFrom } from '../utils/tableConfig'
 import { textConfigFrom } from '../utils/textConfig'
 import { appearanceFrom, type WidgetAppearance } from '../utils/widgetAppearance'
 import { isTextPanel } from '../utils/widgetKind'
@@ -336,8 +337,10 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const metric = metricConfigFrom(config)
   const text = textConfigFrom(config)
   const appearance = appearanceFrom(config)
-  // First table output of the last run: source for the metric preview and the
-  // value-column suggestions. Null until a run has happened.
+  const tableColumns = tableConfigFrom(config).columns
+  // First table output of the last run: source for the metric preview, the
+  // value-column suggestions, and the table column formatting list. Null until
+  // a run has happened.
   const runResultSet = useMemo(() => {
     const data = runResult?.outputs.find(o => o.type === 'table')?.data as ResultSet | undefined
     return data && Array.isArray(data.columns) ? data : null
@@ -385,6 +388,33 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
 
   const saveAppearance = (patch: Partial<WidgetAppearance>) =>
     saveWidgetConfig({ appearance: { ...appearanceFrom(configRef.current), ...patch } })
+
+  // Writes the whole table block: only columns with a format are listed, so
+  // setting a column back to Default removes its entry. Entries are edited as
+  // an array (never by record assignment) so prototype-named columns survive.
+  const saveTableColumn = (name: string, format: ValueFormat | null) => {
+    const entries = Object.entries(tableConfigFrom(configRef.current).columns)
+    const idx = entries.findIndex(([column]) => column === name)
+    if (format) {
+      if (idx >= 0) entries[idx] = [name, format]
+      else entries.push([name, format])
+    } else if (idx >= 0) {
+      entries.splice(idx, 1)
+    } else {
+      return
+    }
+    void saveWidgetConfig({
+      table: { columns: entries.map(([column, columnFormat]) => ({ name: column, format: columnFormat })) },
+    })
+  }
+
+  const saveTableColumnStyle = (name: string, style: ValueFormat['style'] | 'default') => {
+    if (style === 'default') {
+      saveTableColumn(name, null)
+      return
+    }
+    saveTableColumn(name, { ...tableConfigFrom(configRef.current).columns[name], style })
+  }
 
   const runQuery = async () => {
     setRunning(true)
@@ -480,6 +510,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                       outputs={runResult.outputs}
                       fixedView={widgetType === 'chart' ? 'chart' : 'table'}
                       chartConfig={normalizeChartConfig(config)}
+                      columnFormats={tableColumns}
                       onChartConfigChange={saveChartConfig}
                     />
                   )}
@@ -670,6 +701,64 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
               <div style={styles.muted}>
                 {'{{variable}}'} tokens are interpolated with dashboard variable values for display.
               </div>
+            </>
+          )}
+
+          {widgetType === 'table' && (
+            <>
+              <span style={styles.sectionLabel}>Table columns</span>
+              {metricColumns.length === 0 ? (
+                <div style={styles.muted}>Run the query to configure columns.</div>
+              ) : (
+                metricColumns.map(name => {
+                  const format = tableColumns[name]
+                  return (
+                    <div key={name} style={styles.field}>
+                      <span style={styles.fieldLabel}>{name}</span>
+                      <select
+                        aria-label={`Format ${name}`}
+                        style={styles.select}
+                        value={format?.style ?? 'default'}
+                        onChange={e => saveTableColumnStyle(name, e.target.value as ValueFormat['style'] | 'default')}
+                      >
+                        <option value="default">Default</option>
+                        <option value="number">Number</option>
+                        <option value="currency">Currency</option>
+                        <option value="percent">Percent</option>
+                      </select>
+                      {format?.style === 'currency' && (
+                        <div style={styles.field}>
+                          <span style={styles.fieldLabel}>Currency</span>
+                          <DebouncedTextInput
+                            label={`Currency for ${name}`}
+                            value={format.currency ?? ''}
+                            placeholder="USD"
+                            onSave={v => saveTableColumn(name, { ...format, currency: v })}
+                          />
+                        </div>
+                      )}
+                      {format?.style !== undefined && (
+                        <div style={styles.field}>
+                          <span style={styles.fieldLabel}>Decimals</span>
+                          <input
+                            aria-label={`Decimals for ${name}`}
+                            type="number"
+                            min={0}
+                            style={styles.input}
+                            value={format.decimals ?? ''}
+                            onChange={e => {
+                              const raw = e.target.value
+                              const parsed = raw === '' ? undefined : Number(raw)
+                              const decimals = parsed !== undefined && Number.isFinite(parsed) ? Math.max(0, Math.trunc(parsed)) : undefined
+                              saveTableColumn(name, { ...format, decimals })
+                            }}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })
+              )}
             </>
           )}
 

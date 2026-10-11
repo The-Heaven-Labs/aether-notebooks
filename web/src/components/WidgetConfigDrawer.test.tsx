@@ -492,4 +492,94 @@ describe('WidgetConfigDrawer', () => {
     expect(query.appearance).toEqual({ background: 'transparent' })
     expect(query[WIDGET_OVERRIDE_FLAG]).toBeUndefined()
   })
+
+  test('hints to run before table columns can be configured', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    expect(screen.getByText('Run the query to configure columns.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Format x')).not.toBeInTheDocument()
+  })
+
+  test('saves a table column format from the run result', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Format x'), { target: { value: 'currency' } })
+    await waitFor(() =>
+      expect(savedConfigs(bodies).at(-1)?.table).toEqual({ columns: [{ name: 'x', format: { style: 'currency' } }] }),
+    )
+    // Currency and decimals controls appear once a style is chosen.
+    expect(screen.getByLabelText('Currency for x')).toBeInTheDocument()
+    expect(screen.getByLabelText('Decimals for x')).toBeInTheDocument()
+  })
+
+  test('setting a column back to Default removes it from the saved config', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { columns: [{ name: 'x', format: { style: 'currency', currency: 'USD' } }] } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    expect(await screen.findByLabelText('Format x')).toHaveValue('currency')
+    fireEvent.change(screen.getByLabelText('Format x'), { target: { value: 'default' } })
+    await waitFor(() => expect(savedConfigs(bodies).at(-1)?.table).toEqual({ columns: [] }))
+  })
+
+  test('currency and decimals edits merge into the column format', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { columns: [{ name: 'x', format: { style: 'currency' } }] } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Currency for x'), { target: { value: 'EUR' } })
+    fireEvent.change(screen.getByLabelText('Decimals for x'), { target: { value: '2' } })
+    await waitFor(
+      () =>
+        expect(savedConfigs(bodies).at(-1)?.table).toEqual({
+          columns: [{ name: 'x', format: { style: 'currency', currency: 'EUR', decimals: 2 } }],
+        }),
+      { timeout: 3000 },
+    )
+  })
 })

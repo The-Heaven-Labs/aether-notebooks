@@ -614,3 +614,87 @@ describe('TableOutput column resize', () => {
     await waitFor(() => expect(firstCell()).toBe('a'))
   })
 })
+
+// ── Per-column formats ────────────────────────────────────────────────────────
+
+describe('TableOutput column formats', () => {
+  beforeEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'offsetHeight', { configurable: true, get: () => 300 })
+    Object.defineProperty(HTMLElement.prototype, 'offsetWidth', { configurable: true, get: () => 800 })
+  })
+  afterEach(() => {
+    delete (HTMLElement.prototype as { offsetHeight?: unknown }).offsetHeight
+    delete (HTMLElement.prototype as { offsetWidth?: unknown }).offsetWidth
+  })
+
+  function cellText(container: HTMLElement, row: number, col: number): string {
+    return container.querySelector(`td[data-row="${row}"][data-col="${col}"]`)!.textContent ?? ''
+  }
+
+  it('formats numeric cells with the per-column format', async () => {
+    const { container } = renderWithQuery(
+      <OutputRenderer
+        outputs={[{ type: 'table', data: { columns: [{ name: 'revenue', type: 'float' }], rows: [[1200]] } }]}
+        columnFormats={{ revenue: { style: 'currency', currency: 'USD', decimals: 0 } }}
+      />,
+    )
+    await waitFor(() => expect(container.querySelector('td[data-row="0"][data-col="0"]')).toBeTruthy())
+    expect(cellText(container, 0, 0)).toBe('$1,200')
+  })
+
+  it('leaves non-numeric cells and unformatted columns untouched', async () => {
+    const { container } = renderWithQuery(
+      <OutputRenderer
+        outputs={[{
+          type: 'table',
+          data: {
+            columns: [
+              { name: 'revenue', type: 'float' },
+              { name: 'label', type: 'text' },
+              { name: 'other', type: 'float' },
+            ],
+            rows: [[1200, 'plain', 9999.5]],
+          },
+        }]}
+        columnFormats={{ revenue: { style: 'currency', currency: 'USD', decimals: 0 }, label: { style: 'number', decimals: 0 } }}
+      />,
+    )
+    await waitFor(() => expect(container.querySelector('td[data-row="0"][data-col="2"]')).toBeTruthy())
+    expect(cellText(container, 0, 0)).toBe('$1,200')
+    // A format on a string column must not touch the raw string.
+    expect(cellText(container, 0, 1)).toBe('plain')
+    // No format for this column: raw value.
+    expect(cellText(container, 0, 2)).toBe('9999.5')
+  })
+
+  it('keeps the raw value for the title and detail panel and renders null as before', async () => {
+    const { container } = renderWithQuery(
+      <OutputRenderer
+        outputs={[{ type: 'table', data: { columns: [{ name: 'revenue', type: 'float' }], rows: [[1200], [null]] } }]}
+        columnFormats={{ revenue: { style: 'currency', currency: 'USD', decimals: 0 } }}
+        cellId="cell-format-detail"
+      />,
+    )
+    await waitFor(() => expect(container.querySelector('td[data-row="0"][data-col="0"]')).toBeTruthy())
+    const td = container.querySelector<HTMLElement>('td[data-row="0"][data-col="0"]')!
+    expect(td.getAttribute('title')).toBe('1200')
+    expect(cellText(container, 1, 0)).toBe('null')
+
+    fireEvent.click(td)
+    await waitFor(() => expect(screen.getByLabelText('Copy value')).toBeDefined())
+    expect(container.querySelector('pre')?.textContent).toBe('1200')
+  })
+
+  it('does not format a numeric column named after an Object.prototype member', async () => {
+    const { container } = renderWithQuery(
+      <OutputRenderer
+        outputs={[{ type: 'table', data: { columns: [{ name: 'constructor', type: 'float' }], rows: [[1234.567]] } }]}
+        columnFormats={{}}
+      />,
+    )
+    await waitFor(() => expect(container.querySelector('td[data-row="0"][data-col="0"]')).toBeTruthy())
+    // Without the own-property lookup this resolved to Object.prototype.constructor
+    // and silently applied default number formatting.
+    expect(cellText(container, 0, 0)).toBe('1234.567')
+  })
+})

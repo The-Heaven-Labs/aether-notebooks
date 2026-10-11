@@ -8,6 +8,7 @@ import { MetricWidget } from './MetricWidget'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { metricConfigFrom } from '../utils/metric'
+import { tableConfigFrom } from '../utils/tableConfig'
 import type { DashboardVariable, ResultSet, Widget } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
@@ -320,6 +321,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
           outputs={outputs}
           fixedView={widget.type === 'chart' ? 'chart' : 'table'}
           chartConfig={normalizeChartConfig(widget.config)}
+          columnFormats={tableConfigFrom(widget.config).columns}
           footerExtra={footerExtra}
         />
       )}
