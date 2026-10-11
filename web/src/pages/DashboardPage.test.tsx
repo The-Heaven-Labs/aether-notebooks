@@ -303,9 +303,11 @@ describe('DashboardPage live document wiring', () => {
     })
 
     await screen.findByText('Doc board')
-    // can_edit is a REST flag, so the editing controls still render; the doc
-    // drives their state (the grid column count).
-    expect(screen.getByTitle('8 columns')).toHaveAttribute('aria-pressed', 'true')
+    // can_edit is a REST flag, so the editing controls still render. The app
+    // surface keeps the grid column selector in the editor; the canEdit-gated
+    // control on the masthead is the refresh cadence.
+    expect(screen.getByLabelText('Auto-refresh interval')).toBeInTheDocument()
+    expect(screen.queryByTitle('8 columns')).not.toBeInTheDocument()
     // Cell outputs still come from the REST widgets_data payload.
     expect(screen.getByTestId('output-renderer')).toHaveAttribute('data-count', '2')
   })

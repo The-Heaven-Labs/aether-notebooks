@@ -1,10 +1,16 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
+import { ArrowLeft, X, Plus, Eye, Pencil, Shield, LayoutTemplate } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
+import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPayload'
+import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
+import { isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
+import { toGridItem } from '../utils/widgetLayout'
+import { appearanceFrom } from '../utils/widgetAppearance'
+import { textConfigFrom } from '../utils/textConfig'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -13,6 +19,8 @@ import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { QueryDataWidget } from '../components/QueryDataWidget'
+import { WidgetFrame } from '../components/WidgetFrame'
+import { TextWidget } from '../components/TextWidget'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
@@ -22,6 +30,7 @@ import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
 import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
+import { AppSettingsPanel } from '../components/AppSettingsPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
 import { useDashboardDoc } from '../hooks/useDashboardDoc'
@@ -37,27 +46,10 @@ interface DashboardWithWidgets extends Dashboard {
 }
 
 
-const toGridItem = (w: Widget): LayoutItem => ({
-  i: w.id,
-  x: w.layout.col,
-  y: w.layout.row,
-  w: w.layout.width,
-  // Clamp the rendered height too: minH only constrains resizing, so a
-  // 4-row widget would still render ~40px of chart under the widget chrome.
-  h: Math.max(w.layout.height, 6),
-  minW: 2,
-  minH: 6,
-  maxH: 24,
-})
-
 function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {
   if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
   const maxBottom = widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
   return { row: maxBottom, col: 0, width: 6, height: 8 }
-}
-
-function isQueryWidget(w: Widget): boolean {
-  return !!w.connector_id && !!w.query
 }
 
 /** Human name for a widget's controls; falls back to a generic label. */
@@ -141,15 +133,17 @@ const markSaved = useCallback(() => {
 
   const [showPicker, setShowPicker] = useState(false)
   const [showPermissions, setShowPermissions] = useState(false)
-  const [pickerSource, setPickerSource] = useState<'cell' | 'query'>('cell')
+  const [pickerSource, setPickerSource] = useState<'cell' | 'query' | 'none'>('cell')
   const [pickerNotebookId, setPickerNotebookId] = useState('')
   const [pickerCellId, setPickerCellId] = useState('')
   const [pickerConnectorId, setPickerConnectorId] = useState<string | null>(null)
   const [pickerQuery, setPickerQuery] = useState('SELECT 1')
-  const [pickerType, setPickerType] = useState<'table' | 'chart'>('table')
+  const [pickerType, setPickerType] = useState<AddWidgetType>('table')
+  const [pickerMarkdown, setPickerMarkdown] = useState('')
   const [pickerError, setPickerError] = useState<string | null>(null)
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showVariables, setShowVariables] = useState(false)
+  const [showAppSettings, setShowAppSettings] = useState(false)
   const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
   const [variablePrefillType, setVariablePrefillType] = useState<DashboardVariableType | null>(null)
 
@@ -240,14 +234,16 @@ const markSaved = useCallback(() => {
 
   const addWidget = useMutation({
     mutationFn: () => {
-      const base = {
+      const payload = buildAddWidgetPayload({
+        source: pickerSource,
         type: pickerType,
         layout: nextWidgetLayout(widgets),
-        config: {},
-      }
-      const payload = pickerSource === 'query'
-        ? { ...base, connector_id: pickerConnectorId, query: pickerQuery, language: 'sql' }
-        : { ...base, notebook_id: pickerNotebookId, cell_id: pickerCellId }
+        notebookId: pickerNotebookId,
+        cellId: pickerCellId,
+        connectorId: pickerConnectorId,
+        query: pickerQuery,
+        markdown: pickerMarkdown,
+      })
       return api.post<Widget>(`/api/v1/dashboards/${id}/widgets`, payload)
     },
     onSuccess: () => {
@@ -259,6 +255,7 @@ const markSaved = useCallback(() => {
       setPickerConnectorId(null)
       setPickerQuery('SELECT 1')
       setPickerType('table')
+      setPickerMarkdown('')
       setPickerError(null)
     },
     onError: (err: Error) => setPickerError(err.message),
@@ -333,6 +330,16 @@ const markSaved = useCallback(() => {
   }
 
   const pickerCells = pickerNotebook?.cells ?? []
+
+  const pickerValidTypes = validTypesForSource(pickerSource)
+  const pickerSourceComplete =
+    pickerSource === 'cell'
+      ? !!pickerNotebookId && !!pickerCellId
+      : pickerSource === 'query'
+        ? !!pickerConnectorId && !!pickerQuery.trim()
+        : true
+  const pickerTypeValid = pickerValidTypes.includes(pickerType)
+  const pickerAddDisabled = addWidget.isPending || !pickerSourceComplete || !pickerTypeValid
 
   // Live-merged dashboard for the panels and header: when the doc has synced,
   // title/settings/variables come from it (the REST row is a derived cache).
@@ -435,6 +442,17 @@ const markSaved = useCallback(() => {
           >
             Variables
           </button>
+          {!isMobileLayout && (
+            <button
+              type="button"
+              className="nav-btn"
+              onClick={() => setShowAppSettings(true)}
+              disabled={!editingEnabled}
+              title={editingEnabled ? 'App settings' : 'Editing is paused'}
+            >
+              <LayoutTemplate size={12} /> App
+            </button>
+          )}
           {saveStatus && (
             <span style={{
               fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--nav-text-muted)' : 'var(--nav-text)',
@@ -495,6 +513,7 @@ const markSaved = useCallback(() => {
                   setPickerConnectorId(null)
                   setPickerQuery('SELECT 1')
                   setPickerType('table')
+                  setPickerMarkdown('')
                   setPickerError(null)
                 }}
               >
@@ -508,10 +527,16 @@ const markSaved = useCallback(() => {
                 style={styles.pickerSelect}
                 aria-label="Widget source"
                 value={pickerSource}
-                onChange={(e) => setPickerSource(e.target.value as 'cell' | 'query')}
+                onChange={(e) => {
+                  const source = e.target.value as AddWidgetSource
+                  setPickerSource(source)
+                  const valid = validTypesForSource(source)
+                  if (!valid.includes(pickerType)) setPickerType(valid[0])
+                }}
               >
                 <option value="cell">Notebook cell</option>
                 <option value="query">Query</option>
+                <option value="none">None — text panel</option>
               </select>
 
               {pickerSource === 'cell' ? (
@@ -533,7 +558,7 @@ const markSaved = useCallback(() => {
 
                   <label style={styles.pickerLabel}>Cell</label>
                   <select
-                    style={styles.pickerSelect}
+                    style={{ ...styles.pickerSelect, ...(!pickerNotebookId ? styles.pickerSelectDisabled : {}) }}
                     value={pickerCellId}
                     onChange={(e) => setPickerCellId(e.target.value)}
                     disabled={!pickerNotebookId}
@@ -546,23 +571,38 @@ const markSaved = useCallback(() => {
                     ))}
                   </select>
                 </>
-              ) : (
+              ) : pickerSource === 'query' ? (
                 <>
                   <label style={styles.pickerLabel}>Connector</label>
                   <ConnectorSelector value={pickerConnectorId} onChange={setPickerConnectorId} />
                   <label style={styles.pickerLabel}>SQL</label>
                   <SqlEditor value={pickerQuery} onChange={setPickerQuery} minHeight={120} />
                 </>
+              ) : (
+                <>
+                  <label style={styles.pickerLabel}>Markdown</label>
+                  <textarea
+                    style={styles.pickerTextarea}
+                    aria-label="Text panel markdown"
+                    placeholder={'## Title\n\nWrite markdown here…'}
+                    value={pickerMarkdown}
+                    onChange={(e) => setPickerMarkdown(e.target.value)}
+                  />
+                </>
               )}
 
               <label style={styles.pickerLabel}>Widget Type</label>
               <select
-                style={styles.pickerSelect}
+                style={{ ...styles.pickerSelect, ...(pickerSource === 'none' ? styles.pickerSelectDisabled : {}) }}
+                aria-label="Widget type"
                 value={pickerType}
-                onChange={(e) => setPickerType(e.target.value as 'table' | 'chart')}
+                onChange={(e) => setPickerType(e.target.value as AddWidgetType)}
+                disabled={pickerSource === 'none'}
               >
-                <option value="table">Table</option>
-                <option value="chart">Chart</option>
+                <option value="table" disabled={!pickerValidTypes.includes('table')}>Table</option>
+                <option value="chart" disabled={!pickerValidTypes.includes('chart')}>Chart</option>
+                <option value="metric" disabled={!pickerValidTypes.includes('metric')}>Metric</option>
+                <option value="text" disabled={!pickerValidTypes.includes('text')}>Text</option>
               </select>
 
               {pickerError && (
@@ -571,14 +611,8 @@ const markSaved = useCallback(() => {
 
               <button
                 type="button"
-                style={styles.pickerAddBtn}
-                disabled={
-                  !editingEnabled ||
-                  addWidget.isPending ||
-                  (pickerSource === 'cell'
-                    ? !pickerNotebookId || !pickerCellId
-                    : !pickerConnectorId || !pickerQuery.trim())
-                }
+                style={{ ...styles.pickerAddBtn, ...(pickerAddDisabled || !editingEnabled ? styles.pickerAddBtnDisabled : {}) }}
+                disabled={pickerAddDisabled || !editingEnabled}
                 onClick={() => { if (editingEnabled) addWidget.mutate() }}
               >
                 {addWidget.isPending ? 'Adding…' : 'Add Widget'}
@@ -594,7 +628,7 @@ const markSaved = useCallback(() => {
         {widgets.length === 0 ? (
           <EmptyState
             title="No widgets yet"
-            text="Add widgets to display notebook cell outputs in this dashboard."
+            text="Add queries as tables, charts, or metrics — or write a text panel — to this dashboard."
             action={editingEnabled ? { label: '+ Add Widget', onClick: () => setShowPicker(true) } : undefined}
           />
         ) : (
@@ -608,7 +642,7 @@ const markSaved = useCallback(() => {
                 {widgets.map((widget: Widget) => (
                   <div key={widget.id} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
-                      <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
+                      <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
                       <div className="dash-widget-head-actions">
                         <button
                           type="button"
@@ -631,13 +665,15 @@ const markSaved = useCallback(() => {
                         </button>
                       </div>
                     </div>
-                    <div className="dash-widget-data">
+                    <WidgetFrame appearance={appearanceFrom(widget.config)} style={styles.widgetFrame}>
                       {isQueryWidget(widget) ? (
                         <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
+                      ) : isTextPanel(widget) ? (
+                        <TextWidget markdown={textConfigFrom(widget.config).markdown} />
                       ) : (
                         <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                       )}
-                    </div>
+                    </WidgetFrame>
                   </div>
                 ))}
               </div>
@@ -661,7 +697,7 @@ const markSaved = useCallback(() => {
                     <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
                     <div className="dash-widget-card" style={styles.widgetCard}>
                       <div className="dash-widget-head">
-                        <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
+                        <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
                         <div className="dash-widget-head-actions">
                           <button
                             type="button"
@@ -684,13 +720,15 @@ const markSaved = useCallback(() => {
                           </button>
                         </div>
                       </div>
-                      <div className="dash-widget-data">
+                      <WidgetFrame appearance={appearanceFrom(widget.config)} style={styles.widgetFrame}>
                         {isQueryWidget(widget) ? (
                           <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
+                        ) : isTextPanel(widget) ? (
+                          <TextWidget markdown={textConfigFrom(widget.config).markdown} />
                         ) : (
                           <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                         )}
-                      </div>
+                      </WidgetFrame>
                     </div>
                   </div>
                 ))}
@@ -747,6 +785,14 @@ const markSaved = useCallback(() => {
           initialNewName={variablePrefill}
           initialNewType={variablePrefillType}
           onClose={() => { setShowVariables(false); setVariablePrefill(null); setVariablePrefillType(null) }}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
+        />
+      )}
+      {showAppSettings && (
+        <AppSettingsPanel
+          dashboardId={id!}
+          dashboard={liveDashboard}
+          onClose={() => setShowAppSettings(false)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
         />
       )}
@@ -906,6 +952,23 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
   },
+  pickerSelectDisabled: {
+    opacity: 0.5,
+  },
+  pickerTextarea: {
+    width: '100%',
+    minHeight: 120,
+    padding: '8px 10px',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 13,
+    fontFamily: 'var(--font-sans)',
+    lineHeight: 1.6,
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    resize: 'vertical',
+    boxSizing: 'border-box',
+  },
   pickerError: {
     color: 'var(--error)',
     fontSize: 12,
@@ -922,6 +985,10 @@ const styles: Record<string, React.CSSProperties> = {
     cursor: 'pointer',
     marginTop: 4,
   },
+  pickerAddBtnDisabled: {
+    opacity: 0.5,
+    cursor: 'not-allowed',
+  },
   subHeaderMobile: {
     height: 'auto',
     minHeight: 52,
@@ -937,9 +1004,13 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 12,
   },
+  // The widget's card chrome (background/border) is painted by the
+  // WidgetFrame inside, so the editor shell stays transparent and the frame
+  // is the single source of card chrome — otherwise a `transparent`
+  // appearance could not preview.
   mobileWidgetCard: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
+    background: 'transparent',
+    border: 'none',
     borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',
@@ -950,14 +1021,25 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 12px',
     width: '100%',
   },
+  // Transparent shell around the editor's head bar (kind badge + actions)
+  // and the widget frame; the hover outline still marks the editable unit.
+  // See mobileWidgetCard.
   widgetCard: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border-light)',
+    background: 'transparent',
+    border: 'none',
     borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
+  },
+  // Fills the space below the head bar (desktop) / the card's content box
+  // (mobile). The -1px top pull overlaps the head bar's border-bottom with
+  // the frame's border-top so the two hairlines read as one seam.
+  widgetFrame: {
+    flex: 1,
+    minHeight: 0,
+    marginTop: -1,
   },
 }

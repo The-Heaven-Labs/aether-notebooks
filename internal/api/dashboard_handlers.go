@@ -56,6 +56,52 @@ type addWidgetRequest struct {
 	Config      map[string]interface{} `json:"config,omitempty"`
 }
 
+const (
+	maxAppTitleRunes    = 120
+	maxAppSubtitleRunes = 200
+)
+
+// validateDashboardAppSettings bounds the app surface configuration. Unknown
+// JSON keys are already dropped by the struct round-trip; this only rejects
+// values that would render incorrectly.
+func validateDashboardAppSettings(app *models.DashboardAppSettings) error {
+	if app == nil {
+		return nil
+	}
+	if len([]rune(app.Title)) > maxAppTitleRunes {
+		return fmt.Errorf("app title must be at most %d characters", maxAppTitleRunes)
+	}
+	if len([]rune(app.Subtitle)) > maxAppSubtitleRunes {
+		return fmt.Errorf("app subtitle must be at most %d characters", maxAppSubtitleRunes)
+	}
+	if app.Width != "" && app.Width != "fixed" && app.Width != "full" {
+		return fmt.Errorf(`app width must be "fixed" or "full"`)
+	}
+	if app.Layout != "" && app.Layout != "grid" && app.Layout != "custom" {
+		return fmt.Errorf(`app layout must be "grid" or "custom"`)
+	}
+	return nil
+}
+
+// validateDashboardAppSettingsValue validates the `app` block of a raw settings
+// map. The update path decodes settings as a map (shallow merge through the
+// dashboard document), so the app value arrives untyped; decode it into the
+// model to reuse the bounds and enum checks above.
+func validateDashboardAppSettingsValue(raw any) error {
+	if raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("invalid app settings")
+	}
+	var app models.DashboardAppSettings
+	if err := json.Unmarshal(b, &app); err != nil {
+		return fmt.Errorf("invalid app settings")
+	}
+	return validateDashboardAppSettings(&app)
+}
+
 // @Summary Create a dashboard
 // @Description Create a new dashboard
 // @Tags dashboards
@@ -80,6 +126,11 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 
 	if req.FolderID != nil && *req.FolderID == "" {
 		req.FolderID = nil
+	}
+
+	if err := validateDashboardAppSettings(req.Settings.App); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	settingsJSON, _ := json.Marshal(req.Settings)
@@ -174,6 +225,10 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		var mergedSettings map[string]any
 		var variables []map[string]any
 		if req.Settings != nil {
+			if err := validateDashboardAppSettingsValue(req.Settings["app"]); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
 			mergedSettings = make(map[string]any, len(proj.Settings)+len(req.Settings))
 			for k, v := range proj.Settings {
 				mergedSettings[k] = v

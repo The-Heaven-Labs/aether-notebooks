@@ -558,19 +558,26 @@ summary rail on the left, configuration fields on the right, and a full-screen t
 
 **Component**: `web/src/pages/DashboardsPage.tsx`
 
-### DashboardPage
+### DashboardPage (App surface)
 
-**Purpose**: Edit/view a single dashboard
+**Purpose**: The full-bleed, chrome-free viewer for a dashboard — the App surface at `/dashboards/:id/view`
 
 **Layout**:
-- Grid of widgets (react-grid-layout)
-- Each widget: Output from a cell (table or chart)
-- Edit mode: Add/remove widgets, resize, drag
-- Dashboard parameter inputs
+- Bare `AppShell` (no rail or top bar): `AppHeader` masthead (title, subtitle, freshness, refresh) → quiet filter strip (`DashboardVariableBar`) → widget grid (react-grid-layout)
+- Masthead content comes from `dashboards.settings.app`: `title`, `subtitle`, `width` (`fixed` = 1200px content column, `full` = viewport), and the `show_header` / `show_refresh` / `show_last_updated` toggles; `layout` (`grid` | `custom`) is reserved for a later wave
+- The editor (`/dashboards/:id`, `DashboardEditorPage.tsx`) keeps the standard app shell; its **View** link opens this surface and its **App settings** panel edits `settings.app`
+- The public dashboard page reuses the same renderer, with `public_live` gating live queries
+
+**Widgets**:
+- Cell-linked (table/chart output from a notebook cell) or query-backed (`widgets.connector_id/query/language`)
+- **metric** — one reading computed client-side over the query's returned rows (`config.metric`: `value_column`, `aggregation`, `format`, optional `comparison` delta/percent, optional `sparkline`). Values use the reading type role (see DESIGN.md): JetBrains Mono, tabular numerals, `clamp(20px, 9cqw, 32px)` at 700 with -0.5px tracking, above a 10px uppercase tracked mono label; comparison deltas take semantic color + a direction icon on up/down moves
+- **text** — markdown panel with `{{variable}}` interpolation; values insert as plain text and raw HTML never renders (no `rehypeRaw`), so interpolation cannot become a rendering surface
+- **Table column formats** — `config.table.columns` stores an array of `{ name, format: { style: number | currency | percent, currency, decimals, compact } }` entries; `tableConfigFrom` parses them into the name→format map applied in `OutputRenderer`'s table
+- **Appearance** — every widget accepts `config.appearance`: `background` (`card` | `transparent`), `border` (drawn only on cards), outer `padding` (`none` | `sm` | `md`), `align` (`left` | `center` | `right`). The defaults reproduce the standard widget card exactly
 
 **Component**: `web/src/pages/DashboardPage.tsx`
 
-See also: `DashboardEditorPage.tsx` for the dedicated editor.
+See also: `DashboardEditorPage.tsx` for the editor; `e2e/dashboard-app.spec.ts` for the App surface spec.
 
 ### ConnectorsPage
 

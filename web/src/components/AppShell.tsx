@@ -15,6 +15,13 @@ const MotdMarkdown = lazy(() => import('./MotdMarkdown'))
 interface Props {
   children: React.ReactNode
   noPadding?: boolean
+  /**
+   * Chrome-free rendering for the App surface (The Story): no TopBar,
+   * Sidebar, skip link, MOTD banners, or global agent panel — the page owns
+   * the whole viewport. Every shell hook above still runs (rules of hooks);
+   * only the shell markup is skipped. Supersedes `noPadding`.
+   */
+  bare?: boolean
 }
 
 const AgentPanelLayoutContext = createContext<number>(0)
@@ -23,7 +30,7 @@ export function useAgentPanelLayoutVersion() {
   return useContext(AgentPanelLayoutContext)
 }
 
-export function AppShell({ children, noPadding }: Props) {
+export function AppShell({ children, noPadding, bare }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showGlobalAgent, setShowGlobalAgent] = useState(() => {
     try {
@@ -79,10 +86,12 @@ export function AppShell({ children, noPadding }: Props) {
   })
 
   useEffect(() => {
+    // The app surface renders no MOTD banners, so skip the fetch entirely.
+    if (bare) return
     api.get<Array<{id: string; title: string; content: string; visibility: string; pages: string[]}>>('/api/v1/motd')
       .then(setMotds)
       .catch(() => {})
-  }, [])
+  }, [bare])
 
   const dismissMotd = (id: string) => {
     setDismissedMotds(prev => {
@@ -124,6 +133,9 @@ export function AppShell({ children, noPadding }: Props) {
   })
 
   useEffect(() => {
+    // No shell chrome renders in bare mode, so the shortcuts modal and the
+    // global agent panel would have nothing to open — don't swallow the keys.
+    if (bare) return
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
@@ -134,11 +146,11 @@ export function AppShell({ children, noPadding }: Props) {
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [])
+  }, [bare])
 
   useEffect(() => {
+    if (bare || isChatPage) return
     const handler = (e: KeyboardEvent) => {
-      if (isChatPage) return
       const tag = (e.target as HTMLElement).tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
       if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
@@ -149,7 +161,7 @@ export function AppShell({ children, noPadding }: Props) {
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [isChatPage])
+  }, [isChatPage, bare])
 
   // The notebook Chats drawer's "New chat" action opens the panel; the panel
   // itself listens for the same event to reset the session (and start a fresh
@@ -171,6 +183,11 @@ export function AppShell({ children, noPadding }: Props) {
   useEffect(() => {
     setLayoutVersion(v => v + 1)
   }, [showGlobalAgent, globalAgentMinimized, globalAgentDocked])
+
+  // All hooks above: the bare early return below is the last statement before
+  // the shell markup, so hook order is stable across both modes. The app
+  // surface keeps a main landmark, just no shell chrome.
+  if (bare) return <main id="main-content">{children}</main>
 
   return (
     <AgentPanelLayoutContext.Provider value={layoutVersion}>

@@ -49,4 +49,15 @@ describe('AppShell', () => {
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
     expect(screen.queryByTitle('Close agent panel')).toBeNull()
   })
+
+  it('renders children in a bare main landmark: no shell chrome', () => {
+    renderWithProviders(<AppShell bare><div>App surface</div></AppShell>)
+    expect(screen.getByText('App surface')).toBeInTheDocument()
+    // The app surface keeps a main landmark but no skip link, shell frame,
+    // or agent FAB.
+    expect(document.querySelector('main#main-content')).not.toBeNull()
+    expect(screen.queryByText('Skip to content')).toBeNull()
+    expect(document.querySelector('.app-shell')).toBeNull()
+    expect(screen.queryByTitle('Open AI Agent (Ctrl+K)')).toBeNull()
+  })
 })

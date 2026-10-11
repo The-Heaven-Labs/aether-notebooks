@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
+import { Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
 import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -9,12 +9,16 @@ import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { AppShell } from '../components/AppShell'
+import { AppHeader, APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
-import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
+import { appearanceFrom } from '../utils/widgetAppearance'
+import { textConfigFrom } from '../utils/textConfig'
+import { isTextPanel } from '../utils/widgetKind'
+import { toGridItem } from '../utils/widgetLayout'
 import {
   createPerWidgetDebouncer,
   diffVariableDefinitions,
@@ -23,12 +27,13 @@ import {
 } from '../utils/dashboardRunSignature'
 import type { PerWidgetDebouncer, VariableDefinitionSnapshot, WidgetRunBaseline } from '../utils/dashboardRunSignature'
 import { QueryDataWidget } from '../components/QueryDataWidget'
+import { WidgetFrame } from '../components/WidgetFrame'
+import { TextWidget } from '../components/TextWidget'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { useDashboardConnector } from '../hooks/useDashboardConnector'
 import { useDashboardDoc } from '../hooks/useDashboardDoc'
 import { useAuth } from '../hooks/useAuth'
 import { GridLayout } from 'react-grid-layout'
-import type { LayoutItem } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -48,6 +53,11 @@ type AnyWidget = Widget & { type: string; config: any }
 
 function isQueryWidget(w: AnyWidget): w is AnyWidget & { connector_id: string; query: string } {
   return !!w.connector_id && !!w.query
+}
+
+/** TanStack's refetch resolves even on an errored query; detect that shape. */
+function refreshErrored(result: unknown): boolean {
+  return !!result && typeof result === 'object' && 'isError' in result && !!(result as { isError?: boolean }).isError
 }
 
 function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; loading?: boolean; onRun?: () => void; onEdit?: () => void }) {
@@ -214,27 +224,14 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit, onFetchingCh
     }
   }, [widget.notebook_id, widget.cell_id, qc, loading])
 
+  // The card chrome is owned by the enclosing WidgetFrame; this component
+  // only lays out the cell content inside it.
   return (
-    <div style={styles.widgetCard}>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <CellDataWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
-      </div>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <CellDataWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
     </div>
   )
 }
-
-const toGridItem = (w: Widget): LayoutItem => ({
-  i: w.id,
-  x: w.layout.col,
-  y: w.layout.row,
-  w: w.layout.width,
-  // Clamp the rendered height too: minH only constrains resizing, so a
-  // 4-row widget would still render ~40px of chart under the widget chrome.
-  h: Math.max(w.layout.height, 6),
-  minW: 2,
-  minH: 6,
-  maxH: 24,
-})
 
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
@@ -292,12 +289,13 @@ function DashboardContent({ id }: { id: string }) {
   const liveTitle = liveDoc.synced && liveDoc.title ? liveDoc.title : (dashboard?.title ?? '')
 
   // Per-widget fetch state, reported by the widgets themselves, so the header
-  // can show one honest "Refreshing n/m" signal instead of a button that goes
+  // can show one honest refreshing signal instead of a button that goes
   // idle before the widgets actually finish.
   const [fetchingWidgets, setFetchingWidgets] = useState<Record<string, boolean>>({})
-  const [justUpdated, setJustUpdated] = useState(false)
+  // One freshness signal for the whole app surface: the masthead's
+  // "Updated …" line, moved by widget fetches and batch runs.
+  const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null)
   const refreshersRef = useRef(new Map<string, () => Promise<unknown>>())
-  const wasRefreshing = useRef(false)
 
   const reportFetching = useCallback((widgetId: string, fetching: boolean) => {
     setFetchingWidgets(prev => (!!prev[widgetId] === fetching ? prev : { ...prev, [widgetId]: fetching }))
@@ -335,16 +333,6 @@ function DashboardContent({ id }: { id: string }) {
   )
 
   useEffect(() => {
-    const was = wasRefreshing.current
-    wasRefreshing.current = refreshingCount > 0
-    if (was && refreshingCount === 0) {
-      setJustUpdated(true)
-      const t = setTimeout(() => setJustUpdated(false), 2500)
-      return () => clearTimeout(t)
-    }
-  }, [refreshingCount])
-
-  useEffect(() => {
     if (dashboard) {
       document.title = liveTitle ? `${liveTitle} — Aether Notebooks` : 'Aether Notebooks'
       const el = gridContainerRef.current
@@ -368,22 +356,36 @@ function DashboardContent({ id }: { id: string }) {
       // Query widgets refresh through their registered (cache-bypassing)
       // refreshers; awaiting them means the batch is actually done when the
       // button resets, instead of a nonce bump that finishes before the data.
+      // Each run settles as fulfilled only on success (a failed cell execute
+      // or an errored query refresh rejects), so the fulfilled entries are
+      // the runs that actually produced data.
+      const cellRuns = cellWidgets.map(async w => {
+        const resp = await fetch(`/api/v1/notebooks/${w.notebook_id}/cells/${w.cell_id}/execute`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          body: JSON.stringify({ parameters: {} }),
+        })
+        if (!resp.ok) throw new Error(`Cell run failed (${resp.status})`)
+        return resp
+      })
       const queryRuns = queryWidgets
-        .map(w => refreshersRef.current.get(w.id)?.())
-        .filter((p): p is Promise<unknown> => !!p)
-      await Promise.allSettled([
-        ...cellWidgets.map(w =>
-          fetch(`/api/v1/notebooks/${w.notebook_id}/cells/${w.cell_id}/execute`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(token ? { Authorization: `Bearer ${token}` } : {}),
-            },
-            body: JSON.stringify({ parameters: {} }),
-          }),
-        ),
-        ...queryRuns,
-      ])
+        .map(w => refreshersRef.current.get(w.id))
+        .filter((run): run is () => Promise<unknown> => !!run)
+        .map(async run => {
+          const result = await run()
+          // The refresher resolves with TanStack's result even on an errored
+          // refetch; surface that as a rejection for the tally below.
+          if (refreshErrored(result)) throw new Error('Widget refresh failed')
+          return result
+        })
+      const results = await Promise.allSettled([...cellRuns, ...queryRuns])
+      // Never claim freshness for data that did not arrive.
+      if (results.some(r => r.status === 'fulfilled')) {
+        setLastFetchedAt(new Date())
+      }
       if (dashboard?.can_view_with_data) {
         qc.invalidateQueries({ queryKey: ['dashboard', id] })
       } else {
@@ -509,44 +511,55 @@ function DashboardContent({ id }: { id: string }) {
   }
 
   const variables = settings?.variables ?? []
+  const app = settings?.app ?? dashboard.settings?.app
+  const appWidth = app?.width ?? 'fixed'
+  // show_header=false hides the title block; the bar's escape hatches (back
+  // link, actions) stay so the surface is never a dead end.
+  const showMasthead = app?.show_header !== false
+  // The live document's title wins once bound; fall back to the row.
+  const appTitle = app?.title || liveTitle
+  // Masthead, filter strip, and body share one content width (The Story).
+  const contentWidth: React.CSSProperties | undefined = appWidth === 'fixed'
+    ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
+    : undefined
 
   return (
     <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId}>
-    <AppShell noPadding>
-      {/* Sub-header */}
-      <header className="dash-header" style={styles.subHeader}>
-        <div className="dash-header-left" style={styles.headerLeft}>
-          <Link to="/dashboards" style={styles.backLink}>
-            <ArrowLeft size={14} style={{ flexShrink: 0 }} />
-            <span>Dashboards</span>
-          </Link>
-          <span style={styles.breadcrumbSep}>/</span>
-          <span className="dash-title" style={styles.dashboardTitle}>{liveTitle}</span>
-        </div>
-        {/* Run all + auto-refresh */}
-        <div className="dash-header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {/* Presence + live state: avatars come from the document's awareness
-              and the indicator lights while the relay is connected. When the
-              relay is unavailable nothing renders here and the page keeps
-              serving the REST snapshot. */}
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-            <CollaboratorAvatars
-              awareness={liveDoc.awareness}
-              currentUserEmail={userEmail}
-            />
-            {liveDoc.connected && (
-              <span style={styles.liveIndicator} title="Live updates from collaborators">
-                <span style={styles.liveDot} /> Live
-              </span>
-            )}
-          </span>
+    <AppShell noPadding bare>
+      {!showMasthead && <h1 className="sr-only">{appTitle}</h1>}
+      <AppHeader
+        title={showMasthead ? appTitle : ''}
+        subtitle={showMasthead ? app?.subtitle : undefined}
+        width={appWidth}
+        showRefresh={app?.show_refresh !== false}
+        showLastUpdated={app?.show_last_updated !== false}
+        lastUpdated={lastFetchedAt}
+        refreshing={refreshingCount > 0 || isRunningAll}
+        onRefresh={() => executeAllWidgets(widgets)}
+        backTo="/dashboards"
+      >
+        {/* Presence + live state: avatars come from the document's awareness
+            and the indicator lights while the relay is connected. When the
+            relay is unavailable nothing renders here and the page keeps
+            serving the REST snapshot. */}
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <CollaboratorAvatars
+            awareness={liveDoc.awareness}
+            currentUserEmail={userEmail}
+          />
+          {liveDoc.connected && (
+            <span style={styles.liveIndicator} title="Live updates from collaborators">
+              <span style={styles.liveDot} /> Live
+            </span>
+          )}
+        </span>
           {/* Per-viewer connector selection: query widgets in the same
               warehouse run on the selected service; others keep their own.
               allowClear is off while a live default exists — clearing would
               just re-select the suggestion on the next render. */}
           <span
             title="Choose which connector this dashboard's queries run on for you"
-            style={{ display: 'inline-flex' }}
+            style={{ display: 'inline-flex', minWidth: 0 }}
           >
             <ConnectorSelector
               value={viewerConnectorId}
@@ -554,52 +567,19 @@ function DashboardContent({ id }: { id: string }) {
               types={['clickhouse']}
               allowClear={!suggestion}
               placeholder="Run widgets on…"
-              style={{
-                fontSize: 12, maxWidth: 220,
-                background: 'rgba(255,255,255,0.06)',
-                color: 'var(--nav-text)',
-                borderColor: 'var(--nav-border)',
-              }}
+              // minWidth 0 lets the select shrink below its intrinsic width
+              // when the wrapped action row is tight (tablet widths).
+              style={{ fontSize: 12, maxWidth: 220, minHeight: 36, minWidth: 0 }}
             />
           </span>
-          {/* One honest progress signal for every widget refresh: counts while
-              work is in flight, then a brief confirmation. */}
-          <span
-            role="status"
-            aria-live="polite"
-            className="nav-status"
-            style={{
-              fontSize: 10, fontFamily: 'var(--font-mono)',
-              minWidth: 96, textAlign: 'right', whiteSpace: 'nowrap',
-            }}
-          >
-            {refreshingCount > 0
-              ? `Refreshing ${refreshingCount}/${widgets.length}…`
-              : justUpdated ? 'Updated' : ''}
-          </span>
-          <button
-            style={{
-              padding: '5px 12px', fontSize: 12, fontWeight: 600,
-              background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)',
-              border: 'none', borderRadius: 4, cursor: 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              opacity: isRunningAll || refreshingCount > 0 ? 0.6 : 1,
-            }}
-            disabled={isRunningAll || refreshingCount > 0}
-            onClick={() => executeAllWidgets(widgets)}
-            title="Re-run every widget's query with the current filters"
-          >
-            <RefreshCw size={12} style={isRunningAll || refreshingCount > 0 ? { animation: 'spin 1s linear infinite' } : undefined} />
-            {isRunningAll || refreshingCount > 0 ? 'Refreshing…' : 'Refresh'}
-          </button>
-          <Link to={`/dashboards/${id}`} className="nav-btn" title="Edit dashboard layout">
+          <Link to={`/dashboards/${id}`} className="app-action" title="Edit dashboard layout">
             <Settings size={12} /> Edit
           </Link>
 
-          {dashboard?.can_share !== false && (
+          {dashboard.can_share !== false && (
             <button
               type="button"
-              className="nav-btn"
+              className="app-action"
               onClick={() => setShowShare(true)}
               title="Share dashboard"
             >
@@ -607,42 +587,11 @@ function DashboardContent({ id }: { id: string }) {
             </button>
           )}
 
-          {/* Column count selector (edit-permission only: it persists settings) */}
-          {canEdit && <div className="dash-cols nav-seg">
-            {[6, 8, 12, 16, 24].map(cols => (
-              <button
-                key={cols}
-                type="button"
-                aria-pressed={(settings?.grid_cols ?? 12) === cols}
-                onClick={async () => {
-                  const oldCols = settings?.grid_cols ?? 12
-                  await api.put(`/api/v1/dashboards/${id}`, {
-                    settings: { ...(settings ?? {}), grid_cols: cols },
-                  })
-                  if (oldCols !== cols) {
-                    // Reflow widget layouts so nothing falls outside the new
-                    // grid (a bare column change used to push widgets off-view).
-                    const updates = rescaleWidgetLayouts(widgets as unknown as Widget[], oldCols, cols)
-                    await Promise.allSettled(
-                      updates.map(u => api.put(`/api/v1/dashboards/${id}/widgets/${u.id}`, { layout: u.layout })),
-                    )
-                  }
-                  qc.invalidateQueries({ queryKey: ['dashboard', id] })
-                }}
-                title={`${cols} columns`}
-              >
-                {cols}
-              </button>
-            ))}
-          </div>}
-
-          {canEdit && <div style={{ position: 'relative' }}>
+          {/* Auto-refresh persists dashboard settings, so it is an editing
+              control and rides the masthead only for editors. */}
+          {canEdit && <div style={{ position: 'relative', display: 'inline-flex' }}>
             <select
-              className="nav-select"
-              style={{
-                fontSize: 12, padding: '4px 24px 4px 8px',
-                cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
-              }}
+              style={styles.actionSelect}
               value={refreshCustom ? 'custom' : String(refreshSeconds)}
               onChange={async e => {
                 const val = e.target.value
@@ -666,18 +615,15 @@ function DashboardContent({ id }: { id: string }) {
               <option value="600">Every 10m</option>
               <option value="custom">Custom{customRefreshText}</option>
             </select>
-            <svg viewBox="0 0 10 6" width="10" height="6" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }}>
+            <svg viewBox="0 0 10 6" width="10" height="6" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fill: 'none', stroke: 'var(--text-muted)', strokeWidth: 1.5 }}>
               <polyline points="1,1 5,5 9,1" />
             </svg>
           </div>}
           {canEdit && refreshCustom && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <input
                 type="text"
-               
-               
-                className="nav-input"
-                style={{ width: 72, fontSize: 12, padding: '4px 6px' }}
+                style={styles.actionInput}
                 value={refreshSeconds}
                 onChange={e => {
                   const val = parseInt(e.target.value)
@@ -697,18 +643,25 @@ function DashboardContent({ id }: { id: string }) {
               <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>s</span>
             </div>
           )}
+      </AppHeader>
+
+      {/* Quiet filter strip: the variable bar loses its panel chrome inside
+          (see .app-filter-strip) and is constrained to the masthead width. */}
+      {variables.length > 0 && (
+        <div className="app-filter-strip">
+          <div style={contentWidth}>
+            <DashboardVariableBar />
+          </div>
         </div>
-      </header>
+      )}
 
-      <div style={styles.body}>
-        {/* Dashboard variable filters */}
-        {variables.length > 0 && <DashboardVariableBar />}
-
+      <div className="app-body">
+        <div style={{ ...contentWidth, display: 'flex', flexDirection: 'column', gap: 24 }}>
         {/* Widgets grid */}
         {widgets.length === 0 && variables.length === 0 ? (
           <EmptyState
-            title="No widgets yet"
-            text="Add widgets in the dashboard editor to display notebook cell outputs."
+            title="This app has no widgets yet"
+            text="Add widgets in the dashboard editor."
           />
         ) : widgets.length === 0 ? null : (
           <div ref={gridRef}>
@@ -721,7 +674,7 @@ function DashboardContent({ id }: { id: string }) {
               style={{ minHeight: 240 }}
             >
               {widgets.map((widget) => (
-                <div key={widget.id} style={styles.widgetCard}>
+                <WidgetFrame key={widget.id} appearance={appearanceFrom(widget.config)}>
                   {isQueryWidget(widget) ? (
                     <QueryDataWidget
                       dashboardId={dashboard.id}
@@ -730,9 +683,12 @@ function DashboardContent({ id }: { id: string }) {
                       queryEnabled={selected != null || !resolving}
                       viewerConnectorId={viewerConnectorId}
                       onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
+                      onFetched={() => setLastFetchedAt(new Date())}
                       registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
                       registerRerunner={(fn) => registerWidgetRerun(widget.id, fn)}
                     />
+                  ) : isTextPanel(widget) ? (
+                    <TextWidget markdown={textConfigFrom(widget.config).markdown} />
                   ) : (
                     <WidgetCard
                       widget={widget}
@@ -742,11 +698,12 @@ function DashboardContent({ id }: { id: string }) {
                       onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
                     />
                   )}
-                </div>
+                </WidgetFrame>
               ))}
             </GridLayout>
           </div>
         )}
+        </div>
       </div>
       {showShare && dashboard && (
         <ShareModal
@@ -780,49 +737,31 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--accent)',
     opacity: 0.5,
   },
-  subHeader: {
-    background: 'var(--nav-bg)',
-    borderBottom: '1px solid var(--nav-border)',
-    minHeight: 44,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexShrink: 0,
-    position: 'sticky',
-    top: 0,
-    zIndex: 99,
+  // Masthead controls sit on the page canvas (not the dark nav chrome), so
+  // they use the body token family. min-height 36 keeps the app surface's
+  // ≥36px tap-target rule uniform across the action row.
+  actionSelect: {
+    fontSize: 12,
+    minHeight: 36,
+    padding: '4px 24px 4px 8px',
+    cursor: 'pointer',
+    appearance: 'none',
+    WebkitAppearance: 'none',
+    MozAppearance: 'none',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
   },
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    minWidth: 0,
-  },
-  backLink: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 5,
-    color: 'var(--nav-text)',
-    textDecoration: 'none',
-    fontSize: 13,
-    fontWeight: 500,
-    flexShrink: 0,
-    opacity: 0.8,
-  },
-  breadcrumbSep: {
-    color: 'var(--nav-text)',
-    fontSize: 14,
-    flexShrink: 0,
-    opacity: 0.5,
-  },
-  dashboardTitle: {
-    fontSize: 14,
-    fontWeight: 600,
-    color: 'var(--nav-text)',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    maxWidth: 400,
+  actionInput: {
+    width: 72,
+    fontSize: 12,
+    minHeight: 36,
+    padding: '4px 6px',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
   },
   liveIndicator: {
     display: 'inline-flex',
@@ -832,7 +771,7 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     letterSpacing: '0.04em',
     textTransform: 'uppercase',
-    color: 'var(--nav-text-muted)',
+    color: 'var(--text-muted)',
     whiteSpace: 'nowrap',
   },
   liveDot: {
@@ -841,23 +780,5 @@ const styles: Record<string, React.CSSProperties> = {
     height: 6,
     borderRadius: '50%',
     background: 'var(--success, #10b981)',
-  },
-  body: {
-    flex: 1,
-    margin: 0,
-    padding: '8px 12px',
-    width: '100%',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 24,
-  },
-  widgetCard: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border-light)',
-    borderRadius: 4,
-    overflow: 'hidden',
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column',
   },
 }

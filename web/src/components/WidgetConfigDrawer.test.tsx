@@ -4,9 +4,11 @@ import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { EditorView } from '@codemirror/view'
 import * as Y from 'yjs'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse, delay } from 'msw'
 import { server } from '../test/server'
-import { WidgetConfigDrawer } from './WidgetConfigDrawer'
+import { WidgetConfigDrawer, mergeChartConfigInto } from './WidgetConfigDrawer'
+import { WIDGET_OVERRIDE_FLAG } from '../charts/widgetChartConfig'
+import type { ChartConfig } from '../charts/types'
 import { getDashboardCollab, releaseDashboardCollab } from './dashboardCollabRuntime'
 import type { Dashboard, Widget } from '../types'
 
@@ -75,6 +77,13 @@ function queryWidget(overrides: Partial<Widget> = {}): Widget {
     ...overrides,
   }
 }
+
+function savedConfigs(bodies: Array<Record<string, unknown>>): Array<Record<string, unknown>> {
+  return bodies
+    .map(b => b.config)
+    .filter((c): c is Record<string, unknown> => typeof c === 'object' && c !== null)
+}
+
 
 const tableOutput = {
   type: 'table',
@@ -160,6 +169,59 @@ describe('WidgetConfigDrawer', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: /Run/ }))
     expect(await screen.findByText('42')).toBeInTheDocument()
+  })
+
+  test('previews on open without clicking Run, and offers Configure chart', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push(await request.json() as Record<string, unknown>)
+        return HttpResponse.json({ outputs: [tableOutput], metrics: {}, cached: true })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget({ type: 'chart' })} onClose={() => {}} onSaved={() => {}} />,
+    )
+    // The chart preview is a lazy-loaded chunk; under full-suite load the
+    // import can take longer than the 1s default wait.
+    expect(await screen.findByRole('button', { name: 'Configure chart' }, { timeout: 5000 })).toBeInTheDocument()
+    expect(bodies).toHaveLength(1)
+    // The open preview goes through the cache; Run is the fresh fetch.
+    expect(bodies[0].bypass_cache).toBe(false)
+  })
+
+  test('Run bypasses the cache after the open preview', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push(await request.json() as Record<string, unknown>)
+        return HttpResponse.json({ outputs: [tableOutput], metrics: {}, cached: false })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    await waitFor(() => expect(bodies).toHaveLength(1))
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    await waitFor(() => expect(bodies).toHaveLength(2))
+    expect(bodies[0].bypass_cache).toBe(false)
+    expect(bodies[1].bypass_cache).toBe(true)
+  })
+
+  test('does not preview on open without view_with_data', async () => {
+    let calls = 0
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () => {
+        calls++
+        return HttpResponse.json({ outputs: [tableOutput], metrics: {}, cached: false })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={{ ...dashboard, can_view_with_data: false }} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    await new Promise(r => setTimeout(r, 50))
+    expect(calls).toBe(0)
+    expect(screen.getByRole('button', { name: /Run/ })).toBeDisabled()
   })
 
   test('shows a Run error from the execute endpoint', async () => {
@@ -487,5 +549,430 @@ describe('WidgetConfigDrawer', () => {
       />,
     )
     expect(screen.getByRole('button', { name: 'Convert to query widget' })).toBeDisabled()
+  })
+
+  test('saves the metric value column and aggregation', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    fireEvent.change(screen.getByLabelText('Widget type'), { target: { value: 'metric' } })
+    fireEvent.change(await screen.findByLabelText('Value column'), { target: { value: 'x' } })
+    fireEvent.change(screen.getByLabelText('Aggregation'), { target: { value: 'sum' } })
+    // The value column commits after the 600ms debounce; both fields must end
+    // up in the same metric block (each save merges the previous one).
+    await waitFor(
+      () => expect(savedConfigs(bodies).at(-1)?.metric).toEqual({ value_column: 'x', aggregation: 'sum' }),
+      { timeout: 3000 },
+    )
+  })
+
+  test('renders the metric preview and column suggestions after a run', async () => {
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ type: 'metric', config: { metric: { value_column: 'x', aggregation: 'none' } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    // MetricWidget replaces the table fallback so authors see the reading.
+    expect(await screen.findByRole('group', { name: '42' })).toBeInTheDocument()
+    expect(document.querySelector('#metric-value-columns option[value="x"]')).not.toBeNull()
+  })
+
+  test('editing the text markdown saves config.text.markdown', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ connector_id: null, query: null, type: 'text' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Markdown'), { target: { value: '## Hello' } })
+    await waitFor(
+      () => expect(savedConfigs(bodies).at(-1)?.text).toEqual({ markdown: '## Hello' }),
+      { timeout: 3000 },
+    )
+  })
+
+  test('a source-less text widget authors markdown without the cell convert affordance', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ connector_id: null, query: null, type: 'text' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('button', { name: 'Convert to query widget' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/Notebook cell widget/)).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Markdown')).toBeInTheDocument()
+  })
+
+  test('changing the appearance background saves config.appearance.background', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    fireEvent.change(screen.getByLabelText('Background'), { target: { value: 'transparent' } })
+    await waitFor(() => {
+      const appearance = savedConfigs(bodies).at(-1)?.appearance as Record<string, unknown> | undefined
+      expect(appearance?.background).toBe('transparent')
+    })
+  })
+
+  test('disables the border checkbox on transparent backgrounds', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { appearance: { background: 'transparent' } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.getByLabelText('Border')).toBeDisabled()
+    expect(screen.getByText(/never draw a border/i)).toBeInTheDocument()
+  })
+
+  test('serializes config saves so a slow write cannot clobber a newer one', async () => {
+    const applied: Array<Record<string, unknown>> = []
+    const arrivals: number[] = []
+    let inFlight = 0
+    let overlapped = false
+    let requests = 0
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        requests++
+        arrivals.push(requests)
+        inFlight++
+        if (inFlight > 1) overlapped = true
+        const body = (await request.json()) as Record<string, unknown>
+        if (requests === 1) await delay(200)
+        // The server replaces `config` wholesale, so a write lands when its
+        // response is produced: later completions overwrite earlier ones.
+        applied.push(body.config as Record<string, unknown>)
+        inFlight--
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ type: 'metric' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    // Save 1 (slow) then save 2 (fast) before save 1 resolves.
+    fireEvent.change(screen.getByLabelText('Aggregation'), { target: { value: 'sum' } })
+    fireEvent.change(screen.getByLabelText('Background'), { target: { value: 'transparent' } })
+    await waitFor(() => expect(applied).toHaveLength(2))
+    expect(arrivals).toEqual([1, 2])
+    // Serialized: save 2 was not in flight while save 1 was, so it executed
+    // with the freshest merged config and its write is the one that stuck.
+    expect(overlapped).toBe(false)
+    const finalConfig = applied.at(-1)!
+    expect(finalConfig.metric).toMatchObject({ aggregation: 'sum' })
+    expect(finalConfig.appearance).toMatchObject({ background: 'transparent' })
+  })
+
+  test('flushes a pending debounced edit when the drawer unmounts', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    const { unmount } = renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ type: 'metric' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Value column'), { target: { value: 'x' } })
+    // Unmount inside the 600ms debounce window: the draft must still be saved.
+    unmount()
+    await waitFor(() => expect(savedConfigs(bodies).at(-1)?.metric).toEqual({ value_column: 'x' }))
+  })
+
+  test('metric config survives a subsequent appearance change', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { metric: { value_column: 'x', aggregation: 'none' } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Background'), { target: { value: 'transparent' } })
+    await waitFor(() => {
+      const last = savedConfigs(bodies).at(-1)
+      expect(last?.metric).toEqual({ value_column: 'x', aggregation: 'none' })
+      expect((last?.appearance as Record<string, unknown> | undefined)?.background).toBe('transparent')
+    })
+  })
+
+  test('a cell widget chart save keeps appearance and metric blocks', () => {
+    const chart = { chartType: 'bar', xAxis: 'x' } as ChartConfig
+    const cell = mergeChartConfigInto(
+      { appearance: { background: 'transparent' }, metric: { value_column: 'x' } },
+      chart,
+      false,
+    )
+    expect(cell).toMatchObject({
+      appearance: { background: 'transparent' },
+      metric: { value_column: 'x' },
+      chartType: 'bar',
+      xAxis: 'x',
+      [WIDGET_OVERRIDE_FLAG]: true,
+    })
+    // Query widgets store the chart config raw, without the cell marker.
+    const query = mergeChartConfigInto({ appearance: { background: 'transparent' } }, chart, true)
+    expect(query.appearance).toEqual({ background: 'transparent' })
+    expect(query[WIDGET_OVERRIDE_FLAG]).toBeUndefined()
+  })
+
+  test('hints to run before table columns can be configured', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    expect(screen.getByText('Run the query to configure columns.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Format x')).not.toBeInTheDocument()
+  })
+
+  test('saves a table column format from the run result', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Format x'), { target: { value: 'currency' } })
+    await waitFor(() =>
+      expect(savedConfigs(bodies).at(-1)?.table).toEqual({ columns: [{ name: 'x', format: { style: 'currency' } }] }),
+    )
+    // Currency and decimals controls appear once a style is chosen.
+    expect(screen.getByLabelText('Currency for x')).toBeInTheDocument()
+    expect(screen.getByLabelText('Decimals for x')).toBeInTheDocument()
+  })
+
+  test('setting a column back to Default removes it from the saved config', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { columns: [{ name: 'x', format: { style: 'currency', currency: 'USD' } }] } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    expect(await screen.findByLabelText('Format x')).toHaveValue('currency')
+    fireEvent.change(screen.getByLabelText('Format x'), { target: { value: 'default' } })
+    // With no formats left the whole table block is dropped, not persisted as
+    // { columns: [] }.
+    await waitFor(() => {
+      const last = savedConfigs(bodies).at(-1)
+      expect(last).toBeDefined()
+      expect(last?.table).toBeUndefined()
+    })
+  })
+
+  test('normalizes the currency code when saving a table column format', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { columns: [{ name: 'x', format: { style: 'currency' } }] } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Currency for x'), { target: { value: ' eur ' } })
+    await waitFor(
+      () =>
+        expect(savedConfigs(bodies).at(-1)?.table).toEqual({
+          columns: [{ name: 'x', format: { style: 'currency', currency: 'EUR' } }],
+        }),
+      { timeout: 3000 },
+    )
+  })
+
+  test('switching a column away from currency clears the currency code', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { columns: [{ name: 'x', format: { style: 'currency', currency: 'USD' } }] } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Format x'), { target: { value: 'number' } })
+    await waitFor(() =>
+      expect(savedConfigs(bodies).at(-1)?.table).toEqual({ columns: [{ name: 'x', format: { style: 'number' } }] }),
+    )
+  })
+
+  test('preserves sibling keys under config.table when saving column formats', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { keep: 'me' } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Format x'), { target: { value: 'percent' } })
+    await waitFor(() =>
+      expect(savedConfigs(bodies).at(-1)?.table).toEqual({
+        keep: 'me',
+        columns: [{ name: 'x', format: { style: 'percent' } }],
+      }),
+    )
+  })
+
+  test('omits the table columns section for cell widgets', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ id: 'w2', connector_id: null, query: null, notebook_id: 'nb-1', cell_id: 'cell-1' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.queryByText('Table columns')).not.toBeInTheDocument()
+    expect(screen.queryByText('Run the query to configure columns.')).not.toBeInTheDocument()
+    // The convert affordance for cell widgets remains.
+    expect(screen.getByRole('button', { name: 'Convert to query widget' })).toBeInTheDocument()
+  })
+
+  test('currency and decimals edits merge into the column format', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', () =>
+        HttpResponse.json({ outputs: [tableOutput], metrics: { query_time_ms: 3 }, cached: false }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { table: { columns: [{ name: 'x', format: { style: 'currency' } }] } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.click(screen.getByRole('button', { name: /Run/ }))
+    fireEvent.change(await screen.findByLabelText('Currency for x'), { target: { value: 'EUR' } })
+    fireEvent.change(screen.getByLabelText('Decimals for x'), { target: { value: '2' } })
+    await waitFor(
+      () =>
+        expect(savedConfigs(bodies).at(-1)?.table).toEqual({
+          columns: [{ name: 'x', format: { style: 'currency', currency: 'EUR', decimals: 2 } }],
+        }),
+      { timeout: 3000 },
+    )
   })
 })

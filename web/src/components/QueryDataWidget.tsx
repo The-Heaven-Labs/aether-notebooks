@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Loader2, RefreshCw, FilterX, BarChart3 } from 'lucide-react'
 import { ApiError } from '../api/client'
 import { useDashboardVariables, isVariableDefault } from '../contexts/DashboardVariablesContext'
 import { useWidgetQuery } from '../hooks/useWidgetQuery'
 import { OutputRenderer } from './OutputRenderer'
+import { MetricWidget } from './MetricWidget'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
+import { metricConfigFrom } from '../utils/metric'
+import { tableConfigFrom } from '../utils/tableConfig'
 import type { DashboardVariable, ResultSet, Widget } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
@@ -56,6 +59,19 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+  },
+  // Mirrors OutputRenderer's output bar chrome so metric widgets keep the
+  // same refresh/freshness footer as table and chart widgets, pinned below
+  // the reading instead of above a table.
+  metricFooter: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '6px 16px',
+    background: 'var(--bg-secondary)',
+    borderTop: '1px solid var(--border-light)',
+    gap: 8,
+    flexWrap: 'wrap',
   },
   // Compact version of the product's empty-state pattern for widget-sized space.
   zero: {
@@ -169,7 +185,7 @@ function NoDataState({ onRun }: { onRun: () => void }) {
   )
 }
 
-export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, viewerConnectorId, endpointBase, onFetchingChange, registerRefresher, registerRerunner }: {
+export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, viewerConnectorId, endpointBase, onFetchingChange, onFetched, registerRefresher, registerRerunner }: {
   dashboardId: string
   widget: Widget
   canViewWithData: boolean
@@ -181,6 +197,8 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
   endpointBase?: string
   /** Reports this widget's fetching state so the dashboard header can show progress. */
   onFetchingChange?: (fetching: boolean) => void
+  /** Fires after each successful fetch, so the app masthead's freshness line tracks real data. */
+  onFetched?: () => void
   /** Registers an awaitable refresher; return value unregisters on unmount. */
   registerRefresher?: (refresh: () => Promise<unknown>) => (() => void) | void
   /** Registers a cache-eligible re-run handle used by live definition changes. */
@@ -195,16 +213,35 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     viewerConnectorId,
     endpointBase,
   })
+  // Stable identity so OutputRenderer's memo is not defeated by a fresh map on
+  // every render. Must stay above the early returns below (rules of hooks).
+  const columnFormats = useMemo(() => tableConfigFrom(widget.config).columns, [widget.config])
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
 
+  // Ref so an inline parent callback never re-fires this effect (and never
+  // loops setState through the parent).
+  const onFetchedRef = useRef(onFetched)
+  onFetchedRef.current = onFetched
   useEffect(() => {
-    if (data) setFetchedAt(new Date())
+    if (data) {
+      setFetchedAt(new Date())
+      onFetchedRef.current?.()
+    }
   }, [data])
 
-  // Stable refresher handle: the dashboard header can await "Refresh" runs.
+  // Stable refresher handle: the dashboard header can await "Refresh" runs,
+  // and the widget's own refresh/retry controls share it. TanStack's
+  // structural sharing keeps the same `data` reference for an identical
+  // refetch, so the effect above cannot be the only onFetched trigger —
+  // every successful completion reports here too. An errored refetch still
+  // resolves; it must not claim freshness.
   const refreshRef = useRef(refresh)
   refreshRef.current = refresh
-  const stableRefresh = useCallback(() => refreshRef.current(), [])
+  const stableRefresh = useCallback(async () => {
+    const result = await refreshRef.current()
+    if (!result.isError) onFetchedRef.current?.()
+    return result
+  }, [])
   useEffect(() => registerRefresher?.(stableRefresh), [registerRefresher, stableRefresh])
 
   // Stable cache-eligible handle for auto re-runs on live definition changes
@@ -239,7 +276,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
       <div style={styles.error}>
         <span>{error instanceof Error ? error.message : 'Query failed'}</span>
         {!forbidden && (
-          <button style={styles.retry} onClick={() => refreshRef.current()}>Retry</button>
+          <button style={styles.retry} onClick={stableRefresh}>Retry</button>
         )}
       </div>
     )
@@ -267,7 +304,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
         {filtersExclude ? (
           <FilteredZeroState active={activeFilters} values={values} emptyMulti={emptyMulti} onReset={resetAll} />
         ) : (
-          <NoDataState onRun={() => refreshRef.current()} />
+          <NoDataState onRun={stableRefresh} />
         )}
       </div>
     )
@@ -283,7 +320,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     <div style={styles.footer}>
       <button
         style={styles.footerBtn}
-        onClick={() => refreshRef.current()}
+        onClick={stableRefresh}
         disabled={isFetching}
         title={widgetTitle ? `Refresh ${widgetTitle}` : 'Refresh widget data'}
         aria-label={widgetTitle ? `Refresh ${widgetTitle}` : 'Refresh widget data'}
@@ -302,14 +339,24 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     </div>
   )
 
+  const metric = metricConfigFrom(widget.config)
+
   return (
     <div style={{ ...styles.root, opacity: isFetching ? 0.55 : 1 }} aria-busy={isFetching}>
-      <OutputRenderer
-        outputs={outputs}
-        fixedView={widget.type === 'chart' ? 'chart' : 'table'}
-        chartConfig={normalizeChartConfig(widget.config)}
-        footerExtra={footerExtra}
-      />
+      {widget.type === 'metric' && resultSet ? (
+        <>
+          <MetricWidget result={resultSet} config={metric} />
+          <div style={styles.metricFooter}>{footerExtra}</div>
+        </>
+      ) : (
+        <OutputRenderer
+          outputs={outputs}
+          fixedView={widget.type === 'chart' ? 'chart' : 'table'}
+          chartConfig={normalizeChartConfig(widget.config)}
+          columnFormats={columnFormats}
+          footerExtra={footerExtra}
+        />
+      )}
     </div>
   )
 }

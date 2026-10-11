@@ -250,4 +250,25 @@ export const handlers = [
 
   // Audit
   http.get('/api/v1/audit', () => HttpResponse.json([])),
+
+  // Widget execution: the config drawer previews a query widget on open, so
+  // every drawer render with a query widget hits this unless the test
+  // overrides it with server.use.
+  http.post('/api/v1/dashboards/:id/execute', () =>
+    HttpResponse.json({
+      outputs: [{
+        type: 'table',
+        data: {
+          columns: [{ name: 'x', type: 'Int32' }],
+          rows: [[1]],
+          truncated: false,
+          rows_included: 1,
+          rows_total: 1,
+          bytes: 4,
+        },
+      }],
+      metrics: {},
+      cached: true,
+    }),
+  ),
 ]

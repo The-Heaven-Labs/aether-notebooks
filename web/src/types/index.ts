@@ -269,6 +269,17 @@ export interface WidgetQueryResult {
   cache_expires_at?: string
 }
 
+export interface DashboardAppSettings {
+  title?: string
+  subtitle?: string
+  logo_attachment_id?: string
+  width?: 'fixed' | 'full'
+  layout?: 'grid' | 'custom'
+  show_header?: boolean
+  show_refresh?: boolean
+  show_last_updated?: boolean
+}
+
 export interface Dashboard {
   id: string
   org_id: string
@@ -279,6 +290,7 @@ export interface Dashboard {
     query_cache_seconds?: number
     public_live?: boolean
     variables?: DashboardVariable[]
+    app?: DashboardAppSettings
   }
   public_token?: string
   folder_id?: string

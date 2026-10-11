@@ -10525,9 +10525,43 @@ const docTemplate = `{
                 }
             }
         },
+        "models.DashboardAppSettings": {
+            "type": "object",
+            "properties": {
+                "layout": {
+                    "description": "\"grid\" | \"custom\"; empty = grid (wave 4)",
+                    "type": "string"
+                },
+                "logo_attachment_id": {
+                    "type": "string"
+                },
+                "show_header": {
+                    "type": "boolean"
+                },
+                "show_last_updated": {
+                    "type": "boolean"
+                },
+                "show_refresh": {
+                    "type": "boolean"
+                },
+                "subtitle": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "width": {
+                    "description": "\"fixed\" | \"full\"; empty = fixed",
+                    "type": "string"
+                }
+            }
+        },
         "models.DashboardSettings": {
             "type": "object",
             "properties": {
+                "app": {
+                    "$ref": "#/definitions/models.DashboardAppSettings"
+                },
                 "auto_refresh_seconds": {
                     "type": "integer"
                 },

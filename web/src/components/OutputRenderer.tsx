@@ -7,6 +7,7 @@ import type { ChartConfig } from '../charts'
 import { ToggleLeft, Calendar, Clock, Fingerprint, Ban, Binary, Table, BarChart2, Timer, Sigma, ChevronUp, ChevronDown, ChevronLeft, ChevronRight, X, Copy, Check, Download } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import { getApiUrl } from '../config'
+import { formatValue, type ValueFormat } from '../utils/valueFormat'
 
 // The chart renderer (ECharts + chart UI) is the largest dependency of the
 // notebook page. Load it only when a cell actually renders a chart so
@@ -114,22 +115,24 @@ interface Props {
   hideExport?: boolean
   viewMode?: 'table' | 'chart'
   onViewModeChange?: (viewMode: 'table' | 'chart') => void
+  /** Per-column display formats keyed by column name (dashboard table widgets). */
+  columnFormats?: Record<string, ValueFormat>
   footerExtra?: React.ReactNode
 }
 
-export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, chartConfigOverridden, onChartConfigReset, hideExport, viewMode, onViewModeChange, footerExtra }: Props) {
+export const OutputRenderer = memo(function OutputRenderer({ outputs, fixedView, cellId, chartConfig, onChartConfigChange, chartConfigOverridden, onChartConfigReset, hideExport, viewMode, onViewModeChange, columnFormats, footerExtra }: Props) {
   if (!outputs || outputs.length === 0) return null
 
   return (
     <div style={{ ...styles.container, flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
       {outputs.map((out, i) => (
-        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
+        <OutputItem key={i} output={out} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} columnFormats={columnFormats} footerExtra={footerExtra} />
       ))}
     </div>
   )
 })
 
-function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, chartConfigOverridden, onChartConfigReset, hideExport, viewMode, onViewModeChange, footerExtra }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; chartConfigOverridden?: boolean; onChartConfigReset?: () => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; footerExtra?: React.ReactNode }) {
+function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChange, chartConfigOverridden, onChartConfigReset, hideExport, viewMode, onViewModeChange, columnFormats, footerExtra }: { output: Output; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; chartConfigOverridden?: boolean; onChartConfigReset?: () => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; columnFormats?: Record<string, ValueFormat>; footerExtra?: React.ReactNode }) {
   if (output.type === 'error') {
     return (
       <div style={styles.errorWrap}>
@@ -152,7 +155,7 @@ function OutputItem({ output, fixedView, cellId, chartConfig, onChartConfigChang
       return <TruncatedStub data={rs as unknown as OutputStubData} cellId={cellId} hideExport={hideExport} />
     }
     if (!rs?.columns?.length) return <p style={styles.empty}>No results returned</p>
-    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} footerExtra={footerExtra} />
+    return <TableOutput rs={rs} fixedView={fixedView} cellId={cellId} chartConfig={chartConfig} onChartConfigChange={onChartConfigChange} chartConfigOverridden={chartConfigOverridden} onChartConfigReset={onChartConfigReset} hideExport={hideExport} viewMode={viewMode} onViewModeChange={onViewModeChange} columnFormats={columnFormats} footerExtra={footerExtra} />
   }
 
   return null
@@ -394,7 +397,7 @@ function exportJSON(rs: ResultSet): void {
   URL.revokeObjectURL(url)
 }
 
-const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, chartConfigOverridden, onChartConfigReset, hideExport: hideExportProp, viewMode, onViewModeChange, footerExtra }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; chartConfigOverridden?: boolean; onChartConfigReset?: () => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; footerExtra?: React.ReactNode }) {
+const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConfig, onChartConfigChange, chartConfigOverridden, onChartConfigReset, hideExport: hideExportProp, viewMode, onViewModeChange, columnFormats, footerExtra }: { rs: ResultSet; fixedView?: 'table' | 'chart'; cellId?: string; chartConfig?: ChartConfig; onChartConfigChange?: (config: ChartConfig) => void; chartConfigOverridden?: boolean; onChartConfigReset?: () => void; hideExport?: boolean; viewMode?: 'table' | 'chart'; onViewModeChange?: (viewMode: 'table' | 'chart') => void; columnFormats?: Record<string, ValueFormat>; footerExtra?: React.ReactNode }) {
   const storageKey = cellId ? `aether_cell_view_${cellId}` : null
   const hasChartConfig = !!chartConfig?.chartType
   // Shared org setting: every table output reads the same cached query
@@ -713,6 +716,14 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                 : typeof cell === 'object'
                   ? JSON.stringify(cell)
                   : String(cell)
+              // Per-column formats only affect numeric cells' display text:
+              // strings/booleans/objects keep their raw rendering, and the
+              // title/detail/copy paths keep the raw value. The own-property
+              // check keeps prototype keys (e.g. a column named "constructor")
+              // from resolving to Object.prototype members.
+              const columnName = rs.columns[vc.index].name
+              const columnFormat = columnFormats && Object.hasOwn(columnFormats, columnName) ? columnFormats[columnName] : undefined
+              const displayValue = typeof cell === 'number' && columnFormat ? formatValue(cell, columnFormat) : strValue
               return (
                 <td
                   key={vc.key}
@@ -724,7 +735,7 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
                   onClick={(e) => handleCellClick(e, vr.index, vc.index, strValue, cell)}
                 >
                   <span style={isObj ? { ...styles.cellText, ...styles.json } : styles.cellText}>
-                    {cell === null ? <span style={styles.null}>null</span> : strValue}
+                    {cell === null ? <span style={styles.null}>null</span> : displayValue}
                   </span>
                 </td>
               )
