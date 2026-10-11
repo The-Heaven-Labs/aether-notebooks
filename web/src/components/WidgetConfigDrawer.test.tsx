@@ -2,9 +2,11 @@ import type { ReactNode } from 'react'
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse, delay } from 'msw'
 import { server } from '../test/server'
-import { WidgetConfigDrawer } from './WidgetConfigDrawer'
+import { WidgetConfigDrawer, mergeChartConfigInto } from './WidgetConfigDrawer'
+import { WIDGET_OVERRIDE_FLAG } from '../charts/widgetChartConfig'
+import type { ChartConfig } from '../charts/types'
 import type { Dashboard, Widget } from '../types'
 
 // The drawer embeds ConnectorSelector, which reads the shared ['connectors']
@@ -378,5 +380,116 @@ describe('WidgetConfigDrawer', () => {
     )
     expect(screen.getByLabelText('Border')).toBeDisabled()
     expect(screen.getByText(/never draw a border/i)).toBeInTheDocument()
+  })
+
+  test('serializes config saves so a slow write cannot clobber a newer one', async () => {
+    const applied: Array<Record<string, unknown>> = []
+    const arrivals: number[] = []
+    let inFlight = 0
+    let overlapped = false
+    let requests = 0
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        requests++
+        arrivals.push(requests)
+        inFlight++
+        if (inFlight > 1) overlapped = true
+        const body = (await request.json()) as Record<string, unknown>
+        if (requests === 1) await delay(200)
+        // The server replaces `config` wholesale, so a write lands when its
+        // response is produced: later completions overwrite earlier ones.
+        applied.push(body.config as Record<string, unknown>)
+        inFlight--
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ type: 'metric' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    // Save 1 (slow) then save 2 (fast) before save 1 resolves.
+    fireEvent.change(screen.getByLabelText('Aggregation'), { target: { value: 'sum' } })
+    fireEvent.change(screen.getByLabelText('Background'), { target: { value: 'transparent' } })
+    await waitFor(() => expect(applied).toHaveLength(2))
+    expect(arrivals).toEqual([1, 2])
+    // Serialized: save 2 was not in flight while save 1 was, so it executed
+    // with the freshest merged config and its write is the one that stuck.
+    expect(overlapped).toBe(false)
+    const finalConfig = applied.at(-1)!
+    expect(finalConfig.metric).toMatchObject({ aggregation: 'sum' })
+    expect(finalConfig.appearance).toMatchObject({ background: 'transparent' })
+  })
+
+  test('flushes a pending debounced edit when the drawer unmounts', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    const { unmount } = renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ type: 'metric' })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Value column'), { target: { value: 'x' } })
+    // Unmount inside the 600ms debounce window: the draft must still be saved.
+    unmount()
+    await waitFor(() => expect(savedConfigs(bodies).at(-1)?.metric).toEqual({ value_column: 'x' }))
+  })
+
+  test('metric config survives a subsequent appearance change', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={queryWidget({ config: { metric: { value_column: 'x', aggregation: 'none' } } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Background'), { target: { value: 'transparent' } })
+    await waitFor(() => {
+      const last = savedConfigs(bodies).at(-1)
+      expect(last?.metric).toEqual({ value_column: 'x', aggregation: 'none' })
+      expect((last?.appearance as Record<string, unknown> | undefined)?.background).toBe('transparent')
+    })
+  })
+
+  test('a cell widget chart save keeps appearance and metric blocks', () => {
+    const chart = { chartType: 'bar', xAxis: 'x' } as ChartConfig
+    const cell = mergeChartConfigInto(
+      { appearance: { background: 'transparent' }, metric: { value_column: 'x' } },
+      chart,
+      false,
+    )
+    expect(cell).toMatchObject({
+      appearance: { background: 'transparent' },
+      metric: { value_column: 'x' },
+      chartType: 'bar',
+      xAxis: 'x',
+      [WIDGET_OVERRIDE_FLAG]: true,
+    })
+    // Query widgets store the chart config raw, without the cell marker.
+    const query = mergeChartConfigInto({ appearance: { background: 'transparent' } }, chart, true)
+    expect(query.appearance).toEqual({ background: 'transparent' })
+    expect(query[WIDGET_OVERRIDE_FLAG]).toBeUndefined()
   })
 })

@@ -181,6 +181,8 @@ function detectedTokens(query: string): string[] {
  * Text control that keeps a local draft and commits 600ms after the last
  * keystroke — the same debounce as the SQL source editor. The save callback
  * goes through a ref so parent re-renders never restart the timer mid-typing.
+ * An uncommitted draft is flushed once on unmount so closing the drawer (or
+ * hiding the section) inside the debounce window never drops the edit's tail.
  */
 function DebouncedTextInput({ label, value, onSave, listId, placeholder, multiline = false }: {
   label: string
@@ -191,15 +193,37 @@ function DebouncedTextInput({ label, value, onSave, listId, placeholder, multili
   multiline?: boolean
 }) {
   const [draft, setDraft] = useState(value)
+  const draftRef = useRef(value)
+  const valueRef = useRef(value)
+  // Last draft handed to onSave — guards the unmount flush against saving the
+  // same draft twice when the debounce timer already fired.
+  const lastSentRef = useRef(value)
   const saveRef = useRef(onSave)
   useEffect(() => {
     saveRef.current = onSave
   }, [onSave])
   useEffect(() => {
+    valueRef.current = value
+  }, [value])
+  useEffect(() => {
     if (draft === value) return
-    const timer = setTimeout(() => saveRef.current(draft), 600)
+    const timer = setTimeout(() => {
+      lastSentRef.current = draft
+      saveRef.current(draft)
+    }, 600)
     return () => clearTimeout(timer)
   }, [draft, value])
+  useEffect(() => () => {
+    const pending = draftRef.current
+    if (pending !== valueRef.current && pending !== lastSentRef.current) {
+      lastSentRef.current = pending
+      saveRef.current(pending)
+    }
+  }, [])
+  const handleChange = (next: string) => {
+    draftRef.current = next
+    setDraft(next)
+  }
   if (multiline) {
     return (
       <textarea
@@ -207,7 +231,7 @@ function DebouncedTextInput({ label, value, onSave, listId, placeholder, multili
         style={styles.textarea}
         value={draft}
         placeholder={placeholder}
-        onChange={e => setDraft(e.target.value)}
+        onChange={e => handleChange(e.target.value)}
       />
     )
   }
@@ -219,9 +243,26 @@ function DebouncedTextInput({ label, value, onSave, listId, placeholder, multili
       value={draft}
       list={listId}
       placeholder={placeholder}
-      onChange={e => setDraft(e.target.value)}
+      onChange={e => handleChange(e.target.value)}
     />
   )
+}
+
+/**
+ * Chart edits merge into the widget config. Query widgets store the chart
+ * config raw; cell widgets keep the `withWidgetOverride` marker semantics.
+ * Exported so the cell-widget branch stays covered by tests — its chart UI
+ * lives in the editor grid (WidgetContent), not in this drawer.
+ */
+// eslint-disable-next-line react-refresh/only-export-components -- pure helper; a separate file is out of this task's scope
+export function mergeChartConfigInto(
+  config: Record<string, unknown>,
+  chartConfig: ChartConfig,
+  isQuery: boolean,
+): Record<string, unknown> {
+  return isQuery
+    ? { ...config, ...chartConfig }
+    : { ...config, ...withWidgetOverride(chartConfig) }
 }
 
 export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true }: {
@@ -245,6 +286,10 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   // from clobbering each other while the drawer stays open.
   const [config, setConfig] = useState<Record<string, unknown>>(widget.config ?? {})
   const configRef = useRef<Record<string, unknown>>(widget.config ?? {})
+  // Config PUTs are serialized through this chain (see putWidgetConfig): each
+  // save queues behind the previous request so a slow write cannot land after
+  // a newer one and silently drop the newer fields.
+  const saveChain = useRef<Promise<void>>(Promise.resolve())
 
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState<WidgetQueryResult | null>(null)
@@ -310,31 +355,30 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     }
   }
 
-  const putWidgetConfig = async (next: Record<string, unknown>) => {
+  const putWidgetConfig = (next: Record<string, unknown>) => {
     configRef.current = next
     setConfig(next)
-    try {
-      await api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, { config: next })
-      setSaveError(null)
-      onSaved()
-    } catch (e) {
-      setSaveError(e instanceof Error ? e.message : 'Failed to save widget config')
-    }
+    // Append to the chain and send the latest merged config at execution time,
+    // so a queued save still writes the freshest payload (last-write-wins).
+    // The catch keeps one failed request from breaking every later save, and
+    // leaves no rejection unhandled.
+    saveChain.current = saveChain.current
+      .then(() => api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, { config: configRef.current }))
+      .then(() => {
+        setSaveError(null)
+        onSaved()
+      })
+      .catch((e: unknown) => {
+        setSaveError(e instanceof Error ? e.message : 'Failed to save widget config')
+      })
+    return saveChain.current
   }
 
   const saveWidgetConfig = (patch: Record<string, unknown>) =>
     putWidgetConfig({ ...configRef.current, ...patch })
 
-  const saveChartConfig = (chartConfig: ChartConfig) => {
-    if (isQuery) {
-      // Query widgets store the chart config raw, alongside metric/text/
-      // appearance blocks — merge so a chart edit keeps them.
-      return putWidgetConfig({ ...configRef.current, ...chartConfig })
-    }
-    // Cell widgets keep the override-marker semantics; merging the current
-    // config in means appearance/text blocks survive a chart edit too.
-    return putWidgetConfig({ ...configRef.current, ...withWidgetOverride(chartConfig) })
-  }
+  const saveChartConfig = (chartConfig: ChartConfig) =>
+    putWidgetConfig(mergeChartConfigInto(configRef.current, chartConfig, isQuery))
 
   const saveMetric = (patch: Partial<MetricConfig>) =>
     saveWidgetConfig({ metric: { ...metricConfigFrom(configRef.current), ...patch } })
@@ -562,12 +606,13 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
               </div>
               <div style={styles.checkboxRow}>
                 <input
+                  id="widget-metric-compact"
                   type="checkbox"
                   aria-label="Compact"
                   checked={metric.format?.compact ?? false}
                   onChange={e => void saveMetric({ format: { ...metric.format, compact: e.target.checked } })}
                 />
-                <span>Compact (1.2M)</span>
+                <label htmlFor="widget-metric-compact">Compact (1.2M)</label>
               </div>
               <div style={styles.field}>
                 <span style={styles.fieldLabel}>Comparison column</span>
@@ -643,13 +688,14 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
           </div>
           <div style={styles.checkboxRow}>
             <input
+              id="widget-appearance-border"
               type="checkbox"
               aria-label="Border"
               checked={appearance.border}
               disabled={appearance.background === 'transparent'}
               onChange={e => void saveAppearance({ border: e.target.checked })}
             />
-            <span>Border</span>
+            <label htmlFor="widget-appearance-border">Border</label>
           </div>
           {appearance.background === 'transparent' && (
             <div style={styles.muted}>Transparent widgets never draw a border.</div>
