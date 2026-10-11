@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, X, Plus, Eye, Pencil, Shield } from 'lucide-react'
+import { ArrowLeft, X, Plus, Eye, Pencil, Shield, LayoutTemplate } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
@@ -28,6 +28,7 @@ import { PermissionsPanel } from '../components/PermissionsPanel'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
 import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
+import { AppSettingsPanel } from '../components/AppSettingsPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
 import ReactMarkdown from 'react-markdown'
@@ -150,6 +151,7 @@ const markSaved = useCallback(() => {
   const [pickerError, setPickerError] = useState<string | null>(null)
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showVariables, setShowVariables] = useState(false)
+  const [showAppSettings, setShowAppSettings] = useState(false)
   const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
   const [variablePrefillType, setVariablePrefillType] = useState<DashboardVariableType | null>(null)
 
@@ -427,6 +429,16 @@ const markSaved = useCallback(() => {
           >
             Variables
           </button>
+          {!isMobileLayout && (
+            <button
+              type="button"
+              className="nav-btn"
+              onClick={() => setShowAppSettings(true)}
+              title="App settings"
+            >
+              <LayoutTemplate size={12} /> App
+            </button>
+          )}
           {saveStatus && (
             <span style={{
               fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--nav-text-muted)' : 'var(--nav-text)',
@@ -742,6 +754,14 @@ const markSaved = useCallback(() => {
           initialNewName={variablePrefill}
           initialNewType={variablePrefillType}
           onClose={() => { setShowVariables(false); setVariablePrefill(null); setVariablePrefillType(null) }}
+          onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
+        />
+      )}
+      {showAppSettings && (
+        <AppSettingsPanel
+          dashboardId={id!}
+          dashboard={dashboard}
+          onClose={() => setShowAppSettings(false)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
         />
       )}
