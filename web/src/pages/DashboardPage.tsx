@@ -14,7 +14,11 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
+import { appearanceFrom } from '../utils/widgetAppearance'
+import { textConfigFrom } from '../utils/textConfig'
 import { QueryDataWidget } from '../components/QueryDataWidget'
+import { WidgetFrame } from '../components/WidgetFrame'
+import { TextWidget } from '../components/TextWidget'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { useDashboardConnector } from '../hooks/useDashboardConnector'
 import { useAuth } from '../hooks/useAuth'
@@ -39,6 +43,11 @@ type AnyWidget = Widget & { type: string; config: any }
 
 function isQueryWidget(w: AnyWidget): w is AnyWidget & { connector_id: string; query: string } {
   return !!w.connector_id && !!w.query
+}
+
+/** Source-less text panel (no cell, no query): rendered by TextWidget. */
+function isTextPanel(w: AnyWidget): boolean {
+  return w.type === 'text' && !w.notebook_id && !w.connector_id
 }
 
 function CellDataWidget({ widget, qc, widgetsData, dashboardId, loading, onRun, onEdit }: { widget: AnyWidget; qc: ReturnType<typeof useQueryClient>; widgetsData?: DashboardWithWidgets['widgets_data']; dashboardId?: string; loading?: boolean; onRun?: () => void; onEdit?: () => void }) {
@@ -205,11 +214,11 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit, onFetchingCh
     }
   }, [widget.notebook_id, widget.cell_id, qc, loading])
 
+  // The card chrome is owned by the enclosing WidgetFrame; this component
+  // only lays out the cell content inside it.
   return (
-    <div style={styles.widgetCard}>
-      <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
-        <CellDataWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
-      </div>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' }}>
+      <CellDataWidget widget={widget} qc={qc} widgetsData={widgetsData} dashboardId={dashboardId} loading={loading} onRun={handleRun} onEdit={onEdit} />
     </div>
   )
 }
@@ -588,7 +597,7 @@ function DashboardContent({ id }: { id: string }) {
               style={{ minHeight: 240 }}
             >
               {widgets.map((widget) => (
-                <div key={widget.id} style={styles.widgetCard}>
+                <WidgetFrame key={widget.id} appearance={appearanceFrom(widget.config)}>
                   {isQueryWidget(widget) ? (
                     <QueryDataWidget
                       dashboardId={dashboard.id}
@@ -599,6 +608,8 @@ function DashboardContent({ id }: { id: string }) {
                       onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
                       registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
                     />
+                  ) : isTextPanel(widget) ? (
+                    <TextWidget markdown={textConfigFrom(widget.config).markdown} />
                   ) : (
                     <WidgetCard
                       widget={widget}
@@ -608,7 +619,7 @@ function DashboardContent({ id }: { id: string }) {
                       onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
                     />
                   )}
-                </div>
+                </WidgetFrame>
               ))}
             </GridLayout>
           </div>
@@ -698,14 +709,5 @@ const styles: Record<string, React.CSSProperties> = {
     display: 'flex',
     flexDirection: 'column',
     gap: 24,
-  },
-  widgetCard: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border-light)',
-    borderRadius: 4,
-    overflow: 'hidden',
-    height: '100%',
-    display: 'flex',
-    flexDirection: 'column',
   },
 }

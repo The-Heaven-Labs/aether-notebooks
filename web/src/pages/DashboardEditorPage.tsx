@@ -8,6 +8,8 @@ import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPayload'
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
 import { isQueryWidget, widgetKindLabel } from '../utils/widgetKind'
+import { appearanceFrom } from '../utils/widgetAppearance'
+import { textConfigFrom } from '../utils/textConfig'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -16,6 +18,8 @@ import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { QueryDataWidget } from '../components/QueryDataWidget'
+import { WidgetFrame } from '../components/WidgetFrame'
+import { TextWidget } from '../components/TextWidget'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
@@ -62,6 +66,11 @@ function widgetDisplayName(widget: Widget): string {
   const cfg = widget.config as Record<string, unknown> | undefined
   const t = typeof cfg?.title === 'string' ? cfg.title : typeof cfg?.label === 'string' ? cfg.label : ''
   return t || 'widget'
+}
+
+/** Source-less text panel (no cell, no query): rendered by TextWidget. */
+function isTextPanel(widget: Widget): boolean {
+  return widget.type === 'text' && !widget.notebook_id && !widget.connector_id
 }
 
 function WidgetContent({ widget, onConfigSave, onConfigReset }: { widget: Widget; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
@@ -625,13 +634,15 @@ const markSaved = useCallback(() => {
                         </button>
                       </div>
                     </div>
-                    <div className="dash-widget-data">
+                    <WidgetFrame appearance={appearanceFrom(widget.config)} style={styles.widgetFrame}>
                       {isQueryWidget(widget) ? (
                         <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
+                      ) : isTextPanel(widget) ? (
+                        <TextWidget markdown={textConfigFrom(widget.config).markdown} />
                       ) : (
                         <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
                       )}
-                    </div>
+                    </WidgetFrame>
                   </div>
                 ))}
               </div>
@@ -676,13 +687,15 @@ const markSaved = useCallback(() => {
                           </button>
                         </div>
                       </div>
-                      <div className="dash-widget-data">
+                      <WidgetFrame appearance={appearanceFrom(widget.config)} style={styles.widgetFrame}>
                         {isQueryWidget(widget) ? (
                           <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
+                        ) : isTextPanel(widget) ? (
+                          <TextWidget markdown={textConfigFrom(widget.config).markdown} />
                         ) : (
                           <WidgetContent widget={widget} onConfigSave={(widgetId, config) => saveWidgetConfig.mutate({ widgetId, config })} onConfigReset={(widgetId) => resetWidgetConfig.mutate(widgetId)} />
                         )}
-                      </div>
+                      </WidgetFrame>
                     </div>
                   </div>
                 ))}
@@ -941,9 +954,13 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     gap: 12,
   },
+  // The widget's card chrome (background/border) is painted by the
+  // WidgetFrame inside, so the editor shell stays transparent and the frame
+  // is the single source of card chrome — otherwise a `transparent`
+  // appearance could not preview.
   mobileWidgetCard: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border)',
+    background: 'transparent',
+    border: 'none',
     borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',
@@ -954,14 +971,23 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 12px',
     width: '100%',
   },
+  // Transparent shell around the editor's head bar (kind badge + actions)
+  // and the widget frame; the hover outline still marks the editable unit.
+  // See mobileWidgetCard.
   widgetCard: {
-    background: 'var(--bg-card)',
-    border: '1px solid var(--border-light)',
+    background: 'transparent',
+    border: 'none',
     borderRadius: 4,
     overflow: 'hidden',
     position: 'relative',
     height: '100%',
     display: 'flex',
     flexDirection: 'column',
+  },
+  // Fills the space below the head bar (desktop) / the card's content box
+  // (mobile) exactly as `.dash-widget-data` used to.
+  widgetFrame: {
+    flex: 1,
+    minHeight: 0,
   },
 }
