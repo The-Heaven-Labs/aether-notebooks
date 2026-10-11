@@ -17,6 +17,7 @@ import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { isTextPanel } from '../utils/widgetKind'
+import { toGridItem } from '../utils/widgetLayout'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { WidgetFrame } from '../components/WidgetFrame'
 import { TextWidget } from '../components/TextWidget'
@@ -24,7 +25,6 @@ import { ConnectorSelector } from '../components/ConnectorSelector'
 import { useDashboardConnector } from '../hooks/useDashboardConnector'
 import { useAuth } from '../hooks/useAuth'
 import { GridLayout } from 'react-grid-layout'
-import type { LayoutItem } from 'react-grid-layout'
 import 'react-grid-layout/css/styles.css'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -223,19 +223,6 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit, onFetchingCh
     </div>
   )
 }
-
-const toGridItem = (w: Widget): LayoutItem => ({
-  i: w.id,
-  x: w.layout.col,
-  y: w.layout.row,
-  w: w.layout.width,
-  // Clamp the rendered height too: minH only constrains resizing, so a
-  // 4-row widget would still render ~40px of chart under the widget chrome.
-  h: Math.max(w.layout.height, 6),
-  minW: 2,
-  minH: 6,
-  maxH: 24,
-})
 
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()

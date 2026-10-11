@@ -8,6 +8,7 @@ import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPayload'
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
 import { isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
+import { toGridItem } from '../utils/widgetLayout'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { EmptyState } from '../components/EmptyState'
@@ -42,19 +43,6 @@ interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
 }
 
-
-const toGridItem = (w: Widget): LayoutItem => ({
-  i: w.id,
-  x: w.layout.col,
-  y: w.layout.row,
-  w: w.layout.width,
-  // Clamp the rendered height too: minH only constrains resizing, so a
-  // 4-row widget would still render ~40px of chart under the widget chrome.
-  h: Math.max(w.layout.height, 6),
-  minW: 2,
-  minH: 6,
-  maxH: 24,
-})
 
 function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {
   if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
