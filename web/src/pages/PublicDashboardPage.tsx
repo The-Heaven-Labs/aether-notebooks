@@ -9,7 +9,11 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { QueryDataWidget } from '../components/QueryDataWidget'
+import { TextWidget } from '../components/TextWidget'
+import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
 import { formatExecutedAt } from '../utils/formatDateTime'
+import { textConfigFrom } from '../utils/textConfig'
+import { isQueryWidget, isTextPanel } from '../utils/widgetKind'
 import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
@@ -61,13 +65,30 @@ export function PublicDashboardPage() {
   const widgetsData = dashboard.widgets_data ?? {}
   const publicLive = dashboard.settings?.public_live === true
   const variables = dashboard.settings?.variables ?? []
+  const app = dashboard.settings?.app
+  const appWidth = app?.width ?? 'fixed'
+  const appTitle = app?.title || dashboard.title
+  // Masthead and body share one content width (The Story).
+  const contentWidth: React.CSSProperties | undefined = appWidth === 'fixed'
+    ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
+    : undefined
+  // A non-live page doesn't mount the variables provider (its option loads are
+  // live-only and would 403), so text panels interpolate against the
+  // variables' configured defaults instead of an empty context.
+  const variableDefaults: Record<string, unknown> = {}
+  for (const v of variables) {
+    if (v.default !== undefined) variableDefaults[v.name] = v.default
+  }
   const endpointBase = `/api/v1/public/${token}`
-  const isQueryWidget = (w: Widget) => !!w.connector_id && !!w.query
   // Query widgets only render when the owner opted into live queries; cell
-  // widgets need stored outputs to render at all.
-  const visibleWidgets = widgets.filter((w) =>
-    isQueryWidget(w) ? publicLive : !!(w.cell_id && widgetsData[w.cell_id]?.outputs?.length),
-  )
+  // widgets need stored outputs to render at all; source-less text panels
+  // always render — except empty ones, which have nothing to show (the
+  // editor's "empty text panel" hint is wrong on a public surface).
+  const visibleWidgets = widgets.filter((w) => {
+    if (isQueryWidget(w)) return publicLive
+    if (isTextPanel(w)) return textConfigFrom(w.config).markdown.trim().length > 0
+    return !!(w.cell_id && widgetsData[w.cell_id]?.outputs?.length)
+  })
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
   // Widgets are never shorter than 6 rows here either: below that the chart
@@ -79,13 +100,16 @@ export function PublicDashboardPage() {
   const content = (
     <div style={pageStyles.page}>
       <header style={pageStyles.header}>
-        <div style={pageStyles.headerInner}>
+        <div style={{ ...pageStyles.headerInner, ...contentWidth }}>
           <span style={pageStyles.brandMark}>Aether</span>
-          <h1 style={pageStyles.title}>{dashboard.title}</h1>
+          <div style={pageStyles.titleBlock}>
+            <h1 style={pageStyles.title}>{appTitle}</h1>
+            {app?.subtitle && <div style={pageStyles.subtitle}>{app.subtitle}</div>}
+          </div>
           <span style={pageStyles.readOnlyBadge}>{publicLive ? 'Live' : 'Read-only'}</span>
         </div>
       </header>
-      <main style={pageStyles.body}>
+      <main style={{ ...pageStyles.body, ...contentWidth }}>
         {publicLive && variables.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <DashboardVariableBar />
@@ -124,6 +148,21 @@ export function PublicDashboardPage() {
                       widget={widget}
                       canViewWithData
                       endpointBase={endpointBase}
+                    />
+                  </div>
+                )
+              }
+
+              if (isTextPanel(widget)) {
+                return (
+                  <div key={widget.id} style={wrapperStyle}>
+                    {/* Live pages read the provider's current values (URL /
+                        stored / defaults); read-only pages interpolate the
+                        configured defaults so `{{tokens}}` never render raw. */}
+                    <TextWidget
+                      markdown={textConfigFrom(widget.config).markdown}
+                      values={publicLive ? undefined : variableDefaults}
+                      variables={variables}
                     />
                   </div>
                 )
@@ -187,15 +226,13 @@ const pageStyles: Record<string, React.CSSProperties> = {
   header: {
     background: 'var(--nav-bg)',
     borderBottom: '1px solid var(--nav-border)',
-    height: 56,
+    minHeight: 56,
     flexShrink: 0,
     display: 'flex',
     alignItems: 'center',
   },
   headerInner: {
     width: '100%',
-    maxWidth: 1280,
-    margin: '0 auto',
     padding: '0 40px',
     display: 'flex',
     alignItems: 'center',
@@ -209,12 +246,25 @@ const pageStyles: Record<string, React.CSSProperties> = {
     fontFamily: 'var(--font-mono)',
     flexShrink: 0,
   },
+  titleBlock: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: 2,
+    flex: 1,
+    minWidth: 0,
+  },
   title: {
     fontSize: 16,
     fontWeight: 700,
     color: 'var(--nav-text)',
     margin: 0,
-    flex: 1,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+  },
+  subtitle: {
+    fontSize: 12,
+    color: 'var(--nav-text-muted)',
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -233,8 +283,6 @@ const pageStyles: Record<string, React.CSSProperties> = {
   },
   body: {
     flex: 1,
-    maxWidth: 1280,
-    margin: '0 auto',
     padding: '40px 40px',
     width: '100%',
   },
