@@ -28,6 +28,9 @@ function comparisonReading(
   config: MetricConfig,
 ): ComparisonReading | null {
   if (!comparison) return null
+  // Tone follows the delta (business direction), not the percent sign: with a
+  // negative baseline the two can disagree (prev=-100, main=-50 → delta +50,
+  // percent -50%), and the delta is the intended source of truth.
   const tone: ComparisonTone = comparison.delta > 0 ? 'up' : comparison.delta < 0 ? 'down' : 'flat'
   if ((config.comparison?.mode ?? 'percent') === 'delta') {
     return { text: signed(formatValue(comparison.delta, config.format)), tone }
@@ -36,6 +39,11 @@ function comparisonReading(
   // "+0.0%" would read as "no change" when the metric actually grew.
   if (comparison.delta !== 0 && comparison.percent === 0) {
     return { text: '—', tone: 'flat' }
+  }
+  // A change too small to survive one decimal rounds to "+0.0%": keep it
+  // neutral rather than coloring a "-0.0%" red.
+  if (Math.abs(comparison.percent) < 0.05) {
+    return { text: '+0.0%', tone: 'flat' }
   }
   return { text: `${signed(comparison.percent.toFixed(1))}%`, tone }
 }
@@ -48,9 +56,12 @@ const toneColor: Record<ComparisonTone, string> = {
 
 /** x spans the full width; y is normalized into [2, 26] (2px padding). */
 function sparklinePolyline(points: Array<[number, number]>): string {
-  const ys = points.map(([, y]) => y)
-  const min = Math.min(...ys)
-  const max = Math.max(...ys)
+  let min = points[0][1]
+  let max = points[0][1]
+  for (const [, y] of points) {
+    if (y < min) min = y
+    if (y > max) max = y
+  }
   const span = max - min
   const usable = SPARKLINE_HEIGHT - SPARKLINE_PAD_Y * 2
   return points
@@ -77,7 +88,7 @@ export function MetricWidget({ result, config }: Props) {
   const formatted = value === null ? '—' : formatValue(value, config.format)
   const reading = comparisonReading(computeComparison(result, config), config)
   const points = sparklinePoints(result, config)
-  const ariaLabel = `${config.label ? `${config.label}: ` : ''}${formatted}${reading?.text ?? ''}`
+  const ariaLabel = `${config.label ? `${config.label}: ` : ''}${formatted}${reading ? `, ${reading.text}` : ''}`
 
   return (
     <div role="group" aria-label={ariaLabel} style={styles.root}>
@@ -99,7 +110,7 @@ export function MetricWidget({ result, config }: Props) {
           aria-hidden="true"
           style={styles.sparkline}
         >
-          <polyline points={sparklinePolyline(points)} fill="none" stroke="var(--accent)" strokeWidth={1.5} />
+          <polyline points={sparklinePolyline(points)} fill="none" stroke="var(--accent)" strokeWidth={1.5} vectorEffect="non-scaling-stroke" />
         </svg>
       )}
     </div>
@@ -108,6 +119,8 @@ export function MetricWidget({ result, config }: Props) {
 
 const styles: Record<string, React.CSSProperties> = {
   root: {
+    flex: 1,
+    minHeight: 0,
     display: 'flex',
     flexDirection: 'column',
     justifyContent: 'center',
@@ -116,6 +129,7 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 16,
     textAlign: 'left',
     minWidth: 0,
+    containerType: 'inline-size',
   },
   label: {
     fontFamily: 'var(--font-mono)',
@@ -128,11 +142,15 @@ const styles: Record<string, React.CSSProperties> = {
   value: {
     fontFamily: 'var(--font-mono)',
     fontVariantNumeric: 'tabular-nums',
-    fontSize: 32,
+    fontSize: 'clamp(20px, 9cqw, 32px)',
     fontWeight: 700,
     letterSpacing: '-0.5px',
     lineHeight: 1.1,
     color: 'var(--text-primary)',
+    whiteSpace: 'nowrap',
+    maxWidth: '100%',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
   },
   valueMissing: {
     color: 'var(--text-muted)',

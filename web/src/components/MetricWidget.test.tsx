@@ -38,6 +38,15 @@ describe('MetricWidget', () => {
     expect(screen.getByText('+100')).toBeInTheDocument()
   })
 
+  it('shows a negative comparison as a signed delta in delta mode', () => {
+    const drop = {
+      columns: [{ name: 'revenue' }, { name: 'prev' }],
+      rows: [[200, 400]],
+    } as unknown as ResultSet
+    render(<MetricWidget result={drop} config={{ value_column: 'revenue', aggregation: 'none', comparison: { column: 'prev', mode: 'delta' } }} />)
+    expect(screen.getByText('-200')).toHaveStyle({ color: 'var(--error)' })
+  })
+
   it('renders a negative comparison with the error color and a down icon', () => {
     const down = {
       columns: [{ name: 'revenue' }, { name: 'prev' }],
@@ -67,9 +76,25 @@ describe('MetricWidget', () => {
     expect(screen.getByText('+0.0%')).toHaveStyle({ color: 'var(--text-muted)' })
   })
 
+  it('renders a missing value in the muted color', () => {
+    render(<MetricWidget result={result} config={{ value_column: 'nope', aggregation: 'sum' }} />)
+    expect(screen.getByText('—')).toHaveStyle({ color: 'var(--text-muted)' })
+  })
+
+  it('renders a muted +0.0% for a change too small to survive one decimal', () => {
+    const tiny = {
+      columns: [{ name: 'revenue' }, { name: 'prev' }],
+      rows: [[24990, 25000]],
+    } as unknown as ResultSet
+    const { container } = render(<MetricWidget result={tiny} config={{ value_column: 'revenue', aggregation: 'none', comparison: { column: 'prev', mode: 'percent' } }} />)
+    expect(screen.getByText('+0.0%')).toHaveStyle({ color: 'var(--text-muted)' })
+    expect(container.querySelector('.lucide-trending-up')).toBeNull()
+    expect(container.querySelector('.lucide-trending-down')).toBeNull()
+  })
+
   it('includes the reading and the comparison in the group aria-label', () => {
     render(<MetricWidget result={result} config={{ value_column: 'revenue', aggregation: 'sum', label: 'Total revenue', format: { style: 'currency', currency: 'USD', decimals: 0 }, comparison: { column: 'prev', mode: 'percent' } }} />)
-    expect(screen.getByRole('group', { name: 'Total revenue: $200+100.0%' })).toBeInTheDocument()
+    expect(screen.getByRole('group', { name: 'Total revenue: $200, +100.0%' })).toBeInTheDocument()
   })
 
   it('teaches instead of crashing when no value column is configured', () => {
@@ -92,5 +117,35 @@ describe('MetricWidget', () => {
     } as unknown as ResultSet
     const { container } = render(<MetricWidget result={flat} config={{ value_column: 'v', aggregation: 'none', sparkline: { x_column: 'd', y_column: 'v' } }} />)
     expect(container.querySelector('svg polyline')?.getAttribute('points')).toBe('0.0,14.0 120.0,14.0')
+  })
+
+  it('places intermediate sparkline points between the extremes', () => {
+    const three = {
+      columns: [{ name: 'v' }, { name: 'd' }],
+      rows: [
+        [10, '2026-10-01'],
+        [20, '2026-10-02'],
+        [30, '2026-10-03'],
+      ],
+    } as unknown as ResultSet
+    const { container } = render(<MetricWidget result={three} config={{ value_column: 'v', aggregation: 'none', sparkline: { x_column: 'd', y_column: 'v' } }} />)
+    expect(container.querySelector('svg polyline')?.getAttribute('points')).toBe('0.0,26.0 60.0,14.0 120.0,2.0')
+  })
+
+  it('omits the sparkline when fewer than two points are numeric', () => {
+    const sparse = {
+      columns: [{ name: 'revenue' }, { name: 'day' }],
+      rows: [
+        [120, '2026-10-01'],
+        ['n/a', '2026-10-02'],
+      ],
+    } as unknown as ResultSet
+    const { container } = render(<MetricWidget result={sparse} config={{ value_column: 'revenue', aggregation: 'none', sparkline: { x_column: 'day', y_column: 'revenue' } }} />)
+    expect(container.querySelector('svg')).toBeNull()
+  })
+
+  it('omits the sparkline when its columns are not configured', () => {
+    const { container } = render(<MetricWidget result={result} config={{ value_column: 'revenue', aggregation: 'none' }} />)
+    expect(container.querySelector('svg')).toBeNull()
   })
 })
