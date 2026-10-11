@@ -68,6 +68,9 @@ export function PublicDashboardPage() {
   const app = dashboard.settings?.app
   const appWidth = app?.width ?? 'fixed'
   const appTitle = app?.title || dashboard.title
+  // show_header=false hides the title block; the sr-only h1 keeps the
+  // document outline (same treatment as the internal app view).
+  const showMasthead = app?.show_header !== false
   // Masthead and body share one content width (The Story).
   const contentWidth: React.CSSProperties | undefined = appWidth === 'fixed'
     ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
@@ -102,10 +105,14 @@ export function PublicDashboardPage() {
       <header style={pageStyles.header}>
         <div style={{ ...pageStyles.headerInner, ...contentWidth }}>
           <span style={pageStyles.brandMark}>Aether</span>
-          <div style={pageStyles.titleBlock}>
-            <h1 style={pageStyles.title}>{appTitle}</h1>
-            {app?.subtitle && <div style={pageStyles.subtitle}>{app.subtitle}</div>}
-          </div>
+          {showMasthead ? (
+            <div style={pageStyles.titleBlock}>
+              <h1 style={pageStyles.title}>{appTitle}</h1>
+              {app?.subtitle && <div style={pageStyles.subtitle}>{app.subtitle}</div>}
+            </div>
+          ) : (
+            <h1 className="sr-only">{appTitle}</h1>
+          )}
           <span style={pageStyles.readOnlyBadge}>{publicLive ? 'Live' : 'Read-only'}</span>
         </div>
       </header>
@@ -280,6 +287,9 @@ const pageStyles: Record<string, React.CSSProperties> = {
     textTransform: 'uppercase',
     letterSpacing: '0.05em',
     flexShrink: 0,
+    // Holds the right edge when show_header=false removes the flex:1 title
+    // block; a no-op while the block (and its flex:1) is present.
+    marginLeft: 'auto',
   },
   body: {
     flex: 1,
