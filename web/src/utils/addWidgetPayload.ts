@@ -1,14 +1,23 @@
 export type AddWidgetSource = 'cell' | 'query' | 'none'
 
+export type AddWidgetType = 'table' | 'chart' | 'metric' | 'text'
+
 export interface AddWidgetInput {
   source: AddWidgetSource
-  type: 'table' | 'chart' | 'metric' | 'text'
+  type: AddWidgetType
   layout: { row: number; col: number; width: number; height: number }
   notebookId?: string
   cellId?: string
   connectorId?: string | null
   query?: string
   markdown?: string
+}
+
+/** The widget types the picker may add for a given source. */
+export function validTypesForSource(source: AddWidgetSource): AddWidgetType[] {
+  if (source === 'none') return ['text']
+  if (source === 'cell') return ['table', 'chart']
+  return ['table', 'chart', 'metric']
 }
 
 /**

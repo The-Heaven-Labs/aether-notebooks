@@ -5,7 +5,9 @@ import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
-import { buildAddWidgetPayload } from '../utils/addWidgetPayload'
+import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPayload'
+import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
+import { isQueryWidget, widgetKindLabel } from '../utils/widgetKind'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -53,10 +55,6 @@ function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width:
   if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
   const maxBottom = widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
   return { row: maxBottom, col: 0, width: 6, height: 8 }
-}
-
-function isQueryWidget(w: Widget): boolean {
-  return !!w.connector_id && !!w.query
 }
 
 /** Human name for a widget's controls; falls back to a generic label. */
@@ -143,7 +141,7 @@ const markSaved = useCallback(() => {
   const [pickerCellId, setPickerCellId] = useState('')
   const [pickerConnectorId, setPickerConnectorId] = useState<string | null>(null)
   const [pickerQuery, setPickerQuery] = useState('SELECT 1')
-  const [pickerType, setPickerType] = useState<'table' | 'chart' | 'metric' | 'text'>('table')
+  const [pickerType, setPickerType] = useState<AddWidgetType>('table')
   const [pickerMarkdown, setPickerMarkdown] = useState('')
   const [pickerError, setPickerError] = useState<string | null>(null)
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
@@ -333,20 +331,15 @@ const markSaved = useCallback(() => {
   const widgets = dashboard.widgets ?? []
   const pickerCells = pickerNotebook?.cells ?? []
 
-  // The picker can only add valid source/type combinations:
-  // none→text; cell→table|chart; query→table|chart|metric.
+  const pickerValidTypes = validTypesForSource(pickerSource)
   const pickerSourceComplete =
     pickerSource === 'cell'
       ? !!pickerNotebookId && !!pickerCellId
       : pickerSource === 'query'
         ? !!pickerConnectorId && !!pickerQuery.trim()
         : true
-  const pickerTypeValid =
-    pickerSource === 'none'
-      ? pickerType === 'text'
-      : pickerSource === 'query'
-        ? pickerType !== 'text'
-        : pickerType === 'table' || pickerType === 'chart'
+  const pickerTypeValid = pickerValidTypes.includes(pickerType)
+  const pickerAddDisabled = addWidget.isPending || !pickerSourceComplete || !pickerTypeValid
 
   const variables = dashboard.settings?.variables ?? []
 
@@ -496,13 +489,10 @@ const markSaved = useCallback(() => {
                 aria-label="Widget source"
                 value={pickerSource}
                 onChange={(e) => {
-                  const source = e.target.value as 'cell' | 'query' | 'none'
+                  const source = e.target.value as AddWidgetSource
                   setPickerSource(source)
-                  if (source === 'none') {
-                    setPickerType('text')
-                  } else if (pickerType === 'text' || (source === 'cell' && pickerType === 'metric')) {
-                    setPickerType('table')
-                  }
+                  const valid = validTypesForSource(source)
+                  if (!valid.includes(pickerType)) setPickerType(valid[0])
                 }}
               >
                 <option value="cell">Notebook cell</option>
@@ -529,7 +519,7 @@ const markSaved = useCallback(() => {
 
                   <label style={styles.pickerLabel}>Cell</label>
                   <select
-                    style={styles.pickerSelect}
+                    style={{ ...styles.pickerSelect, ...(!pickerNotebookId ? styles.pickerSelectDisabled : {}) }}
                     value={pickerCellId}
                     onChange={(e) => setPickerCellId(e.target.value)}
                     disabled={!pickerNotebookId}
@@ -564,16 +554,16 @@ const markSaved = useCallback(() => {
 
               <label style={styles.pickerLabel}>Widget Type</label>
               <select
-                style={styles.pickerSelect}
+                style={{ ...styles.pickerSelect, ...(pickerSource === 'none' ? styles.pickerSelectDisabled : {}) }}
                 aria-label="Widget type"
                 value={pickerType}
-                onChange={(e) => setPickerType(e.target.value as 'table' | 'chart' | 'metric' | 'text')}
+                onChange={(e) => setPickerType(e.target.value as AddWidgetType)}
                 disabled={pickerSource === 'none'}
               >
-                <option value="table">Table</option>
-                <option value="chart">Chart</option>
-                <option value="metric" disabled={pickerSource === 'cell'}>Metric</option>
-                <option value="text" disabled={pickerSource !== 'none'}>Text</option>
+                <option value="table" disabled={!pickerValidTypes.includes('table')}>Table</option>
+                <option value="chart" disabled={!pickerValidTypes.includes('chart')}>Chart</option>
+                <option value="metric" disabled={!pickerValidTypes.includes('metric')}>Metric</option>
+                <option value="text" disabled={!pickerValidTypes.includes('text')}>Text</option>
               </select>
 
               {pickerError && (
@@ -582,8 +572,8 @@ const markSaved = useCallback(() => {
 
               <button
                 type="button"
-                style={styles.pickerAddBtn}
-                disabled={addWidget.isPending || !pickerSourceComplete || !pickerTypeValid}
+                style={{ ...styles.pickerAddBtn, ...(pickerAddDisabled ? styles.pickerAddBtnDisabled : {}) }}
+                disabled={pickerAddDisabled}
                 onClick={() => addWidget.mutate()}
               >
                 {addWidget.isPending ? 'Adding…' : 'Add Widget'}
@@ -613,7 +603,7 @@ const markSaved = useCallback(() => {
                 {dashboard.widgets?.map((widget: Widget) => (
                   <div key={widget.id} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
-                      <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
+                      <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
                       <div className="dash-widget-head-actions">
                         <button
                           type="button"
@@ -664,7 +654,7 @@ const markSaved = useCallback(() => {
                     <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
                     <div className="dash-widget-card" style={styles.widgetCard}>
                       <div className="dash-widget-head">
-                        <span className="dash-widget-kind">{isQueryWidget(widget) ? 'Query' : 'Cell'}</span>
+                        <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
                         <div className="dash-widget-head-actions">
                           <button
                             type="button"
@@ -899,6 +889,9 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
   },
+  pickerSelectDisabled: {
+    opacity: 0.5,
+  },
   pickerTextarea: {
     width: '100%',
     minHeight: 120,
@@ -928,6 +921,10 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 600,
     cursor: 'pointer',
     marginTop: 4,
+  },
+  pickerAddBtnDisabled: {
+    opacity: 0.5,
+    cursor: 'not-allowed',
   },
   subHeaderMobile: {
     height: 'auto',

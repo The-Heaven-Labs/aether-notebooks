@@ -1,7 +1,19 @@
 import { describe, expect, it } from 'vitest'
-import { buildAddWidgetPayload } from './addWidgetPayload'
+import { buildAddWidgetPayload, validTypesForSource } from './addWidgetPayload'
 
 const layout = { row: 0, col: 0, width: 6, height: 8 }
+
+describe('validTypesForSource', () => {
+  it('offers only text for the source-less panel', () => {
+    expect(validTypesForSource('none')).toEqual(['text'])
+  })
+  it('offers table and chart for cell widgets', () => {
+    expect(validTypesForSource('cell')).toEqual(['table', 'chart'])
+  })
+  it('offers metric for query widgets', () => {
+    expect(validTypesForSource('query')).toEqual(['table', 'chart', 'metric'])
+  })
+})
 
 describe('buildAddWidgetPayload', () => {
   it('builds a source-less text widget', () => {
@@ -9,6 +21,20 @@ describe('buildAddWidgetPayload', () => {
       type: 'text',
       layout,
       config: { text: { markdown: '## Hi' } },
+    })
+  })
+  it('defaults a missing markdown to an empty string', () => {
+    expect(buildAddWidgetPayload({ source: 'none', type: 'text', layout })).toEqual({
+      type: 'text',
+      layout,
+      config: { text: { markdown: '' } },
+    })
+  })
+  it('coerces the type to text for source-less widgets', () => {
+    expect(buildAddWidgetPayload({ source: 'none', type: 'table', markdown: '# Hi', layout })).toEqual({
+      type: 'text',
+      layout,
+      config: { text: { markdown: '# Hi' } },
     })
   })
   it('builds a query metric widget', () => {
