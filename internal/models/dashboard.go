@@ -15,11 +15,26 @@ type Dashboard struct {
 }
 
 type DashboardSettings struct {
-	AutoRefreshSeconds int                 `json:"auto_refresh_seconds,omitempty"`
-	GridCols           int                 `json:"grid_cols,omitempty"`
-	QueryCacheSeconds  *int                `json:"query_cache_seconds,omitempty"`
-	PublicLive         bool                `json:"public_live,omitempty"`
-	Variables          []DashboardVariable `json:"variables,omitempty"`
+	AutoRefreshSeconds int                   `json:"auto_refresh_seconds,omitempty"`
+	GridCols           int                   `json:"grid_cols,omitempty"`
+	QueryCacheSeconds  *int                  `json:"query_cache_seconds,omitempty"`
+	PublicLive         bool                  `json:"public_live,omitempty"`
+	Variables          []DashboardVariable   `json:"variables,omitempty"`
+	App                *DashboardAppSettings `json:"app,omitempty"`
+}
+
+// DashboardAppSettings configures the dashboard's App surface (the
+// full-bleed, chrome-free viewer). All fields are optional; absent values
+// keep today's viewer behavior (fixed width, header/refresh/freshness shown).
+type DashboardAppSettings struct {
+	Title            string `json:"title,omitempty"`
+	Subtitle         string `json:"subtitle,omitempty"`
+	LogoAttachmentID string `json:"logo_attachment_id,omitempty"`
+	Width            string `json:"width,omitempty"`  // "fixed" | "full"; empty = fixed
+	Layout           string `json:"layout,omitempty"` // "grid" | "custom"; empty = grid (wave 4)
+	ShowHeader       *bool  `json:"show_header,omitempty"`
+	ShowRefresh      *bool  `json:"show_refresh,omitempty"`
+	ShowLastUpdated  *bool  `json:"show_last_updated,omitempty"`
 }
 
 // DashboardVariable is a dashboard-level filter. Values are interpolated

@@ -50,6 +50,33 @@ type addWidgetRequest struct {
 	Config      map[string]interface{} `json:"config,omitempty"`
 }
 
+const (
+	maxAppTitleRunes    = 120
+	maxAppSubtitleRunes = 200
+)
+
+// validateDashboardAppSettings bounds the app surface configuration. Unknown
+// JSON keys are already dropped by the struct round-trip; this only rejects
+// values that would render incorrectly.
+func validateDashboardAppSettings(app *models.DashboardAppSettings) error {
+	if app == nil {
+		return nil
+	}
+	if len([]rune(app.Title)) > maxAppTitleRunes {
+		return fmt.Errorf("app title must be at most %d characters", maxAppTitleRunes)
+	}
+	if len([]rune(app.Subtitle)) > maxAppSubtitleRunes {
+		return fmt.Errorf("app subtitle must be at most %d characters", maxAppSubtitleRunes)
+	}
+	if app.Width != "" && app.Width != "fixed" && app.Width != "full" {
+		return fmt.Errorf(`app width must be "fixed" or "full"`)
+	}
+	if app.Layout != "" && app.Layout != "grid" && app.Layout != "custom" {
+		return fmt.Errorf(`app layout must be "grid" or "custom"`)
+	}
+	return nil
+}
+
 // @Summary Create a dashboard
 // @Description Create a new dashboard
 // @Tags dashboards
@@ -150,6 +177,10 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		argIdx++
 	}
 	if req.Settings != nil {
+		if err := validateDashboardAppSettings(req.Settings.App); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		settingsJSON, _ := json.Marshal(req.Settings)
 		updates = append(updates, fmt.Sprintf("settings=$%d", argIdx))
 		args = append(args, settingsJSON)
