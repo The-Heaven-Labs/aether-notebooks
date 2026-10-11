@@ -216,10 +216,10 @@ test.describe('live dashboard collaboration', () => {
     const initialExecutes = executes()
     expect(initialExecutes).toBeGreaterThanOrEqual(1)
 
-    // Edit the SQL in the drawer: `* 3` → `* 2`. The drawer's editor binds to
-    // the shared document asynchronously, and a late attach reverts an early
-    // keystroke; retype-and-verify until the viewer actually receives the new
-    // SQL (which also proves the change reached the shared document).
+    // Edit the SQL in the drawer: `* 3` → `* 2`. The editor is read-only until
+    // its shared-document binding attaches, so early keystrokes cannot land;
+    // retype until the viewer actually receives the new SQL (which also proves
+    // the change reached the shared document).
     const target = 'SELECT i AS number, i * 2 AS doubled FROM generate_series(1,5) AS i'
     await editor.page.getByRole('button', { name: 'Edit widget' }).click()
     const drawer = editor.page.getByRole('dialog', { name: 'Widget configuration' })

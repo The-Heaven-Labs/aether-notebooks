@@ -17,7 +17,7 @@ export interface SqlEditorCollab {
   widgetId: string
 }
 
-export function SqlEditor({ value, onChange, minHeight = 160, connectorType, collab = null, editable = true }: {
+export function SqlEditor({ value, onChange, minHeight = 160, connectorType, collab = null, editable = true, onCollabUnavailable }: {
   value: string
   onChange: (value: string) => void
   minHeight?: number
@@ -30,11 +30,26 @@ export function SqlEditor({ value, onChange, minHeight = 160, connectorType, col
   collab?: SqlEditorCollab | null
   /** When false the editor is read-only (used while editing is paused). */
   editable?: boolean
+  /**
+   * Called when the shared binding cannot be loaded or applied; the caller
+   * should drop the document binding and fall back to local editing + REST
+   * persistence.
+   */
+  onCollabUnavailable?: () => void
 }) {
   const ref = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const onChangeRef = useRef(onChange)
   const valueRef = useRef(value)
+  const onCollabUnavailableRef = useRef(onCollabUnavailable)
+
+  // The collab whose binding has settled — applied, or failed with the editor
+  // released back to local editing. While it does not match `collab` the editor
+  // stays read-only: a keystroke before y-codemirror adopts the shared text
+  // would be reverted when the binding attaches.
+  const [readyCollab, setReadyCollab] = useState<SqlEditorCollab | null>(null)
+  const effectiveEditable = editable && (!collab || readyCollab === collab)
+  const effectiveEditableRef = useRef(effectiveEditable)
 
   // Latest-value refs, updated after render (refs must not be written during
   // render): the view creation effect reads them without re-running per
@@ -42,6 +57,8 @@ export function SqlEditor({ value, onChange, minHeight = 160, connectorType, col
   useEffect(() => {
     onChangeRef.current = onChange
     valueRef.current = value
+    onCollabUnavailableRef.current = onCollabUnavailable
+    effectiveEditableRef.current = effectiveEditable
   })
 
   // The view lives in state (not only a ref) so the binding and value effects
@@ -80,7 +97,7 @@ export function SqlEditor({ value, onChange, minHeight = 160, connectorType, col
             '.cm-gutters': { display: 'none' },
             '.cm-focused': { outline: 'none' },
           }),
-          editableCompartment.current.of(EditorView.editable.of(editable)),
+          editableCompartment.current.of(EditorView.editable.of(effectiveEditableRef.current)),
           collabCompartment.current.of([]),
         ],
       }),
@@ -98,10 +115,11 @@ export function SqlEditor({ value, onChange, minHeight = 160, connectorType, col
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [connectorType, minHeight])
 
-  // Toggle read-only without recreating the view.
+  // Toggle read-only without recreating the view. The editor also stays
+  // read-only until a requested shared binding has settled (`readyCollab`).
   useEffect(() => {
-    view?.dispatch({ effects: editableCompartment.current.reconfigure(EditorView.editable.of(editable)) })
-  }, [view, editable])
+    view?.dispatch({ effects: editableCompartment.current.reconfigure(EditorView.editable.of(effectiveEditable)) })
+  }, [view, effectiveEditable])
 
   // Apply external value changes without recreating the view. Once bound to a
   // shared document the Yjs text is the source of truth, so external values
@@ -114,22 +132,34 @@ export function SqlEditor({ value, onChange, minHeight = 160, connectorType, col
     }
   }, [view, value])
 
-  // Collaboration binding; the y-codemirror stack is imported on demand.
+  // Collaboration binding; the y-codemirror stack is imported on demand. Until
+  // the binding settles the editor is read-only, so an early keystroke cannot
+  // be reverted when y-codemirror adopts the shared text.
   useEffect(() => {
     if (!view || !collab) return
     let cancelled = false
     let detach: (() => void) | undefined
     collabBoundRef.current = false
-    void import('./dashboardCollabEditor').then((mod) => {
-      if (cancelled) return
-      detach = mod.attachDashboardCollabToEditor({
-        view,
-        compartment: collabCompartment.current,
-        collab: collab.collab,
-        widgetId: collab.widgetId,
+    setReadyCollab(null)
+    void import('./dashboardCollabEditor')
+      .then((mod) => {
+        if (cancelled) return
+        detach = mod.attachDashboardCollabToEditor({
+          view,
+          compartment: collabCompartment.current,
+          collab: collab.collab,
+          widgetId: collab.widgetId,
+        })
+        collabBoundRef.current = true
+        setReadyCollab(collab)
       })
-      collabBoundRef.current = true
-    })
+      .catch(() => {
+        if (cancelled) return
+        // The binding could not be loaded: release the gate and hand the
+        // editor back to local editing; the caller drops its doc binding.
+        setReadyCollab(collab)
+        onCollabUnavailableRef.current?.()
+      })
     return () => {
       cancelled = true
       detach?.()

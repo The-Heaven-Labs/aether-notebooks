@@ -174,17 +174,32 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   // a provider: when the page holds the dashboard document there is an entry,
   // otherwise the editor falls back to local state + REST.
   const [sqlCollab, setSqlCollab] = useState<SqlEditorCollab | null>(null)
+  // True once the live-document lookup has settled. Until then the SQL editor
+  // stays read-only: typing before the binding attaches would be reverted when
+  // y-codemirror adopts the shared text.
+  const [collabLookupDone, setCollabLookupDone] = useState(false)
+  const collabPending = docSynced && !collabLookupDone
   useEffect(() => {
-    if (!docSynced) return
+    if (!docSynced) {
+      setCollabLookupDone(false)
+      return
+    }
     let cancelled = false
-    void import('./dashboardCollabRuntime').then((mod) => {
-      if (cancelled) return
-      const entry = mod.peekDashboardCollab(dashboardId)
-      if (!entry) return
-      setSqlCollab(prev => (
-        prev && prev.collab === entry && prev.widgetId === widget.id ? prev : { collab: entry, widgetId: widget.id }
-      ))
-    })
+    void import('./dashboardCollabRuntime')
+      .then((mod) => {
+        if (cancelled) return
+        const entry = mod.peekDashboardCollab(dashboardId)
+        setSqlCollab(prev => {
+          if (!entry) return null
+          return prev && prev.collab === entry && prev.widgetId === widget.id
+            ? prev
+            : { collab: entry, widgetId: widget.id }
+        })
+      })
+      .catch(() => { /* fall back to local editing + REST */ })
+      .finally(() => {
+        if (!cancelled) setCollabLookupDone(true)
+      })
     return () => { cancelled = true }
   }, [docSynced, dashboardId, widget.id])
 
@@ -316,7 +331,14 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
           {isQuery ? (
             <>
               <ConnectorSelector value={connectorId} onChange={setConnectorId} disabled={!editingEnabled} />
-              <SqlEditor value={query} onChange={setQuery} connectorType={undefined} collab={sqlCollab} editable={editingEnabled} />
+              <SqlEditor
+                value={query}
+                onChange={setQuery}
+                connectorType={undefined}
+                collab={sqlCollab}
+                editable={editingEnabled && !collabPending}
+                onCollabUnavailable={() => setSqlCollab(null)}
+              />
               {references.length > 0 && (
                 <div style={styles.chipRow}>
                   {references.map(name => (
