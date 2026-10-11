@@ -947,9 +947,13 @@ The frame's defaults (`--bg-card`, `--border-light`, 4px radius, no inner paddin
 
 Wrap the widget content inside the editor's `dash-widget-card` with the same `WidgetFrame`, so the editor preview shows the authored appearance while drag chrome stays outside the frame.
 
+**Step 2b: Render source-less text widgets**
+
+Both pages currently render every non-query widget as a cell widget, so a source-less `text` widget (created by the Task 7 picker) shows "Cell not found". In both pages, when `widget.type === 'text' && !widget.notebook_id && !widget.connector_id`, render `<TextWidget markdown={textConfigFrom(widget.config).markdown} />` (import `textConfigFrom` from `../utils/textConfig`) inside the frame instead of the cell-output path. Cell-linked text cells keep their existing rendering.
+
 **Step 3: Verify**
 
-Run: `cd web && npm run test:run -- src/components/WidgetFrame.test.tsx src/components/QueryDataWidget.test.tsx && npx tsc --noEmit`
+Run: `cd web && npm run test:run -- src/components/WidgetFrame.test.tsx src/components/QueryDataWidget.test.tsx src/components/TextWidget.test.tsx && npx tsc --noEmit`
 Expected: PASS.
 
 **Step 4: Commit**
