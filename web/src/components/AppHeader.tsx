@@ -3,6 +3,12 @@ import { Link } from 'react-router-dom'
 import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
 import { formatExecutedAt } from '../utils/formatDateTime'
 
+/**
+ * The App surface's shared content width. The masthead, the filter strip, and
+ * the widget body all constrain to this so the three align.
+ */
+export const APP_CONTENT_MAX_WIDTH = 1200
+
 interface AppHeaderProps {
   /** Masthead title (the app title, falling back to the dashboard title). */
   title: string
@@ -39,10 +45,19 @@ export function AppHeader({
   children,
 }: AppHeaderProps) {
   return (
-    <header style={styles.root}>
-      <div style={width === 'fixed' ? styles.contentFixed : styles.content}>
+    <header className="app-header" style={styles.root}>
+      <div
+        className="app-header-content"
+        style={width === 'fixed' ? styles.contentFixed : undefined}
+      >
         {backTo && (
-          <Link to={backTo} aria-label="Back to dashboards" title="Back to dashboards" style={styles.backLink}>
+          <Link
+            to={backTo}
+            aria-label="Back to dashboards"
+            title="Back to dashboards"
+            className="icon-btn"
+            style={styles.backLink}
+          >
             <ArrowLeft size={16} />
           </Link>
         )}
@@ -52,9 +67,13 @@ export function AppHeader({
             {subtitle && <div style={styles.subtitle}>{subtitle}</div>}
           </div>
         )}
-        <div style={styles.actions}>
+        <div className="app-header-actions">
           {showLastUpdated && (
-            <span role="status" aria-live="polite" style={styles.freshness}>
+            <span
+              role="status"
+              aria-live="polite"
+              className="app-header-freshness"
+            >
               {lastUpdated ? `Updated ${formatExecutedAt(lastUpdated)}` : ''}
             </span>
           )}
@@ -82,28 +101,22 @@ export function AppHeader({
 }
 
 const styles: Record<string, CSSProperties> = {
+  // Padding lives on the .app-header class (theme.css) so the responsive
+  // media rule can tighten it; the hairline stays inline with the component.
   root: {
-    padding: '16px 32px',
     borderBottom: '1px solid var(--border-light)',
   },
-  content: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-  },
   contentFixed: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 12,
-    maxWidth: 1200,
+    maxWidth: APP_CONTENT_MAX_WIDTH,
     margin: '0 auto',
   },
+  // 36×36: the app surface's ≥36px tap-target rule (The Story).
   backLink: {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: 30,
-    height: 30,
+    width: 36,
+    height: 36,
     flexShrink: 0,
     borderRadius: 4,
     color: 'var(--text-muted)',
@@ -136,25 +149,13 @@ const styles: Record<string, CSSProperties> = {
     textOverflow: 'ellipsis',
     whiteSpace: 'nowrap',
   },
-  actions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 8,
-    flexShrink: 0,
-    marginLeft: 'auto',
-  },
-  freshness: {
-    fontSize: 11,
-    fontFamily: 'var(--font-mono)',
-    color: 'var(--text-muted)',
-    whiteSpace: 'nowrap',
-  },
+  // 36×36: same tap-target rule as the back link.
   refreshButton: {
     display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: 30,
-    height: 30,
+    width: 36,
+    height: 36,
     padding: 0,
     borderRadius: 4,
     border: '1px solid var(--border)',

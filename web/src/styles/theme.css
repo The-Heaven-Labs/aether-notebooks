@@ -1030,13 +1030,118 @@ input[type="color"] {
   }
 }
 
-/* ── Dashboard chrome (DashboardPage) ───────────────────────────────────── */
-.dash-header {
-  padding: 0 12px;
+/* ── App surface (DashboardPage's /view composition — The Story) ───────── */
+/* The masthead: a full-bleed hairline strip whose content row is constrained
+   to the shared app width (APP_CONTENT_MAX_WIDTH). On desktop the row does
+   not wrap; below 768px it wraps so title and actions coexist, the freshness
+   line demotes to the end of the action row, and side padding tightens. */
+.app-header {
+  padding: 16px 32px;
 }
 
-.dash-cols {
+.app-header-content {
   display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.app-header-actions:empty {
+  display: none;
+}
+
+/* The freshness line's own styles live here (not inline) so the mobile rule
+   can demote it. */
+.app-header-freshness {
+  font-size: 11px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* The quiet filter strip: the variable bar loses its own panel chrome inside
+   — the strip is the panel, reading as a shelf under the masthead. */
+.app-filter-strip {
+  padding: 8px 32px;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.app-filter-strip .dash-vars-bar {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+/* The widget body's page-canvas padding; the page constrains its inner width
+   to APP_CONTENT_MAX_WIDTH when settings.app.width is 'fixed'. */
+.app-body {
+  padding: 24px 32px;
+}
+
+/* Masthead action buttons (Edit / Share) sit on the page canvas, not the
+   dark nav chrome, so they use the body token family. The 36px min height
+   keeps the app surface's ≥36px tap-target rule. */
+.app-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 12px;
+  min-height: 36px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.app-action:hover {
+  color: var(--text-primary);
+  border-color: var(--text-muted);
+}
+
+@media (max-width: 767px) {
+  .app-header {
+    padding: 16px;
+  }
+
+  .app-header-content {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  /* Actions take their own row(s); the freshness line demotes behind the
+     controls so title + actions coexist at 375px. */
+  .app-header-actions {
+    flex-basis: 100%;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    row-gap: 8px;
+  }
+
+  .app-header-freshness {
+    order: 2;
+    font-size: 10px;
+  }
+
+  .app-filter-strip {
+    padding: 8px 16px;
+  }
+
+  .app-body {
+    padding: 24px 16px;
+  }
 }
 
 /* ── Dashboard variable bar (DashboardVariableBar) ─────────────────────── */
@@ -1164,39 +1269,6 @@ input[type="color"] {
   border-radius: 4px;
 }
 
-.nav-status {
-  color: var(--nav-text-muted);
-}
-
-@media (max-width: 767px) {
-  .dash-header {
-    flex-wrap: wrap;
-    padding: 8px 12px;
-    row-gap: 8px;
-  }
-
-  .dash-header-left {
-    min-width: 0;
-  }
-
-  .dash-title {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .dash-header-right {
-    flex-wrap: wrap;
-    row-gap: 8px;
-  }
-
-  /* The column selector is an editing control; it leaves the view header on
-     narrow screens (the editor keeps its own responsive variant). */
-  .dash-cols {
-    display: none;
-  }
-}
-
 /* ── Dashboard editor widget chrome (DashboardEditorPage) ───────────────── */
 /* Dashboard-editor widget chrome: a slim header row carries the widget kind
    and its edit/remove controls, so the widget's own meta text (rows/columns,
@@ -1229,13 +1301,6 @@ input[type="color"] {
   cursor: grab;
   z-index: 1;
   border-radius: 4px 4px 0 0;
-}
-
-.dash-widget-data {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
 }
 
 .dash-widget-kind {

@@ -15,6 +15,13 @@ const MotdMarkdown = lazy(() => import('./MotdMarkdown'))
 interface Props {
   children: React.ReactNode
   noPadding?: boolean
+  /**
+   * Chrome-free rendering for the App surface (The Story): no TopBar,
+   * Sidebar, skip link, MOTD banners, or global agent panel — the page owns
+   * the whole viewport. Every shell hook above still runs (rules of hooks);
+   * only the shell markup is skipped. Supersedes `noPadding`.
+   */
+  bare?: boolean
 }
 
 const AgentPanelLayoutContext = createContext<number>(0)
@@ -23,7 +30,7 @@ export function useAgentPanelLayoutVersion() {
   return useContext(AgentPanelLayoutContext)
 }
 
-export function AppShell({ children, noPadding }: Props) {
+export function AppShell({ children, noPadding, bare }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
   const [showGlobalAgent, setShowGlobalAgent] = useState(() => {
     try {
@@ -171,6 +178,10 @@ export function AppShell({ children, noPadding }: Props) {
   useEffect(() => {
     setLayoutVersion(v => v + 1)
   }, [showGlobalAgent, globalAgentMinimized, globalAgentDocked])
+
+  // All hooks above: the bare early return below is the last statement before
+  // the shell markup, so hook order is stable across both modes.
+  if (bare) return <>{children}</>
 
   return (
     <AgentPanelLayoutContext.Provider value={layoutVersion}>

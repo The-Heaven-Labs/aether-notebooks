@@ -118,6 +118,15 @@ describe('AppHeader', () => {
     expect(screen.queryByLabelText('Back to dashboards')).toBeNull()
   })
 
+  it('renders a minimal bar without a heading when the title is empty', () => {
+    renderHeader({ title: '', backTo: '/dashboards' }, <button type="button">Share</button>)
+    // show_header=false path: no title block, but the escape hatches remain.
+    expect(screen.queryByRole('heading')).toBeNull()
+    expect(screen.getByLabelText('Back to dashboards')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Share' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Refresh data' })).toBeInTheDocument()
+  })
+
   it('constrains content when width is fixed and spans when full', () => {
     const fixed = renderHeader({ width: 'fixed' })
     const fixedContent = fixed.container.firstElementChild?.firstElementChild as HTMLElement
@@ -133,8 +142,20 @@ describe('AppHeader', () => {
     const { container } = renderHeader()
     const header = container.firstElementChild as HTMLElement
     expect(header.tagName).toBe('HEADER')
-    expect(header.style.padding).toBe('16px 32px')
+    // The .app-header class owns the responsive padding (theme.css); the
+    // hairline stays inline with the component.
+    expect(header.className).toBe('app-header')
     expect(header.style.borderBottom).toBe('1px solid var(--border-light)')
     expect(header.style.position).not.toBe('sticky')
+  })
+
+  it('exposes 36px tap targets on the back and refresh controls', () => {
+    renderHeader({ backTo: '/dashboards' })
+    const back = screen.getByLabelText('Back to dashboards')
+    expect(back.style.width).toBe('36px')
+    expect(back.style.height).toBe('36px')
+    const refresh = screen.getByRole('button', { name: 'Refresh data' })
+    expect(refresh.style.width).toBe('36px')
+    expect(refresh.style.height).toBe('36px')
   })
 })

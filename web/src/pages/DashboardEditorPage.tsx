@@ -605,7 +605,7 @@ const markSaved = useCallback(() => {
         {widgets.length === 0 ? (
           <EmptyState
             title="No widgets yet"
-            text="Add widgets to display notebook cell outputs in this dashboard."
+            text="Add queries as tables, charts, or metrics — or write a text panel — to this dashboard."
             action={{ label: '+ Add Widget', onClick: () => setShowPicker(true) }}
           />
         ) : (
@@ -1000,9 +1000,11 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
   },
   // Fills the space below the head bar (desktop) / the card's content box
-  // (mobile) exactly as `.dash-widget-data` used to.
+  // (mobile). The -1px top pull overlaps the head bar's border-bottom with
+  // the frame's border-top so the two hairlines read as one seam.
   widgetFrame: {
     flex: 1,
     minHeight: 0,
+    marginTop: -1,
   },
 }

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
+import { Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
 import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -9,11 +9,11 @@ import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { AppShell } from '../components/AppShell'
+import { AppHeader, APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
-import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { isTextPanel } from '../utils/widgetKind'
@@ -280,12 +280,13 @@ function DashboardContent({ id }: { id: string }) {
   })
 
   // Per-widget fetch state, reported by the widgets themselves, so the header
-  // can show one honest "Refreshing n/m" signal instead of a button that goes
+  // can show one honest refreshing signal instead of a button that goes
   // idle before the widgets actually finish.
   const [fetchingWidgets, setFetchingWidgets] = useState<Record<string, boolean>>({})
-  const [justUpdated, setJustUpdated] = useState(false)
+  // One freshness signal for the whole app surface: the masthead's
+  // "Updated …" line, moved by widget fetches and batch runs.
+  const [lastFetchedAt, setLastFetchedAt] = useState<Date | null>(null)
   const refreshersRef = useRef(new Map<string, () => Promise<unknown>>())
-  const wasRefreshing = useRef(false)
 
   const reportFetching = useCallback((widgetId: string, fetching: boolean) => {
     setFetchingWidgets(prev => (!!prev[widgetId] === fetching ? prev : { ...prev, [widgetId]: fetching }))
@@ -299,16 +300,6 @@ function DashboardContent({ id }: { id: string }) {
     () => Object.values(fetchingWidgets).filter(Boolean).length,
     [fetchingWidgets],
   )
-
-  useEffect(() => {
-    const was = wasRefreshing.current
-    wasRefreshing.current = refreshingCount > 0
-    if (was && refreshingCount === 0) {
-      setJustUpdated(true)
-      const t = setTimeout(() => setJustUpdated(false), 2500)
-      return () => clearTimeout(t)
-    }
-  }, [refreshingCount])
 
   useEffect(() => {
     if (dashboard) {
@@ -346,6 +337,7 @@ function DashboardContent({ id }: { id: string }) {
         ),
         ...queryRuns,
       ])
+      setLastFetchedAt(new Date())
       if (dashboard?.can_view_with_data) {
         qc.invalidateQueries({ queryKey: ['dashboard', id] })
       } else {
@@ -396,29 +388,39 @@ function DashboardContent({ id }: { id: string }) {
   }
 
   const variables = dashboard.settings?.variables ?? []
+  const app = dashboard.settings?.app
+  const appWidth = app?.width ?? 'fixed'
+  // show_header=false hides the title block; the bar's escape hatches (back
+  // link, actions) stay so the surface is never a dead end.
+  const showMasthead = app?.show_header !== false
+  const appTitle = app?.title || dashboard.title
+  // Masthead, filter strip, and body share one content width (The Story).
+  const contentWidth: React.CSSProperties | undefined = appWidth === 'fixed'
+    ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
+    : undefined
 
   return (
     <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId}>
-    <AppShell noPadding>
-      {/* Sub-header */}
-      <header className="dash-header" style={styles.subHeader}>
-        <div className="dash-header-left" style={styles.headerLeft}>
-          <Link to="/dashboards" style={styles.backLink}>
-            <ArrowLeft size={14} style={{ flexShrink: 0 }} />
-            <span>Dashboards</span>
-          </Link>
-          <span style={styles.breadcrumbSep}>/</span>
-          <span className="dash-title" style={styles.dashboardTitle}>{dashboard.title}</span>
-        </div>
-        {/* Run all + auto-refresh */}
-        <div className="dash-header-right" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+    <AppShell noPadding bare>
+      {!showMasthead && <h1 className="sr-only">{appTitle}</h1>}
+      <AppHeader
+        title={showMasthead ? appTitle : ''}
+        subtitle={showMasthead ? app?.subtitle : undefined}
+        width={appWidth}
+        showRefresh={app?.show_refresh !== false}
+        showLastUpdated={app?.show_last_updated !== false}
+        lastUpdated={lastFetchedAt}
+        refreshing={refreshingCount > 0}
+        onRefresh={() => executeAllWidgets(widgets)}
+        backTo="/dashboards"
+      >
           {/* Per-viewer connector selection: query widgets in the same
               warehouse run on the selected service; others keep their own.
               allowClear is off while a live default exists — clearing would
               just re-select the suggestion on the next render. */}
           <span
             title="Choose which connector this dashboard's queries run on for you"
-            style={{ display: 'inline-flex' }}
+            style={{ display: 'inline-flex', minWidth: 0 }}
           >
             <ConnectorSelector
               value={viewerConnectorId}
@@ -426,52 +428,17 @@ function DashboardContent({ id }: { id: string }) {
               types={['clickhouse']}
               allowClear={!suggestion}
               placeholder="Run widgets on…"
-              style={{
-                fontSize: 12, maxWidth: 220,
-                background: 'rgba(255,255,255,0.06)',
-                color: 'var(--nav-text)',
-                borderColor: 'var(--nav-border)',
-              }}
+              style={{ fontSize: 12, maxWidth: 220, minHeight: 36 }}
             />
           </span>
-          {/* One honest progress signal for every widget refresh: counts while
-              work is in flight, then a brief confirmation. */}
-          <span
-            role="status"
-            aria-live="polite"
-            className="nav-status"
-            style={{
-              fontSize: 10, fontFamily: 'var(--font-mono)',
-              minWidth: 96, textAlign: 'right', whiteSpace: 'nowrap',
-            }}
-          >
-            {refreshingCount > 0
-              ? `Refreshing ${refreshingCount}/${widgets.length}…`
-              : justUpdated ? 'Updated' : ''}
-          </span>
-          <button
-            style={{
-              padding: '5px 12px', fontSize: 12, fontWeight: 600,
-              background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)',
-              border: 'none', borderRadius: 4, cursor: 'pointer',
-              display: 'inline-flex', alignItems: 'center', gap: 5,
-              opacity: isRunningAll || refreshingCount > 0 ? 0.6 : 1,
-            }}
-            disabled={isRunningAll || refreshingCount > 0}
-            onClick={() => executeAllWidgets(widgets)}
-            title="Re-run every widget's query with the current filters"
-          >
-            <RefreshCw size={12} style={isRunningAll || refreshingCount > 0 ? { animation: 'spin 1s linear infinite' } : undefined} />
-            {isRunningAll || refreshingCount > 0 ? 'Refreshing…' : 'Refresh'}
-          </button>
-          <Link to={`/dashboards/${id}`} className="nav-btn" title="Edit dashboard layout">
+          <Link to={`/dashboards/${id}`} className="app-action" title="Edit dashboard layout">
             <Settings size={12} /> Edit
           </Link>
 
-          {dashboard?.can_share !== false && (
+          {dashboard.can_share !== false && (
             <button
               type="button"
-              className="nav-btn"
+              className="app-action"
               onClick={() => setShowShare(true)}
               title="Share dashboard"
             >
@@ -479,42 +446,11 @@ function DashboardContent({ id }: { id: string }) {
             </button>
           )}
 
-          {/* Column count selector (edit-permission only: it persists settings) */}
-          {canEdit && <div className="dash-cols nav-seg">
-            {[6, 8, 12, 16, 24].map(cols => (
-              <button
-                key={cols}
-                type="button"
-                aria-pressed={(dashboard?.settings?.grid_cols ?? 12) === cols}
-                onClick={async () => {
-                  const oldCols = dashboard?.settings?.grid_cols ?? 12
-                  await api.put(`/api/v1/dashboards/${id}`, {
-                    settings: { ...dashboard?.settings, grid_cols: cols },
-                  })
-                  if (oldCols !== cols) {
-                    // Reflow widget layouts so nothing falls outside the new
-                    // grid (a bare column change used to push widgets off-view).
-                    const updates = rescaleWidgetLayouts(widgets as unknown as Widget[], oldCols, cols)
-                    await Promise.allSettled(
-                      updates.map(u => api.put(`/api/v1/dashboards/${id}/widgets/${u.id}`, { layout: u.layout })),
-                    )
-                  }
-                  qc.invalidateQueries({ queryKey: ['dashboard', id] })
-                }}
-                title={`${cols} columns`}
-              >
-                {cols}
-              </button>
-            ))}
-          </div>}
-
-          {canEdit && <div style={{ position: 'relative' }}>
+          {/* Auto-refresh persists dashboard settings, so it is an editing
+              control and rides the masthead only for editors. */}
+          {canEdit && <div style={{ position: 'relative', display: 'inline-flex' }}>
             <select
-              className="nav-select"
-              style={{
-                fontSize: 12, padding: '4px 24px 4px 8px',
-                cursor: 'pointer', appearance: 'none', WebkitAppearance: 'none', MozAppearance: 'none',
-              }}
+              style={styles.actionSelect}
               value={refreshCustom ? 'custom' : String(refreshSeconds)}
               onChange={async e => {
                 const val = e.target.value
@@ -538,18 +474,15 @@ function DashboardContent({ id }: { id: string }) {
               <option value="600">Every 10m</option>
               <option value="custom">Custom{customRefreshText}</option>
             </select>
-            <svg viewBox="0 0 10 6" width="10" height="6" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fill: 'none', stroke: 'currentColor', strokeWidth: 1.5 }}>
+            <svg viewBox="0 0 10 6" width="10" height="6" style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', fill: 'none', stroke: 'var(--text-muted)', strokeWidth: 1.5 }}>
               <polyline points="1,1 5,5 9,1" />
             </svg>
           </div>}
           {canEdit && refreshCustom && (
-            <div style={{ display: 'flex', alignItems: 'center', gap: 4, marginLeft: 4 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <input
                 type="text"
-               
-               
-                className="nav-input"
-                style={{ width: 72, fontSize: 12, padding: '4px 6px' }}
+                style={styles.actionInput}
                 value={refreshSeconds}
                 onChange={e => {
                   const val = parseInt(e.target.value)
@@ -569,18 +502,25 @@ function DashboardContent({ id }: { id: string }) {
               <span style={{ fontSize: 11, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>s</span>
             </div>
           )}
+      </AppHeader>
+
+      {/* Quiet filter strip: the variable bar loses its panel chrome inside
+          (see .app-filter-strip) and is constrained to the masthead width. */}
+      {variables.length > 0 && (
+        <div className="app-filter-strip">
+          <div style={contentWidth}>
+            <DashboardVariableBar />
+          </div>
         </div>
-      </header>
+      )}
 
-      <div style={styles.body}>
-        {/* Dashboard variable filters */}
-        {variables.length > 0 && <DashboardVariableBar />}
-
+      <div className="app-body">
+        <div style={{ ...contentWidth, display: 'flex', flexDirection: 'column', gap: 24 }}>
         {/* Widgets grid */}
         {widgets.length === 0 && variables.length === 0 ? (
           <EmptyState
-            title="No widgets yet"
-            text="Add widgets in the dashboard editor to display notebook cell outputs."
+            title="This app has no widgets yet"
+            text="Add widgets in the dashboard editor."
           />
         ) : widgets.length === 0 ? null : (
           <div ref={gridRef}>
@@ -602,6 +542,7 @@ function DashboardContent({ id }: { id: string }) {
                       queryEnabled={selected != null || !resolving}
                       viewerConnectorId={viewerConnectorId}
                       onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
+                      onFetched={() => setLastFetchedAt(new Date())}
                       registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
                     />
                   ) : isTextPanel(widget) ? (
@@ -620,6 +561,7 @@ function DashboardContent({ id }: { id: string }) {
             </GridLayout>
           </div>
         )}
+        </div>
       </div>
       {showShare && dashboard && (
         <ShareModal
@@ -653,57 +595,30 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'var(--accent)',
     opacity: 0.5,
   },
-  subHeader: {
-    background: 'var(--nav-bg)',
-    borderBottom: '1px solid var(--nav-border)',
-    minHeight: 44,
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    flexShrink: 0,
-    position: 'sticky',
-    top: 0,
-    zIndex: 99,
+  // Masthead controls sit on the page canvas (not the dark nav chrome), so
+  // they use the body token family. min-height 36 keeps the app surface's
+  // ≥36px tap-target rule uniform across the action row.
+  actionSelect: {
+    fontSize: 12,
+    minHeight: 36,
+    padding: '4px 24px 4px 8px',
+    cursor: 'pointer',
+    appearance: 'none',
+    WebkitAppearance: 'none',
+    MozAppearance: 'none',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
   },
-  headerLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 10,
-    minWidth: 0,
-  },
-  backLink: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: 5,
-    color: 'var(--nav-text)',
-    textDecoration: 'none',
-    fontSize: 13,
-    fontWeight: 500,
-    flexShrink: 0,
-    opacity: 0.8,
-  },
-  breadcrumbSep: {
-    color: 'var(--nav-text)',
-    fontSize: 14,
-    flexShrink: 0,
-    opacity: 0.5,
-  },
-  dashboardTitle: {
-    fontSize: 14,
-    fontWeight: 600,
-    color: 'var(--nav-text)',
-    whiteSpace: 'nowrap',
-    overflow: 'hidden',
-    textOverflow: 'ellipsis',
-    maxWidth: 400,
-  },
-  body: {
-    flex: 1,
-    margin: 0,
-    padding: '8px 12px',
-    width: '100%',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: 24,
+  actionInput: {
+    width: 72,
+    fontSize: 12,
+    minHeight: 36,
+    padding: '4px 6px',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
   },
 }

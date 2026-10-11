@@ -49,4 +49,13 @@ describe('AppShell', () => {
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
     expect(screen.queryByTitle('Close agent panel')).toBeNull()
   })
+
+  it('renders children alone in bare mode: no shell chrome', () => {
+    renderWithProviders(<AppShell bare><div>App surface</div></AppShell>)
+    expect(screen.getByText('App surface')).toBeInTheDocument()
+    // No skip link, no shell frame, no agent FAB.
+    expect(screen.queryByText('Skip to content')).toBeNull()
+    expect(document.querySelector('.app-shell')).toBeNull()
+    expect(screen.queryByTitle('Open AI Agent (Ctrl+K)')).toBeNull()
+  })
 })

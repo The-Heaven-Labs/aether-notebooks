@@ -185,7 +185,7 @@ function NoDataState({ onRun }: { onRun: () => void }) {
   )
 }
 
-export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, viewerConnectorId, endpointBase, onFetchingChange, registerRefresher }: {
+export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, viewerConnectorId, endpointBase, onFetchingChange, onFetched, registerRefresher }: {
   dashboardId: string
   widget: Widget
   canViewWithData: boolean
@@ -197,6 +197,8 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
   endpointBase?: string
   /** Reports this widget's fetching state so the dashboard header can show progress. */
   onFetchingChange?: (fetching: boolean) => void
+  /** Fires after each successful fetch, so the app masthead's freshness line tracks real data. */
+  onFetched?: () => void
   /** Registers an awaitable refresher; return value unregisters on unmount. */
   registerRefresher?: (refresh: () => Promise<unknown>) => (() => void) | void
 }) {
@@ -214,8 +216,15 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
   const columnFormats = useMemo(() => tableConfigFrom(widget.config).columns, [widget.config])
   const [fetchedAt, setFetchedAt] = useState<Date | null>(null)
 
+  // Ref so an inline parent callback never re-fires this effect (and never
+  // loops setState through the parent).
+  const onFetchedRef = useRef(onFetched)
+  onFetchedRef.current = onFetched
   useEffect(() => {
-    if (data) setFetchedAt(new Date())
+    if (data) {
+      setFetchedAt(new Date())
+      onFetchedRef.current?.()
+    }
   }, [data])
 
   // Stable refresher handle: the dashboard header can await "Refresh" runs.
