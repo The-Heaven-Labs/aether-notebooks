@@ -269,6 +269,18 @@ export interface WidgetQueryResult {
   cache_expires_at?: string
 }
 
+export interface DashboardAppTheme {
+  accent?: string
+  background?: string
+  surface?: string
+  text?: string
+  border?: string
+  radius?: number
+  font_family?: 'dm-sans' | 'jetbrains-mono' | 'system'
+  chart_palette?: string[]
+  color_scheme?: 'auto' | 'light' | 'dark'
+}
+
 export interface DashboardAppSettings {
   title?: string
   subtitle?: string
@@ -278,6 +290,12 @@ export interface DashboardAppSettings {
   show_header?: boolean
   show_refresh?: boolean
   show_last_updated?: boolean
+  theme?: DashboardAppTheme
+}
+
+export interface DashboardTab {
+  id: string
+  title: string
 }
 
 export interface Dashboard {
@@ -291,6 +309,7 @@ export interface Dashboard {
     public_live?: boolean
     variables?: DashboardVariable[]
     app?: DashboardAppSettings
+    tabs?: DashboardTab[]
   }
   public_token?: string
   folder_id?: string
@@ -304,6 +323,14 @@ export interface Dashboard {
   widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[]; metadata?: Record<string, unknown>; updated_at?: string }>
 }
 
+export interface WidgetLayout {
+  row: number
+  col: number
+  width: number
+  height: number
+  tab?: string
+}
+
 export interface Widget {
   id: string
   dashboard_id: string
@@ -313,7 +340,7 @@ export interface Widget {
   query?: string | null
   language?: string
   type: 'chart' | 'table' | 'text' | 'metric'
-  layout: { row: number; col: number; width: number; height: number }
+  layout: WidgetLayout
   config: Record<string, unknown>
   created_at: string
 }

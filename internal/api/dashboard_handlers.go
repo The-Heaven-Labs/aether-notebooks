@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -59,7 +61,18 @@ type addWidgetRequest struct {
 const (
 	maxAppTitleRunes    = 120
 	maxAppSubtitleRunes = 200
+
+	maxAppThemePaletteColors = 12
+	maxAppThemeRadius        = 24
+
+	maxDashboardTabs          = 10
+	maxDashboardTabIDLen      = 64
+	maxDashboardTabTitleRunes = 60
 )
+
+// dashboardTabIDPattern is the charset a tab id (and a widget's layout.tab)
+// must match: lowercase alphanumerics and dashes, starting alphanumeric.
+var dashboardTabIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 
 // validateDashboardAppSettings bounds the app surface configuration. Unknown
 // JSON keys are already dropped by the struct round-trip; this only rejects
@@ -80,7 +93,134 @@ func validateDashboardAppSettings(app *models.DashboardAppSettings) error {
 	if app.Layout != "" && app.Layout != "grid" && app.Layout != "custom" {
 		return fmt.Errorf(`app layout must be "grid" or "custom"`)
 	}
+	return validateAppTheme(app.Theme)
+}
+
+// validateAppTheme bounds the app surface's token overrides.
+func validateAppTheme(theme *models.DashboardAppTheme) error {
+	if theme == nil {
+		return nil
+	}
+	colors := []struct {
+		name  string
+		value string
+	}{
+		{"accent", theme.Accent},
+		{"background", theme.Background},
+		{"surface", theme.Surface},
+		{"text", theme.Text},
+		{"border", theme.Border},
+	}
+	for _, c := range colors {
+		if c.value != "" && !isHexColor(c.value) {
+			return fmt.Errorf("app theme %s must be a hex color like #rrggbb", c.name)
+		}
+	}
+	if theme.Radius != nil && (*theme.Radius < 0 || *theme.Radius > maxAppThemeRadius) {
+		return fmt.Errorf("app theme radius must be between 0 and %d", maxAppThemeRadius)
+	}
+	switch theme.FontFamily {
+	case "", "dm-sans", "jetbrains-mono", "system":
+	default:
+		return fmt.Errorf(`app theme font_family must be "dm-sans", "jetbrains-mono", or "system"`)
+	}
+	switch theme.ColorScheme {
+	case "", "auto", "light", "dark":
+	default:
+		return fmt.Errorf(`app theme color_scheme must be "auto", "light", or "dark"`)
+	}
+	if len(theme.ChartPalette) > maxAppThemePaletteColors {
+		return fmt.Errorf("app theme chart_palette must have at most %d colors", maxAppThemePaletteColors)
+	}
+	for _, c := range theme.ChartPalette {
+		if !isHexColor(c) {
+			return fmt.Errorf("app theme chart_palette entries must be hex colors like #rrggbb")
+		}
+	}
 	return nil
+}
+
+// isHexColor reports whether s is a #rgb or #rrggbb hex color.
+func isHexColor(s string) bool {
+	if len(s) != 4 && len(s) != 7 {
+		return false
+	}
+	if s[0] != '#' {
+		return false
+	}
+	for _, c := range s[1:] {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+// validateDashboardTabs bounds the dashboard's tab list: at most 10 tabs with
+// unique lowercase ids and a non-empty, bounded title.
+func validateDashboardTabs(tabs []models.DashboardTab) error {
+	if len(tabs) > maxDashboardTabs {
+		return fmt.Errorf("at most %d tabs are allowed", maxDashboardTabs)
+	}
+	seen := make(map[string]bool, len(tabs))
+	for _, tab := range tabs {
+		if tab.ID == "" {
+			return fmt.Errorf("tab id is required")
+		}
+		if err := validateWidgetTab(tab.ID); err != nil {
+			return err
+		}
+		if seen[tab.ID] {
+			return fmt.Errorf("duplicate tab id %q", tab.ID)
+		}
+		seen[tab.ID] = true
+		if strings.TrimSpace(tab.Title) == "" {
+			return fmt.Errorf("tab title is required")
+		}
+		if len([]rune(tab.Title)) > maxDashboardTabTitleRunes {
+			return fmt.Errorf("tab title must be at most %d characters", maxDashboardTabTitleRunes)
+		}
+	}
+	return nil
+}
+
+// validateWidgetTab bounds a widget's layout.tab. An empty tab is allowed
+// (the widget falls back to the first tab); otherwise it must match the tab
+// id charset and length.
+func validateWidgetTab(tab string) error {
+	if tab == "" {
+		return nil
+	}
+	if len(tab) > maxDashboardTabIDLen || !dashboardTabIDPattern.MatchString(tab) {
+		return fmt.Errorf("invalid tab id %q", tab)
+	}
+	return nil
+}
+
+// validateDashboardSettingsValue validates the `app` and `tabs` blocks of a
+// raw settings map. The update path decodes settings as a map (shallow merge
+// through the dashboard document), so the values arrive untyped; decode them
+// into the models to reuse the bounds and enum checks above.
+func validateDashboardSettingsValue(settings map[string]any) error {
+	if settings == nil {
+		return nil
+	}
+	if err := validateDashboardAppSettingsValue(settings["app"]); err != nil {
+		return err
+	}
+	raw, ok := settings["tabs"]
+	if !ok || raw == nil {
+		return nil
+	}
+	b, err := json.Marshal(raw)
+	if err != nil {
+		return fmt.Errorf("invalid tabs")
+	}
+	var tabs []models.DashboardTab
+	if err := json.Unmarshal(b, &tabs); err != nil {
+		return fmt.Errorf("invalid tabs")
+	}
+	return validateDashboardTabs(tabs)
 }
 
 // validateDashboardAppSettingsValue validates the `app` block of a raw settings
@@ -129,6 +269,10 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validateDashboardAppSettings(req.Settings.App); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := validateDashboardTabs(req.Settings.Tabs); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -225,7 +369,7 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		var mergedSettings map[string]any
 		var variables []map[string]any
 		if req.Settings != nil {
-			if err := validateDashboardAppSettingsValue(req.Settings["app"]); err != nil {
+			if err := validateDashboardSettingsValue(req.Settings); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
@@ -696,6 +840,12 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Validate the widget's tab assignment (empty falls back to the first tab).
+	if err := validateWidgetTab(req.Layout.Tab); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	// Validate widget layout bounds and overlap.
 	if err := s.validateWidgetLayout(ctx, dashID, req.Layout, ""); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -795,10 +945,11 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Layout *struct {
-			Row    int `json:"row"`
-			Col    int `json:"col"`
-			Width  int `json:"width"`
-			Height int `json:"height"`
+			Row    int    `json:"row"`
+			Col    int    `json:"col"`
+			Width  int    `json:"width"`
+			Height int    `json:"height"`
+			Tab    string `json:"tab,omitempty"`
 		} `json:"layout,omitempty"`
 		Config      map[string]interface{} `json:"config,omitempty"`
 		Type        *models.WidgetType     `json:"type,omitempty"`
@@ -834,6 +985,10 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Layout != nil {
+		if err := validateWidgetTab(req.Layout.Tab); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		// Validate widget layout bounds only (overlap is handled by the frontend compactor
 		// during drag/resize, and the backend cannot know which widgets were moved together).
 		if err := s.validateWidgetLayoutBounds(r.Context(), dashID, *req.Layout); err != nil {
