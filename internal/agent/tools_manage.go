@@ -391,7 +391,10 @@ func validateDashboardLogoAttachment(ctx context.Context, pool *pgxpool.Pool, or
 	if attachmentID == "" {
 		return nil
 	}
-	if _, err := uuid.Parse(attachmentID); err != nil {
+	// Mirror the API's isValidUUID: only the canonical lowercase spelling is
+	// accepted, so an id that the public attachment route would reject can
+	// never be stored as a logo.
+	if u, err := uuid.Parse(attachmentID); err != nil || u.String() != attachmentID {
 		return fmt.Errorf("logo attachment not found")
 	}
 	var exists bool

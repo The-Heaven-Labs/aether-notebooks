@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -1325,6 +1326,19 @@ func TestDashboardUpdateSettingsValidatesLogoAttachment(t *testing.T) {
 	})
 	require.NoError(t, err)
 	_, err = handler(malformedArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "logo attachment not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
+
+	// A non-canonical spelling of a real attachment id is rejected too: the
+	// public attachment route only accepts the canonical lowercase form, so
+	// storing another spelling would render a broken logo.
+	upperArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": strings.ToUpper(logoID)},
+	})
+	require.NoError(t, err)
+	_, err = handler(upperArgs, ctx)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "logo attachment not found")
 	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
