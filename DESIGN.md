@@ -292,6 +292,21 @@ Every dashboard widget carries an appearance block (`widget.config.appearance`).
 
 Absent or malformed fields fall back per-field to the defaults, so opting in can never break a widget.
 
+### App Surface Theming (approved 2026-10-11)
+
+The App surface (`/dashboards/:id/view` and public pages) may restyle itself per dashboard and per org; the editor and the rest of the product never change. Three layers resolve in order — dashboard `settings.app.theme`, org `settings.branding`, the built-in defaults — and the result is applied as scoped overrides of the existing token variables on an `.app-theme` container, plus a chart-palette override for canvas charts (charts cannot read CSS variables).
+
+- **Token set:** `accent` → `--accent`; `background` → `--bg-primary` (the page canvas); `surface` → `--bg-card`; `text` → `--text-primary`; `border` → `--border-light`; `radius` (0–24) → `--app-radius`; `font_family` → `--app-font` / `--font-sans` (curated self-hosted set: DM Sans default, JetBrains Mono, system-ui); `chart_palette` (≤12 hex colors) replaces the series palette; `color_scheme` is `auto` (follows the app's theme), `light`, or `dark` (a forced scheme re-declares the full token set on the container).
+- **Org branding** contributes the shared layer only: `app_name`, `logo_attachment_id`, `accent_color`, `default_chart_palette`.
+- **Contrast guardrails:** an override must be readable where it lands — text ≥ 4.5:1 against both the effective canvas and the effective card, accent ≥ 3:1 against the final canvas. Failing tokens fall back independently (dashboard → branding → default), so one unreadable color never discards the rest of a theme.
+- Fonts stay self-hosted; no third-party font requests.
+
+### Chapters & Publish (approved 2026-10-11)
+
+The app reads as chapters: `settings.tabs` (≤10; id `^[a-z0-9][a-z0-9-]*$`; title ≤60 runes) renders a tab bar under the masthead, and each widget sits in a chapter via `widgets.layout.tab`. The active chapter rides `?tab=`; an empty or unknown placement — and an unknown requested id — falls back to the first tab, so a deleted tab never strands its widgets. With no tabs the surface is one implicit chapter and the bar stays hidden.
+
+Publishing freezes the app for viewers: `POST /dashboards/{id}/publish` snapshots title + settings (variables folded in) + every widget definition into `dashboard_versions` (V130) with a canonical content hash. Viewers without `edit` are served the latest snapshot by default and never see draft edits; editors keep the draft and preview it at `?preview=draft`. Once a version exists the draft document is editor-only, published-mode execute/options resolve definitions server-side from the snapshot, and a draft whose widgets fail validation refuses to publish (422) instead of silently dropping them.
+
 ### Inputs / Fields
 - **Style:** 1px hairline border, 6px radius for form fields (4px for inline notebook controls), canvas or surface background, 13–14px DM Sans text (mono for parameter names, connector selectors, and code-adjacent inputs).
 - **Focus:** the global 2px amethyst outline at 2px offset — no glow, no border-color swap, no custom ring.
