@@ -293,13 +293,12 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const [connectorId, setConnectorId] = useState<string | null>(widget.connector_id ?? null)
   const [query, setQuery] = useState(widget.query ?? '')
   const [widgetType, setWidgetType] = useState<Widget['type']>(widget.type)
-  // Placement: "" means the first tab (layout.tab is absent). A tab that no
-  // longer exists falls back to the default so the select never shows a dead id.
+  // Placement: "" is the first tab (layout.tab absent). The select's value is
+  // derived per render so a tab deleted while the drawer is open falls back to
+  // the default instead of showing a stale id.
   const tabs = dashboard.settings?.tabs ?? []
-  const [tab, setTab] = useState(() => {
-    const own = widget.layout?.tab ?? ''
-    return own && tabs.some((t) => t.id === own) ? own : ''
-  })
+  const [tab, setTab] = useState(widget.layout?.tab ?? '')
+  const selectedTab = tab && tabs.some((t) => t.id === tab) ? tab : ''
   const [saveError, setSaveError] = useState<string | null>(null)
   // The latest saved config. The `widget` prop is a snapshot, so merging every
   // field edit into this (instead of `widget.config`) keeps sequential saves
@@ -688,9 +687,9 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
               <label style={styles.sectionLabel} htmlFor="widget-tab">Placement</label>
               <select
                 id="widget-tab"
-                aria-label="Tab"
+                aria-label="Placement"
                 style={styles.select}
-                value={tab}
+                value={selectedTab}
                 disabled={!editingEnabled}
                 onChange={(e) => saveTab(e.target.value)}
               >

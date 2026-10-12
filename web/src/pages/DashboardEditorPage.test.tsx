@@ -414,21 +414,44 @@ function syncedTabs(): void {
   })
 }
 
-/** Stubs the drop-point hit test; returns a restoring cleanup. */
+/** Stubs the legacy single-element hit test; returns a restoring cleanup. */
 function stubElementFromPoint(el: Element): () => void {
   Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => el })
   return () => { delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint }
 }
 
+/** Stubs the full hit-test stack, recording the queried points. */
+function stubElementsFromPoint(stack: Element[]): { points: Array<[number, number]>; restore: () => void } {
+  const points: Array<[number, number]> = []
+  Object.defineProperty(document, 'elementsFromPoint', {
+    configurable: true,
+    value: (x: number, y: number) => { points.push([x, y]); return stack },
+  })
+  return {
+    points,
+    restore: () => { delete (document as unknown as { elementsFromPoint?: unknown }).elementsFromPoint },
+  }
+}
+
 describe('DashboardEditorPage tabs', () => {
-  test('hides the strip and the filter entirely without tabs', async () => {
+  test('without tabs only the add shortcut shows; the filter stays hidden', async () => {
     docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
     await screen.findByTestId('grid')
 
     expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Add tab' })).not.toBeInTheDocument()
+    // The lone + is the only chapter control so a first tab can be created.
+    expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
     expect(screen.getByLabelText('Edit Rest widget')).toBeInTheDocument()
+  })
+
+  test('the lone add shortcut shows on mobile layouts too', async () => {
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 500 })
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+    await screen.findByLabelText('Edit Rest widget')
+
+    expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
   })
 
   test('renders a chip per tab and filters the grid from editor-local state', async () => {
@@ -450,19 +473,46 @@ describe('DashboardEditorPage tabs', () => {
     expect(screen.getByLabelText('Edit Beta widget')).toBeInTheDocument()
   })
 
-  test('dropping a card on a tab chip moves it there in one document write', async () => {
+  test('a deleted chapter does not re-apply its filter when the id returns', async () => {
+    syncedTabs()
+    renderEditor()
+    fireEvent.click(await screen.findByRole('button', { name: 'Beta' }))
+    expect(screen.queryByLabelText('Edit Alpha widget')).not.toBeInTheDocument()
+
+    // Beta is deleted elsewhere: the filter falls back to All immediately.
+    act(() => {
+      docStore.set({ settings: { tabs: [TABS[0]] } })
+    })
+    expect(await screen.findByLabelText('Edit Alpha widget')).toBeInTheDocument()
+
+    // A later chapter reusing the id must not resurrect the stale selection.
+    act(() => {
+      docStore.set({ settings: { tabs: [TABS[0], TABS[1]] } })
+    })
+    expect(screen.getByLabelText('Edit Alpha widget')).toBeInTheDocument()
+    expect(screen.getByLabelText('Edit Beta widget')).toBeInTheDocument()
+  })
+
+  test('dropping a card on a tab chip moves it there in a single document write', async () => {
     syncedTabs()
     renderEditor()
     await screen.findByTestId('grid')
 
-    const restore = stubElementFromPoint(screen.getByRole('button', { name: 'Beta' }))
+    // The dragged card sits above the chip at drop time, so the stack test must
+    // skip the top element and find the chip beneath it.
+    const { points, restore } = stubElementsFromPoint([
+      screen.getByTestId('grid'),
+      screen.getByRole('button', { name: 'Beta' }),
+    ])
     try {
       fireEvent.click(screen.getByTestId('drag-stop-on-chip'))
     } finally {
       restore()
     }
 
+    expect(points).toEqual([[20, 30]])
     // The final (dropped) position plus the new chapter, written as one layout.
+    expect(docStore.mutators.updateLayout).toHaveBeenCalledTimes(1)
     expect(docStore.mutators.updateLayout).toHaveBeenCalledWith(
       'w1', { row: 4, col: 3, width: 6, height: 8, tab: 'beta' })
   })
@@ -479,6 +529,7 @@ describe('DashboardEditorPage tabs', () => {
       restore()
     }
 
+    expect(docStore.mutators.updateLayout).toHaveBeenCalledTimes(1)
     expect(docStore.mutators.updateLayout).toHaveBeenCalledWith(
       'w1', { row: 4, col: 3, width: 6, height: 8, tab: '' })
   })

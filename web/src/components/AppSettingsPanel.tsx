@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { ArrowDown, ArrowUp, X } from 'lucide-react'
 import { api, getToken } from '../api/client'
@@ -139,11 +139,11 @@ function uniqueTabId(slug: string, taken: string[]): string {
 }
 
 /**
- * Clears a removed tab's placement on its widgets before the tab leaves
- * `settings.tabs`. A live dashboard document takes the write directly (one
- * Yjs transaction per widget); without one the same write goes over REST.
- * Failures are non-fatal: a widget whose tab no longer exists falls back to
- * the first tab anyway.
+ * Clears a removed tab's placement on its widgets after the settings save
+ * that dropped the tab succeeds. A live dashboard document takes the write
+ * directly (one Yjs transaction per widget); without one the same write goes
+ * over REST. Failures are non-fatal: a widget whose tab no longer exists
+ * falls back to the first tab anyway.
  */
 async function clearWidgetTabs(dashboardId: string, affected: Widget[]): Promise<void> {
   if (affected.length === 0) return
@@ -187,11 +187,12 @@ async function clearWidgetTabs(dashboardId: string, affected: Widget[]): Promise
  * and into the dashboard's other settings (variables, public_live, …).
  *
  * Tabs (`settings.tabs`) are edited as local draft rows — title, order and
- * membership commit with the same Save button as everything else — while a
- * tab's removal immediately clears its placement on the dashboard's widgets
- * (see clearWidgetTabs) so no widget is ever left pointing at a deleted
- * chapter. New tab ids are slugged from the default title (`tab-1`, …) and
- * stay stable across renames: widgets reference the id, not the title.
+ * membership commit with the same Save button as everything else. Removing a
+ * row is draft-only: placements for dropped tabs are cleared after the save
+ * that actually drops them succeeds (see clearWidgetTabs), so closing without
+ * saving leaves the dashboard untouched. New tab ids are slugged from the
+ * default title (`tab-1`, …) and stay stable across renames: widgets
+ * reference the id, not the title.
  */
 export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initialSection, onClose, onSaved }: {
   dashboardId: string
@@ -199,7 +200,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
   /** The dashboard's live widgets; used to clear a deleted tab's placements. */
   widgets?: Widget[]
   /** Opens with the Tabs section revealed and focused (the editor strip's +). */
-  initialSection?: 'app' | 'tabs'
+  initialSection?: 'tabs'
   onClose: () => void
   onSaved: () => void
 }) {
@@ -236,23 +237,17 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
   const [tabs, setTabs] = useState<DashboardTab[]>(() => dashboard.settings?.tabs ?? [])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
-  const tabsSectionRef = useRef<HTMLDivElement>(null)
   const tabsFocusRef = useRef<HTMLInputElement>(null)
   const addTabBtnRef = useRef<HTMLButtonElement>(null)
 
   useEscapeToClose(onClose)
-  useFocusTrap(panelRef)
-
-  // The editor strip's + opens this panel to add/arrange chapters: reveal the
-  // section and put focus on its first control. One-shot: the panel is mounted
-  // per open, and later tab edits must not steal focus mid-typing.
-  useEffect(() => {
-    if (initialSection !== 'tabs') return
-    tabsSectionRef.current?.scrollIntoView?.({ block: 'start' })
-    if (tabs.length > 0) tabsFocusRef.current?.focus()
-    else addTabBtnRef.current?.focus()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  // The editor strip's + opens this panel to add/arrange chapters: the focus
+  // trap lands on the Tabs section's first control instead of the panel.
+  useFocusTrap(
+    panelRef,
+    true,
+    initialSection === 'tabs' ? (tabs.length > 0 ? tabsFocusRef : addTabBtnRef) : undefined,
+  )
 
   const addTab = () => {
     if (tabs.length >= MAX_DASHBOARD_TABS) return
@@ -282,12 +277,8 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
   }
 
   const removeTab = (index: number) => {
-    const target = tabs[index]
-    if (!target) return
+    if (!tabs[index]) return
     setSaved(false)
-    // Drop the placement first so a widget can never keep pointing at the tab
-    // being removed (even if the panel is closed without saving).
-    void clearWidgetTabs(dashboardId, widgets.filter((w) => w.layout?.tab === target.id))
     setTabs((prev) => prev.filter((_, i) => i !== index))
   }
 
@@ -337,6 +328,11 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
       setError(built.error)
       return
     }
+    // Tabs present in the stored settings but absent from the draft are the
+    // ones this save drops; their widgets' placements are cleared only once
+    // the save succeeds, so closing without saving changes nothing.
+    const droppedTabs = (dashboard.settings?.tabs ?? [])
+      .filter((stored) => !tabs.some((tab) => tab.id === stored.id))
     setSaving(true)
     try {
       // Start from the existing app block so fields this panel doesn't own
@@ -358,12 +354,17 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
       else if (app?.theme) next.theme = null
       else delete next.theme
       await api.put(`/api/v1/dashboards/${dashboardId}`, {
-        // `tabs` is always sent: the server merges settings shallowly, so an
-        // omitted key would strand the stored chapter list.
-        settings: { ...dashboard.settings, app: next, tabs },
+        // Only the keys this panel owns are sent: the server merges settings
+        // shallowly, so anything omitted keeps its stored value. `tabs` must
+        // always ride along for chapter removals to apply.
+        settings: { app: next, tabs },
       })
       setSaved(true)
       onSaved()
+      if (droppedTabs.length > 0) {
+        void clearWidgetTabs(dashboardId, widgets.filter((w) =>
+          w.layout?.tab != null && droppedTabs.some((tab) => tab.id === w.layout.tab)))
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save app settings')
     } finally {
@@ -479,7 +480,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             <label htmlFor="app-show-last-updated">Show last updated</label>
           </div>
 
-          <div ref={tabsSectionRef} style={styles.section} role="heading" aria-level={3}>Tabs</div>
+          <div style={styles.section} role="heading" aria-level={3}>Tabs</div>
           {tabs.map((tab, index) => (
             <div key={tab.id} style={styles.tabRow}>
               <input

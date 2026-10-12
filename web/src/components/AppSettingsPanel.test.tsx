@@ -63,7 +63,7 @@ function renderPanel(
   dashboard: PanelDashboard,
   onSaved = vi.fn(),
   onClose = vi.fn(),
-  options: { widgets?: Widget[]; initialSection?: 'app' | 'tabs' } = {},
+  options: { widgets?: Widget[]; initialSection?: 'tabs' } = {},
 ) {
   render(
     <AppSettingsPanel
@@ -135,7 +135,7 @@ describe('AppSettingsPanel', () => {
     expect((screen.getByLabelText('App title') as HTMLInputElement).placeholder).toBe('Test Dashboard')
   })
 
-  test('saves explicit booleans and preserves sibling settings', async () => {
+  test('saves the app block and tabs only, without echoing unrelated settings', async () => {
     const bodies = capturePuts()
     const { onSaved } = renderPanel(dashboardWith({
       public_live: true,
@@ -150,9 +150,10 @@ describe('AppSettingsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
 
     await waitFor(() => expect(bodies.length).toBe(1))
+    // Only the keys this panel owns: the server shallow-merges settings, so
+    // echoing `public_live`/`variables` here would only risk reverting a
+    // concurrent change made elsewhere.
     expect(bodies[0].settings).toEqual({
-      public_live: true,
-      variables: [{ name: 'region', type: 'text' }],
       app: {
         logo_attachment_id: 'att-1',
         title: 'Q3 Revenue',
@@ -597,7 +598,32 @@ describe('AppSettingsPanel', () => {
     expect(screen.getByRole('button', { name: 'Add tab' })).toBeDisabled()
   })
 
-  test('deleting a tab clears its widgets over REST without a document, then removes it', async () => {
+  test('removing a tab is draft-only: closing without saving clears nothing', () => {
+    const entry = { doc: {}, provider: {}, refCount: 1, synced: true, connected: true }
+    vi.mocked(peekDashboardCollab).mockReturnValue(entry as never)
+    const { onClose } = renderPanel(
+      dashboardWith({
+        tabs: [
+          { id: 'a', title: 'A' },
+          { id: 'b', title: 'B' },
+        ],
+      }),
+      vi.fn(),
+      vi.fn(),
+      { widgets: [widget({ id: 'w1', layout: { row: 0, col: 0, width: 6, height: 6, tab: 'a' } })] },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove A' }))
+    expect(screen.queryByLabelText('Tab 1 title')).toHaveValue('B')
+
+    // Closing the panel (no Save) must leave the stored tab and the widget's
+    // placement untouched.
+    fireEvent.click(screen.getByTestId('app-settings-backdrop'))
+    expect(onClose).toHaveBeenCalled()
+    expect(setWidgetTab).not.toHaveBeenCalled()
+  })
+
+  test('deleting a tab clears its widgets over REST without a document when saved', async () => {
     const clears: Array<{ widgetId: string; body: Record<string, unknown> }> = []
     server.use(
       http.put('/api/v1/dashboards/d1/widgets/:widgetId', async ({ request, params }) => {
@@ -628,21 +654,24 @@ describe('AppSettingsPanel', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove A' }))
+    // Draft removal alone must not touch widget layouts.
+    expect(clears).toEqual([])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((bodies[0].settings as Record<string, unknown>).tabs).toEqual([{ id: 'b', title: 'B' }])
 
     await waitFor(() => expect(clears.length).toBe(1))
     expect(clears[0]).toEqual({
       widgetId: 'w1',
       body: { layout: { row: 1, col: 2, width: 3, height: 4, tab: '' } },
     })
-
-    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
-    await waitFor(() => expect(bodies.length).toBe(1))
-    expect((bodies[0].settings as Record<string, unknown>).tabs).toEqual([{ id: 'b', title: 'B' }])
   })
 
-  test('deleting a tab clears its widgets through the live document when bound', async () => {
+  test('deleting a tab clears its widgets through the live document when bound and saved', async () => {
     const entry = { doc: {}, provider: {}, refCount: 1, synced: true, connected: true }
     vi.mocked(peekDashboardCollab).mockReturnValue(entry as never)
+    capturePuts()
     renderPanel(
       dashboardWith({ tabs: [{ id: 'a', title: 'A' }] }),
       vi.fn(),
@@ -651,8 +680,37 @@ describe('AppSettingsPanel', () => {
     )
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove A' }))
+    expect(setWidgetTab).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
 
     await waitFor(() => expect(setWidgetTab).toHaveBeenCalledWith(entry, 'w1', ''))
+  })
+
+  test('a failed save clears nothing', async () => {
+    const clears: string[] = []
+    server.use(
+      http.put('/api/v1/dashboards/d1', () =>
+        HttpResponse.json({ error: 'boom' }, { status: 500 }),
+      ),
+      http.put('/api/v1/dashboards/d1/widgets/:widgetId', ({ params }) => {
+        clears.push(String(params.widgetId))
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderPanel(
+      dashboardWith({ tabs: [{ id: 'a', title: 'A' }] }),
+      vi.fn(),
+      vi.fn(),
+      { widgets: [widget({ id: 'w1', layout: { row: 0, col: 0, width: 6, height: 6, tab: 'a' } })] },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove A' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('boom')
+    expect(clears).toEqual([])
+    expect(setWidgetTab).not.toHaveBeenCalled()
   })
 
   test('initialSection tabs reveals and focuses the first title input', () => {

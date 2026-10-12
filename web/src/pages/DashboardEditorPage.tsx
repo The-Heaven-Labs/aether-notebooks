@@ -254,13 +254,16 @@ const markSaved = useCallback(() => {
     [liveDoc.synced, liveDoc.widgets, dashboard?.widgets],
   )
 
-  // Chapters: doc-sourced once synced. An empty list hides the strip, the
-  // filter, and the drawer's Placement select (no tabs = old behavior).
+  // Chapters: doc-sourced once synced. An empty list hides the strip's chips
+  // and the grid filter (only the editor's add shortcut remains).
   const tabs = liveDoc.synced
     ? (liveDoc.settings.tabs ?? NO_TABS)
     : (dashboard?.settings?.tabs ?? NO_TABS)
-  // An unknown/deleted editor selection falls back to All so the grid never
-  // silently strands every widget off-screen.
+  // A selected chapter that disappears (deleted by anyone) is forgotten so a
+  // later tab reusing its id cannot silently re-apply the stale filter.
+  if (editorTab !== null && !tabs.some((t) => t.id === editorTab)) setEditorTab(null)
+  // The current render still sees the pre-clear value; fall back to All so the
+  // grid never silently strands every widget off-screen.
   const activeEditorTab = editorTab && tabs.some((t) => t.id === editorTab) ? editorTab : null
   const shownWidgets = useMemo(
     () => (tabs.length === 0 || activeEditorTab === null
@@ -330,7 +333,11 @@ const markSaved = useCallback(() => {
   // Drag/resize stops write the layout straight to the shared document (the
   // source of truth); the relay persists it and every replica sees the move
   // live. No REST call and no cache invalidation — the doc is live.
-  const applyLayoutStop = useCallback((layout: Layout) => {
+  //
+  // `tabDrop` carries a chip drop: the dragged widget's new chapter is folded
+  // into the same write as its position, so a chip drop is a single document
+  // write per widget instead of a position write plus a tab write.
+  const applyLayoutStop = useCallback((layout: Layout, tabDrop?: { widgetId: string; tab: string }) => {
     if (!editingEnabled) return
     // The compactor may have moved other widgets too: write every changed
     // widget's layout so overlapping changes merge instead of being lost.
@@ -338,9 +345,11 @@ const markSaved = useCallback(() => {
       const widget = widgets.find((w: Widget) => w.id === item.i)
       if (!widget) return
       const prev = widget.layout
+      const tab = tabDrop && tabDrop.widgetId === item.i ? tabDrop.tab : prev.tab
       if (prev.col === item.x && prev.row === item.y &&
-          prev.width === item.w && prev.height === item.h) return
-      updateDocLayout(item.i, { ...prev, row: item.y, col: item.x, width: item.w, height: item.h })
+          prev.width === item.w && prev.height === item.h &&
+          (prev.tab ?? '') === (tab ?? '')) return
+      updateDocLayout(item.i, { ...prev, row: item.y, col: item.x, width: item.w, height: item.h, tab })
     })
   }, [editingEnabled, widgets, updateDocLayout])
 
@@ -357,21 +366,19 @@ const markSaved = useCallback(() => {
     e?: Event,
   ) => {
     if (!newItem || !layout) return
-    // The library's compactor handles overlap prevention.
-    applyLayoutStop(layout)
     // Dropping a card on a tab chip re-places it; the All chip (data-tab-id="")
     // clears the tab so the widget falls back to the first chapter.
-    if (!editingEnabled || tabs.length === 0 || !e) return
-    const tabId = tabIdAtPoint(e)
-    if (tabId === null) return
-    const widget = widgets.find((w: Widget) => w.id === newItem.i)
-    if (!widget || (widget.layout?.tab ?? '') === tabId) return
-    // The final layout item (newItem can predate the last move) carries the
-    // dropped position; in practice only the tab differs from applyLayoutStop.
-    const item = layout.find((it) => it.i === newItem.i)
-    if (!item) return
-    updateDocLayout(item.i, { row: item.y, col: item.x, width: item.w, height: item.h, tab: tabId })
-  }, [applyLayoutStop, editingEnabled, tabs, widgets, updateDocLayout])
+    let tabDrop: { widgetId: string; tab: string } | undefined
+    if (editingEnabled && tabs.length > 0 && e) {
+      const tabId = tabIdAtPoint(e)
+      if (tabId !== null) {
+        const widget = widgets.find((w: Widget) => w.id === newItem.i)
+        if (widget && (widget.layout?.tab ?? '') !== tabId) tabDrop = { widgetId: newItem.i, tab: tabId }
+      }
+    }
+    // The library's compactor handles overlap prevention.
+    applyLayoutStop(layout, tabDrop)
+  }, [applyLayoutStop, editingEnabled, tabs, widgets])
 
   if (isLoading) {
     return (
@@ -565,22 +572,26 @@ const markSaved = useCallback(() => {
 
       {/* Chapter strip (editor-local filter, not URL state): All + one chip per
           tab + the add shortcut that opens the App settings panel's Tabs
-          section. Hidden entirely when the dashboard defines no tabs. */}
-      {tabs.length > 0 && (
+          section. Without tabs the strip collapses to the lone add shortcut so
+          authors can create the first chapter on every layout (the header's
+          App button is desktop-only); read-only visitors see no strip. */}
+      {(tabs.length > 0 || editingEnabled) && (
         <div
           style={{ ...styles.tabStrip, ...(isMobileLayout ? styles.tabStripMobile : {}) }}
           role="group"
           aria-label="Dashboard chapters"
         >
-          <button
-            type="button"
-            data-tab-id=""
-            aria-pressed={activeEditorTab === null}
-            style={activeEditorTab === null ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
-            onClick={() => setEditorTab(null)}
-          >
-            All
-          </button>
+          {tabs.length > 0 && (
+            <button
+              type="button"
+              data-tab-id=""
+              aria-pressed={activeEditorTab === null}
+              style={activeEditorTab === null ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
+              onClick={() => setEditorTab(null)}
+            >
+              All
+            </button>
+          )}
           {tabs.map((tab) => (
             <button
               key={tab.id}

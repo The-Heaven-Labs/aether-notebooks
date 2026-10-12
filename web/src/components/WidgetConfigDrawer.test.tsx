@@ -1006,7 +1006,7 @@ describe('WidgetConfigDrawer', () => {
       />,
     )
     expect(screen.getByText('Placement')).toBeInTheDocument()
-    const select = screen.getByLabelText('Tab') as HTMLSelectElement
+    const select = screen.getByLabelText('Placement') as HTMLSelectElement
     expect(select.value).toBe('details')
     expect(screen.getByRole('option', { name: 'First tab (default)' })).toBeInTheDocument()
     expect(screen.getByRole('option', { name: 'Overview' })).toBeInTheDocument()
@@ -1023,7 +1023,20 @@ describe('WidgetConfigDrawer', () => {
         onSaved={() => {}}
       />,
     )
-    expect((screen.getByLabelText('Tab') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('Placement') as HTMLSelectElement).value).toBe('')
+  })
+
+  test('a placement naming a deleted tab reads as the first-tab default', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={tabbedDashboard}
+        widget={queryWidget({ layout: { row: 0, col: 0, width: 6, height: 6, tab: 'gone' } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect((screen.getByLabelText('Placement') as HTMLSelectElement).value).toBe('')
   })
 
   test('saving the tab placement writes the shared document when bound', async () => {
@@ -1061,7 +1074,7 @@ describe('WidgetConfigDrawer', () => {
       () => expect(document.querySelector('.cm-editor')!.textContent).toContain('SELECT 99 AS shared'),
       { timeout: 5000 },
     )
-    fireEvent.change(screen.getByLabelText('Tab'), { target: { value: 'details' } })
+    fireEvent.change(screen.getByLabelText('Placement'), { target: { value: 'details' } })
 
     await waitFor(() => expect(lm.get('tab')).toBe('details'), { timeout: 5000 })
     // The grid fields survive the tab-only write.
@@ -1090,7 +1103,7 @@ describe('WidgetConfigDrawer', () => {
         onSaved={onSaved}
       />,
     )
-    fireEvent.change(screen.getByLabelText('Tab'), { target: { value: 'details' } })
+    fireEvent.change(screen.getByLabelText('Placement'), { target: { value: 'details' } })
     await waitFor(() =>
       expect(bodies).toContainEqual({ layout: { row: 1, col: 2, width: 6, height: 6, tab: 'details' } }),
     )
@@ -1114,7 +1127,7 @@ describe('WidgetConfigDrawer', () => {
         onSaved={() => {}}
       />,
     )
-    fireEvent.change(screen.getByLabelText('Tab'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('Placement'), { target: { value: '' } })
     await waitFor(() =>
       expect(bodies).toContainEqual({ layout: { row: 0, col: 0, width: 6, height: 6, tab: '' } }),
     )
