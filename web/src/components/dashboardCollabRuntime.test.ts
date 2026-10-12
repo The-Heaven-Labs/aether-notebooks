@@ -1,0 +1,79 @@
+import { describe, test, expect, vi } from 'vitest'
+import * as Y from 'yjs'
+import { projectDashboardDoc, updateWidgetLayout } from './dashboardCollabRuntime'
+import type { DashboardCollab } from './dashboardCollabRuntime'
+
+// The runtime imports the Hocuspocus provider at module load; these tests
+// drive the shared Y.Doc directly, so the socket stack is stubbed out.
+vi.mock('@hocuspocus/provider', () => ({ HocuspocusProvider: class {} }))
+
+function fakeCollab(doc: Y.Doc): DashboardCollab {
+  return {
+    doc,
+    provider: {} as DashboardCollab['provider'],
+    refCount: 1,
+    synced: true,
+    connected: true,
+  }
+}
+
+/** Seeds one table widget; `layout` entries override the default grid fields. */
+function seedWidget(doc: Y.Doc, layout: Record<string, unknown> = {}): void {
+  const wm = new Y.Map<unknown>()
+  wm.set('type', 'table')
+  wm.set('language', 'sql')
+  wm.set('config', '{}')
+  const lm = new Y.Map<unknown>()
+  lm.set('row', 0)
+  lm.set('col', 0)
+  lm.set('width', 6)
+  lm.set('height', 4)
+  for (const [key, value] of Object.entries(layout)) lm.set(key, value)
+  wm.set('layout', lm)
+  doc.getMap('widgets').set('w1', wm)
+}
+
+describe('projectLayout', () => {
+  test('projects layout.tab when present', () => {
+    const doc = new Y.Doc()
+    seedWidget(doc, { tab: 'overview' })
+
+    const proj = projectDashboardDoc(doc, 'd1')
+    expect(proj.widgets).toHaveLength(1)
+    expect(proj.widgets[0].layout).toEqual({ row: 0, col: 0, width: 6, height: 4, tab: 'overview' })
+  })
+
+  test('omits layout.tab when absent or not a string', () => {
+    const doc = new Y.Doc()
+    seedWidget(doc, { tab: 7 })
+
+    const layout = projectDashboardDoc(doc, 'd1').widgets[0].layout
+    expect(layout).toEqual({ row: 0, col: 0, width: 6, height: 4 })
+    expect('tab' in layout).toBe(false)
+  })
+})
+
+describe('updateWidgetLayout', () => {
+  test('writes tab alongside the grid fields', () => {
+    const doc = new Y.Doc()
+    seedWidget(doc)
+
+    updateWidgetLayout(fakeCollab(doc), 'w1', { row: 1, col: 2, width: 3, height: 4, tab: 'deep-dive' })
+
+    expect(projectDashboardDoc(doc, 'd1').widgets[0].layout).toEqual(
+      { row: 1, col: 2, width: 3, height: 4, tab: 'deep-dive' },
+    )
+  })
+
+  test('an empty tab removes the key', () => {
+    const doc = new Y.Doc()
+    seedWidget(doc, { tab: 'overview' })
+
+    updateWidgetLayout(fakeCollab(doc), 'w1', { row: 0, col: 0, width: 6, height: 4 })
+
+    const wm = doc.getMap('widgets').get('w1') as Y.Map<unknown>
+    const lm = wm.get('layout') as Y.Map<unknown>
+    expect(lm.has('tab')).toBe(false)
+    expect('tab' in projectDashboardDoc(doc, 'd1').widgets[0].layout).toBe(false)
+  })
+})

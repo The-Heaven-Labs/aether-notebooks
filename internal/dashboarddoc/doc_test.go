@@ -702,6 +702,39 @@ func TestProject_DropsNonFiniteFloats(t *testing.T) {
 	require.Empty(t, got.WidgetWarnings, "settings/variables warnings are not widget warnings")
 }
 
+// TestProject_LayoutTab pins the layout.tab read behavior: a bounded string
+// projects, a non-string fails the widget with a warning (like the numeric
+// fields), and an over-long id is treated as unset instead of dropping the
+// widget.
+func TestProject_LayoutTab(t *testing.T) {
+	state := buildState(t, func(txn *crdt.Transaction, _, widgets *crdt.YMap) {
+		putRawWidget(txn, widgets, testUUID(1), func(txn *crdt.Transaction, w *crdt.YMap) {
+			lm := crdt.NewMapPrelim()
+			lm.Set(txn, keyTab, "overview")
+			w.Set(txn, keyLayout, lm)
+		})
+		putRawWidget(txn, widgets, testUUID(2), func(txn *crdt.Transaction, w *crdt.YMap) {
+			lm := crdt.NewMapPrelim()
+			lm.Set(txn, keyTab, int64(7))
+			w.Set(txn, keyLayout, lm)
+		})
+		putRawWidget(txn, widgets, testUUID(3), func(txn *crdt.Transaction, w *crdt.YMap) {
+			lm := crdt.NewMapPrelim()
+			lm.Set(txn, keyTab, strings.Repeat("x", maxLayoutTabLen+1))
+			w.Set(txn, keyLayout, lm)
+		})
+	})
+
+	got, err := Project(state)
+	require.NoError(t, err)
+	require.Equal(t, "overview", got.Widgets[testUUID(1)].Layout.Tab)
+	require.NotContains(t, got.Widgets, testUUID(2))
+	require.Len(t, got.Warnings, 1)
+	require.Contains(t, got.Warnings[0], "layout.tab")
+	require.Contains(t, got.Warnings[0], "want string")
+	require.Empty(t, got.Widgets[testUUID(3)].Layout.Tab)
+}
+
 // TestSeedProject_LargeLayoutRoundTrip proves Seed's large int layouts survive
 // the float64 wire encoding and project back as ints.
 func TestSeedProject_LargeLayoutRoundTrip(t *testing.T) {

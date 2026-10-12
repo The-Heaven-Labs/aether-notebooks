@@ -125,6 +125,7 @@ const (
 	keyCol    = "col"
 	keyWidth  = "width"
 	keyHeight = "height"
+	keyTab    = "tab"
 )
 
 // maxWidgetConfigBytes caps a widget's config JSON (1 MiB) as stored in the
@@ -132,6 +133,11 @@ const (
 // widget with a warning, so an oversized editor-written config can never abort
 // a store.
 const maxWidgetConfigBytes = 1 << 20
+
+// maxLayoutTabLen caps a layout.tab id read from the document, mirroring the
+// REST validation bound. A longer value is treated as unset instead of
+// failing the widget, so a stray editor write cannot delete its derived row.
+const maxLayoutTabLen = 64
 
 // widgetTypes is the set of widget types allowed in the document, mirroring
 // the widgets.type CHECK constraint.
@@ -149,14 +155,16 @@ var queryLanguages = map[string]bool{
 	"sql": true,
 }
 
-// Layout is a widget's position on the dashboard grid. The JSON tags match
-// the REST-written widgets.layout shape, so materialized JSONB rows are
-// byte-shape compatible with rows written by the REST handlers.
+// Layout is a widget's position on the dashboard grid, plus its App tab
+// placement. The JSON tags match the REST-written widgets.layout shape, so
+// materialized JSONB rows are byte-shape compatible with rows written by the
+// REST handlers. Tab is empty when unset and omitted from the JSONB row.
 type Layout struct {
-	Row    int `json:"row"`
-	Col    int `json:"col"`
-	Width  int `json:"width"`
-	Height int `json:"height"`
+	Row    int    `json:"row"`
+	Col    int    `json:"col"`
+	Width  int    `json:"width"`
+	Height int    `json:"height"`
+	Tab    string `json:"tab,omitempty"`
 }
 
 // WidgetDoc is the projection of one widget in the dashboard document.

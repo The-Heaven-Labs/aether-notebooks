@@ -121,11 +121,12 @@ func DeleteWidget(state []byte, widgetID string) ([]byte, error) {
 	return doc.EncodeStateAsUpdate(), nil
 }
 
-// UpdateLayout writes all four layout fields of one widget and returns the
-// merged state. A missing layout map is created; a present-but-invalid layout
-// map is an error, as is a missing widget (ErrWidgetNotFound) or a negative
-// layout. The ID is canonicalized, so any UUID spelling addresses the same
-// widget.
+// UpdateLayout writes the four layout fields and the tab placement of one
+// widget and returns the merged state. A missing layout map is created; a
+// present-but-invalid layout map is an error, as is a missing widget
+// (ErrWidgetNotFound) or a negative layout. The tab is replaced wholesale: an
+// empty tab removes the key, so the widget falls back to the first tab. The ID
+// is canonicalized, so any UUID spelling addresses the same widget.
 func UpdateLayout(state []byte, widgetID string, l Layout) ([]byte, error) {
 	canonical, err := canonicalWidgetID(widgetID)
 	if err != nil {
@@ -162,6 +163,9 @@ func UpdateLayout(state []byte, widgetID string, l Layout) ([]byte, error) {
 			lm.Set(txn, keyCol, int64(l.Col))
 			lm.Set(txn, keyWidth, int64(l.Width))
 			lm.Set(txn, keyHeight, int64(l.Height))
+			if l.Tab != "" {
+				lm.Set(txn, keyTab, l.Tab)
+			}
 			wm.Set(txn, keyLayout, lm)
 			return
 		}
@@ -169,6 +173,11 @@ func UpdateLayout(state []byte, widgetID string, l Layout) ([]byte, error) {
 		layout.Set(txn, keyCol, int64(l.Col))
 		layout.Set(txn, keyWidth, int64(l.Width))
 		layout.Set(txn, keyHeight, int64(l.Height))
+		if l.Tab != "" {
+			layout.Set(txn, keyTab, l.Tab)
+		} else {
+			layout.Delete(txn, keyTab)
+		}
 	})
 
 	return doc.EncodeStateAsUpdate(), nil

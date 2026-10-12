@@ -274,9 +274,11 @@ func projectWidget(id string, m *crdt.YMap) (WidgetDoc, string) {
 }
 
 // readLayout reads the widget's layout map. A missing layout (or missing
-// field) defaults to zero; a present-but-invalid field fails the widget.
-// Integral float32/float64 fields are accepted (with a fit check) because
-// Seed-written ints above int32 range arrive as float64 on the wire.
+// field) defaults to zero; a present-but-invalid numeric field fails the
+// widget. Integral float32/float64 fields are accepted (with a fit check)
+// because Seed-written ints above int32 range arrive as float64 on the wire.
+// A non-string tab also fails the widget; an over-long tab is treated as unset
+// rather than failing the widget (the tab is only a placement hint).
 func readLayout(m *crdt.YMap) (Layout, string) {
 	v, ok := m.Get(keyLayout)
 	if !ok {
@@ -310,6 +312,14 @@ func readLayout(m *crdt.YMap) (Layout, string) {
 			return Layout{}, fmt.Sprintf("%s.%s is negative (%d)", keyLayout, f.key, n)
 		}
 		*f.dst = n
+	}
+
+	tab, ok := readString(lm, keyTab)
+	if !ok {
+		return Layout{}, fmt.Sprintf("%s.%s is %s, want string", keyLayout, keyTab, describeValue(lm, keyTab))
+	}
+	if len(tab) <= maxLayoutTabLen {
+		l.Tab = tab
 	}
 	return l, ""
 }

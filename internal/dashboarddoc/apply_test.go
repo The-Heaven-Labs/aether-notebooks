@@ -82,6 +82,19 @@ func TestApply_UpsertWidget(t *testing.T) {
 		require.Nil(t, w.ConnectorID)
 	})
 
+	t.Run("round-trips layout.tab", func(t *testing.T) {
+		state, err := UpsertWidget(nil, WidgetDoc{
+			ID:     testUUID(1),
+			Type:   "text",
+			Layout: Layout{Row: 0, Col: 0, Width: 6, Height: 4, Tab: "overview"},
+			Config: map[string]any{},
+		})
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		require.Equal(t, "overview", proj.Widgets[testUUID(1)].Layout.Tab)
+	})
+
 	t.Run("adds a widget without disturbing the others", func(t *testing.T) {
 		state, err := UpsertWidget(applyTestBase(t), WidgetDoc{
 			ID:     testUUID(3),
@@ -257,11 +270,23 @@ func TestApply_UpdateLayout(t *testing.T) {
 			min.Set(txn, keyType, "text")
 			widgets.Set(txn, testUUID(1), min)
 		})
-		state, err := UpdateLayout(base, testUUID(1), Layout{Row: 1, Col: 2, Width: 3, Height: 4})
+		state, err := UpdateLayout(base, testUUID(1), Layout{Row: 1, Col: 2, Width: 3, Height: 4, Tab: "overview"})
 		require.NoError(t, err)
 
 		proj := mustProject(t, state)
-		require.Equal(t, Layout{Row: 1, Col: 2, Width: 3, Height: 4}, proj.Widgets[testUUID(1)].Layout)
+		require.Equal(t, Layout{Row: 1, Col: 2, Width: 3, Height: 4, Tab: "overview"}, proj.Widgets[testUUID(1)].Layout)
+	})
+
+	t.Run("sets and clears layout.tab", func(t *testing.T) {
+		state, err := UpdateLayout(applyTestBase(t), testUUID(1),
+			Layout{Row: 0, Col: 0, Width: 6, Height: 4, Tab: "overview"})
+		require.NoError(t, err)
+		require.Equal(t, "overview", mustProject(t, state).Widgets[testUUID(1)].Layout.Tab)
+		require.Empty(t, mustProject(t, state).Widgets[testUUID(2)].Layout.Tab, "other widgets are untouched")
+
+		cleared, err := UpdateLayout(state, testUUID(1), Layout{Row: 0, Col: 0, Width: 6, Height: 4})
+		require.NoError(t, err)
+		require.Empty(t, mustProject(t, cleared).Widgets[testUUID(1)].Layout.Tab)
 	})
 
 	t.Run("missing widget is an error", func(t *testing.T) {

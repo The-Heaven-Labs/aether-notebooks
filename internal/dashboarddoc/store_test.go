@@ -249,7 +249,7 @@ func TestMergeAndStore_MaterializesWidgetDiff(t *testing.T) {
 	updated := WidgetDoc{
 		ID:          testUUID(1),
 		Type:        "metric",
-		Layout:      Layout{Row: 2, Col: 0, Width: 3, Height: 2},
+		Layout:      Layout{Row: 2, Col: 0, Width: 3, Height: 2, Tab: "overview"},
 		ConnectorID: &f.connectorID,
 		Query:       &query,
 		Language:    "sql",
@@ -275,9 +275,9 @@ func TestMergeAndStore_MaterializesWidgetDiff(t *testing.T) {
 
 	a := after[testUUID(1)]
 	require.Equal(t, "metric", a.Type)
-	require.Equal(t, Layout{Row: 2, Col: 0, Width: 3, Height: 2}, a.Layout)
+	require.Equal(t, Layout{Row: 2, Col: 0, Width: 3, Height: 2, Tab: "overview"}, a.Layout)
 	require.Equal(t, map[string]any{
-		"row": float64(2), "col": float64(0), "width": float64(3), "height": float64(2),
+		"row": float64(2), "col": float64(0), "width": float64(3), "height": float64(2), "tab": "overview",
 	}, a.LayoutRaw, "layout JSONB must match the REST-written shape")
 	require.Equal(t, map[string]any{"field": "count"}, a.Config)
 	require.Equal(t, f.connectorID, *a.ConnectorID)

@@ -197,6 +197,9 @@ func widgetPrelim(txn *crdt.Transaction, w WidgetDoc, config string) *crdt.YMap 
 	layout.Set(txn, keyCol, int64(w.Layout.Col))
 	layout.Set(txn, keyWidth, int64(w.Layout.Width))
 	layout.Set(txn, keyHeight, int64(w.Layout.Height))
+	if w.Layout.Tab != "" {
+		layout.Set(txn, keyTab, w.Layout.Tab)
+	}
 	wm.Set(txn, keyLayout, layout)
 
 	query := crdt.NewTextPrelim()

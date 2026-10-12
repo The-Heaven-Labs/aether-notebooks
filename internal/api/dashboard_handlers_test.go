@@ -430,6 +430,31 @@ func TestDashboardTabsAndTheme(t *testing.T) {
 		json.NewDecoder(w.Body).Decode(&resp)
 		return resp.Settings.Tabs, resp.Settings.App.Theme
 	}
+	getWidgetLayoutTab := func(widgetID string) (string, bool) {
+		r := httptest.NewRequest("GET", "/api/v1/dashboards/"+dashID, nil)
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-AETHER-Admin-Mode", "true")
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, r)
+		if w.Code != http.StatusOK {
+			t.Fatalf("get: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+		var resp struct {
+			Widgets []struct {
+				ID     string `json:"id"`
+				Layout struct {
+					Tab string `json:"tab"`
+				} `json:"layout"`
+			} `json:"widgets"`
+		}
+		json.NewDecoder(w.Body).Decode(&resp)
+		for _, widget := range resp.Widgets {
+			if widget.ID == widgetID {
+				return widget.Layout.Tab, true
+			}
+		}
+		return "", false
+	}
 
 	// Valid tabs + theme round-trip.
 	rec = put(map[string]interface{}{
@@ -468,6 +493,36 @@ func TestDashboardTabsAndTheme(t *testing.T) {
 		t.Fatalf("chart palette did not round-trip: %+v", gotTheme.ChartPalette)
 	}
 
+	// Short uppercase hex is accepted.
+	if rec = put(map[string]interface{}{
+		"app": map[string]interface{}{"theme": map[string]interface{}{"accent": "#ABC"}},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("short uppercase hex: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, gotTheme := getSettings(); gotTheme.Accent != "#ABC" {
+		t.Fatalf("short uppercase hex did not round-trip: %q", gotTheme.Accent)
+	}
+
+	// Radius boundaries: 0 is a present zero, 24 is the maximum, 25 is rejected.
+	if rec = put(map[string]interface{}{
+		"app": map[string]interface{}{"theme": map[string]interface{}{"radius": 0}},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("radius 0: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, gotTheme := getSettings(); gotTheme.Radius == nil || *gotTheme.Radius != 0 {
+		t.Fatalf("radius 0 did not round-trip as present: %+v", gotTheme.Radius)
+	}
+	if rec = put(map[string]interface{}{
+		"app": map[string]interface{}{"theme": map[string]interface{}{"radius": 24}},
+	}); rec.Code != http.StatusOK {
+		t.Fatalf("radius 24: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec = put(map[string]interface{}{
+		"app": map[string]interface{}{"theme": map[string]interface{}{"radius": 25}},
+	}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("radius 25: expected 400, got %d", rec.Code)
+	}
+
 	tooManyTabs := make([]map[string]interface{}, 0, 11)
 	for i := 0; i < 11; i++ {
 		tooManyTabs = append(tooManyTabs, map[string]interface{}{
@@ -482,6 +537,7 @@ func TestDashboardTabsAndTheme(t *testing.T) {
 		{"app": map[string]interface{}{"theme": map[string]interface{}{"font_family": "comic-sans"}}},
 		{"app": map[string]interface{}{"theme": map[string]interface{}{"color_scheme": "sepia"}}},
 		{"app": map[string]interface{}{"theme": map[string]interface{}{"chart_palette": []string{"#7c5cff", "nope"}}}},
+		{"tabs": "nope"},
 		{"tabs": []map[string]interface{}{{"id": "", "title": "Empty id"}}},
 		{"tabs": []map[string]interface{}{{"id": "Overview", "title": "Bad charset"}}},
 		{"tabs": []map[string]interface{}{{"id": "overview", "title": "Dup"}, {"id": "overview", "title": "Dup again"}}},
@@ -496,8 +552,38 @@ func TestDashboardTabsAndTheme(t *testing.T) {
 		t.Fatalf("rejected updates changed stored tabs: %+v", tabs)
 	}
 
-	// Widget tab validation: a bad id charset is rejected, a valid one is accepted.
-	addWidgetWithTab := func(tab string) int {
+	// Clearing: an empty tabs list and an explicit null theme both persist.
+	if rec = put(map[string]interface{}{"tabs": []map[string]interface{}{}}); rec.Code != http.StatusOK {
+		t.Fatalf("clear tabs: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if tabs, _ := getSettings(); len(tabs) != 0 {
+		t.Fatalf("tabs were not cleared: %+v", tabs)
+	}
+	if rec = put(map[string]interface{}{"app": map[string]interface{}{"theme": nil}}); rec.Code != http.StatusOK {
+		t.Fatalf("clear theme: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, gotTheme := getSettings(); gotTheme.Accent != "" || gotTheme.Radius != nil || gotTheme.ChartPalette != nil {
+		t.Fatalf("theme was not cleared: %+v", gotTheme)
+	}
+
+	// Create-path tabs validation: 11 tabs are rejected there too.
+	badCreateBody, _ := json.Marshal(map[string]interface{}{
+		"title":    "Too Many Tabs",
+		"settings": map[string]interface{}{"tabs": tooManyTabs},
+	})
+	badCreateReq := httptest.NewRequest("POST", "/api/v1/dashboards", bytes.NewReader(badCreateBody))
+	badCreateReq.Header.Set("Content-Type", "application/json")
+	badCreateReq.Header.Set("Authorization", "Bearer "+token)
+	badCreateReq.Header.Set("X-AETHER-Admin-Mode", "true")
+	badCreateRec := httptest.NewRecorder()
+	srv.ServeHTTP(badCreateRec, badCreateReq)
+	if badCreateRec.Code != http.StatusBadRequest {
+		t.Fatalf("create with 11 tabs: expected 400, got %d: %s", badCreateRec.Code, badCreateRec.Body.String())
+	}
+
+	// Widget tab validation: a bad id charset is rejected, a valid one is
+	// accepted and persists through the document into the widget's layout.
+	addWidgetWithTab := func(tab string) (int, string) {
 		b, _ := json.Marshal(map[string]interface{}{
 			"type":   "chart",
 			"layout": map[string]interface{}{"row": 0, "col": 0, "width": 6, "height": 8, "tab": tab},
@@ -508,12 +594,34 @@ func TestDashboardTabsAndTheme(t *testing.T) {
 		r.Header.Set("X-AETHER-Admin-Mode", "true")
 		w := httptest.NewRecorder()
 		srv.ServeHTTP(w, r)
-		return w.Code
+		var resp struct {
+			ID string `json:"id"`
+		}
+		json.NewDecoder(w.Body).Decode(&resp)
+		return w.Code, resp.ID
 	}
-	if code := addWidgetWithTab("OVERVIEW"); code != http.StatusBadRequest {
+	if code, _ := addWidgetWithTab("OVERVIEW"); code != http.StatusBadRequest {
 		t.Fatalf("widget with bad tab id: expected 400, got %d", code)
 	}
-	if code := addWidgetWithTab("overview"); code != http.StatusCreated {
+	code, widgetID := addWidgetWithTab("overview")
+	if code != http.StatusCreated {
 		t.Fatalf("widget with valid tab id: expected 201, got %d", code)
+	}
+	if tab, ok := getWidgetLayoutTab(widgetID); !ok || tab != "overview" {
+		t.Fatalf("widget layout.tab did not persist: ok=%v tab=%q", ok, tab)
+	}
+
+	// Widget update path: a bad tab id is rejected there too.
+	updateBody, _ := json.Marshal(map[string]interface{}{
+		"layout": map[string]interface{}{"row": 0, "col": 0, "width": 6, "height": 8, "tab": "BAD"},
+	})
+	updateReq := httptest.NewRequest("PUT", "/api/v1/dashboards/"+dashID+"/widgets/"+widgetID, bytes.NewReader(updateBody))
+	updateReq.Header.Set("Content-Type", "application/json")
+	updateReq.Header.Set("Authorization", "Bearer "+token)
+	updateReq.Header.Set("X-AETHER-Admin-Mode", "true")
+	updateRec := httptest.NewRecorder()
+	srv.ServeHTTP(updateRec, updateReq)
+	if updateRec.Code != http.StatusBadRequest {
+		t.Fatalf("widget update with bad tab id: expected 400, got %d: %s", updateRec.Code, updateRec.Body.String())
 	}
 }

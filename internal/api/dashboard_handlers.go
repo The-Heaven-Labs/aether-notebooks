@@ -192,7 +192,7 @@ func validateWidgetTab(tab string) error {
 		return nil
 	}
 	if len(tab) > maxDashboardTabIDLen || !dashboardTabIDPattern.MatchString(tab) {
-		return fmt.Errorf("invalid tab id %q", tab)
+		return fmt.Errorf("invalid tab id %q (lowercase letters, digits, and dashes only, at most %d characters)", tab, maxDashboardTabIDLen)
 	}
 	return nil
 }
@@ -871,7 +871,7 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	newState, err := dashboarddoc.UpsertWidget(state, dashboarddoc.WidgetDoc{
 		ID:          widgetID,
 		Type:        string(req.Type),
-		Layout:      dashboarddoc.Layout{Row: req.Layout.Row, Col: req.Layout.Col, Width: req.Layout.Width, Height: req.Layout.Height},
+		Layout:      dashboarddoc.Layout{Row: req.Layout.Row, Col: req.Layout.Col, Width: req.Layout.Width, Height: req.Layout.Height, Tab: req.Layout.Tab},
 		ConnectorID: req.ConnectorID,
 		Query:       req.Query,
 		Language:    lang,
@@ -1039,6 +1039,7 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 			Col:    req.Layout.Col,
 			Width:  req.Layout.Width,
 			Height: req.Layout.Height,
+			Tab:    req.Layout.Tab,
 		}
 	}
 	if req.Config != nil {
@@ -1093,6 +1094,7 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 			Col:    req.Layout.Col,
 			Width:  req.Layout.Width,
 			Height: req.Layout.Height,
+			Tab:    req.Layout.Tab,
 		}
 		ops = append(ops, func(state []byte) ([]byte, error) {
 			return dashboarddoc.UpdateLayout(state, widgetID, layout)
