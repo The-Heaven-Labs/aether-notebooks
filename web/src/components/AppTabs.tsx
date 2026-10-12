@@ -10,11 +10,22 @@ interface AppTabsProps {
   onChange: (id: string) => void
 }
 
+/** DOM id of a chapter tab's button (the panel's `aria-labelledby`). */
+export function appTabButtonId(tabId: string): string {
+  return `app-tab-${tabId}`
+}
+
+/** DOM id of a chapter's panel container (rendered by the pages). */
+export function appTabPanelId(tabId: string): string {
+  return `app-tabpanel-${tabId}`
+}
+
 /**
  * The App surface's chapter tablist: a quiet ruled row under the masthead,
  * 13px DM Sans, 36px tap targets, hairline underline on the active chapter.
- * Automatic-activation keyboard nav (ArrowLeft / ArrowRight, wrapping) keeps
- * selection and focus in lockstep; only the selected tab is in the tab order.
+ * Automatic-activation keyboard nav (ArrowLeft / ArrowRight, wrapping, plus
+ * Home / End) keeps selection and focus in lockstep; only the selected tab is
+ * in the tab order. Each tab carries the ids that link it to its panel.
  */
 export function AppTabs({ tabs, activeId, onChange }: AppTabsProps) {
   const buttonsRef = useRef<Array<HTMLButtonElement | null>>([])
@@ -30,12 +41,25 @@ export function AppTabs({ tabs, activeId, onChange }: AppTabsProps) {
   }
 
   const handleKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
-    if (event.key === 'ArrowRight') {
-      event.preventDefault()
-      select((index + 1) % tabs.length)
-    } else if (event.key === 'ArrowLeft') {
-      event.preventDefault()
-      select((index - 1 + tabs.length) % tabs.length)
+    switch (event.key) {
+      case 'ArrowRight':
+        event.preventDefault()
+        select((index + 1) % tabs.length)
+        break
+      case 'ArrowLeft':
+        event.preventDefault()
+        select((index - 1 + tabs.length) % tabs.length)
+        break
+      case 'Home':
+        event.preventDefault()
+        select(0)
+        break
+      case 'End':
+        event.preventDefault()
+        select(tabs.length - 1)
+        break
+      default:
+        break
     }
   }
 
@@ -47,9 +71,11 @@ export function AppTabs({ tabs, activeId, onChange }: AppTabsProps) {
           <button
             key={tab.id}
             ref={(el) => { buttonsRef.current[index] = el }}
+            id={appTabButtonId(tab.id)}
             type="button"
             role="tab"
             aria-selected={selected}
+            aria-controls={appTabPanelId(tab.id)}
             tabIndex={selected ? 0 : -1}
             style={selected ? { ...styles.tab, ...styles.tabActive } : styles.tab}
             onClick={() => onChange(tab.id)}
@@ -63,22 +89,29 @@ export function AppTabs({ tabs, activeId, onChange }: AppTabsProps) {
   )
 }
 
+/** Quiet placeholder for a chapter that has no widgets yet. */
+export function EmptyChapter() {
+  return <p style={styles.emptyChapter}>Nothing in this chapter yet.</p>
+}
+
 const styles: Record<string, CSSProperties> = {
-  // The chapter rule: the tablist owns the hairline; the tabs' negative
-  // margin-bottom pulls their own underline onto it so the active chapter
-  // reads as a break in the rule, not a floating bar.
+  // The chapter rule: the tablist owns the hairline; the active tab's
+  // indicator is drawn inside its own box (see tabActive) so nothing bleeds
+  // out of the scroll container. `overflowY` is pinned because a one-axis
+  // `auto` computes the other axis to `auto` as well, which would show a
+  // vertical scrollbar for any bleed.
   tablist: {
     display: 'flex',
     alignItems: 'stretch',
     gap: 24,
     borderBottom: '1px solid var(--border-light)',
     overflowX: 'auto',
+    overflowY: 'hidden',
   },
   tab: {
     display: 'inline-flex',
     alignItems: 'center',
     minHeight: 36,
-    marginBottom: -1,
     padding: '0 0 9px',
     fontFamily: 'var(--font-sans)',
     fontSize: 13,
@@ -87,18 +120,23 @@ const styles: Record<string, CSSProperties> = {
     color: 'var(--text-muted)',
     background: 'none',
     border: 'none',
-    // Longhands, not the `borderBottom` shorthand: React's style diff only
-    // writes changed keys, and clearing a shorthand-set longhand on the
-    // previously active tab would drop its color back to currentcolor.
-    borderBottomWidth: 1,
-    borderBottomStyle: 'solid',
-    borderBottomColor: 'transparent',
     cursor: 'pointer',
     whiteSpace: 'nowrap',
   },
   tabActive: {
     color: 'var(--text-primary)',
     fontWeight: 600,
-    borderBottomColor: 'var(--accent)',
+    // A 1px accent rule on the tab's inner bottom edge, flush with the
+    // tablist's hairline. An inset shadow (not a border) keeps the indicator
+    // inside the box; a negative-margin border would be clipped by the
+    // scroll container.
+    boxShadow: 'inset 0 -1px 0 0 var(--accent)',
+  },
+  emptyChapter: {
+    margin: 0,
+    padding: '24px 0',
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: 'var(--text-muted)',
   },
 }

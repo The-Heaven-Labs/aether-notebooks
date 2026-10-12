@@ -84,17 +84,46 @@ describe('AppTabs', () => {
     expect(tab('Funnel')).toHaveFocus()
   })
 
-  test('the previously selected tab drops its accent underline', () => {
+  test('Home and End jump to the first and last tabs', () => {
+    const onChange = vi.fn()
+    render(<Harness initial="orders" onChange={onChange} />)
+
+    tab('Orders').focus()
+    fireEvent.keyDown(tab('Orders'), { key: 'End' })
+    expect(onChange).toHaveBeenCalledWith('funnel')
+    expect(tab('Funnel')).toHaveAttribute('aria-selected', 'true')
+    expect(tab('Funnel')).toHaveFocus()
+
+    fireEvent.keyDown(tab('Funnel'), { key: 'Home' })
+    expect(onChange).toHaveBeenCalledWith('overview')
+    expect(tab('Overview')).toHaveAttribute('aria-selected', 'true')
+    expect(tab('Overview')).toHaveFocus()
+  })
+
+  test('links each tab to its chapter panel', () => {
+    render(<AppTabs tabs={TABS} activeId="overview" onChange={() => {}} />)
+
+    expect(tab('Orders')).toHaveAttribute('id', 'app-tab-orders')
+    expect(tab('Orders')).toHaveAttribute('aria-controls', 'app-tabpanel-orders')
+  })
+
+  test('draws the active indicator inside the tab box without vertical overflow', () => {
     render(<Harness initial="overview" />)
 
-    expect(tab('Overview').style.borderBottomColor).toBe('var(--accent)')
-    expect(tab('Orders').style.borderBottomColor).toBe('transparent')
+    // One-axis `auto` computes the other axis to `auto` too; pinning both
+    // keeps Chrome from showing a scrollbar for any indicator bleed.
+    expect(screen.getByRole('tablist').style.overflowY).toBe('hidden')
+    expect(tab('Overview').style.boxShadow).toBe('inset 0 -1px 0 0 var(--accent)')
+    expect(tab('Orders').style.boxShadow).toBe('')
 
     fireEvent.click(tab('Orders'))
 
-    // Regression guard: a shorthand-set border color cleared by React's style
-    // diff would fall back to currentcolor and draw a second underline.
-    expect(tab('Overview').style.borderBottomColor).toBe('transparent')
-    expect(tab('Orders').style.borderBottomColor).toBe('var(--accent)')
+    // The indicator moves with selection and stays inside the box (no
+    // negative-margin overlay clipped by the scroll container).
+    expect(tab('Overview').style.boxShadow).toBe('')
+    expect(tab('Orders').style.boxShadow).toBe('inset 0 -1px 0 0 var(--accent)')
+    for (const t of screen.getAllByRole('tab')) {
+      expect(t.style.marginBottom).toBe('')
+    }
   })
 })

@@ -1,6 +1,13 @@
 import type { DashboardTab, Widget } from '../types'
 
 /**
+ * Stable identity for a dashboard without tabs, so callers can fall back to
+ * it without creating a fresh array on every render (which would defeat any
+ * memo keyed on the tab list).
+ */
+export const NO_TABS: DashboardTab[] = []
+
+/**
  * The tab to show: the requested id when it names an existing tab, else the
  * first tab, else null when the dashboard defines no tabs at all. An unknown
  * `?tab=` value therefore lands on the first chapter instead of an empty page.

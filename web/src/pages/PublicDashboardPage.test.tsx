@@ -111,7 +111,7 @@ describe('PublicDashboardPage chapter tabs', () => {
     { id: 'orders', title: 'Orders' },
   ]
 
-  function panelWidget(id: string, tabId: string, label: string, col: number): Record<string, unknown> {
+  function panelWidget(id: string, tabId: string, label: string, col: number, row = 0): Record<string, unknown> {
     return {
       id,
       dashboard_id: 'd1',
@@ -121,7 +121,7 @@ describe('PublicDashboardPage chapter tabs', () => {
       query: null,
       language: 'sql',
       type: 'text',
-      layout: { row: 0, col, width: 6, height: 6, tab: tabId },
+      layout: { row, col, width: 6, height: 6, tab: tabId },
       config: { text: { markdown: `${label} panel` } },
       created_at: '2026-01-01T00:00:00Z',
     }
@@ -143,12 +143,15 @@ describe('PublicDashboardPage chapter tabs', () => {
     expect(screen.getByText('Overview panel')).toBeVisible()
     expect(screen.getByText('Orders panel')).not.toBeVisible()
     expect(screen.getByTestId('location')).toHaveTextContent(`/public/dashboards/${PUBLIC_TOKEN}`)
+    // The visible chapter panel is linked to its tab.
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'app-tab-overview')
 
     fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
 
     expect(screen.getByRole('tab', { name: 'Orders' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Overview panel')).not.toBeVisible()
     expect(screen.getByText('Orders panel')).toBeVisible()
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'app-tab-orders')
     // The token route is intact; only the `tab` param was set.
     expect(screen.getByTestId('location')).toHaveTextContent(`/public/dashboards/${PUBLIC_TOKEN}?tab=orders`)
   })
@@ -160,5 +163,39 @@ describe('PublicDashboardPage chapter tabs', () => {
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByText('Overview panel')).toBeVisible()
     expect(screen.getByText('Orders panel')).not.toBeVisible()
+  })
+
+  test('a chapter authored at high rows renders without leading blank space', async () => {
+    mockPublicDashboard(publicDashboard({
+      settings: { tabs: TABS },
+      // The Orders chapter sits at rows 8-14 in the stored layout (as it could
+      // when it was authored in a global coordinate space).
+      widgets: [panelWidget('w1', 'overview', 'Overview', 0), panelWidget('w2', 'orders', 'Orders', 6, 8)],
+    }))
+    renderPublicPage()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
+
+    const wrapper = screen.getByText('Orders panel').closest<HTMLElement>('div[style*="position: absolute"]')
+    if (!wrapper) throw new Error('widget wrapper not found')
+    // The chapter's leading row offset is shifted away (top = 0), matching
+    // the viewer's per-chapter grid compaction.
+    expect(wrapper.style.top).toBe('0px')
+  })
+
+  test('shows a quiet placeholder for a chapter with no widgets', async () => {
+    mockPublicDashboard(publicDashboard({
+      settings: { tabs: TABS },
+      widgets: [panelWidget('w1', 'overview', 'Overview', 0)],
+    }))
+    renderPublicPage()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    const placeholder = screen.getByText('Nothing in this chapter yet.')
+    expect(placeholder).not.toBeVisible()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
+    expect(placeholder).toBeVisible()
   })
 })

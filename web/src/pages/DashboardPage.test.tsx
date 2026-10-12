@@ -538,17 +538,21 @@ describe('DashboardPage chapter tabs', () => {
     await screen.findByRole('tab', { name: 'Overview' })
 
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
-    // Both chapters stay mounted (refreshers registered); only the active one
-    // is visible.
+    // One grid per chapter; both stay mounted (refreshers registered) and only
+    // the active one is visible.
+    expect(screen.getAllByTestId('grid')).toHaveLength(2)
     expect(screen.getByTestId('query-w2')).toBeVisible()
     expect(screen.getByTestId('query-w3')).not.toBeVisible()
     expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1/view')
+    // The visible chapter panel is linked to its tab.
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'app-tab-overview')
 
     fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
 
     expect(screen.getByRole('tab', { name: 'Orders' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('query-w2')).not.toBeVisible()
     expect(screen.getByTestId('query-w3')).toBeVisible()
+    expect(screen.getByRole('tabpanel')).toHaveAttribute('aria-labelledby', 'app-tab-orders')
     expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1/view?tab=orders')
   })
 
@@ -559,6 +563,24 @@ describe('DashboardPage chapter tabs', () => {
     expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
     expect(screen.getByTestId('query-w2')).toBeVisible()
     expect(screen.getByTestId('query-w3')).not.toBeVisible()
+  })
+
+  test('shows a quiet placeholder for a chapter with no widgets', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      settings: { ...REST_DASHBOARD.settings, tabs: TABS },
+      widgets: [tabWidget('w2', 'overview')],
+    })))
+    renderDashboard()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    const placeholder = screen.getByText('Nothing in this chapter yet.')
+    expect(placeholder).not.toBeVisible()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
+    expect(placeholder).toBeVisible()
+    // The empty chapter renders no grid of its own.
+    expect(screen.getAllByTestId('grid')).toHaveLength(1)
   })
 
   test('the refresh action runs the hidden chapter’s widgets too', async () => {

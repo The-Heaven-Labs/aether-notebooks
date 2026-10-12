@@ -17,8 +17,8 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
-import { AppTabs } from '../components/AppTabs'
-import { activeTabId, widgetsInTab, widgetTabId } from '../utils/dashboardTabs'
+import { AppTabs, appTabButtonId, appTabPanelId, EmptyChapter } from '../components/AppTabs'
+import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { isTextPanel } from '../utils/widgetKind'
@@ -56,11 +56,6 @@ interface DashboardWithWidgets extends Dashboard {
 
 // Widget type extended with input widget variants (config is typed loosely)
 type AnyWidget = Widget & { type: string; config: any }
-
-// Grid metrics shared by react-grid-layout's config and the container-height
-// pin below (RGL sizes its container from the layout, not the DOM).
-const GRID_ROW_HEIGHT = 30
-const GRID_MARGIN = 4
 
 function isQueryWidget(w: AnyWidget): w is AnyWidget & { connector_id: string; query: string } {
   return !!w.connector_id && !!w.query
@@ -436,14 +431,22 @@ function DashboardContent({ id }: { id: string }) {
   )
 
   // Chapters: `settings.tabs` arrives with the dashboard response (draft or
-  // published snapshot). No tabs means no bar and every widget renders.
-  const tabs = settings?.tabs ?? []
+  // published snapshot). No tabs means a single implicit chapter holding every
+  // widget, so the render path below stays uniform.
+  const tabs = settings?.tabs ?? NO_TABS
   const requestedTab = searchParams.get('tab')
   const activeTab = activeTabId(tabs, requestedTab)
-  const tabWidgets = useMemo(
-    () => widgetsInTab(widgets, tabs, requestedTab),
-    [widgets, tabs, requestedTab],
-  )
+  // One grid per chapter: every widget resolves to exactly one chapter (an
+  // empty or unknown tab falls back to the first), and a chapter's items feed
+  // only its own grid — no shared coordinate space, and each chapter compacts
+  // independently. All chapters stay mounted so refreshers stay registered.
+  const chapters = useMemo(() => {
+    if (tabs.length === 0) return [{ tabId: null as string | null, widgets }]
+    return tabs.map((tab) => ({
+      tabId: tab.id as string | null,
+      widgets: widgets.filter((w) => widgetTabId(w, tabs) === tab.id),
+    }))
+  }, [tabs, widgets])
   // Replacing (not pushing) keeps tab switches out of the back stack, like
   // the filter strip's own URL writes.
   const handleTabChange = useCallback((tabId: string) => {
@@ -453,22 +456,6 @@ function DashboardContent({ id }: { id: string }) {
       return next
     }, { replace: true })
   }, [setSearchParams])
-
-  // Every chapter's widgets stay mounted (refreshers registered, data loaded
-  // in one pass) and inactive ones are hidden with `display: none`. RGL sizes
-  // its container from every layout item, so pin the height to the active
-  // chapter's own rows — otherwise a short chapter sits above the tallest
-  // chapter's worth of dead space.
-  const activeTabBottom = useMemo(
-    () => tabWidgets.reduce((max, w) => {
-      const item = toGridItem(w)
-      return Math.max(max, item.y + item.h)
-    }, 0),
-    [tabWidgets],
-  )
-  const activeTabHeight = activeTabBottom > 0
-    ? activeTabBottom * GRID_ROW_HEIGHT + (activeTabBottom - 1) * GRID_MARGIN + GRID_MARGIN * 2
-    : 0
 
   // Grid density and the refresh cadence are persisted dashboard settings, so
   // they are edit actions — viewers don't get to restyle the shared board.
@@ -736,49 +723,59 @@ function DashboardContent({ id }: { id: string }) {
           />
         ) : widgets.length === 0 ? null : (
           <div ref={gridRef}>
-            <GridLayout
-              layout={widgets.map(toGridItem)}
-              width={containerWidth}
-              gridConfig={{ cols: settings?.grid_cols ?? 12, rowHeight: GRID_ROW_HEIGHT, margin: [GRID_MARGIN, GRID_MARGIN] }}
-              dragConfig={{ enabled: false }}
-              resizeConfig={{ enabled: false }}
-              style={{ minHeight: activeTabBottom > 0 ? 240 : 0, height: activeTabHeight }}
-            >
-              {widgets.map((widget) => (
-                <WidgetFrame
-                  key={widget.id}
-                  appearance={appearanceFrom(widget.config)}
-                  // Inactive chapters stay mounted (their refreshers stay
-                  // registered and their data loads in one pass) but are
-                  // hidden from view.
-                  style={widgetTabId(widget, tabs) === activeTab ? undefined : { display: 'none' }}
-                >
-                  {isQueryWidget(widget) ? (
-                    <QueryDataWidget
-                      dashboardId={dashboard.id}
-                      widget={widget}
-                      canViewWithData={dashboard.can_view_with_data !== false}
-                      queryEnabled={selected != null || !resolving}
-                      viewerConnectorId={viewerConnectorId}
-                      onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
-                      onFetched={() => setLastFetchedAt(new Date())}
-                      registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
-                      registerRerunner={(fn) => registerWidgetRerun(widget.id, fn)}
-                    />
-                  ) : isTextPanel(widget) ? (
-                    <TextWidget markdown={textConfigFrom(widget.config).markdown} />
-                  ) : (
-                    <WidgetCard
-                      widget={widget}
-                      qc={qc}
-                      widgetsData={dashboard.widgets_data}
-                      dashboardId={id}
-                      onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
-                    />
-                  )}
-                </WidgetFrame>
-              ))}
-            </GridLayout>
+            {chapters.map(({ tabId, widgets: chapterWidgets }) => (
+              <div
+                key={tabId ?? '__all__'}
+                id={tabId ? appTabPanelId(tabId) : undefined}
+                role={tabId ? 'tabpanel' : undefined}
+                aria-labelledby={tabId ? appTabButtonId(tabId) : undefined}
+                // Inactive chapters stay mounted (their refreshers stay
+                // registered and their data loads in one pass) but are hidden
+                // from view.
+                style={tabId !== null && tabId !== activeTab ? { display: 'none' } : undefined}
+              >
+                {chapterWidgets.length === 0 ? (
+                  <EmptyChapter />
+                ) : (
+                  <GridLayout
+                    layout={chapterWidgets.map(toGridItem)}
+                    width={containerWidth}
+                    gridConfig={{ cols: settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
+                    dragConfig={{ enabled: false }}
+                    resizeConfig={{ enabled: false }}
+                    style={{ minHeight: 240 }}
+                  >
+                    {chapterWidgets.map((widget) => (
+                      <WidgetFrame key={widget.id} appearance={appearanceFrom(widget.config)}>
+                        {isQueryWidget(widget) ? (
+                          <QueryDataWidget
+                            dashboardId={dashboard.id}
+                            widget={widget}
+                            canViewWithData={dashboard.can_view_with_data !== false}
+                            queryEnabled={selected != null || !resolving}
+                            viewerConnectorId={viewerConnectorId}
+                            onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
+                            onFetched={() => setLastFetchedAt(new Date())}
+                            registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
+                            registerRerunner={(fn) => registerWidgetRerun(widget.id, fn)}
+                          />
+                        ) : isTextPanel(widget) ? (
+                          <TextWidget markdown={textConfigFrom(widget.config).markdown} />
+                        ) : (
+                          <WidgetCard
+                            widget={widget}
+                            qc={qc}
+                            widgetsData={dashboard.widgets_data}
+                            dashboardId={id}
+                            onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
+                          />
+                        )}
+                      </WidgetFrame>
+                    ))}
+                  </GridLayout>
+                )}
+              </div>
+            ))}
           </div>
         )}
         </div>

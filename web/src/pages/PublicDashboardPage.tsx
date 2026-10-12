@@ -10,8 +10,8 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { AppThemeProvider } from '../components/AppThemeProvider'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
-import { AppTabs } from '../components/AppTabs'
-import { activeTabId, widgetsInTab, widgetTabId } from '../utils/dashboardTabs'
+import { AppTabs, appTabButtonId, appTabPanelId, EmptyChapter } from '../components/AppTabs'
+import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { TextWidget } from '../components/TextWidget'
 import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
@@ -36,6 +36,15 @@ export function PublicDashboardPage() {
   const { token } = useParams<{ token: string }>()
   // The active chapter rides the URL (`?tab=`) next to the token route.
   const [searchParams, setSearchParams] = useSearchParams()
+  // Replacing (not pushing) keeps tab switches out of the back stack, like
+  // the viewer's own URL writes.
+  const handleTabChange = useCallback((tabId: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('tab', tabId)
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['public', token],
     queryFn: () => api.get<DashboardWithWidgets>(`/api/v1/public/${token}`),
@@ -92,19 +101,19 @@ export function PublicDashboardPage() {
   const defaults = variableDefaults(variables)
   const endpointBase = `/api/v1/public/${token}`
   const shownWidgets = visibleWidgets(widgets, widgetsData, publicLive)
-  // Chapters: `settings.tabs` rides the published snapshot; the public page
-  // filters client-side exactly like the viewer. No tabs means no bar.
-  const tabs = dashboard.settings?.tabs ?? []
-  const requestedTab = searchParams.get('tab')
-  const activeTab = activeTabId(tabs, requestedTab)
-  const tabWidgets = widgetsInTab(shownWidgets, tabs, requestedTab)
-  const handleTabChange = (tabId: string) => {
-    setSearchParams(prev => {
-      const next = new URLSearchParams(prev)
-      next.set('tab', tabId)
-      return next
-    }, { replace: true })
-  }
+  // Chapters: `settings.tabs` rides the published snapshot. No tabs means a
+  // single implicit chapter holding every widget. A chapter's widgets are
+  // addressed in the chapter's own coordinate space: the viewer compacts each
+  // chapter's rows up (RGL), so the leading row offset is shifted away here
+  // too — a chapter authored at high rows shows no blank space above it.
+  const tabs = dashboard.settings?.tabs ?? NO_TABS
+  const activeTab = activeTabId(tabs, searchParams.get('tab'))
+  const chapters = tabs.length > 0
+    ? tabs.map((tab) => ({
+        tabId: tab.id as string | null,
+        widgets: shownWidgets.filter((w) => widgetTabId(w, tabs) === tab.id),
+      }))
+    : [{ tabId: null as string | null, widgets: shownWidgets }]
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
   // The dashboard logo wins over the org fallback. Public pages stream the
@@ -114,11 +123,6 @@ export function PublicDashboardPage() {
   const logoUrl = logoAttachmentId
     ? `${getApiUrl()}/api/v1/public/${token}/attachments/${logoAttachmentId}`
     : undefined
-  // Widgets are never shorter than 6 rows here either: below that the chart
-  // area collapses under the widget chrome (~40px plots).
-  const totalHeight = tabWidgets.reduce((max, w) => {
-    return Math.max(max, (w.layout?.row ?? 0) + Math.max(w.layout?.height ?? 4, 6))
-  }, 0) * (ROW_HEIGHT + gap)
 
   const content = (
     <div style={pageStyles.page}>
@@ -157,77 +161,110 @@ export function PublicDashboardPage() {
             <p style={{ fontSize: 13, margin: 0 }}>The dashboard owner hasn't added any widgets yet.</p>
           </div>
         ) : (
-          <div ref={measureRef} style={{ minHeight: totalHeight, position: 'relative' }}>
-            {shownWidgets.map((widget) => {
-              const l = widget.layout
-              const left = l.col * (colWidth + gap)
-              const top = l.row * (ROW_HEIGHT + gap)
-              const width = l.width * colWidth + (l.width - 1) * gap
-              const widgetRows = Math.max(l.height, 6)
-              const height = widgetRows * ROW_HEIGHT + (widgetRows - 1) * gap
-              const wrapperStyle: React.CSSProperties = {
-                position: 'absolute',
-                left, top, width, height,
-                background: 'var(--bg-card)',
-                border: '1px solid var(--border)',
-                borderRadius: 4,
-                overflow: 'hidden',
-                // Inactive chapters stay mounted (refreshers registered, data
-                // fetched in one pass) but are hidden from view.
-                display: widgetTabId(widget, tabs) === activeTab ? 'flex' : 'none',
-                flexDirection: 'column',
-              }
-
-              if (isQueryWidget(widget)) {
-                return (
-                  <div key={widget.id} style={wrapperStyle}>
-                    <QueryDataWidget
-                      dashboardId={dashboard.id}
-                      widget={widget}
-                      canViewWithData
-                      endpointBase={endpointBase}
-                    />
-                  </div>
-                )
-              }
-
-              if (isTextPanel(widget)) {
-                return (
-                  <div key={widget.id} style={wrapperStyle}>
-                    {/* Live pages read the provider's current values (URL /
-                        stored / defaults); read-only pages interpolate the
-                        configured defaults so `{{tokens}}` never render raw. */}
-                    <TextWidget
-                      markdown={textConfigFrom(widget.config).markdown}
-                      values={publicLive ? undefined : defaults}
-                      variables={variables}
-                    />
-                  </div>
-                )
-              }
-
-              const cellData = widgetsData[widget.cell_id!]
-              const isChart = widget.type === 'chart'
-              const fixedView = isChart ? 'chart' : 'table'
-              const chartConfig = mergeWidgetChartConfig(cellData.metadata?.chart, widget.config)
-
+          <div ref={measureRef}>
+            {chapters.map(({ tabId, widgets: chapterWidgets }) => {
+              // Each chapter is its own coordinate space. The viewer compacts
+              // every chapter's rows up, so its leading row offset is shifted
+              // away here as well: a chapter authored at high rows shows no
+              // blank space above its content.
+              const rowOffset = chapterWidgets.reduce(
+                (min, w) => Math.min(min, w.layout.row),
+                Number.POSITIVE_INFINITY,
+              )
+              const offset = Number.isFinite(rowOffset) ? rowOffset : 0
+              // Widgets are never shorter than 6 rows here either: below that
+              // the chart area collapses under the widget chrome (~40px plots).
+              const chapterHeight = chapterWidgets.reduce(
+                (max, w) => Math.max(max, (w.layout.row - offset) + Math.max(w.layout.height, 6)),
+                0,
+              ) * (ROW_HEIGHT + gap)
               return (
-                <div key={widget.id} style={wrapperStyle}>
-                  {cellData.type === 'text' ? (
-                    <div style={{ padding: 16, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' }}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{cellData.source || ''}</ReactMarkdown>
-                    </div>
+                <div
+                  key={tabId ?? '__all__'}
+                  id={tabId ? appTabPanelId(tabId) : undefined}
+                  role={tabId ? 'tabpanel' : undefined}
+                  aria-labelledby={tabId ? appTabButtonId(tabId) : undefined}
+                  // Inactive chapters stay mounted (refreshers registered,
+                  // data fetched in one pass) but are hidden from view.
+                  style={tabId !== null && tabId !== activeTab ? { display: 'none' } : undefined}
+                >
+                  {chapterWidgets.length === 0 ? (
+                    <EmptyChapter />
                   ) : (
-                    <OutputRenderer
-                      outputs={cellData.outputs}
-                      fixedView={fixedView}
-                      chartConfig={chartConfig}
-                      footerExtra={cellData.updated_at ? (
-                        <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-                          Executed at {formatExecutedAt(cellData.updated_at)}
-                        </span>
-                      ) : undefined}
-                    />
+                    <div style={{ minHeight: chapterHeight, position: 'relative' }}>
+                      {chapterWidgets.map((widget) => {
+                        const l = widget.layout
+                        const left = l.col * (colWidth + gap)
+                        const top = (l.row - offset) * (ROW_HEIGHT + gap)
+                        const width = l.width * colWidth + (l.width - 1) * gap
+                        const widgetRows = Math.max(l.height, 6)
+                        const height = widgetRows * ROW_HEIGHT + (widgetRows - 1) * gap
+                        const wrapperStyle: React.CSSProperties = {
+                          position: 'absolute',
+                          left, top, width, height,
+                          background: 'var(--bg-card)',
+                          border: '1px solid var(--border)',
+                          borderRadius: 4,
+                          overflow: 'hidden',
+                          display: 'flex',
+                          flexDirection: 'column',
+                        }
+
+                        if (isQueryWidget(widget)) {
+                          return (
+                            <div key={widget.id} style={wrapperStyle}>
+                              <QueryDataWidget
+                                dashboardId={dashboard.id}
+                                widget={widget}
+                                canViewWithData
+                                endpointBase={endpointBase}
+                              />
+                            </div>
+                          )
+                        }
+
+                        if (isTextPanel(widget)) {
+                          return (
+                            <div key={widget.id} style={wrapperStyle}>
+                              {/* Live pages read the provider's current values (URL /
+                                  stored / defaults); read-only pages interpolate the
+                                  configured defaults so `{{tokens}}` never render raw. */}
+                              <TextWidget
+                                markdown={textConfigFrom(widget.config).markdown}
+                                values={publicLive ? undefined : defaults}
+                                variables={variables}
+                              />
+                            </div>
+                          )
+                        }
+
+                        const cellData = widgetsData[widget.cell_id!]
+                        const isChart = widget.type === 'chart'
+                        const fixedView = isChart ? 'chart' : 'table'
+                        const chartConfig = mergeWidgetChartConfig(cellData.metadata?.chart, widget.config)
+
+                        return (
+                          <div key={widget.id} style={wrapperStyle}>
+                            {cellData.type === 'text' ? (
+                              <div style={{ padding: 16, fontSize: 14, color: 'var(--text-primary)', lineHeight: 1.6, overflow: 'auto', height: '100%' }}>
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{cellData.source || ''}</ReactMarkdown>
+                              </div>
+                            ) : (
+                              <OutputRenderer
+                                outputs={cellData.outputs}
+                                fixedView={fixedView}
+                                chartConfig={chartConfig}
+                                footerExtra={cellData.updated_at ? (
+                                  <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                    Executed at {formatExecutedAt(cellData.updated_at)}
+                                  </span>
+                                ) : undefined}
+                              />
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
                   )}
                 </div>
               )
