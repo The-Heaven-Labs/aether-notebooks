@@ -281,6 +281,18 @@ export interface DashboardAppTheme {
   color_scheme?: 'auto' | 'light' | 'dark'
 }
 
+/**
+ * Org-level branding (`orgs.settings.branding`), served as `org_branding` on
+ * dashboard and public-dashboard responses. Every field is optional; absent
+ * values keep the built-in app defaults.
+ */
+export interface OrgBranding {
+  app_name?: string
+  logo_attachment_id?: string
+  accent_color?: string
+  default_chart_palette?: string[]
+}
+
 export interface DashboardAppSettings {
   title?: string
   subtitle?: string

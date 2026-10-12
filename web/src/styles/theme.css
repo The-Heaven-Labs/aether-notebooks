@@ -181,6 +181,130 @@
   --cm-editor-bg: #1e1e1e;
 }
 
+/* ── App-surface theming (.app-theme) ───────────────────────────────────── */
+/* A dashboard may restyle the app surface only (never the editor). The
+   AppThemeProvider sets per-theme token overrides inline on this container;
+   the scheme blocks below re-declare the global token set (copied from
+   `:root` / `[data-theme="dark"]`) so a forced light/dark surface renders
+   correctly even when the global `data-theme` is the other scheme. Inline
+   overrides win over both blocks. */
+.app-theme {
+  /* The container is the surface canvas: the bare app shell's <main> paints
+     no background of its own, so a themed background must be visible here or
+     it would be hidden behind the body's global canvas. 100dvh mirrors
+     .app-shell (visible viewport on browsers with dynamic toolbars). */
+  min-height: 100vh;
+  min-height: 100dvh;
+  --app-font: inherit;
+  --app-radius: 8px;
+  font-family: var(--app-font);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  caret-color: var(--text-primary);
+}
+
+.app-theme[data-app-scheme='light'] {
+  --bg-primary: #f5f5f5;
+  --bg-secondary: #f9f9f9;
+  --bg-card: #ffffff;
+  --bg-elevated: #ffffff;
+  --bg-input: #ffffff;
+  --bg-overlay: rgba(0, 0, 0, 0.35);
+  --bg-modal: #ffffff;
+  --bg-cell-code: #f7f7f7;
+  --bg-cell-text: #ffffff;
+  --border: #e8e8e8;
+  --border-light: #efefef;
+  --text-primary: #111;
+  --text-secondary: #555;
+  --text-muted: #6e6e6e;
+  --accent: #7c6faa;
+  --accent-hover: #6a5e96;
+  --accent-light: #f5f5f5;
+  --success: #2e7d32;
+  --success-full: #27ae60;
+  --success-light: #f0f9f0;
+  --error: #b85c5c;
+  --error-full: #c0392b;
+  --error-light: #fdf5f5;
+  --error-border: #f5d0d0;
+  --error-text: #9a2828;
+  --warning: #b89a4a;
+  --warning-light: #fffdf0;
+  --warning-border: #f5d78e;
+  --warning-text: #8a6028;
+  --nav-bg: #1a1814;
+  --nav-text: #e8e4dc;
+  --nav-text-muted: #9e9690;
+  --nav-border: #2e2a24;
+  --nav-accent: #9b8fc4;
+  --shadow-md: 0 2px 16px rgba(0,0,0,0.10);
+  --shadow-lg: 0 8px 32px rgba(0,0,0,0.18);
+  --shadow-overlay: rgba(0,0,0,0.12);
+  --code-keyword: #3451c9;
+  --code-string: #2e7d32;
+  --code-comment: #777;
+  --code-function: #0097a7;
+  --code-number: #c0392b;
+  --button-primary-bg: #6a5e96;
+  --button-primary-text: #ffffff;
+  --text-badge-on-light: #111;
+  --cm-editor-bg: #f7f7f7;
+  --accent-bg: var(--accent-light);
+  --accent-border: var(--accent);
+}
+
+.app-theme[data-app-scheme='dark'] {
+  --bg-primary: #141414;
+  --bg-secondary: #1c1c1c;
+  --bg-card: #1c1c1c;
+  --bg-elevated: #242424;
+  --bg-input: #1e1e1e;
+  --bg-overlay: rgba(0, 0, 0, 0.6);
+  --bg-modal: #1c1c1c;
+  --bg-cell-code: #1e1e1e;
+  --bg-cell-text: #181818;
+  --border: #2e2e2e;
+  --border-light: #242424;
+  --text-primary: #e8e8e8;
+  --text-secondary: #aaa;
+  --text-muted: #888;
+  --accent: #9b8fc4;
+  --accent-hover: #b8a9d8;
+  --accent-light: #242430;
+  --success: #4caf74;
+  --success-full: #66bb6a;
+  --success-light: #1a2e1f;
+  --error: #c97070;
+  --error-full: #ef5350;
+  --error-light: #2e1a1a;
+  --error-border: #5a2e2e;
+  --error-text: #ef9a9a;
+  --warning: #d4a84b;
+  --warning-light: #2e2a1a;
+  --warning-border: #5a4a2e;
+  --warning-text: #e5b97a;
+  --nav-bg: #0a0a0a;
+  --nav-text: #f0ece4;
+  --nav-text-muted: #9e9690;
+  --nav-border: #1a1a1a;
+  --shadow-md: 0 2px 16px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  --shadow-overlay: rgba(0, 0, 0, 0.3);
+  --code-keyword: #7b9eff;
+  --code-string: #6ee7a0;
+  --code-comment: #888;
+  --code-function: #5dd9e8;
+  --code-number: #ff8a8a;
+  --button-primary-bg: #b8a9d8;
+  --button-primary-text: #111111;
+  --text-badge-on-light: #111;
+  --cm-editor-bg: #1e1e1e;
+  /* Re-resolve the indirection against this container's own accent tokens. */
+  --accent-bg: var(--accent-light);
+  --accent-border: var(--accent);
+}
+
 .cm-editor .cm-content span.cm-keyword { color: var(--code-keyword); font-weight: bold; }
 .cm-editor .cm-content span.cm-string { color: var(--code-string); }
 .cm-editor .cm-content span.cm-comment { color: var(--code-comment); font-style: italic; }
