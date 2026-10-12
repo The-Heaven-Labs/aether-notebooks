@@ -1,12 +1,45 @@
-import { useState, useEffect, useId } from 'react'
+import { useState, useEffect, useId, useRef } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
-import { api, ApiError } from '../api/client'
+import { api, ApiError, getToken } from '../api/client'
+import { getApiUrl } from '../config'
+import { CHART_PALETTE_PRESETS, MAX_PALETTE_COLORS } from '../charts/palettes'
+import type { ChartPalettePresetValue } from '../charts/palettes'
+import { hexToRgb } from '../utils/appTheme'
+import { useAuth } from '../hooks/useAuth'
 import { Loader2, CheckCircle2, XCircle } from 'lucide-react'
-import type { SSOProvider, PlatformSSOProvider, SSOSettings, SSODebugCapture } from '../types'
+import type { SSOProvider, PlatformSSOProvider, SSOSettings, SSODebugCapture, OrgBranding } from '../types'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { DebugClaimsPanel } from '../components/SSODebugClaimsPanel'
+
+// ─── Org settings / branding ────────────────────────────────────────────────
+
+/** The full settings object returned by GET /api/v1/org/settings. */
+interface OrgSettingsPayload {
+  default_query_timeout_seconds?: number
+  default_max_rows?: number
+  audit_retention_days?: number
+  branding?: OrgBranding
+}
+
+/** The preset whose colors match `palette`; unmatched palettes are Custom. */
+function brandingPreset(palette: string[] | undefined): ChartPalettePresetValue {
+  if (!palette?.length) return 'default'
+  const match = CHART_PALETTE_PRESETS.find(
+    p => 'colors' in p && p.colors.length === palette.length && p.colors.every((c, i) => c === palette[i]),
+  )
+  return match?.value ?? 'custom'
+}
+
+/** `<input type="color">` only accepts 7-char hex; `#rgb` expands, anything else shows black. */
+function swatchColor(value: string): string {
+  const trimmed = value.trim()
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed.toLowerCase()
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(trimmed)
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`.toLowerCase()
+  return '#000000'
+}
 
 // ─── Provider form state ────────────────────────────────────────────────────
 
@@ -348,6 +381,8 @@ const formStyles: Record<string, React.CSSProperties> = {
 
 export function OrgSettingsPage() {
   const qc = useQueryClient()
+  const { user } = useAuth()
+  const isAdmin = user?.role === 'admin'
 
   // ── Platform providers ───────────────────────────────────────────────────
   const { data: platformProviders = [], isLoading: loadingPlatform } = useQuery<PlatformSSOProvider[]>({
@@ -408,6 +443,26 @@ export function OrgSettingsPage() {
   const [auditRetentionSaved, setAuditRetentionSaved] = useState(false)
   const [auditRetentionError, setAuditRetentionError] = useState<string | null>(null)
 
+  // ── Branding ──────────────────────────────────────────────────────────────
+  // orgSettings keeps the full GET payload so the branding save can merge into
+  // it and always send the complete settings object (the backend replaces the
+  // `branding` block wholesale when the key is present).
+  const [orgSettings, setOrgSettings] = useState<OrgSettingsPayload>({})
+  const [brandingAppName, setBrandingAppName] = useState('')
+  const [brandingAccentColor, setBrandingAccentColor] = useState('')
+  const [brandingPalette, setBrandingPalette] = useState<ChartPalettePresetValue>('default')
+  const [brandingCustomPalette, setBrandingCustomPalette] = useState('')
+  const [brandingLogoId, setBrandingLogoId] = useState<string | undefined>(undefined)
+  const [brandingUploading, setBrandingUploading] = useState(false)
+  const [brandingSaving, setBrandingSaving] = useState(false)
+  const [brandingSaved, setBrandingSaved] = useState(false)
+  const [brandingError, setBrandingError] = useState<string | null>(null)
+  const brandingFileRef = useRef<HTMLInputElement>(null)
+  const brandingAppNameId = useId()
+  const brandingAccentId = useId()
+  const brandingPaletteId = useId()
+  const brandingCustomPaletteId = useId()
+
   // ── Cell output limits ────────────────────────────────────────────────────
   const [cellOutputMaxBytes, setCellOutputMaxBytes] = useState(10485760)
   const [cellOutputMaxBytesResolved, setCellOutputMaxBytesResolved] = useState(10485760)
@@ -446,8 +501,18 @@ export function OrgSettingsPage() {
     api.get<{ data_export_enabled: boolean }>('/api/v1/org/data-export')
       .then(r => setDataExportEnabled(r.data_export_enabled))
       .catch(() => {})
-    api.get<{ audit_retention_days?: number }>('/api/v1/org/settings')
-      .then(r => setAuditRetentionDays(r.audit_retention_days ?? 7))
+    api.get<OrgSettingsPayload>('/api/v1/org/settings')
+      .then(r => {
+        setAuditRetentionDays(r.audit_retention_days ?? 7)
+        setOrgSettings(r)
+        const branding = r.branding
+        setBrandingAppName(branding?.app_name ?? '')
+        setBrandingAccentColor(branding?.accent_color ?? '')
+        setBrandingLogoId(branding?.logo_attachment_id)
+        const preset = brandingPreset(branding?.default_chart_palette)
+        setBrandingPalette(preset)
+        setBrandingCustomPalette(preset === 'custom' ? (branding?.default_chart_palette ?? []).join(', ') : '')
+      })
       .catch(() => {})
   }, [])
 
@@ -505,6 +570,77 @@ export function OrgSettingsPage() {
       setOutputLimitsSaving(false)
     }
   }
+
+  async function handleBrandingLogoUpload(file: File) {
+    setBrandingError(null)
+    setBrandingUploading(true)
+    try {
+      const form = new FormData()
+      form.append('file', file)
+      const attachment = await api.upload<{ id: string }>('/api/v1/org/attachments', form)
+      setBrandingLogoId(attachment.id)
+      setBrandingSaved(false)
+    } catch (e: unknown) {
+      setBrandingError(String(e))
+    } finally {
+      setBrandingUploading(false)
+    }
+  }
+
+  async function handleSaveBranding() {
+    setBrandingError(null)
+    const appName = brandingAppName.trim()
+    if ([...appName].length > 60) {
+      setBrandingError('App name must be at most 60 characters')
+      return
+    }
+    const accentColor = brandingAccentColor.trim()
+    if (accentColor && hexToRgb(accentColor) === null) {
+      setBrandingError('Accent color must be a hex color like #6366f1')
+      return
+    }
+    // `branding` is replaced wholesale by the handler, so the object always
+    // carries every field the panel owns: `{}` is the documented clear path
+    // (an explicit JSON null is dropped by omitempty).
+    const branding: OrgBranding = {}
+    if (appName) branding.app_name = appName
+    if (accentColor) branding.accent_color = accentColor
+    if (brandingLogoId) branding.logo_attachment_id = brandingLogoId
+    if (brandingPalette === 'custom') {
+      const entries = brandingCustomPalette.split(',').map(entry => entry.trim()).filter(Boolean)
+      const invalid = entries.find(entry => hexToRgb(entry) === null)
+      if (invalid) {
+        setBrandingError(`Chart color "${invalid}" must be a hex color like #6366f1`)
+        return
+      }
+      if (entries.length > MAX_PALETTE_COLORS) {
+        setBrandingError(`Chart palettes support at most ${MAX_PALETTE_COLORS} colors`)
+        return
+      }
+      if (entries.length) branding.default_chart_palette = entries
+    } else {
+      const preset = CHART_PALETTE_PRESETS.find(p => p.value === brandingPalette)
+      if (preset && 'colors' in preset) branding.default_chart_palette = [...preset.colors]
+    }
+    setBrandingSaving(true)
+    try {
+      // Always the full settings object (the fields fetched on load plus the
+      // branding block): the save never depends on a partial payload being
+      // merged server-side, and `branding` itself is replaced wholesale.
+      await api.put('/api/v1/org/settings', { ...orgSettings, branding })
+      setBrandingSaved(true)
+      setTimeout(() => setBrandingSaved(false), 2000)
+    } catch (e: unknown) {
+      setBrandingError(String(e))
+    } finally {
+      setBrandingSaving(false)
+    }
+  }
+
+  const brandingSessionToken = getToken()
+  const brandingLogoUrl = brandingLogoId
+    ? `${getApiUrl()}/api/v1/attachments/${brandingLogoId}${brandingSessionToken ? `?token=${encodeURIComponent(brandingSessionToken)}` : ''}`
+    : undefined
 
   const createProvider = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post<SSOProvider>('/api/v1/sso/providers', body),
@@ -1167,6 +1303,9 @@ const formInput: React.CSSProperties = {
                 setAuditRetentionSaving(true)
                 try {
                   await api.put('/api/v1/org/settings', { audit_retention_days: auditRetentionDays })
+                  // Keep the full settings snapshot fresh: the branding save
+                  // merges into it, so it must not clobber this just-saved value.
+                  setOrgSettings(prev => ({ ...prev, audit_retention_days: auditRetentionDays }))
                   setAuditRetentionSaved(true)
                   setTimeout(() => setAuditRetentionSaved(false), 2000)
                 } catch (e: unknown) { setAuditRetentionError(String(e)) }
@@ -1181,7 +1320,123 @@ const formInput: React.CSSProperties = {
           </div>
         </section>
 
-        {/* ── J. Message of the Day ── */}
+        {/* ── J. Branding ── */}
+        {isAdmin && (
+          <section style={styles.section}>
+            <div style={styles.sectionTitle}>Branding</div>
+            <p style={styles.sectionDesc}>
+              Organization-wide defaults for app surfaces. A dashboard's app settings override these values.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
+              <div style={formLabel}>
+                <label htmlFor={brandingAppNameId}>App name</label>
+                <input
+                  id={brandingAppNameId}
+                  style={formInput}
+                  value={brandingAppName}
+                  placeholder="Aether"
+                  onChange={e => { setBrandingSaved(false); setBrandingAppName(e.target.value) }}
+                />
+              </div>
+              <div style={formLabel}>
+                <label htmlFor={brandingAccentId}>Accent color</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <input
+                    type="color"
+                    aria-label="Accent color picker"
+                    style={styles.swatch}
+                    value={swatchColor(brandingAccentColor)}
+                    onChange={e => { setBrandingSaved(false); setBrandingAccentColor(e.target.value) }}
+                  />
+                  <input
+                    id={brandingAccentId}
+                    style={{ ...formInput, flex: 1 }}
+                    value={brandingAccentColor}
+                    placeholder="#6366f1"
+                    onChange={e => { setBrandingSaved(false); setBrandingAccentColor(e.target.value) }}
+                  />
+                </div>
+              </div>
+              <div style={formLabel}>
+                <label htmlFor={brandingPaletteId}>Chart palette</label>
+                <select
+                  id={brandingPaletteId}
+                  style={formInput}
+                  value={brandingPalette}
+                  onChange={e => { setBrandingSaved(false); setBrandingPalette(e.target.value as ChartPalettePresetValue) }}
+                >
+                  {CHART_PALETTE_PRESETS.map(preset => (
+                    <option key={preset.value} value={preset.value}>{preset.label}</option>
+                  ))}
+                </select>
+              </div>
+              {brandingPalette === 'custom' && (
+                <div style={formLabel}>
+                  <label htmlFor={brandingCustomPaletteId}>Custom chart colors</label>
+                  <input
+                    id={brandingCustomPaletteId}
+                    style={formInput}
+                    value={brandingCustomPalette}
+                    placeholder="#6366f1, #06b6d4, #10b981"
+                    onChange={e => { setBrandingSaved(false); setBrandingCustomPalette(e.target.value) }}
+                  />
+                </div>
+              )}
+              <div style={formLabel}>
+                <span>Logo</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <button
+                    type="button"
+                    style={{ ...styles.uploadBtn, opacity: brandingUploading ? 0.6 : 1 }}
+                    onClick={() => brandingFileRef.current?.click()}
+                    disabled={brandingUploading}
+                  >
+                    {brandingUploading ? 'Uploading…' : 'Upload…'}
+                  </button>
+                  {brandingLogoId && (
+                    <button
+                      type="button"
+                      style={styles.uploadBtn}
+                      aria-label="Clear logo"
+                      onClick={() => { setBrandingSaved(false); setBrandingLogoId(undefined) }}
+                      disabled={brandingUploading}
+                    >
+                      Clear
+                    </button>
+                  )}
+                  <input
+                    ref={brandingFileRef}
+                    type="file"
+                    accept="image/*"
+                    aria-label="Logo file"
+                    style={{ display: 'none' }}
+                    onChange={e => {
+                      const file = e.target.files?.[0]
+                      e.target.value = ''
+                      if (file) void handleBrandingLogoUpload(file)
+                    }}
+                  />
+                  {brandingLogoUrl
+                    ? <img src={brandingLogoUrl} alt="Logo preview" style={styles.brandingLogoImg} />
+                    : <span style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>No logo</span>}
+                </div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <button
+                style={{ ...styles.saveBtn, opacity: brandingSaving || brandingUploading ? 0.6 : 1 }}
+                onClick={handleSaveBranding}
+                disabled={brandingSaving || brandingUploading}
+              >
+                {brandingSaving ? 'Saving…' : 'Save branding'}
+              </button>
+              {brandingSaved && <span style={{ fontSize: 12, color: 'var(--success, #059669)' }}>Saved</span>}
+              {brandingError && <span role="alert" style={{ fontSize: 12, color: 'var(--error)' }}>{brandingError}</span>}
+            </div>
+          </section>
+        )}
+
+        {/* ── K. Message of the Day ── */}
         <section style={styles.section}>
           <div style={styles.sectionTitle}>Message of the Day</div>
           <p style={styles.sectionDesc}>
@@ -1358,5 +1613,32 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: 13,
     fontWeight: 600,
     cursor: 'pointer',
+  },
+  swatch: {
+    width: 28,
+    height: 28,
+    padding: 0,
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'none',
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  uploadBtn: {
+    padding: '7px 14px',
+    background: 'var(--bg-input)',
+    color: 'var(--text-primary)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    fontSize: 13,
+    cursor: 'pointer',
+  },
+  brandingLogoImg: {
+    maxWidth: 120,
+    maxHeight: 40,
+    objectFit: 'contain',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'var(--bg-input)',
   },
 }
