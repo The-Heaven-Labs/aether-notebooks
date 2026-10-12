@@ -13,6 +13,7 @@ import type { ResultSet } from '../types'
 import type { ChartConfig, MarkLineConfig } from './types'
 import { AppChartThemeContext, getAppChartTheme } from './appChartTheme'
 import type { AppChartTheme } from './appChartTheme'
+import { LIGHT_CHART_COLORS, DARK_CHART_COLORS } from './palettes'
 
 // Register only what we use
 echarts.use([
@@ -25,16 +26,6 @@ echarts.use([
   LabelLayout,
   CanvasRenderer,
 ])
-
-const LIGHT_CHART_COLORS = [
-  '#6366f1', '#06b6d4', '#10b981', '#f59e0b',
-  '#f43f5e', '#8b5cf6', '#0ea5e9', '#84cc16',
-]
-
-const DARK_CHART_COLORS = [
-  '#818cf8', '#22d3ee', '#34d399', '#fbbf24',
-  '#fb7185', '#a78bfa', '#38bdf8', '#a3e635',
-]
 
 function getCurrentPalette(): string[] {
   // The app-surface palette override (AppThemeProvider) wins; without one the

@@ -3,14 +3,18 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { AppSettingsPanel } from './AppSettingsPanel'
-import type { Dashboard } from '../types'
+import { LIGHT_CHART_COLORS } from '../charts/palettes'
+import type { Dashboard, OrgBranding } from '../types'
 
-function dashboardWith(settings: Dashboard['settings']): Dashboard {
+type PanelDashboard = Dashboard & { org_branding?: OrgBranding }
+
+function dashboardWith(settings: Dashboard['settings'], orgBranding?: OrgBranding): PanelDashboard {
   return {
     id: 'd1',
     org_id: 'org-1',
     title: 'Test Dashboard',
     settings,
+    org_branding: orgBranding,
     created_by: 'u1',
     created_at: '2026-01-01T00:00:00Z',
     updated_at: '2026-01-01T00:00:00Z',
@@ -28,7 +32,7 @@ function capturePuts() {
   return bodies
 }
 
-function renderPanel(dashboard: Dashboard, onSaved = vi.fn(), onClose = vi.fn()) {
+function renderPanel(dashboard: PanelDashboard, onSaved = vi.fn(), onClose = vi.fn()) {
   render(
     <AppSettingsPanel
       dashboardId="d1"
@@ -38,6 +42,11 @@ function renderPanel(dashboard: Dashboard, onSaved = vi.fn(), onClose = vi.fn())
     />,
   )
   return { onSaved, onClose }
+}
+
+/** The `app` block of the first captured PUT body. */
+function savedApp(bodies: Array<Record<string, unknown>>): Record<string, unknown> {
+  return (bodies[0].settings as Record<string, unknown>).app as Record<string, unknown>
 }
 
 describe('AppSettingsPanel', () => {
@@ -50,6 +59,13 @@ describe('AppSettingsPanel', () => {
         show_header: false,
         show_refresh: true,
         show_last_updated: false,
+        theme: {
+          accent: '#ff0000',
+          radius: 8,
+          font_family: 'jetbrains-mono',
+          color_scheme: 'dark',
+          chart_palette: ['#111111', '#222222'],
+        },
       },
     }))
     expect((screen.getByLabelText('App title') as HTMLInputElement).value).toBe('Q3 Revenue')
@@ -58,7 +74,14 @@ describe('AppSettingsPanel', () => {
     expect((screen.getByLabelText('Show header') as HTMLInputElement).checked).toBe(false)
     expect((screen.getByLabelText('Show refresh') as HTMLInputElement).checked).toBe(true)
     expect((screen.getByLabelText('Show last updated') as HTMLInputElement).checked).toBe(false)
-    expect(screen.getByText('Logo and fonts arrive with org branding (next wave).')).toBeInTheDocument()
+    expect(screen.getByText('Theme')).toBeInTheDocument()
+    expect((screen.getByLabelText('Accent') as HTMLInputElement).value).toBe('#ff0000')
+    expect((screen.getByLabelText('Corner radius') as HTMLInputElement).value).toBe('8')
+    expect((screen.getByLabelText('Font family') as HTMLSelectElement).value).toBe('jetbrains-mono')
+    expect((screen.getByLabelText('Color scheme') as HTMLSelectElement).value).toBe('dark')
+    expect((screen.getByLabelText('Chart palette') as HTMLSelectElement).value).toBe('custom')
+    expect((screen.getByLabelText('Custom chart colors') as HTMLInputElement).value).toBe('#111111, #222222')
+    expect(screen.getByText('Logo')).toBeInTheDocument()
   })
 
   test('unset toggles default to shown and the width to fixed', () => {
@@ -67,6 +90,10 @@ describe('AppSettingsPanel', () => {
     expect((screen.getByLabelText('Show refresh') as HTMLInputElement).checked).toBe(true)
     expect((screen.getByLabelText('Show last updated') as HTMLInputElement).checked).toBe(true)
     expect((screen.getByLabelText('Width') as HTMLSelectElement).value).toBe('fixed')
+    expect((screen.getByLabelText('Accent') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('Font family') as HTMLSelectElement).value).toBe('')
+    expect((screen.getByLabelText('Color scheme') as HTMLSelectElement).value).toBe('auto')
+    expect((screen.getByLabelText('Chart palette') as HTMLSelectElement).value).toBe('default')
   })
 
   test('app title placeholder falls back to the dashboard title', () => {
@@ -116,7 +143,7 @@ describe('AppSettingsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
 
     await waitFor(() => expect(bodies.length).toBe(1))
-    const app = (bodies[0].settings as Record<string, unknown>).app as Record<string, unknown>
+    const app = savedApp(bodies)
     expect(app).toEqual({
       logo_attachment_id: 'att-1',
       width: 'fixed',
@@ -145,5 +172,183 @@ describe('AppSettingsPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
     fireEvent.click(screen.getByTestId('app-settings-backdrop'))
     expect(onClose).toHaveBeenCalledTimes(2)
+  })
+
+  test('changing the accent color saves it into the theme', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: { theme: { radius: 8 } } }))
+
+    fireEvent.change(screen.getByLabelText('Accent'), { target: { value: '#ff0000' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(savedApp(bodies).theme).toEqual({ radius: 8, accent: '#ff0000' })
+  })
+
+  test('color scheme and font family round-trip into the save payload', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: {} }))
+
+    fireEvent.change(screen.getByLabelText('Color scheme'), { target: { value: 'dark' } })
+    fireEvent.change(screen.getByLabelText('Font family'), { target: { value: 'jetbrains-mono' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(savedApp(bodies).theme).toEqual({ color_scheme: 'dark', font_family: 'jetbrains-mono' })
+  })
+
+  test('choosing a preset chart palette saves the preset hexes', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: {} }))
+
+    fireEvent.change(screen.getByLabelText('Chart palette'), { target: { value: 'aether' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((savedApp(bodies).theme as Record<string, unknown>).chart_palette).toEqual(LIGHT_CHART_COLORS)
+  })
+
+  test('a custom chart palette saves the parsed hex list', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: {} }))
+
+    fireEvent.change(screen.getByLabelText('Chart palette'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByLabelText('Custom chart colors'), { target: { value: '#111111, #222222' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((savedApp(bodies).theme as Record<string, unknown>).chart_palette).toEqual(['#111111', '#222222'])
+  })
+
+  test('the radius persists as a number', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: { theme: { radius: 4 } } }))
+
+    fireEvent.change(screen.getByLabelText('Corner radius'), { target: { value: '16' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    const theme = savedApp(bodies).theme as Record<string, unknown>
+    expect(theme.radius).toBe(16)
+    expect(typeof theme.radius).toBe('number')
+  })
+
+  test('clearing a color removes that key from the theme', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: { theme: { accent: '#ff0000', radius: 4 } } }))
+
+    fireEvent.change(screen.getByLabelText('Accent'), { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(savedApp(bodies).theme).toEqual({ radius: 4 })
+  })
+
+  test('clearing every theme field sends theme: null', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({
+      app: {
+        theme: {
+          accent: '#ff0000',
+          background: '#ffffff',
+          surface: '#fafafa',
+          text: '#111111',
+          border: '#eeeeee',
+          radius: 6,
+          font_family: 'jetbrains-mono',
+          color_scheme: 'dark',
+          chart_palette: ['#111111'],
+        },
+      },
+    }))
+
+    for (const label of ['Accent', 'Background', 'Surface', 'Text', 'Border']) {
+      fireEvent.change(screen.getByLabelText(label), { target: { value: '' } })
+    }
+    fireEvent.change(screen.getByLabelText('Corner radius'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('Font family'), { target: { value: '' } })
+    fireEvent.change(screen.getByLabelText('Color scheme'), { target: { value: 'auto' } })
+    fireEvent.change(screen.getByLabelText('Chart palette'), { target: { value: 'default' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    const app = savedApp(bodies)
+    expect('theme' in app).toBe(true)
+    expect(app.theme).toBeNull()
+  })
+
+  test('an out-of-range radius is rejected before saving', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: {} }))
+
+    fireEvent.change(screen.getByLabelText('Corner radius'), { target: { value: '30' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Corner radius must be a whole number between 0 and 24')
+    expect(bodies.length).toBe(0)
+  })
+
+  test('uploading a logo POSTs to the dashboard attachments endpoint and saves the id', async () => {
+    const bodies = capturePuts()
+    const uploads: Array<{ auth: string | null; hasFile: boolean }> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/attachments', async ({ request }) => {
+        const form = await request.formData()
+        uploads.push({
+          auth: request.headers.get('Authorization'),
+          hasFile: form.get('file') != null,
+        })
+        return HttpResponse.json(
+          { id: 'att-9', filename: 'logo.png', mime_type: 'image/png', size: 3 },
+          { status: 201 },
+        )
+      }),
+    )
+    localStorage.setItem('aether_token', 'test-token')
+    try {
+      renderPanel(dashboardWith({ app: {} }, { logo_attachment_id: 'org-logo' }))
+      // No dashboard logo yet: the org logo is the effective fallback.
+      expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/org-logo?token=test-token')
+
+      fireEvent.click(screen.getByLabelText('Upload…'))
+      fireEvent.change(screen.getByLabelText('Logo file'), {
+        target: { files: [new File(['png'], 'logo.png', { type: 'image/png' })] },
+      })
+
+      await waitFor(() => expect(uploads.length).toBe(1))
+      expect(uploads[0]).toEqual({ auth: 'Bearer test-token', hasFile: true })
+      await waitFor(() =>
+        expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/att-9?token=test-token'),
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+      await waitFor(() => expect(bodies.length).toBe(1))
+      expect(savedApp(bodies).logo_attachment_id).toBe('att-9')
+    } finally {
+      localStorage.removeItem('aether_token')
+    }
+  })
+
+  test('"Use org logo" clears the dashboard logo and previews the org fallback', async () => {
+    const bodies = capturePuts()
+    localStorage.setItem('aether_token', 'test-token')
+    try {
+      renderPanel(dashboardWith(
+        { app: { logo_attachment_id: 'att-dash' } },
+        { logo_attachment_id: 'org-logo' },
+      ))
+      expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/att-dash?token=test-token')
+
+      fireEvent.click(screen.getByLabelText('Use org logo'))
+      await waitFor(() =>
+        expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/org-logo?token=test-token'),
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+      await waitFor(() => expect(bodies.length).toBe(1))
+      expect('logo_attachment_id' in savedApp(bodies)).toBe(false)
+    } finally {
+      localStorage.removeItem('aether_token')
+    }
   })
 })
