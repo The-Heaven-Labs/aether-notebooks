@@ -1391,3 +1391,37 @@ func TestDashboardSetLayoutComposesAppearanceEntries(t *testing.T) {
 		`SELECT config::text FROM widgets WHERE id = $1`, widgetID).Scan(&configOut))
 	require.JSONEq(t, `{"showLegend":true,"appearance":{"background":"transparent","padding":"md"}}`, configOut)
 }
+
+// TestDashboardGetDashboardExposesOrgBranding pins the branding read on the
+// agent's dashboard inspect: org_branding carries the org's theme tokens, and
+// stays null when the org has none.
+func TestDashboardGetDashboardExposesOrgBranding(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Branding Dashboard")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "get_dashboard")
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Nil(t, out.(map[string]any)["org_branding"], "unset branding must be null")
+
+	_, err = db.Pool.Exec(context.Background(),
+		`UPDATE orgs SET settings = COALESCE(settings, '{}'::jsonb) ||
+		 '{"branding":{"app_name":"Acme Analytics","accent_color":"#7c5cff","default_chart_palette":["#7c5cff","#22c55e"]}}'::jsonb
+		 WHERE id = $1`, orgID)
+	require.NoError(t, err)
+
+	out, err = handler(args, ctx)
+	require.NoError(t, err)
+	branding, ok := out.(map[string]any)["org_branding"].(map[string]any)
+	require.True(t, ok, "expected org_branding map, got %v", out.(map[string]any)["org_branding"])
+	require.Equal(t, "Acme Analytics", branding["app_name"])
+	require.Equal(t, "#7c5cff", branding["accent_color"])
+	require.Equal(t, []any{"#7c5cff", "#22c55e"}, branding["default_chart_palette"])
+}

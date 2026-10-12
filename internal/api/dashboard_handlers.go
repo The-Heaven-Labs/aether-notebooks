@@ -313,6 +313,21 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 		if !allowed {
 			continue
 		}
+		// Viewers of a published dashboard must not see draft-only content in
+		// the list: substitute the latest snapshot's title and settings like
+		// GET /dashboards/{id} does. A never-published dashboard has nothing
+		// to substitute, so the draft serves everyone (the read behavior).
+		editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "edit")
+		if !editOK {
+			snapshot, snapErr := s.loadPublishedDashboardSnapshot(ctx, claims.OrgID, d.ID)
+			if snapErr == nil {
+				d.Title = snapshot.Title
+				d.Settings = snapshot.Settings
+			} else if !errors.Is(snapErr, errNoPublishedVersion) {
+				writeError(w, http.StatusInternalServerError, "query failed")
+				return
+			}
+		}
 		dashboards = append(dashboards, d)
 	}
 	if dashboards == nil {

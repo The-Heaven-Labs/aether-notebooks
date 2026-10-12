@@ -591,6 +591,56 @@ describe('DashboardEditorPage tabs', () => {
     expect(await screen.findByRole('heading', { name: 'Tabs', level: 3 })).toBeInTheDocument()
     expect(screen.getByLabelText('Tab 1 title')).toHaveValue('Alpha')
   })
+
+  test('a widget added while a chapter is active lands in that chapter', async () => {
+    let posted: Record<string, unknown> | null = null
+    server.use(
+      http.post('/api/v1/dashboards/d1/widgets', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ id: 'w3', dashboard_id: 'd1', type: 'text', layout: {}, config: {} })
+      }),
+    )
+    syncedTabs()
+    renderEditor()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Beta' }))
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Widget' }))
+    fireEvent.change(await screen.findByLabelText('Widget source'), { target: { value: 'none' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add Widget' }))
+
+    const body = await waitFor(() => {
+      expect(posted).not.toBeNull()
+      return posted as unknown as Record<string, unknown>
+    })
+    expect(body).toMatchObject({
+      type: 'text',
+      layout: { row: 8, col: 0, width: 6, height: 8, tab: 'beta' },
+    })
+  })
+
+  test('a widget added with All selected carries no tab', async () => {
+    let posted: Record<string, unknown> | null = null
+    server.use(
+      http.post('/api/v1/dashboards/d1/widgets', async ({ request }) => {
+        posted = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json({ id: 'w3', dashboard_id: 'd1', type: 'text', layout: {}, config: {} })
+      }),
+    )
+    syncedTabs()
+    renderEditor()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'All' }))
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Widget' }))
+    fireEvent.change(await screen.findByLabelText('Widget source'), { target: { value: 'none' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Add Widget' }))
+
+    const body = await waitFor(() => {
+      expect(posted).not.toBeNull()
+      return posted as unknown as Record<string, unknown>
+    })
+    expect(body).toMatchObject({ layout: { row: 8, col: 0, width: 6, height: 8 } })
+    expect((body.layout as Record<string, unknown>).tab).toBeUndefined()
+  })
 })
 
 describe('DashboardEditorPage publish controls', () => {

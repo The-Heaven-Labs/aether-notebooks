@@ -48,10 +48,18 @@ interface DashboardWithWidgets extends Dashboard {
 }
 
 
-function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {
-  if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
-  const maxBottom = widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
-  return { row: maxBottom, col: 0, width: 6, height: 8 }
+/**
+ * The next free layout for a widget added through the picker. When a chapter
+ * filter is active the widget lands in that chapter (`layout.tab`); with
+ * "All" selected no tab is set and the widget falls back to the first chapter
+ * like before.
+ */
+function nextWidgetLayout(widgets: Widget[], tab: string | null): { row: number; col: number; width: number; height: number; tab?: string } {
+  const maxBottom = widgets.length
+    ? widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
+    : 0
+  const layout = { row: maxBottom, col: 0, width: 6, height: 8 }
+  return tab ? { ...layout, tab } : layout
 }
 
 /** Human name for a widget's controls; falls back to a generic label. */
@@ -340,7 +348,7 @@ const markSaved = useCallback(() => {
       const payload = buildAddWidgetPayload({
         source: pickerSource,
         type: pickerType,
-        layout: nextWidgetLayout(widgets),
+        layout: nextWidgetLayout(widgets, activeEditorTab),
         notebookId: pickerNotebookId,
         cellId: pickerCellId,
         connectorId: pickerConnectorId,

@@ -911,3 +911,60 @@ func TestDashboardGetPublishedWidgetsData(t *testing.T) {
 	rec = versionsRequest(t, srv, token, "GET", "/api/v1/dashboards/"+dashID, nil)
 	require.ElementsMatch(t, []string{cellA, cellB}, widgetsDataKeys(rec))
 }
+
+// TestDashboardListServesPublishedContentToViewers pins the list read for a
+// published dashboard: callers without `edit` see the latest snapshot's title
+// and settings, never the editor's draft-only edits; the editor keeps seeing
+// the draft.
+func TestDashboardListServesPublishedContentToViewers(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	email := fmt.Sprintf("dash-list-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Dash List Org")
+	dashID := createDashWithSettings(t, srv, token, map[string]any{"auto_refresh_seconds": 30})
+
+	// Publish the initial draft, then edit title + settings in the draft only.
+	publishVersionsDashboard(t, srv, token, dashID)
+	rec := versionsRequest(t, srv, token, "PUT", "/api/v1/dashboards/"+dashID,
+		map[string]any{"title": "Draft Renamed", "settings": map[string]any{"auto_refresh_seconds": 60}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var orgID string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+	viewerID := insertUser(t, srv, fmt.Sprintf("dash-list-viewer-%d@example.com", time.Now().UnixNano()), "List Viewer")
+	addOrgMember(t, srv, orgID, viewerID, "editor")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", viewerID, "view")
+	viewerToken := issueToken(t, viewerID, orgID, "editor")
+
+	find := func(t *testing.T, asToken string) map[string]any {
+		t.Helper()
+		rec := versionsRequest(t, srv, asToken, "GET", "/api/v1/dashboards", nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		var list []map[string]any
+		require.NoError(t, json.NewDecoder(rec.Body).Decode(&list))
+		for _, d := range list {
+			if d["id"] == dashID {
+				return d
+			}
+		}
+		t.Fatalf("dashboard %s missing from the list", dashID)
+		return nil
+	}
+
+	// The editor sees the draft title and draft settings.
+	editorEntry := find(t, token)
+	require.Equal(t, "Draft Renamed", editorEntry["title"])
+	editorSettings, ok := editorEntry["settings"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 60, editorSettings["auto_refresh_seconds"])
+
+	// The viewer sees the published snapshot only.
+	viewerEntry := find(t, viewerToken)
+	require.Equal(t, "Query Dash", viewerEntry["title"], "the draft title must not leak")
+	viewerSettings, ok := viewerEntry["settings"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 30, viewerSettings["auto_refresh_seconds"], "the draft settings must not leak")
+}

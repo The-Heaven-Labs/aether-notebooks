@@ -658,13 +658,15 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 
 		// Validate layout bounds and overlap against the materialized rows
-		// (kept current by every document store).
+		// (kept current by every document store). The merged tab rides along
+		// so the overlap check is chapter-aware.
 		if hasLayout {
 			if err := validate.WidgetLayout(ctx.Context, pool, req.DashboardID, models.WidgetLayout{
 				Row:    layout.Row,
 				Col:    layout.Col,
 				Width:  layout.Width,
 				Height: layout.Height,
+				Tab:    layout.Tab,
 			}, widgetID); err != nil {
 				return nil, fmt.Errorf("invalid layout: %w", err)
 			}
@@ -763,7 +765,26 @@ func makeGetDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 			widgets = []map[string]any{}
 		}
 
-		return map[string]any{"dashboard_id": req.DashboardID, "title": title, "settings": settings, "widgets": widgets}, nil
+		// Org branding rides along so the agent can read the org's theme
+		// tokens; a read failure degrades to null rather than failing the
+		// whole read (mirrors the API's orgBranding helper).
+		var orgBranding map[string]any
+		var brandingJSON []byte
+		if err := pool.QueryRow(ctx.Context,
+			`SELECT COALESCE(settings->'branding', 'null'::jsonb) FROM orgs WHERE id = $1`, ctx.OrgID,
+		).Scan(&brandingJSON); err != nil {
+			slog.Debug("org branding read failed", "org_id", ctx.OrgID, "error", err)
+		} else if err := json.Unmarshal(brandingJSON, &orgBranding); err != nil {
+			slog.Debug("org branding decode failed", "org_id", ctx.OrgID, "error", err)
+		}
+
+		return map[string]any{
+			"dashboard_id": req.DashboardID,
+			"title":        title,
+			"settings":     settings,
+			"widgets":      widgets,
+			"org_branding": orgBranding,
+		}, nil
 	}
 }
 

@@ -83,3 +83,68 @@ func TestCreateDashboardWidgetDoesNotSnapshotCellChartConfig(t *testing.T) {
 		`SELECT metadata::text FROM cells WHERE id = $1`, cellID).Scan(&meta))
 	require.JSONEq(t, `{"chart":{"chartType":"pie","showLegend":false}}`, meta)
 }
+
+// TestDashboardWidgetOverlapIsChapterAware pins the tab-scoped overlap check:
+// the app renders one independent grid per chapter, so widgets at identical
+// coordinates in different tabs coexist, while an overlap within the same
+// effective chapter is still rejected. Empty and unknown tabs fall back to the
+// first chapter, and a dashboard without tabs keeps the global check.
+func TestDashboardWidgetOverlapIsChapterAware(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+
+	email := fmt.Sprintf("dash-tabs-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Dash Tabs Org")
+	dashID := createDashWithSettings(t, srv, token, map[string]any{
+		"tabs": []map[string]any{
+			{"id": "alpha", "title": "Alpha"},
+			{"id": "beta", "title": "Beta"},
+		},
+	})
+
+	add := func(dashID string, layout map[string]any) *httptest.ResponseRecorder {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{"type": "text", "layout": layout})
+		req := httptest.NewRequest("POST", "/api/v1/dashboards/"+dashID+"/widgets", bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		return rec
+	}
+	layout := func(tab string) map[string]any {
+		l := map[string]any{"row": 0, "col": 0, "width": 6, "height": 6}
+		if tab != "" {
+			l["tab"] = tab
+		}
+		return l
+	}
+
+	// The first widget lands in chapter alpha.
+	require.Equal(t, http.StatusCreated, add(dashID, layout("alpha")).Code)
+
+	// Identical coordinates in chapter beta are accepted: a different grid.
+	require.Equal(t, http.StatusCreated, add(dashID, layout("beta")).Code)
+
+	// Identical coordinates in the same chapter are still rejected.
+	rec := add(dashID, layout("alpha"))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "widget overlaps existing widget")
+
+	// Empty and unknown tabs both resolve to the first chapter (alpha), so
+	// they collide with the alpha widget.
+	for _, tab := range []string{"", "gamma"} {
+		rec = add(dashID, layout(tab))
+		require.Equal(t, http.StatusBadRequest, rec.Code, "tab %q: %s", tab, rec.Body.String())
+		require.Contains(t, rec.Body.String(), "widget overlaps existing widget")
+	}
+
+	// Without tabs the check stays global: the same coordinates in a
+	// well-formed but undefined tab still overlap.
+	plainID := createDashWithSettings(t, srv, token, nil)
+	require.Equal(t, http.StatusCreated, add(plainID, layout("")).Code)
+	rec = add(plainID, layout("beta"))
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+	require.Contains(t, rec.Body.String(), "widget overlaps existing widget")
+}
