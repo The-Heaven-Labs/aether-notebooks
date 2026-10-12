@@ -287,6 +287,14 @@ test.describe('Dashboard publish, tabs, theming, and draft preview', () => {
     // The editor's draft is back to v1 (a reload reads the restored document) ...
     await openEditor(page, fx.dashboardId)
     await expect(page.locator('span[title="Click to rename"]')).toHaveText(publishedTitle)
+    // ... including the widget's SQL: restore copies the whole snapshot, not
+    // just the title.
+    await expect.poll(async () => {
+      const resp = await request.get(`/api/v1/dashboards/${fx.dashboardId}`, { headers: fx.headers })
+      if (!resp.ok()) return null
+      const body = (await resp.json()) as { widgets: Array<{ id: string; query?: string }> }
+      return body.widgets.find((w) => w.id === fx.widgetIds[0])?.query ?? null
+    }, { timeout: 15_000 }).toBe("SELECT 'live-value' AS marker")
     // ... while /view and the viewer still render the last published version (v2).
     await page.goto(`/dashboards/${fx.dashboardId}/view`)
     await expect(page.getByRole('heading', { name: renamedTitle })).toBeVisible()
@@ -302,8 +310,11 @@ test.describe('Dashboard publish, tabs, theming, and draft preview', () => {
     const fx = await createPublishDashboard(page, request, {
       suffix: ts,
       widgets: [
-        { title: 'Alpha', query: "SELECT 'alpha-value' AS marker" },
-        { title: 'Beta', query: "SELECT 'beta-value' AS marker" },
+        // Metric widgets: their reading renders inside the hidden chapter too
+        // (a virtualized table body would not), so "mounted but hidden" is a
+        // real DOM state the assertions can pin.
+        { title: 'Alpha', type: 'metric', query: 'SELECT 41 AS marker', config: { metric: { value_column: 'marker', aggregation: 'none' } } },
+        { title: 'Beta', type: 'metric', query: 'SELECT 42 AS marker', config: { metric: { value_column: 'marker', aggregation: 'none' } } },
       ],
     })
 
@@ -341,23 +352,36 @@ test.describe('Dashboard publish, tabs, theming, and draft preview', () => {
 
     await publishViaEditor(page, 1)
 
-    // /view renders the chapter bar; switching chapters swaps the widget and
-    // writes ?tab= (replacing, so it stays out of the back stack).
+    // /view renders the chapter bar; switching chapters swaps the visible
+    // reading and writes ?tab= (replacing, so it stays out of the back stack).
+    // Both chapters stay mounted — the inactive reading is in the DOM but
+    // hidden, not absent — so pin the count before the visibility assertion:
+    // `not.toBeVisible` alone would also pass if the widget were missing. The
+    // locators are plain CSS (not getByRole): role selectors exclude
+    // `display:none` subtrees from the accessibility tree, which is exactly
+    // the state being pinned.
+    const alphaReading = page.locator('[role="group"][aria-label="41"]')
+    const betaReading = page.locator('[role="group"][aria-label="42"]')
     await page.goto(`/dashboards/${fx.dashboardId}/view`)
     await expect(page.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByText('alpha-value')).toBeVisible()
-    await expect(page.getByText('beta-value')).not.toBeVisible()
+    await expect(alphaReading).toHaveCount(1)
+    await expect(alphaReading).toBeVisible()
+    await expect(betaReading).toHaveCount(1)
+    await expect(betaReading).not.toBeVisible()
 
     await page.getByRole('tab', { name: 'Orders' }).click()
     await expect(page.getByRole('tab', { name: 'Orders' })).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByText('beta-value')).toBeVisible()
-    await expect(page.getByText('alpha-value')).not.toBeVisible()
+    await expect(betaReading).toHaveCount(1)
+    await expect(betaReading).toBeVisible()
+    await expect(alphaReading).toHaveCount(1)
+    await expect(alphaReading).not.toBeVisible()
     await expect(page).toHaveURL(new RegExp(`/dashboards/${fx.dashboardId}/view\\?tab=tab-2$`))
 
     // A reload lands on the same chapter (the URL is the source of truth).
     await page.reload()
     await expect(page.getByRole('tab', { name: 'Orders' })).toHaveAttribute('aria-selected', 'true')
-    await expect(page.getByText('beta-value')).toBeVisible()
+    await expect(betaReading).toHaveCount(1)
+    await expect(betaReading).toBeVisible()
   })
 
   test('the app surface takes the dashboard theme (visual)', async ({ page, request }) => {
@@ -367,25 +391,35 @@ test.describe('Dashboard publish, tabs, theming, and draft preview', () => {
       suffix: ts,
       widgets: [{
         type: 'metric',
-        query: 'SELECT 42 AS revenue, 40 AS prev',
+        // Eight rows so the configured sparkline renders (≥2 numeric rows);
+        // the sparkline stroke consumes --accent, so the accent override is
+        // visible in the snapshot instead of only existing as a token.
+        query: 'SELECT i AS step, 40 + i AS revenue, 40 AS prev FROM generate_series(1, 8) AS i',
         config: {
           metric: {
             value_column: 'revenue',
             aggregation: 'none',
             comparison: { column: 'prev', mode: 'percent' },
+            sparkline: { x_column: 'step', y_column: 'revenue' },
           },
         },
       }],
     })
 
-    // Masthead title, accent, and dark scheme through the App settings panel.
+    // A light scheme (the global default is dark, so this visibly flips the
+    // surface), canvas/card overrides, an accent the sparkline paints, and a
+    // masthead title — all through the App settings panel. The accent is a
+    // dark indigo so it clears the app-theme contrast guardrail against the
+    // light canvas.
     await openEditor(page, fx.dashboardId)
     await page.getByRole('button', { name: 'App', exact: true }).click()
     const appSettings = page.getByRole('dialog', { name: 'App settings' })
     await expect(appSettings).toBeVisible()
     await appSettings.getByLabel('App title').fill('Themed Brief')
-    await appSettings.getByLabel('Accent', { exact: true }).fill('#0ea5e9')
-    await appSettings.getByLabel('Color scheme').selectOption('dark')
+    await appSettings.getByLabel('Accent', { exact: true }).fill('#4338ca')
+    await appSettings.getByLabel('Background', { exact: true }).fill('#eef2ff')
+    await appSettings.getByLabel('Surface', { exact: true }).fill('#faf5ff')
+    await appSettings.getByLabel('Color scheme').selectOption('light')
     await appSettings.getByRole('button', { name: 'Save app settings' }).click()
     await expect(appSettings.getByText('App settings saved')).toBeVisible()
     await appSettings.getByRole('button', { name: 'Close app settings' }).click()
@@ -397,9 +431,16 @@ test.describe('Dashboard publish, tabs, theming, and draft preview', () => {
     await page.clock.setFixedTime(new Date('2026-06-01T12:00:00Z'))
     await page.goto(`/dashboards/${fx.dashboardId}/view`)
 
-    await expect(page.locator('.app-theme')).toHaveAttribute('data-app-scheme', 'dark')
+    // The scoped tokens prove the theme resolved (not just the attribute):
+    // the container's canvas is the background override, and the accent is
+    // what the sparkline stroke consumes.
+    const themed = page.locator('.app-theme')
+    await expect(themed).toHaveAttribute('data-app-scheme', 'light')
+    await expect(themed).toHaveCSS('background-color', 'rgb(238, 242, 255)')
+    await expect(themed).toHaveCSS('--bg-card', '#faf5ff')
+    await expect(themed).toHaveCSS('--accent', '#4338ca')
     await expect(page.getByRole('heading', { name: 'Themed Brief' })).toBeVisible()
-    await expect(page.getByRole('group', { name: '42, +5.0%' })).toBeVisible()
+    await expect(page.getByRole('group', { name: '41, +2.5%' })).toBeVisible()
 
     // Guard the mask locator: if the footer text ever changes, this fails
     // loudly here instead of silently dropping the mask and letting the pixel
