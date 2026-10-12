@@ -1,5 +1,5 @@
 import type React from 'react'
-import { memo, useRef, useEffect, useMemo, useState } from 'react'
+import { memo, useRef, useEffect, useMemo, useState, useContext } from 'react'
 import * as echarts from 'echarts/core'
 import { BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart, FunnelChart, HeatmapChart } from 'echarts/charts'
 import {
@@ -11,6 +11,11 @@ import { CanvasRenderer } from 'echarts/renderers'
 import { LabelLayout } from 'echarts/features'
 import type { ResultSet } from '../types'
 import type { ChartConfig, MarkLineConfig } from './types'
+import { AppChartThemeContext, getAppChartTheme } from './appChartTheme'
+import type { AppChartTheme } from './appChartTheme'
+
+export { AppChartThemeContext } from './appChartTheme'
+export type { AppChartTheme } from './appChartTheme'
 
 // Register only what we use
 echarts.use([
@@ -35,7 +40,9 @@ const DARK_CHART_COLORS = [
 ]
 
 function getCurrentPalette(): string[] {
-  return isDarkMode() ? DARK_CHART_COLORS : LIGHT_CHART_COLORS
+  // The app-surface palette override (AppThemeProvider) wins; without one the
+  // global scheme picks the built-in light/dark palette.
+  return getAppChartTheme()?.palette ?? (isDarkMode() ? DARK_CHART_COLORS : LIGHT_CHART_COLORS)
 }
 
 export const CHART_COLORS = new Proxy(LIGHT_CHART_COLORS, {
@@ -401,7 +408,10 @@ export function useGroupBySeries(
   // as 0, so the band and tooltip should agree).
   coalesceNulls?: boolean,
 ): { series: any[]; xValues: string[] } {
-  const colors = palette ?? (getCurrentPalette())
+  // Context (not just the module override) so a live theme change re-renders
+  // memoized chart subtrees with the new palette.
+  const appTheme = useContext(AppChartThemeContext)
+  const colors = palette ?? appTheme?.palette ?? getCurrentPalette()
   return useMemo(() => {
     const groupByCol = config.groupBy
     if (!groupByCol || !config.xAxis || !config.yAxis?.length || chartData.length === 0) {
@@ -446,8 +456,11 @@ export function useGroupBySeries(
   }, [chartData, config.xAxis, config.yAxis, config.groupBy, config.seriesColors, colors, coalesceNulls])
 }
 
-// Detect dark mode and provide explicit colors for ECharts (canvas doesn't support CSS vars)
+// Detect dark mode and provide explicit colors for ECharts (canvas doesn't support CSS vars).
+// The app-surface override (AppThemeProvider) wins over the global data-theme.
 function isDarkMode(): boolean {
+  const app = getAppChartTheme()
+  if (app) return app.scheme === 'dark'
   return document.documentElement.getAttribute('data-theme') === 'dark'
 }
 
@@ -461,30 +474,43 @@ export function getContrastTextColor(bg: string): string {
   return luminance > 0.5 ? '#111' : '#fff'
 }
 
-export function getChartColors() {
-  const dark = isDarkMode()
+// Scheme defaults with the app theme's overrides layered on. Shared by the
+// module-level `getChartColors` and the context-aware `useChartColors`.
+function colorsFromAppChartTheme(app: AppChartTheme) {
+  const dark = app.scheme === 'dark'
   return {
-    text: dark ? '#e8e8e8' : '#111',
+    text: app.text ?? (dark ? '#e8e8e8' : '#111'),
     textMuted: dark ? '#888' : '#6e6e6e',
-    border: dark ? '#2e2e2e' : '#e8e8e8',
-    bgCard: dark ? '#1c1c1c' : '#ffffff',
+    border: app.border ?? (dark ? '#2e2e2e' : '#e8e8e8'),
+    bgCard: app.bgCard ?? (dark ? '#1c1c1c' : '#ffffff'),
     shadow: dark ? 'rgba(0,0,0,0.3)' : 'rgba(0,0,0,0.1)',
-    palette: dark ? DARK_CHART_COLORS : LIGHT_CHART_COLORS,
+    palette: app.palette ?? (dark ? DARK_CHART_COLORS : LIGHT_CHART_COLORS),
   }
 }
 
+export function getChartColors() {
+  const app = getAppChartTheme()
+  if (app) return colorsFromAppChartTheme(app)
+  const dark = document.documentElement.getAttribute('data-theme') === 'dark'
+  return colorsFromAppChartTheme({ scheme: dark ? 'dark' : 'light' })
+}
+
 export function useChartColors() {
-  const [colors, setColors] = useState(getChartColors)
+  const appTheme = useContext(AppChartThemeContext)
+  const [domColors, setDomColors] = useState(getChartColors)
 
   useEffect(() => {
     const el = document.documentElement
-    const update = () => setColors(getChartColors())
+    const update = () => setDomColors(getChartColors())
     const observer = new MutationObserver(update)
     observer.observe(el, { attributes: true, attributeFilter: ['data-theme'] })
     return () => observer.disconnect()
   }, [])
 
-  return colors
+  return useMemo(
+    () => (appTheme ? colorsFromAppChartTheme(appTheme) : domColors),
+    [appTheme, domColors],
+  )
 }
 
 // Canvas text can't use CSS variables, so the design system's stacks are

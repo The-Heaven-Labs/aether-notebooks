@@ -183,7 +183,14 @@ export function resolveAppTheme(
     vars['--app-radius'] = `${radius}px`
   }
   const stack = theme?.font_family ? FONT_STACKS[theme.font_family] : undefined
-  if (stack) vars['--app-font'] = stack
+  if (stack) {
+    vars['--app-font'] = stack
+    // App-surface components (masthead, filter strip, widgets) set
+    // `font-family: var(--font-sans)` explicitly, so `--app-font` alone would
+    // not restyle them; scope the same stack onto the sans token. `--font-mono`
+    // (the data/instrument font) is deliberately left alone.
+    vars['--font-sans'] = stack
+  }
 
   const chartPalette = pickPalette(theme?.chart_palette) ?? pickPalette(branding?.default_chart_palette)
 

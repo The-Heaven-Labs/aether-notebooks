@@ -253,6 +253,29 @@ describe('DashboardPage live document wiring', () => {
     expect(screen.queryByTestId('output-renderer')).not.toBeInTheDocument()
   })
 
+  test('wraps the surface in the resolved app theme and renders the dashboard logo', async () => {
+    localStorage.setItem('aether_token', 'test-token')
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      settings: {
+        ...REST_DASHBOARD.settings,
+        app: { theme: { color_scheme: 'dark' }, logo_attachment_id: 'logo-1' },
+      },
+      org_branding: { logo_attachment_id: 'org-logo' },
+    })))
+    renderDashboard()
+    await screen.findByText('Rest board')
+
+    const themeContainer = document.querySelector<HTMLElement>('.app-theme')
+    if (!themeContainer) throw new Error('.app-theme container not found')
+    expect(themeContainer).toHaveAttribute('data-app-scheme', 'dark')
+
+    // The dashboard logo wins over the org fallback, and the URL carries the
+    // session token: an <img> cannot send an Authorization header.
+    const logo = screen.getByRole('img', { name: 'Rest board' })
+    expect(logo).toHaveAttribute('src', '/api/v1/attachments/logo-1?token=test-token')
+  })
+
   test('falls back silently to the REST snapshot when the relay is unavailable', async () => {
     renderDashboard()
     expect(await screen.findByText('Rest board')).toBeInTheDocument()

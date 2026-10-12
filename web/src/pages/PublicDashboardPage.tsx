@@ -6,6 +6,7 @@ import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
 import { Skeleton } from '../components/Skeleton'
 import { OutputRenderer } from '../components/OutputRenderer'
+import { AppThemeProvider } from '../components/AppThemeProvider'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { QueryDataWidget } from '../components/QueryDataWidget'
@@ -15,12 +16,14 @@ import { formatExecutedAt } from '../utils/formatDateTime'
 import { textConfigFrom } from '../utils/textConfig'
 import { visibleWidgets, variableDefaults } from '../utils/publicDashboard'
 import { isQueryWidget, isTextPanel } from '../utils/widgetKind'
-import type { Dashboard, Widget, Output } from '../types'
+import type { Dashboard, OrgBranding, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
   widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[]; metadata?: Record<string, unknown>; updated_at?: string }>
+  /** Org-level branding (served on the public payload); app-theme fallback. */
+  org_branding?: OrgBranding
 }
 
 const ROW_HEIGHT = 30
@@ -84,6 +87,12 @@ export function PublicDashboardPage() {
   const shownWidgets = visibleWidgets(widgets, widgetsData, publicLive)
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
+  // The dashboard logo wins over the org fallback. Public pages stream the
+  // logo through the share token — no session credentials exist here.
+  const logoAttachmentId = app?.logo_attachment_id || dashboard.org_branding?.logo_attachment_id
+  const logoUrl = logoAttachmentId
+    ? `/api/v1/public/${token}/attachments/${logoAttachmentId}`
+    : undefined
   // Widgets are never shorter than 6 rows here either: below that the chart
   // area collapses under the widget chrome (~40px plots).
   const totalHeight = shownWidgets.reduce((max, w) => {
@@ -95,6 +104,7 @@ export function PublicDashboardPage() {
       <header style={pageStyles.header}>
         <div style={{ ...pageStyles.headerInner, ...contentWidth }}>
           <span style={pageStyles.brandMark}>Aether</span>
+          {logoUrl && <img src={logoUrl} alt={appTitle} style={pageStyles.logo} />}
           {showMasthead ? (
             <div style={pageStyles.titleBlock}>
               <h1 style={pageStyles.title}>{appTitle}</h1>
@@ -200,7 +210,16 @@ export function PublicDashboardPage() {
     </div>
   )
 
-  if (!publicLive) return content
+  // The whole surface (header + body + footer) sits inside the themed
+  // container: `.app-theme` paints the canvas and sets a 100vh min-height, so
+  // wrapping only <main> would add a scrollbar of header/footer height.
+  const themed = (
+    <AppThemeProvider theme={app?.theme} branding={dashboard.org_branding}>
+      {content}
+    </AppThemeProvider>
+  )
+
+  if (!publicLive) return themed
   return (
     <DashboardVariablesProvider
       dashboardId={dashboard.id}
@@ -208,7 +227,7 @@ export function PublicDashboardPage() {
       endpointBase={endpointBase}
       storageId={`pub_${token}`}
     >
-      {content}
+      {themed}
     </DashboardVariablesProvider>
   )
 }
@@ -242,6 +261,14 @@ const pageStyles: Record<string, React.CSSProperties> = {
     letterSpacing: '-0.02em',
     fontFamily: 'var(--font-mono)',
     flexShrink: 0,
+  },
+  // The app's own mark, sized to sit quietly beside the title block.
+  logo: {
+    height: 24,
+    maxWidth: 160,
+    objectFit: 'contain',
+    flexShrink: 0,
+    display: 'block',
   },
   titleBlock: {
     display: 'flex',

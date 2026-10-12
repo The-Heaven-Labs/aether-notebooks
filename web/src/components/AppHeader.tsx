@@ -22,6 +22,8 @@ interface AppHeaderProps {
   onRefresh: () => void
   /** When set, a back link to this route renders before the title block. */
   backTo?: string
+  /** App logo image URL; renders before the title block when set. */
+  logoUrl?: string
   /** Right-side actions (Edit, Share, connector selector, …). */
   children?: ReactNode
 }
@@ -42,6 +44,7 @@ export function AppHeader({
   refreshing,
   onRefresh,
   backTo,
+  logoUrl,
   children,
 }: AppHeaderProps) {
   return (
@@ -60,6 +63,9 @@ export function AppHeader({
           >
             <ArrowLeft size={16} />
           </Link>
+        )}
+        {logoUrl && (
+          <img src={logoUrl} alt={title} style={styles.logo} />
         )}
         {title && (
           <div style={styles.titleBlock}>
@@ -109,6 +115,14 @@ const styles: Record<string, CSSProperties> = {
   contentFixed: {
     maxWidth: APP_CONTENT_MAX_WIDTH,
     margin: '0 auto',
+  },
+  // The app's own mark, sized to sit quietly beside the title block.
+  logo: {
+    height: 24,
+    maxWidth: 160,
+    objectFit: 'contain',
+    flexShrink: 0,
+    display: 'block',
   },
   // 36×36: the app surface's ≥36px tap-target rule (The Story).
   backLink: {

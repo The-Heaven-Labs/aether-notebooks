@@ -118,6 +118,20 @@ describe('AppHeader', () => {
     expect(screen.queryByLabelText('Back to dashboards')).toBeNull()
   })
 
+  it('renders the logo before the title block when logoUrl is set', () => {
+    renderHeader({ logoUrl: '/api/v1/attachments/logo-1?token=abc' })
+    const logo = screen.getByRole('img', { name: 'Executive Brief' })
+    expect(logo).toHaveAttribute('src', '/api/v1/attachments/logo-1?token=abc')
+    expect(logo.style.height).toBe('24px')
+    const heading = screen.getByRole('heading', { name: 'Executive Brief' })
+    expect(logo.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
+  it('renders no logo without logoUrl', () => {
+    renderHeader()
+    expect(screen.queryByRole('img')).toBeNull()
+  })
+
   it('renders a minimal bar without a heading when the title is empty', () => {
     renderHeader({ title: '', backTo: '/dashboards' }, <button type="button">Share</button>)
     // show_header=false path: no title block, but the escape hatches remain.

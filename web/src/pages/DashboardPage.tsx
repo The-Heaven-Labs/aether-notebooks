@@ -3,13 +3,14 @@ import { useParams, Link } from 'react-router-dom'
 import { Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
 import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
-import type { Dashboard, Notebook, Cell, Widget } from '../types'
+import { api, getToken } from '../api/client'
+import type { Dashboard, Notebook, Cell, Widget, OrgBranding } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { AppShell } from '../components/AppShell'
 import { AppHeader, APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
+import { AppThemeProvider } from '../components/AppThemeProvider'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
@@ -46,6 +47,8 @@ interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
   can_share?: boolean
   can_edit?: boolean
+  /** Org-level branding (served on the dashboard GET); app-theme fallback. */
+  org_branding?: OrgBranding
 }
 
 // Widget type extended with input widget variants (config is typed loosely)
@@ -523,7 +526,17 @@ function DashboardContent({ id }: { id: string }) {
     ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
     : undefined
 
+  // The dashboard logo wins over the org fallback. The authed attachment route
+  // needs credentials an <img> cannot send as a header, so the session JWT
+  // rides the query string (the auth middleware accepts ?token= for these).
+  const logoAttachmentId = app?.logo_attachment_id || dashboard.org_branding?.logo_attachment_id
+  const sessionToken = getToken()
+  const logoUrl = logoAttachmentId
+    ? `/api/v1/attachments/${logoAttachmentId}${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`
+    : undefined
+
   return (
+    <AppThemeProvider theme={app?.theme} branding={dashboard.org_branding}>
     <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId}>
     <AppShell noPadding bare>
       {!showMasthead && <h1 className="sr-only">{appTitle}</h1>}
@@ -537,6 +550,7 @@ function DashboardContent({ id }: { id: string }) {
         refreshing={refreshingCount > 0 || isRunningAll}
         onRefresh={() => executeAllWidgets(widgets)}
         backTo="/dashboards"
+        logoUrl={logoUrl}
       >
         {/* Presence + live state: avatars come from the document's awareness
             and the indicator lights while the relay is connected. When the
@@ -715,6 +729,7 @@ function DashboardContent({ id }: { id: string }) {
       )}
     </AppShell>
     </DashboardVariablesProvider>
+    </AppThemeProvider>
   )
 }
 

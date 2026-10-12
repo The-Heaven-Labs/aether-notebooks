@@ -95,12 +95,19 @@ describe('resolveAppTheme', () => {
     expect(resolveAppTheme({ radius: -1 }, undefined, 'light').vars['--app-radius']).toBeUndefined()
   })
 
-  it('maps font_family to the matching stack', () => {
-    const stack = (font: 'dm-sans' | 'jetbrains-mono' | 'system') =>
-      resolveAppTheme({ font_family: font }, undefined, 'light').vars['--app-font']
-    expect(stack('dm-sans')).toBe("'DM Sans', system-ui, sans-serif")
-    expect(stack('jetbrains-mono')).toBe("'JetBrains Mono', ui-monospace, monospace")
-    expect(stack('system')).toBe('system-ui, -apple-system, sans-serif')
+  it('maps font_family to --app-font and the scoped --font-sans stack', () => {
+    const vars = (font: 'dm-sans' | 'jetbrains-mono' | 'system') =>
+      resolveAppTheme({ font_family: font }, undefined, 'light').vars
+    expect(vars('dm-sans')['--app-font']).toBe("'DM Sans', system-ui, sans-serif")
+    expect(vars('jetbrains-mono')['--app-font']).toBe("'JetBrains Mono', ui-monospace, monospace")
+    expect(vars('system')['--app-font']).toBe('system-ui, -apple-system, sans-serif')
+    // App-surface components set `font-family: var(--font-sans)` explicitly, so
+    // the chosen stack must also override the scoped sans token; the data /
+    // instrument font (--font-mono) is deliberately left alone.
+    expect(vars('dm-sans')['--font-sans']).toBe("'DM Sans', system-ui, sans-serif")
+    expect(vars('jetbrains-mono')['--font-sans']).toBe("'JetBrains Mono', ui-monospace, monospace")
+    expect(vars('system')['--font-sans']).toBe('system-ui, -apple-system, sans-serif')
+    expect(vars('dm-sans')['--font-mono']).toBeUndefined()
   })
 
   it('ignores overrides that are not hex colors', () => {
@@ -215,6 +222,7 @@ describe('resolveAppTheme', () => {
         '--border-light': '#2e2e2e',
         '--app-radius': '10px',
         '--app-font': "'DM Sans', system-ui, sans-serif",
+        '--font-sans': "'DM Sans', system-ui, sans-serif",
       })
     })
 
