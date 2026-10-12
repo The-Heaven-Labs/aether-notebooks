@@ -4,6 +4,7 @@ import { Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
 import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api, getToken } from '../api/client'
+import { getApiUrl } from '../config'
 import type { Dashboard, Notebook, Cell, Widget, OrgBranding } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
@@ -529,10 +530,11 @@ function DashboardContent({ id }: { id: string }) {
   // The dashboard logo wins over the org fallback. The authed attachment route
   // needs credentials an <img> cannot send as a header, so the session JWT
   // rides the query string (the auth middleware accepts ?token= for these).
+  // The runtime API base is prefixed so split-origin deployments resolve it.
   const logoAttachmentId = app?.logo_attachment_id || dashboard.org_branding?.logo_attachment_id
   const sessionToken = getToken()
   const logoUrl = logoAttachmentId
-    ? `/api/v1/attachments/${logoAttachmentId}${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`
+    ? `${getApiUrl()}/api/v1/attachments/${logoAttachmentId}${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`
     : undefined
 
   return (

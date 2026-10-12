@@ -35,24 +35,42 @@ export interface AppChartTheme {
 /** `null` outside an `AppThemeProvider` (DOM/global scheme applies). */
 export const AppChartThemeContext = createContext<AppChartTheme | null>(null)
 
-let appChartTheme: AppChartTheme | null = null
+// Provider themes form a stack: nested providers layer over their ancestors
+// and the innermost (last rendered) one is the active override. Entries are
+// keyed by theme identity; `getAppChartTheme` exposes the top.
+const appChartThemeStack: AppChartTheme[] = []
 
-/** Sets the module-level override non-hook chart readers resolve. */
+/**
+ * Registers `theme` as the active module-level override.
+ *
+ * - Absent: pushed on top (a nested provider layers over its ancestors).
+ * - Present: left in place — re-asserting must not reorder the stack, or an
+ *   outer provider re-rendering would outrank a mounted inner one.
+ *
+ * `null` clears the whole stack.
+ */
 export function setAppChartTheme(theme: AppChartTheme | null): void {
-  appChartTheme = theme
+  if (theme === null) {
+    appChartThemeStack.length = 0
+    return
+  }
+  if (!appChartThemeStack.includes(theme)) appChartThemeStack.push(theme)
 }
 
 /**
- * Clears the override only while `theme` is still the active one: an
- * unmounting provider must not clobber a sibling provider that rendered in the
- * same commit (React renders the new tree before running the old tree's
- * cleanups).
+ * Removes `theme` by identity; the entry beneath it (if any) becomes active
+ * again. An unmounting provider must not clobber a sibling provider that
+ * rendered in the same commit (React renders the new tree before running the
+ * old tree's cleanups), so removal is by identity rather than "clear all".
  */
 export function clearAppChartTheme(theme: AppChartTheme): void {
-  if (appChartTheme === theme) appChartTheme = null
+  const idx = appChartThemeStack.indexOf(theme)
+  if (idx !== -1) appChartThemeStack.splice(idx, 1)
 }
 
-/** The active module-level override, or null when no provider is mounted. */
+/** The active module-level override (the innermost provider), or null. */
 export function getAppChartTheme(): AppChartTheme | null {
-  return appChartTheme
+  return appChartThemeStack.length > 0
+    ? appChartThemeStack[appChartThemeStack.length - 1]
+    : null
 }

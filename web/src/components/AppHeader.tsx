@@ -65,7 +65,8 @@ export function AppHeader({
           </Link>
         )}
         {logoUrl && (
-          <img src={logoUrl} alt={title} style={styles.logo} />
+          // Decorative: the adjacent h1 announces the app name.
+          <img src={logoUrl} alt="" style={styles.logo} />
         )}
         {title && (
           <div style={styles.titleBlock}>

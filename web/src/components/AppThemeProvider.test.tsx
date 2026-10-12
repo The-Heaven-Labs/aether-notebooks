@@ -1,6 +1,9 @@
+import { StrictMode } from 'react'
 import { describe, expect, it, afterEach } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
 import { AppThemeProvider } from './AppThemeProvider'
+import { CHART_COLORS, useChartColors } from '../charts/common'
+import { getAppChartTheme } from '../charts/appChartTheme'
 
 afterEach(() => {
   document.documentElement.removeAttribute('data-theme')
@@ -10,6 +13,24 @@ function containerFor(text: string): HTMLElement {
   const el = screen.getByText(text).closest('.app-theme')
   if (!(el instanceof HTMLElement)) throw new Error('.app-theme container not found')
   return el
+}
+
+function PaletteProbe({ testId }: { testId: string }) {
+  const colors = useChartColors()
+  return <div data-testid={testId} data-palette={colors.palette.join(',')} />
+}
+
+function NestedProviders({ showInner }: { showInner: boolean }) {
+  return (
+    <AppThemeProvider theme={{ chart_palette: ['#111111'] }}>
+      <PaletteProbe testId="outer-colors" />
+      {showInner && (
+        <AppThemeProvider theme={{ chart_palette: ['#222222'] }}>
+          <PaletteProbe testId="inner-colors" />
+        </AppThemeProvider>
+      )}
+    </AppThemeProvider>
+  )
 }
 
 describe('AppThemeProvider', () => {
@@ -106,5 +127,41 @@ describe('AppThemeProvider', () => {
       </AppThemeProvider>,
     )
     expect(containerFor('precedence').style.getPropertyValue('--accent')).toBe('#7c6faa')
+  })
+
+  it('stacks nested providers: the inner theme wins and unmounting it restores the outer', () => {
+    const { rerender, unmount } = render(<NestedProviders showInner />)
+
+    // Context is per-subtree; module readers (canvas charts) see the innermost.
+    expect(screen.getByTestId('outer-colors')).toHaveAttribute('data-palette', '#111111')
+    expect(screen.getByTestId('inner-colors')).toHaveAttribute('data-palette', '#222222')
+    expect(CHART_COLORS[0]).toBe('#222222')
+
+    // Unmounting the inner provider falls back to the outer, not the DOM default.
+    rerender(<NestedProviders showInner={false} />)
+    expect(screen.queryByTestId('inner-colors')).toBeNull()
+    expect(screen.getByTestId('outer-colors')).toHaveAttribute('data-palette', '#111111')
+    expect(CHART_COLORS[0]).toBe('#111111')
+
+    // Unmounting the last provider restores the global defaults.
+    unmount()
+    expect(getAppChartTheme()).toBeNull()
+    expect(CHART_COLORS[0]).toBe('#6366f1')
+  })
+
+  it('survives StrictMode double-effects and restores the global defaults on unmount', () => {
+    const { unmount } = render(
+      <StrictMode>
+        <AppThemeProvider theme={{ chart_palette: ['#111111'] }}>
+          <PaletteProbe testId="strict-colors" />
+        </AppThemeProvider>
+      </StrictMode>,
+    )
+    expect(screen.getByTestId('strict-colors')).toHaveAttribute('data-palette', '#111111')
+    expect(CHART_COLORS[0]).toBe('#111111')
+
+    unmount()
+    expect(getAppChartTheme()).toBeNull()
+    expect(CHART_COLORS[0]).toBe('#6366f1')
   })
 })

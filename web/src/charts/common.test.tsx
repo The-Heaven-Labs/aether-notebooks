@@ -103,6 +103,19 @@ describe('app chart theme plumbing', () => {
     expect(screen.getByTestId('colors')).toHaveAttribute('data-bg-card', '#1c1c1c')
   })
 
+  it('layers a partial override over the scheme defaults', () => {
+    render(
+      <AppThemeProvider theme={{ chart_palette: ['#111111'] }}>
+        <ColorsProbe />
+      </AppThemeProvider>,
+    )
+    expect(screen.getByTestId('colors')).toHaveAttribute('data-palette', '#111111')
+    // Text/border/card stay at the scheme defaults when not overridden.
+    expect(screen.getByTestId('colors')).toHaveAttribute('data-text', '#111')
+    expect(screen.getByTestId('colors')).toHaveAttribute('data-border', '#e8e8e8')
+    expect(screen.getByTestId('colors')).toHaveAttribute('data-bg-card', '#ffffff')
+  })
+
   it('defaults useGroupBySeries to the app palette', () => {
     render(
       <AppThemeProvider theme={{ chart_palette: ['#111111'] }}>

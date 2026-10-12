@@ -75,8 +75,8 @@ export function AppThemeProvider({ theme, branding, children }: AppThemeProvider
   // cannot consume context, so the module-level override must already be
   // current when children render — a layout effect runs too late for the same
   // pass. The write is idempotent and derived purely from props; the layout
-  // effect below re-asserts it (StrictMode's simulated remount) and restores
-  // on unmount.
+  // effect below re-asserts it (StrictMode's simulated remount) and clears this
+  // provider's stack entry on unmount, re-exposing an outer provider's theme.
   setAppChartTheme(chartTheme)
   useLayoutEffect(() => {
     setAppChartTheme(chartTheme)

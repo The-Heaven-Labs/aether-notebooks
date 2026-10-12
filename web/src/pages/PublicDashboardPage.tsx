@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { api } from '../api/client'
+import { getApiUrl } from '../config'
 import { Skeleton } from '../components/Skeleton'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { AppThemeProvider } from '../components/AppThemeProvider'
@@ -88,10 +89,11 @@ export function PublicDashboardPage() {
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
   // The dashboard logo wins over the org fallback. Public pages stream the
-  // logo through the share token — no session credentials exist here.
+  // logo through the share token — no session credentials exist here. The
+  // runtime API base is prefixed so split-origin deployments resolve it.
   const logoAttachmentId = app?.logo_attachment_id || dashboard.org_branding?.logo_attachment_id
   const logoUrl = logoAttachmentId
-    ? `/api/v1/public/${token}/attachments/${logoAttachmentId}`
+    ? `${getApiUrl()}/api/v1/public/${token}/attachments/${logoAttachmentId}`
     : undefined
   // Widgets are never shorter than 6 rows here either: below that the chart
   // area collapses under the widget chrome (~40px plots).
@@ -104,7 +106,10 @@ export function PublicDashboardPage() {
       <header style={pageStyles.header}>
         <div style={{ ...pageStyles.headerInner, ...contentWidth }}>
           <span style={pageStyles.brandMark}>Aether</span>
-          {logoUrl && <img src={logoUrl} alt={appTitle} style={pageStyles.logo} />}
+          {logoUrl && (
+            // Decorative: the adjacent h1 announces the app name.
+            <img src={logoUrl} alt="" style={pageStyles.logo} />
+          )}
           {showMasthead ? (
             <div style={pageStyles.titleBlock}>
               <h1 style={pageStyles.title}>{appTitle}</h1>

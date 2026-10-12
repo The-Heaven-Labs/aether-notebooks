@@ -14,9 +14,6 @@ import type { ChartConfig, MarkLineConfig } from './types'
 import { AppChartThemeContext, getAppChartTheme } from './appChartTheme'
 import type { AppChartTheme } from './appChartTheme'
 
-export { AppChartThemeContext } from './appChartTheme'
-export type { AppChartTheme } from './appChartTheme'
-
 // Register only what we use
 echarts.use([
   BarChart, LineChart, ScatterChart, PieChart, TreeChart, MapChart, SankeyChart, FunnelChart, HeatmapChart,
@@ -500,12 +497,15 @@ export function useChartColors() {
   const [domColors, setDomColors] = useState(getChartColors)
 
   useEffect(() => {
+    // The context branch never reads `domColors`, so the observer would be
+    // dead work while an app-theme provider is mounted.
+    if (appTheme) return
     const el = document.documentElement
     const update = () => setDomColors(getChartColors())
     const observer = new MutationObserver(update)
     observer.observe(el, { attributes: true, attributeFilter: ['data-theme'] })
     return () => observer.disconnect()
-  }, [])
+  }, [appTheme])
 
   return useMemo(
     () => (appTheme ? colorsFromAppChartTheme(appTheme) : domColors),

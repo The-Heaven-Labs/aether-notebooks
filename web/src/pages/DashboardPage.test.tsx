@@ -271,9 +271,12 @@ describe('DashboardPage live document wiring', () => {
     expect(themeContainer).toHaveAttribute('data-app-scheme', 'dark')
 
     // The dashboard logo wins over the org fallback, and the URL carries the
-    // session token: an <img> cannot send an Authorization header.
-    const logo = screen.getByRole('img', { name: 'Rest board' })
+    // session token: an <img> cannot send an Authorization header. The alt is
+    // decorative (the h1 announces the name).
+    const logo = document.querySelector<HTMLImageElement>('.app-theme img')
+    if (!logo) throw new Error('logo img not found')
     expect(logo).toHaveAttribute('src', '/api/v1/attachments/logo-1?token=test-token')
+    expect(logo).toHaveAttribute('alt', '')
   })
 
   test('falls back silently to the REST snapshot when the relay is unavailable', async () => {
