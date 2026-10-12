@@ -1,6 +1,9 @@
 package models
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type Dashboard struct {
 	ID        string            `json:"id"`
@@ -12,6 +15,26 @@ type Dashboard struct {
 	CreatedAt time.Time         `json:"created_at"`
 	UpdatedAt time.Time         `json:"updated_at"`
 	DeletedAt *time.Time        `json:"deleted_at,omitempty"`
+}
+
+// DashboardVersion is a published, immutable snapshot of a dashboard's
+// document content: the title, settings (with variables folded in as
+// settings["variables"]) and full widget definitions as of the publish.
+// ContentHash is the canonical hash of that content, compared against the
+// draft to report unpublished changes. Widgets stays raw JSONB so the
+// dashboarddoc widget shape is decoded by the API layer rather than
+// duplicated here.
+type DashboardVersion struct {
+	ID          string          `json:"id"`
+	DashboardID string          `json:"dashboard_id"`
+	OrgID       string          `json:"org_id"`
+	Version     int             `json:"version"`
+	Title       string          `json:"title"`
+	Settings    map[string]any  `json:"settings"`
+	Widgets     json.RawMessage `json:"widgets"`
+	ContentHash string          `json:"content_hash"`
+	CreatedBy   string          `json:"created_by"`
+	CreatedAt   time.Time       `json:"created_at"`
 }
 
 type DashboardSettings struct {

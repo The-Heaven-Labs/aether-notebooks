@@ -489,6 +489,9 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/dashboards/{id}/permissions", authMW(http.HandlerFunc(s.handleGetDashboardPermissions)))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/execute", authMW(http.HandlerFunc(s.handleExecuteDashboardWidget)))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/variables/{name}/options", authMW(http.HandlerFunc(s.handleDashboardVariableOptions)))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/publish", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handlePublishDashboard))))
+	s.mux.Handle("GET /api/v1/dashboards/{id}/versions", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handleListDashboardVersions))))
+	s.mux.Handle("POST /api/v1/dashboards/{id}/versions/{version}/restore", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handleRestoreDashboardVersion))))
 	s.mux.Handle("POST /api/v1/public/{token}/execute",
 		s.rateLimit(rateLimitConfig{
 			keyFunc: func(r *http.Request) string { return "public-dash-exec:" + r.PathValue("token") + ":" + clientIP(r) },
