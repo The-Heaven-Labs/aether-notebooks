@@ -32,6 +32,13 @@ export interface UseDashboardDocOptions {
    * empty `dashboardId` to skip it.
    */
   enabled?: boolean
+  /**
+   * Whether to acquire the shared document (default true). Pass false to skip
+   * the acquire effect entirely — no provider, no subscription — and return
+   * the empty snapshot. Published app views use this so a viewer never
+   * connects to the draft document.
+   */
+  connect?: boolean
 }
 
 export interface DashboardDocSnapshot {
@@ -87,6 +94,8 @@ export function useDashboardDoc(
   const editingRef = useRef(editing)
   useEffect(() => { editingRef.current = editing }, [editing])
 
+  const connect = options.connect ?? true
+
   const [runtime, setRuntime] = useState<AcquiredRuntime | null>(null)
   // The state entry carries its dashboard id so a stale entry from the
   // previous dashboard never projects while the next one loads.
@@ -100,7 +109,7 @@ export function useDashboardDoc(
 
   // ── Acquire / release the shared document ──────────────────────────────────
   useEffect(() => {
-    if (!dashboardId) return
+    if (!dashboardId || !connect) return
     let cancelled = false
     let acquired: AcquiredRuntime | null = null
 
@@ -127,7 +136,7 @@ export function useDashboardDoc(
       }
       acquired.mod.releaseDashboardCollab(dashboardId)
     }
-  }, [dashboardId])
+  }, [dashboardId, connect])
 
   const entry = active?.entry ?? null
   const mod = active?.mod ?? null

@@ -19,14 +19,12 @@ import { formatExecutedAt } from '../utils/formatDateTime'
 import { textConfigFrom } from '../utils/textConfig'
 import { visibleWidgets, variableDefaults } from '../utils/publicDashboard'
 import { isQueryWidget, isTextPanel } from '../utils/widgetKind'
-import type { Dashboard, OrgBranding, Widget, Output } from '../types'
+import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
   widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[]; metadata?: Record<string, unknown>; updated_at?: string }>
-  /** Org-level branding (served on the public payload); app-theme fallback. */
-  org_branding?: OrgBranding
 }
 
 const ROW_HEIGHT = 30

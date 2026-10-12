@@ -3,6 +3,7 @@ import { renderHook, act, waitFor } from '@testing-library/react'
 import * as Y from 'yjs'
 import { useDashboardDoc } from './useDashboardDoc'
 import type { UseDashboardDocResult } from './useDashboardDoc'
+import { getDashboardCollab } from '../components/dashboardCollabRuntime'
 import type { Widget } from '../types'
 
 // A fake Hocuspocus provider: records its configuration, tracks listeners and
@@ -69,6 +70,13 @@ const fake = vi.hoisted(() => {
 
 vi.mock('@hocuspocus/provider', () => ({ HocuspocusProvider: fake.FakeHocuspocusProvider }))
 
+// Wraps the real runtime so tests can observe acquisition; every other export
+// passes through unchanged.
+vi.mock('../components/dashboardCollabRuntime', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../components/dashboardCollabRuntime')>()
+  return { ...actual, getDashboardCollab: vi.fn(actual.getDashboardCollab) }
+})
+
 const DASHBOARD_ID = 'dash-1'
 
 type FakeProvider = InstanceType<typeof fake.FakeHocuspocusProvider>
@@ -125,6 +133,7 @@ function seedWidget(
 
 beforeEach(() => {
   fake.FakeHocuspocusProvider.instances.length = 0
+  vi.mocked(getDashboardCollab).mockClear()
   localStorage.clear()
   localStorage.setItem('aether_token', 'test-token')
   localStorage.setItem('aether_user_name', 'Nova')
@@ -281,5 +290,34 @@ describe('useDashboardDoc', () => {
     expect(provider.destroyed).toBe(false)
     second.unmount()
     expect(provider.destroyed).toBe(true)
+  })
+
+  test('connect: false never acquires the collab runtime', async () => {
+    const { result } = renderHook(() => useDashboardDoc(DASHBOARD_ID, { connect: false }))
+    // Give a wrong implementation's dynamic import a chance to resolve before
+    // asserting it never ran at all.
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+
+    expect(vi.mocked(getDashboardCollab)).not.toHaveBeenCalled()
+    expect(fake.FakeHocuspocusProvider.instances).toHaveLength(0)
+    expect(result.current.synced).toBe(false)
+    expect(result.current.connected).toBe(false)
+    expect(result.current.widgets).toEqual([])
+    expect(result.current.awareness).toBeNull()
+  })
+
+  test('flipping connect from false to true acquires and projects the document', async () => {
+    const { result, rerender } = renderHook(
+      ({ connect }: { connect: boolean }) => useDashboardDoc(DASHBOARD_ID, { connect }),
+      { initialProps: { connect: false } },
+    )
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)) })
+    expect(fake.FakeHocuspocusProvider.instances).toHaveLength(0)
+
+    rerender({ connect: true })
+    await waitFor(() => expect(fake.FakeHocuspocusProvider.instances).toHaveLength(1))
+    const doc = sharedDoc()
+    act(() => { doc.getMap('meta').set('title', 'Now connected') })
+    await waitFor(() => expect(result.current.title).toBe('Now connected'))
   })
 })

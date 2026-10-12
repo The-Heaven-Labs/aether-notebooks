@@ -16,11 +16,18 @@ export function useWidgetQuery(opts: {
   viewerConnectorId?: string | null
   /** Overrides the execute endpoint base, e.g. `/api/v1/public/{token}` for public dashboards. */
   endpointBase?: string
+  /**
+   * Resolve the widget definition from the published snapshot server-side.
+   * Omitted from the body when false; the draft and published results live in
+   * separate cache entries so a mode switch can never serve the other's rows.
+   */
+  published?: boolean
 }) {
   const bypassRef = useRef(false)
   const endpointBase = opts.endpointBase ?? `/api/v1/dashboards/${opts.dashboardId}`
+  const published = opts.published ?? false
   const query = useQuery({
-    queryKey: ['widget-query', endpointBase, opts.widget.id, opts.viewerConnectorId ?? '', canonicalValues(opts.values)],
+    queryKey: ['widget-query', endpointBase, opts.widget.id, opts.viewerConnectorId ?? '', published ? 'published' : 'draft', canonicalValues(opts.values)],
     queryFn: ({ signal }) => {
       const bypass = bypassRef.current
       bypassRef.current = false
@@ -31,6 +38,9 @@ export function useWidgetQuery(opts: {
           connector_id: opts.viewerConnectorId ?? undefined,
           variables: opts.values,
           bypass_cache: bypass,
+          // Only a published run claims the mode; the draft omits the key so
+          // the server resolves the live definitions.
+          ...(published ? { published: true } : {}),
         },
         { signal },
       )

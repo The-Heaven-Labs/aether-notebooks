@@ -354,6 +354,13 @@ export interface Dashboard {
   can_edit?: boolean
   can_share?: boolean
   widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[]; metadata?: Record<string, unknown>; updated_at?: string }>
+  /** Org-level branding (served on dashboard + public-dashboard GETs); app-theme fallback. */
+  org_branding?: OrgBranding
+  /**
+   * Set when the response served the latest published snapshot (never on a
+   * draft read); identifies the version and its publish time.
+   */
+  published_version?: { version: number; created_at: string } | null
 }
 
 export interface WidgetLayout {

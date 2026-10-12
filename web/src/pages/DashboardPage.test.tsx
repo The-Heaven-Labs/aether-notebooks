@@ -63,10 +63,17 @@ const docStore = vi.hoisted(() => {
   }
 })
 
+// Captures the options each render passes to the hook so tests can assert the
+// page's connect/edit intent (published mode must not connect).
+const docHookOptions = vi.hoisted(() => ({
+  calls: [] as Array<{ enabled?: boolean; connect?: boolean } | undefined>,
+}))
+
 vi.mock('../hooks/useDashboardDoc', async () => {
   const { useSyncExternalStore } = await import('react')
   return {
-    useDashboardDoc: () => {
+    useDashboardDoc: (_id: string, options?: { enabled?: boolean; connect?: boolean }) => {
+      docHookOptions.calls.push(options)
       const snapshot = useSyncExternalStore(docStore.subscribe, docStore.getSnapshot, docStore.getSnapshot)
       return {
         ...snapshot,
@@ -99,8 +106,9 @@ const refreshSpies = vi.hoisted(() => new Map<string, () => void>())
 
 vi.mock('../components/QueryDataWidget', async () => {
   const { useEffect } = await import('react')
-  function QueryDataWidgetProbe({ widget, registerRefresher, registerRerunner }: {
+  function QueryDataWidgetProbe({ widget, published, registerRefresher, registerRerunner }: {
     widget: { id: string; query?: string | null }
+    published?: boolean
     registerRefresher?: (refresh: () => Promise<unknown>) => (() => void) | void
     registerRerunner?: (rerun: () => Promise<unknown>) => (() => void) | void
   }) {
@@ -118,7 +126,7 @@ vi.mock('../components/QueryDataWidget', async () => {
       }),
       [registerRerunner, widget.id],
     )
-    return <div data-testid={`query-${widget.id}`}>{widget.query}</div>
+    return <div data-testid={`query-${widget.id}`} data-published={published ? 'true' : 'false'}>{widget.query}</div>
   }
   return { QueryDataWidget: QueryDataWidgetProbe }
 })
@@ -199,6 +207,19 @@ const REST_DASHBOARD = {
   },
 }
 
+// Published mode: the response carries the snapshot identity, so the page
+// renders this REST payload and must not merge the live draft document.
+const PUBLISHED_DASHBOARD = {
+  ...REST_DASHBOARD,
+  title: 'Published board',
+  published_version: { version: 1, created_at: '2026-10-10T00:00:00Z' },
+  widgets: [widget(), queryWidget()],
+}
+
+// A draft whose widget set mirrors the published one, so mode switches can be
+// compared widget-for-widget.
+const DRAFT_DASHBOARD = { ...REST_DASHBOARD, widgets: [widget(), queryWidget()] }
+
 function fakeAwareness(states: Array<{ email: string; name: string; color: string }>): Awareness {
   const map = new Map(states.map((user, i) => [i + 1, { user }]))
   return {
@@ -234,6 +255,7 @@ beforeEach(() => {
   localStorage.clear()
   localStorage.setItem('aether_user_email', 'me@test.com')
   docStore.reset()
+  docHookOptions.calls.length = 0
   rerunSpies.clear()
   refreshSpies.clear()
   server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json(REST_DASHBOARD)))
@@ -597,5 +619,166 @@ describe('DashboardPage chapter tabs', () => {
 
     await waitFor(() => expect(ordersRefresh).toHaveBeenCalledTimes(1))
     expect(overviewRefresh).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('DashboardPage published mode', () => {
+  test('a published dashboard renders the REST snapshot, never the live doc, and runs published', async () => {
+    const urls: string[] = []
+    server.use(http.get('/api/v1/dashboards/d1', ({ request }) => {
+      urls.push(request.url)
+      return HttpResponse.json(PUBLISHED_DASHBOARD)
+    }))
+    renderDashboard()
+    await screen.findByText('Published board')
+
+    // The viewer fetch asks for the published snapshot explicitly.
+    expect(new URL(urls[0]).searchParams.get('published')).toBe('1')
+    // The REST widget list paints: the cell widget's inlined outputs and the
+    // query probe.
+    expect(screen.getByTestId('output-renderer')).toHaveAttribute('data-count', '2')
+    expect(screen.getByTestId('query-w2')).toHaveTextContent('SELECT 2')
+    // Execute is threaded with published: true.
+    expect(screen.getByTestId('query-w2')).toHaveAttribute('data-published', 'true')
+    // The hook is told not to connect (no draft subscription, no mutators) —
+    // including while the response was still loading, so the page never even
+    // attempts the draft document before knowing the mode.
+    expect(docHookOptions.calls.at(-1)).toMatchObject({ connect: false, enabled: false })
+    expect(docHookOptions.calls.every((c) => c?.connect === false)).toBe(true)
+
+    // A synced live document must not merge into the published view.
+    act(() => {
+      docStore.set({
+        synced: true,
+        connected: true,
+        title: 'Doc board',
+        settings: { grid_cols: 8 },
+        variables: [],
+        widgets: [queryWidget({ id: 'w2', query: 'SELECT 2 -- draft' })],
+      })
+    })
+    expect(screen.queryByText('Doc board')).not.toBeInTheDocument()
+    expect(screen.queryByText('Live')).not.toBeInTheDocument()
+    expect(screen.getByTestId('query-w2')).toHaveTextContent('SELECT 2')
+    expect(screen.getByTestId('variable-bar')).toHaveTextContent('region')
+  })
+
+  test('an editor viewing the published app gets a Preview draft link', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json(PUBLISHED_DASHBOARD)))
+    renderDashboard()
+    await screen.findByText('Published board')
+
+    const link = screen.getByRole('link', { name: /Preview draft/ })
+    expect(link).toHaveAttribute('href', '/dashboards/d1/view?preview=draft')
+    expect(screen.queryByText('Draft preview')).not.toBeInTheDocument()
+  })
+
+  test('the Preview draft toggle switches to the plain draft fetch and back', async () => {
+    const urls: string[] = []
+    server.use(http.get('/api/v1/dashboards/d1', ({ request }) => {
+      urls.push(request.url)
+      const published = new URL(request.url).searchParams.get('published') === '1'
+      return HttpResponse.json(published ? PUBLISHED_DASHBOARD : DRAFT_DASHBOARD)
+    }))
+    renderDashboard()
+    await screen.findByText('Published board')
+
+    fireEvent.click(screen.getByRole('link', { name: /Preview draft/ }))
+
+    expect(await screen.findByText('Draft preview')).toBeInTheDocument()
+    expect(await screen.findByText('Rest board')).toBeInTheDocument()
+    expect(new URL(urls.at(-1)!).searchParams.has('published')).toBe(false)
+    expect(screen.getByTestId('query-w2')).toHaveAttribute('data-published', 'false')
+
+    fireEvent.click(screen.getByRole('link', { name: /View published/ }))
+    await waitFor(() => expect(screen.queryByText('Draft preview')).not.toBeInTheDocument())
+    expect(await screen.findByText('Published board')).toBeInTheDocument()
+    expect(screen.getByTestId('query-w2')).toHaveAttribute('data-published', 'true')
+  })
+
+  test('an editor previewing the draft gets the plain fetch, the live doc, and the badge', async () => {
+    const urls: string[] = []
+    server.use(http.get('/api/v1/dashboards/d1', ({ request }) => {
+      urls.push(request.url)
+      return HttpResponse.json(DRAFT_DASHBOARD)
+    }))
+    renderDashboard('/dashboards/d1/view?preview=draft')
+    await screen.findByText('Rest board')
+
+    expect(urls.every(u => !new URL(u).searchParams.has('published'))).toBe(true)
+    expect(screen.getByText('Draft preview')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: /View published/ }))
+      .toHaveAttribute('href', '/dashboards/d1/view')
+    expect(screen.queryByRole('link', { name: /Preview draft/ })).not.toBeInTheDocument()
+    expect(screen.getByTestId('query-w2')).toHaveAttribute('data-published', 'false')
+    // The connect gate waits for the response: false while loading, true once
+    // the draft is known.
+    expect(docHookOptions.calls[0]).toMatchObject({ connect: false })
+    expect(docHookOptions.calls.at(-1)).toMatchObject({ connect: true })
+
+    // Draft preview keeps the live-document handover.
+    act(() => {
+      docStore.set({
+        synced: true,
+        connected: true,
+        title: 'Doc board',
+        settings: { grid_cols: 12 },
+        variables: [],
+        widgets: [queryWidget({ id: 'w2', query: 'SELECT 2 -- draft' })],
+      })
+    })
+    expect(await screen.findByText('Doc board')).toBeInTheDocument()
+    expect(screen.getByText('Draft preview')).toBeInTheDocument()
+    expect(screen.getByTestId('query-w2')).toHaveTextContent('SELECT 2 -- draft')
+  })
+
+  test('preview=draft without edit falls back to the published snapshot', async () => {
+    const urls: string[] = []
+    server.use(http.get('/api/v1/dashboards/d1', ({ request }) => {
+      urls.push(request.url)
+      return HttpResponse.json({ ...PUBLISHED_DASHBOARD, can_edit: false })
+    }))
+    renderDashboard('/dashboards/d1/view?preview=draft')
+    await screen.findByText('Published board')
+
+    // The request is plain; the server serves the snapshot to non-editors.
+    expect(new URL(urls[0]).searchParams.has('published')).toBe(false)
+    expect(screen.queryByText('Draft preview')).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /Preview draft/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: /View published/ })).not.toBeInTheDocument()
+    expect(screen.getByTestId('query-w2')).toHaveAttribute('data-published', 'true')
+
+    act(() => { docStore.set({ synced: true, connected: true, title: 'Doc board' }) })
+    expect(screen.queryByText('Doc board')).not.toBeInTheDocument()
+    expect(screen.queryByText('Live')).not.toBeInTheDocument()
+  })
+
+  test('without a published version the viewer keeps the live-document behavior', async () => {
+    const urls: string[] = []
+    server.use(http.get('/api/v1/dashboards/d1', ({ request }) => {
+      urls.push(request.url)
+      return HttpResponse.json(REST_DASHBOARD)
+    }))
+    renderDashboard()
+    await screen.findByText('Rest board')
+
+    // The request still asks for the published view; the server falls back to
+    // the draft when the dashboard has never been published.
+    expect(new URL(urls[0]).searchParams.get('published')).toBe('1')
+    expect(docHookOptions.calls.at(-1)).toMatchObject({ connect: true })
+
+    act(() => {
+      docStore.set({
+        synced: true,
+        connected: true,
+        title: 'Doc board',
+        settings: { grid_cols: 12 },
+        variables: [],
+        widgets: [queryWidget({ id: 'w2', query: 'SELECT 2' })],
+      })
+    })
+    expect(await screen.findByText('Doc board')).toBeInTheDocument()
+    expect(screen.getByTestId('query-w2')).toHaveAttribute('data-published', 'false')
+    expect(screen.getByText('Live')).toBeInTheDocument()
   })
 })

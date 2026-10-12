@@ -105,6 +105,40 @@ describe('PublicDashboardPage app surface', () => {
   })
 })
 
+describe('PublicDashboardPage published widgets', () => {
+  test('renders the published snapshot widgets and omits the published flag from execute', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post(`/api/v1/public/${PUBLIC_TOKEN}/execute`, async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({
+          outputs: [{ type: 'table', data: { columns: [{ name: 'x', type: 'String' }], rows: [[1]] } }],
+          metrics: {},
+          cached: false,
+        })
+      }),
+    )
+    mockPublicDashboard(publicDashboard({
+      settings: { public_live: true },
+      published_version: { version: 1, created_at: '2026-10-10T00:00:00Z' },
+      widgets: [{
+        id: 'wq', dashboard_id: 'd1', notebook_id: null, cell_id: null,
+        connector_id: 'c1', query: 'SELECT 1', language: 'sql', type: 'table',
+        layout: { row: 0, col: 0, width: 6, height: 6 },
+        config: {}, created_at: '2026-01-01T00:00:00Z',
+      }],
+    }))
+    renderPublicPage()
+
+    // The published snapshot's query widget renders its data…
+    expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+    // …and the server resolves the snapshot for public runs, so the body must
+    // not claim a mode.
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).not.toHaveProperty('published')
+  })
+})
+
 describe('PublicDashboardPage chapter tabs', () => {
   const TABS = [
     { id: 'overview', title: 'Overview' },
