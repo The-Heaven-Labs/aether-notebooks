@@ -485,5 +485,12 @@ test.describe('Dashboard publish, tabs, theming, and draft preview', () => {
     await expect(page.getByRole('heading', { name: draftTitle })).toBeVisible()
     await expect(page.getByRole('link', { name: /View published/ }))
       .toHaveAttribute('href', `/dashboards/${fx.dashboardId}/view`)
+
+    // The draft-preview action set (LIVE + DRAFT PREVIEW + View published on
+    // top of the usual controls) is wider than a 1280px masthead row, so the
+    // header must wrap instead of crushing the title block to an ellipsis
+    // (regression: the h1 measured ~10px wide before the wrap fix).
+    const draftTitleBox = await page.getByRole('heading', { name: draftTitle }).boundingBox()
+    expect(draftTitleBox?.width ?? 0).toBeGreaterThan(180)
   })
 })

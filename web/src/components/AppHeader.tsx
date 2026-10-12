@@ -142,7 +142,10 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: 'column',
     gap: 2,
     flex: 1,
-    minWidth: 0,
+    // A floor so a wide action row (e.g. draft preview's LIVE + DRAFT PREVIEW +
+    // View published) wraps the masthead instead of crushing the title to an
+    // ellipsis. Kept small enough that ordinary rows stay single-line.
+    minWidth: 220,
   },
   title: {
     margin: 0,
