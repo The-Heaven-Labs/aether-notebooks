@@ -183,8 +183,10 @@ async function clearWidgetTabs(dashboardId: string, affected: Widget[]): Promise
  * disabled while an upload is in flight so a resolving request can never
  * resurrect a logo the user just cleared.
  *
- * The save merges into the existing app block (logo_attachment_id, layout)
- * and into the dashboard's other settings (variables, public_live, …).
+ * The save writes only the keys this panel owns — the app block
+ * (title/subtitle/width/toggles/theme/logo_attachment_id/layout) and
+ * `tabs`; the server shallow-merges settings, so unrelated keys
+ * (variables, public_live, …) keep their stored values.
  *
  * Tabs (`settings.tabs`) are edited as local draft rows — title, order and
  * membership commit with the same Save button as everything else. Removing a

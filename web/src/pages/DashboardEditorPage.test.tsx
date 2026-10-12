@@ -446,12 +446,18 @@ describe('DashboardEditorPage tabs', () => {
   })
 
   test('the lone add shortcut shows on mobile layouts too', async () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 500 })
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
-    renderEditor()
-    await screen.findByLabelText('Edit Rest widget')
+    try {
+      docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+      renderEditor()
+      await screen.findByLabelText('Edit Rest widget')
 
-    expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Add tab' })).toBeInTheDocument()
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'clientWidth', original)
+      else delete (HTMLElement.prototype as { clientWidth?: unknown }).clientWidth
+    }
   })
 
   test('renders a chip per tab and filters the grid from editor-local state', async () => {
