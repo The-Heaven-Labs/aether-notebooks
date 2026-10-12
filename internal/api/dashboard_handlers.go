@@ -545,10 +545,11 @@ func dashboardWidgetsFromSnapshot(dashID string, widgets []snapshotWidget) []mod
 }
 
 // @Summary Get a dashboard
-// @Description Get a dashboard with its widgets
+// @Description Get a dashboard with its widgets. Viewers without dashboard edit permission always receive the latest published snapshot; editors receive the draft unless published=1 is set.
 // @Tags dashboards
 // @Produce json
 // @Param id path string true "Dashboard ID"
+// @Param published query string false "1 serves the latest published snapshot for everyone (falls back to the draft when the dashboard has never been published)"
 // @Success 200 {object} object
 // @Failure 404 {object} map[string]string
 // @Security BearerAuth
@@ -602,7 +603,10 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	// Wave-2 reads: viewers see the latest published snapshot and never draft
 	// edits; editors see the draft unless ?published=1 explicitly asks for
 	// the snapshot. A never-published dashboard has nothing to substitute, so
-	// the draft serves everyone (the pre-publish behavior).
+	// the draft serves everyone (the pre-publish behavior) and no
+	// published_version is set. Execute's published: true deliberately does
+	// not share this fallback: it 404s, so a run can never claim unpublished
+	// data is published.
 	var publishedVersion *dashboardPublishedVersion
 	var widgets []models.Widget
 	if r.URL.Query().Get("published") == "1" || !editOK {
