@@ -352,17 +352,17 @@ test('counts the app name in runes, not UTF-16 units', async () => {
   const appName = await renderBranding(BRANDED_SETTINGS)
   server.use(captureSettingsPuts(bodies))
 
-  fireEvent.change(appName, { target: { value: 'é'.repeat(61) } })
+  fireEvent.change(appName, { target: { value: '😀'.repeat(61) } })
   fireEvent.click(screen.getByRole('button', { name: 'Save branding' }))
   expect(await screen.findByRole('alert')).toHaveTextContent('at most 60 characters')
   expect(bodies.length).toBe(0)
 
   // 60 code points but 120 UTF-16 units: a naive `.length` check would reject it.
-  fireEvent.change(appName, { target: { value: 'é'.repeat(60) } })
+  fireEvent.change(appName, { target: { value: '😀'.repeat(60) } })
   fireEvent.click(screen.getByRole('button', { name: 'Save branding' }))
   await waitFor(() => expect(bodies.length).toBe(1))
   const branding = bodies[0].branding as Record<string, unknown>
-  expect(branding.app_name).toBe('é'.repeat(60))
+  expect(branding.app_name).toBe('😀'.repeat(60))
 })
 
 test('keeps Save disabled while a logo upload is in flight', async () => {
