@@ -226,6 +226,23 @@ func TestAdminDeleteUser(t *testing.T) {
 		`UPDATE connectors SET created_by = $1 WHERE id = $2`, targetID, connID)
 	require.NoError(t, err)
 
+	// A published dashboard version owned by the target: its created_by is a
+	// NOT NULL FK, so the user delete must reassign it like the other
+	// created_by references or the delete fails with an FK violation.
+	var dashID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO dashboards (org_id, title, created_by) VALUES ($1, 'Owned Dashboard', $2) RETURNING id`,
+		testOrgID, targetID,
+	).Scan(&dashID)
+	require.NoError(t, err)
+	var versionID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO dashboard_versions (dashboard_id, org_id, version, title, settings, widgets, content_hash, created_by)
+		 VALUES ($1, $2, 1, 'Owned Dashboard', '{}'::jsonb, '[]'::jsonb, 'hash', $3) RETURNING id`,
+		dashID, testOrgID, targetID,
+	).Scan(&versionID)
+	require.NoError(t, err)
+
 	_, err = s.DB().Pool.Exec(ctx,
 		`INSERT INTO api_tokens (user_id, org_id, name, token_hash) VALUES ($1, $2, 'test', 'hash')`,
 		targetID, testOrgID)
@@ -267,6 +284,12 @@ func TestAdminDeleteUser(t *testing.T) {
 		`SELECT COALESCE(created_by::text, '') FROM connectors WHERE id = $1`, connID).Scan(&creator)
 	require.NoError(t, err)
 	assert.Equal(t, "", creator)
+
+	// The published version was reassigned too, so the delete did not hit the
+	// dashboard_versions.created_by FK.
+	err = s.DB().Pool.QueryRow(ctx, `SELECT created_by FROM dashboard_versions WHERE id = $1`, versionID).Scan(&creator)
+	require.NoError(t, err)
+	assert.Equal(t, testUserID, creator)
 }
 
 func TestAdminDeleteUser_SelfDeletionBlocked(t *testing.T) {

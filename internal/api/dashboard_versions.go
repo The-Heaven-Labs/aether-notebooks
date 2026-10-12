@@ -108,6 +108,16 @@ func dashboardSnapshotFromProjection(proj *dashboarddoc.Projection) *dashboardSn
 // widget set is partially unreadable would silently drop those widgets from
 // the published app. The refusal is errSnapshotWarnings via
 // snapshotWarningsError, carrying the warnings.
+//
+// Two deliberate policies:
+//
+//   - Only widget warnings refuse a publish. Settings/variables warnings are
+//     skipped by Project and are simply dropped from the snapshot, matching
+//     the materializer, so one malformed setting can never block publishing.
+//   - Restore cannot remove draft widgets that fail projection: the restore
+//     diff is driven by Projection.Widgets, which omits warned widgets, so a
+//     corrupt widget survives in the document (invisible to readers and the
+//     materializer) until a raw-key document primitive can delete it by ID.
 func dashboardSnapshotFromDoc(state []byte) (*dashboardSnapshot, error) {
 	proj, err := dashboarddoc.Project(state)
 	if err != nil {
@@ -201,7 +211,9 @@ func scanDashboardVersion(row pgx.Row) (*dashboardVersionRow, error) {
 }
 
 // loadLatestDashboardVersion returns the dashboard's highest published
-// version, or pgx.ErrNoRows when it has never been published.
+// version, or pgx.ErrNoRows when it has never been published. The version
+// status endpoint derives its latest entry from the list query instead (the
+// snapshot payload is not needed there); published-mode reads use this.
 func (s *Server) loadLatestDashboardVersion(ctx context.Context, orgID, dashID string) (*dashboardVersionRow, error) {
 	return scanDashboardVersion(s.db.Pool.QueryRow(ctx,
 		dashboardVersionSelect+` ORDER BY v.version DESC LIMIT 1`, dashID, orgID))
@@ -240,7 +252,7 @@ func (s *Server) publishDashboardVersion(ctx context.Context, orgID, dashID, use
 	}
 	contentHash = dashboardContentHash(snap.Title, snap.Settings, snap.Widgets)
 
-	for attempt := 0; ; attempt++ {
+	for attempt := 0; attempt < 2; attempt++ {
 		err = s.db.Pool.QueryRow(ctx, `
 			INSERT INTO dashboard_versions
 				(dashboard_id, org_id, version, title, settings, widgets, content_hash, created_by)
@@ -277,11 +289,15 @@ type dashboardVersionSummary struct {
 }
 
 // dashboardVersionsResponse is the GET /dashboards/{id}/versions body.
+// Warnings carries the draft's widget projection warnings: a non-empty list
+// forces HasUnpublishedChanges, because a draft that publish would refuse has
+// unpublished changes by definition and the editor needs to know why.
 type dashboardVersionsResponse struct {
 	Versions              []dashboardVersionSummary `json:"versions"`
 	Latest                *dashboardVersionSummary  `json:"latest"`
 	HasUnpublishedChanges bool                      `json:"has_unpublished_changes"`
 	DraftHash             string                    `json:"draft_hash"`
+	Warnings              []string                  `json:"warnings,omitempty"`
 }
 
 // @Summary Publish a dashboard version
@@ -356,12 +372,6 @@ func (s *Server) handleListDashboardVersions(w http.ResponseWriter, r *http.Requ
 	draft := dashboardSnapshotFromProjection(proj)
 	draftHash := dashboardContentHash(draft.Title, draft.Settings, draft.Widgets)
 
-	latest, err := s.loadLatestDashboardVersion(ctx, claims.OrgID, dashID)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		writeError(w, http.StatusInternalServerError, "failed to load versions")
-		return
-	}
-
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT v.version, v.content_hash, v.created_at, COALESCE(u.email, '')
 		FROM dashboard_versions v
@@ -390,18 +400,22 @@ func (s *Server) handleListDashboardVersions(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// The list is newest-first, so its first row is the latest version; no
+	// separate query is needed (and the snapshot payload stays undecoded).
+	var latest *dashboardVersionSummary
+	if len(versions) > 0 {
+		latest = &versions[0]
+	}
+
+	// A draft whose widgets fail projection can never be published, so it
+	// always counts as having unpublished changes — the hash alone would miss
+	// it (warned widgets project out) and the editor needs the warnings.
 	resp := dashboardVersionsResponse{
 		Versions:              versions,
-		HasUnpublishedChanges: latest == nil || draftHash != latest.ContentHash,
+		Latest:                latest,
+		HasUnpublishedChanges: latest == nil || draftHash != latest.ContentHash || len(proj.WidgetWarnings) > 0,
 		DraftHash:             draftHash,
-	}
-	if latest != nil {
-		resp.Latest = &dashboardVersionSummary{
-			Version:        latest.Version,
-			CreatedByEmail: latest.CreatedByEmail,
-			CreatedAt:      latest.CreatedAt,
-			ContentHash:    latest.ContentHash,
-		}
+		Warnings:              proj.WidgetWarnings,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -480,6 +494,8 @@ func (s *Server) handleRestoreDashboardVersion(w http.ResponseWriter, r *http.Re
 
 	// Upsert every snapshot widget, then delete the draft widgets the snapshot
 	// does not contain, so the draft's widget set is exactly the snapshot's.
+	// Draft widgets that fail projection are absent from proj.Widgets and are
+	// deliberately left in the document (see dashboardSnapshotFromDoc).
 	snapshotIDs := make(map[string]struct{}, len(widgets))
 	for _, sw := range widgets {
 		snapshotIDs[sw.ID] = struct{}{}

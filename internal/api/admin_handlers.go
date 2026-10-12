@@ -424,6 +424,7 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		`UPDATE folders SET created_by = $2 WHERE created_by = $1`,
 		`UPDATE notebooks SET created_by = $2 WHERE created_by = $1`,
 		`UPDATE dashboards SET created_by = $2 WHERE created_by = $1`,
+		`UPDATE dashboard_versions SET created_by = $2 WHERE created_by = $1`,
 		`UPDATE agents SET created_by = $2 WHERE created_by = $1`,
 		`UPDATE model_configs SET created_by = $2 WHERE created_by = $1`,
 		`UPDATE skills SET created_by = $2 WHERE created_by = $1`,
