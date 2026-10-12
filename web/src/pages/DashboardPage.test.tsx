@@ -645,6 +645,10 @@ describe('DashboardPage published mode', () => {
     // attempts the draft document before knowing the mode.
     expect(docHookOptions.calls.at(-1)).toMatchObject({ connect: false, enabled: false })
     expect(docHookOptions.calls.every((c) => c?.connect === false)).toBe(true)
+    // Auto-refresh persists settings — the snapshot in this mode — so its
+    // control is draft-only; the interval itself still runs from the
+    // snapshot's cadence.
+    expect(screen.queryByLabelText('Auto-refresh interval')).not.toBeInTheDocument()
 
     // A synced live document must not merge into the published view.
     act(() => {
@@ -715,6 +719,8 @@ describe('DashboardPage published mode', () => {
     // the draft is known.
     expect(docHookOptions.calls[0]).toMatchObject({ connect: false })
     expect(docHookOptions.calls.at(-1)).toMatchObject({ connect: true })
+    // The draft surface keeps the auto-refresh editing control.
+    expect(screen.getByLabelText('Auto-refresh interval')).toBeInTheDocument()
 
     // Draft preview keeps the live-document handover.
     act(() => {
@@ -780,5 +786,36 @@ describe('DashboardPage published mode', () => {
     expect(await screen.findByText('Doc board')).toBeInTheDocument()
     expect(screen.getByTestId('query-w2')).toHaveAttribute('data-published', 'false')
     expect(screen.getByText('Live')).toBeInTheDocument()
+  })
+
+  test('a published view renders no collaborator presence or live indicator', async () => {
+    docStore.set({
+      connected: true,
+      awareness: fakeAwareness([{ email: 'bob@test.com', name: 'Bob Smith', color: '#3366cc' }]),
+    })
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json(PUBLISHED_DASHBOARD)))
+    renderDashboard()
+    await screen.findByText('Published board')
+
+    expect(screen.queryByTitle('Bob Smith')).not.toBeInTheDocument()
+    expect(screen.queryByText('Live')).not.toBeInTheDocument()
+  })
+
+  test('the mode toggle preserves other query params', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', ({ request }) => {
+      const published = new URL(request.url).searchParams.get('published') === '1'
+      return HttpResponse.json(published ? PUBLISHED_DASHBOARD : DRAFT_DASHBOARD)
+    }))
+    renderDashboard('/dashboards/d1/view?tab=orders')
+    await screen.findByText('Published board')
+
+    expect(screen.getByRole('link', { name: /Preview draft/ }))
+      .toHaveAttribute('href', '/dashboards/d1/view?tab=orders&preview=draft')
+
+    fireEvent.click(screen.getByRole('link', { name: /Preview draft/ }))
+    expect(await screen.findByText('Draft preview')).toBeInTheDocument()
+    // The way back keeps the active chapter too.
+    expect(screen.getByRole('link', { name: /View published/ }))
+      .toHaveAttribute('href', '/dashboards/d1/view?tab=orders')
   })
 })

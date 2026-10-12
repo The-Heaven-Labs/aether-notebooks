@@ -320,4 +320,37 @@ describe('useDashboardDoc', () => {
     act(() => { doc.getMap('meta').set('title', 'Now connected') })
     await waitFor(() => expect(result.current.title).toBe('Now connected'))
   })
+
+  test('flipping connect from true to false releases the document and returns the empty snapshot', async () => {
+    const { result, rerender } = renderHook(
+      ({ connect }: { connect: boolean }) => useDashboardDoc(DASHBOARD_ID, { connect }),
+      { initialProps: { connect: true } },
+    )
+    await waitFor(() => expect(fake.FakeHocuspocusProvider.instances).toHaveLength(1))
+    const provider = latestProvider()
+    const doc = sharedDoc()
+    act(() => {
+      doc.getMap('meta').set('title', 'Live title')
+      provider.emit('synced', { state: true })
+      provider.emit('status', { status: 'connected' })
+    })
+    await waitFor(() => expect(result.current.title).toBe('Live title'))
+    expect(result.current.synced).toBe(true)
+    expect(result.current.connected).toBe(true)
+    expect(result.current.awareness).toBe(provider.awareness)
+
+    rerender({ connect: false })
+
+    // The released document must not keep projecting: no latched synced/
+    // connected, no widgets, no awareness, and the provider is gone.
+    await waitFor(() => expect(result.current.title).toBe(''))
+    expect(result.current.synced).toBe(false)
+    expect(result.current.connected).toBe(false)
+    expect(result.current.widgets).toEqual([])
+    expect(result.current.awareness).toBeNull()
+    expect(provider.destroyed).toBe(true)
+    // The hook's external-store subscription is gone; only the runtime's own
+    // creation listener remains.
+    await waitFor(() => expect(provider.listenerCount('synced')).toBe(1))
+  })
 })

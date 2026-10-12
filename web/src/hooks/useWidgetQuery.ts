@@ -1,5 +1,5 @@
 import { useCallback, useRef } from 'react'
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Widget, WidgetQueryResult } from '../types'
 
@@ -19,15 +19,18 @@ export function useWidgetQuery(opts: {
   /**
    * Resolve the widget definition from the published snapshot server-side.
    * Omitted from the body when false; the draft and published results live in
-   * separate cache entries so a mode switch can never serve the other's rows.
+   * separate cache entries so a mode switch refetches instead of serving the
+   * other mode's rows, and the previous-frame placeholder is suppressed
+   * across the switch.
    */
   published?: boolean
 }) {
   const bypassRef = useRef(false)
   const endpointBase = opts.endpointBase ?? `/api/v1/dashboards/${opts.dashboardId}`
   const published = opts.published ?? false
+  const modeKey = published ? 'published' : 'draft'
   const query = useQuery({
-    queryKey: ['widget-query', endpointBase, opts.widget.id, opts.viewerConnectorId ?? '', published ? 'published' : 'draft', canonicalValues(opts.values)],
+    queryKey: ['widget-query', endpointBase, opts.widget.id, opts.viewerConnectorId ?? '', modeKey, canonicalValues(opts.values)],
     queryFn: ({ signal }) => {
       const bypass = bypassRef.current
       bypassRef.current = false
@@ -49,9 +52,16 @@ export function useWidgetQuery(opts: {
     retry: false,
     staleTime: 0,
     refetchOnWindowFocus: false,
-    // Keep the previous frame on screen while a new filter combination loads:
-    // the widget dims instead of collapsing into a "Loading…" jump.
-    placeholderData: keepPreviousData,
+    // Keep the previous frame on screen while a new filter combination loads
+    // (the widget dims instead of collapsing into a "Loading…" jump) — but
+    // never across a mode switch, where that frame belongs to the other
+    // definition (draft vs published) and must not be painted at all.
+    placeholderData: (previousData, previousQuery) => {
+      // `modeKey` sits at index 4 of the query key above: a different value
+      // means the previous frame came from the other definition.
+      if (previousQuery && previousQuery.queryKey[4] !== modeKey) return undefined
+      return previousData
+    },
   })
   const refetch = query.refetch
   const refresh = useCallback(async () => {

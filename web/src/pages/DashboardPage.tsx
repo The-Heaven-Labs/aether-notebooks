@@ -610,7 +610,7 @@ function DashboardContent({ id }: { id: string }) {
 
   return (
     <AppThemeProvider theme={app?.theme} branding={dashboard.org_branding}>
-    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId}>
+    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId} published={published}>
     <AppShell noPadding bare>
       {!showMasthead && <h1 className="sr-only">{appTitle}</h1>}
       <AppHeader
@@ -699,8 +699,11 @@ function DashboardContent({ id }: { id: string }) {
           )}
 
           {/* Auto-refresh persists dashboard settings, so it is an editing
-              control and rides the masthead only for editors. */}
-          {canEdit && <div style={{ position: 'relative', display: 'inline-flex' }}>
+              control that only belongs on the draft surface: in published mode
+              `settings` is the snapshot, and a wholesale write would merge
+              snapshot tabs/theme/variables back into the draft. The interval
+              itself still runs from the snapshot's cadence. */}
+          {canEdit && !published && <div style={{ position: 'relative', display: 'inline-flex' }}>
             <select
               style={styles.actionSelect}
               value={refreshCustom ? 'custom' : String(refreshSeconds)}
@@ -730,7 +733,7 @@ function DashboardContent({ id }: { id: string }) {
               <polyline points="1,1 5,5 9,1" />
             </svg>
           </div>}
-          {canEdit && refreshCustom && (
+          {canEdit && !published && refreshCustom && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <input
                 type="text"

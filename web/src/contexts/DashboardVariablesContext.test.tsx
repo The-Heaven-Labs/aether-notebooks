@@ -140,6 +140,35 @@ describe('DashboardVariablesContext', () => {
     expect(bodies[1].connector_id).toBe('conn-2')
   })
 
+  test('options request carries published only in published mode, reloading on a mode switch', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/variables/city/options', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({ options: [{ label: 'Paris', value: 'paris' }] })
+      }),
+    )
+    let published = false
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <MemoryRouter initialEntries={['/dash/d1']}>
+        <DashboardVariablesProvider dashboardId="d1" variables={[countryVar, cityVar]} published={published}>
+          {children}
+        </DashboardVariablesProvider>
+      </MemoryRouter>
+    )
+    const { rerender } = renderHook(() => useDashboardVariables(), { wrapper })
+
+    await waitFor(() => expect(bodies.length).toBe(1), { timeout: 3000 })
+    expect(bodies[0]).not.toHaveProperty('published')
+
+    // The published snapshot and the draft can define different option
+    // queries, so a mode switch reloads under the new mode.
+    published = true
+    rerender()
+    await waitFor(() => expect(bodies.length).toBe(2), { timeout: 3000 })
+    expect(bodies[1].published).toBe(true)
+  })
+
   test('exposes loading and error state for failed option queries', async () => {
     server.use(
       http.post('/api/v1/dashboards/d1/variables/city/options', async () => {
