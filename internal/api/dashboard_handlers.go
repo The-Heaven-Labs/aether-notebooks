@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"regexp"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -58,190 +56,6 @@ type addWidgetRequest struct {
 	Config      map[string]interface{} `json:"config,omitempty"`
 }
 
-const (
-	maxAppTitleRunes    = 120
-	maxAppSubtitleRunes = 200
-
-	maxAppThemePaletteColors = 12
-	maxAppThemeRadius        = 24
-
-	maxDashboardTabs          = 10
-	maxDashboardTabIDLen      = 64
-	maxDashboardTabTitleRunes = 60
-)
-
-// dashboardTabIDPattern is the charset a tab id (and a widget's layout.tab)
-// must match: lowercase alphanumerics and dashes, starting alphanumeric.
-var dashboardTabIDPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
-
-// validateDashboardAppSettings bounds the app surface configuration. Unknown
-// JSON keys are already dropped by the struct round-trip; this only rejects
-// values that would render incorrectly.
-func validateDashboardAppSettings(app *models.DashboardAppSettings) error {
-	if app == nil {
-		return nil
-	}
-	if len([]rune(app.Title)) > maxAppTitleRunes {
-		return fmt.Errorf("app title must be at most %d characters", maxAppTitleRunes)
-	}
-	if len([]rune(app.Subtitle)) > maxAppSubtitleRunes {
-		return fmt.Errorf("app subtitle must be at most %d characters", maxAppSubtitleRunes)
-	}
-	if app.Width != "" && app.Width != "fixed" && app.Width != "full" {
-		return fmt.Errorf(`app width must be "fixed" or "full"`)
-	}
-	if app.Layout != "" && app.Layout != "grid" && app.Layout != "custom" {
-		return fmt.Errorf(`app layout must be "grid" or "custom"`)
-	}
-	return validateAppTheme(app.Theme)
-}
-
-// validateAppTheme bounds the app surface's token overrides.
-func validateAppTheme(theme *models.DashboardAppTheme) error {
-	if theme == nil {
-		return nil
-	}
-	colors := []struct {
-		name  string
-		value string
-	}{
-		{"accent", theme.Accent},
-		{"background", theme.Background},
-		{"surface", theme.Surface},
-		{"text", theme.Text},
-		{"border", theme.Border},
-	}
-	for _, c := range colors {
-		if c.value != "" && !isHexColor(c.value) {
-			return fmt.Errorf("app theme %s must be a hex color like #rrggbb", c.name)
-		}
-	}
-	if theme.Radius != nil && (*theme.Radius < 0 || *theme.Radius > maxAppThemeRadius) {
-		return fmt.Errorf("app theme radius must be between 0 and %d", maxAppThemeRadius)
-	}
-	switch theme.FontFamily {
-	case "", "dm-sans", "jetbrains-mono", "system":
-	default:
-		return fmt.Errorf(`app theme font_family must be "dm-sans", "jetbrains-mono", or "system"`)
-	}
-	switch theme.ColorScheme {
-	case "", "auto", "light", "dark":
-	default:
-		return fmt.Errorf(`app theme color_scheme must be "auto", "light", or "dark"`)
-	}
-	if len(theme.ChartPalette) > maxAppThemePaletteColors {
-		return fmt.Errorf("app theme chart_palette must have at most %d colors", maxAppThemePaletteColors)
-	}
-	for _, c := range theme.ChartPalette {
-		if !isHexColor(c) {
-			return fmt.Errorf("app theme chart_palette entries must be hex colors like #rrggbb")
-		}
-	}
-	return nil
-}
-
-// isHexColor reports whether s is a #rgb or #rrggbb hex color.
-func isHexColor(s string) bool {
-	if len(s) != 4 && len(s) != 7 {
-		return false
-	}
-	if s[0] != '#' {
-		return false
-	}
-	for _, c := range s[1:] {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
-			return false
-		}
-	}
-	return true
-}
-
-// validateDashboardTabs bounds the dashboard's tab list: at most 10 tabs with
-// unique lowercase ids and a non-empty, bounded title.
-func validateDashboardTabs(tabs []models.DashboardTab) error {
-	if len(tabs) > maxDashboardTabs {
-		return fmt.Errorf("at most %d tabs are allowed", maxDashboardTabs)
-	}
-	seen := make(map[string]bool, len(tabs))
-	for _, tab := range tabs {
-		if tab.ID == "" {
-			return fmt.Errorf("tab id is required")
-		}
-		if err := validateWidgetTab(tab.ID); err != nil {
-			return err
-		}
-		if seen[tab.ID] {
-			return fmt.Errorf("duplicate tab id %q", tab.ID)
-		}
-		seen[tab.ID] = true
-		if strings.TrimSpace(tab.Title) == "" {
-			return fmt.Errorf("tab title is required")
-		}
-		if len([]rune(tab.Title)) > maxDashboardTabTitleRunes {
-			return fmt.Errorf("tab title must be at most %d characters", maxDashboardTabTitleRunes)
-		}
-	}
-	return nil
-}
-
-// validateWidgetTab bounds a widget's layout.tab. An empty tab is allowed
-// (the widget falls back to the first tab); otherwise it must match the tab
-// id charset and length.
-func validateWidgetTab(tab string) error {
-	if tab == "" {
-		return nil
-	}
-	if len(tab) > maxDashboardTabIDLen || !dashboardTabIDPattern.MatchString(tab) {
-		return fmt.Errorf("invalid tab id %q (lowercase letters, digits, and dashes only, must start with a letter or digit, at most %d characters)", tab, maxDashboardTabIDLen)
-	}
-	return nil
-}
-
-// validateDashboardSettingsValue validates the `app` and `tabs` blocks of a
-// raw settings map. The update path decodes settings as a map (shallow merge
-// through the dashboard document), so the values arrive untyped; decode them
-// into the models to reuse the bounds and enum checks above.
-func validateDashboardSettingsValue(settings map[string]any) error {
-	if settings == nil {
-		return nil
-	}
-	if err := validateDashboardAppSettingsValue(settings["app"]); err != nil {
-		return err
-	}
-	raw, ok := settings["tabs"]
-	if !ok || raw == nil {
-		return nil
-	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("invalid tabs")
-	}
-	var tabs []models.DashboardTab
-	if err := json.Unmarshal(b, &tabs); err != nil {
-		return fmt.Errorf("invalid tabs")
-	}
-	return validateDashboardTabs(tabs)
-}
-
-// validateDashboardAppSettingsValue validates the `app` block of a raw settings
-// map. The update path decodes settings as a map (shallow merge through the
-// dashboard document), so the app value arrives untyped; decode it into the
-// model to reuse the bounds and enum checks above.
-func validateDashboardAppSettingsValue(raw any) error {
-	if raw == nil {
-		return nil
-	}
-	b, err := json.Marshal(raw)
-	if err != nil {
-		return fmt.Errorf("invalid app settings")
-	}
-	var app models.DashboardAppSettings
-	if err := json.Unmarshal(b, &app); err != nil {
-		return fmt.Errorf("invalid app settings")
-	}
-	return validateDashboardAppSettings(&app)
-}
-
 // @Summary Create a dashboard
 // @Description Create a new dashboard
 // @Tags dashboards
@@ -268,11 +82,11 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 		req.FolderID = nil
 	}
 
-	if err := validateDashboardAppSettings(req.Settings.App); err != nil {
+	if err := validate.DashboardAppSettings(req.Settings.App); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := validateDashboardTabs(req.Settings.Tabs); err != nil {
+	if err := validate.DashboardTabs(req.Settings.Tabs); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -374,7 +188,7 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 		var mergedSettings map[string]any
 		var variables []map[string]any
 		if req.Settings != nil {
-			if err := validateDashboardSettingsValue(req.Settings); err != nil {
+			if err := validate.DashboardSettingsValue(req.Settings); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
 			}
@@ -532,7 +346,7 @@ func dashboardSnapshotSettings(settings map[string]any) (models.DashboardSetting
 // snapshotWidgetToModel converts one published snapshot widget into the REST
 // widget shape, scoped to its dashboard. Timestamps stay zero: a snapshot
 // carries content, not row metadata.
-func snapshotWidgetToModel(dashID string, sw snapshotWidget) models.Widget {
+func snapshotWidgetToModel(dashID string, sw dashboarddoc.SnapshotWidget) models.Widget {
 	return models.Widget{
 		ID:          sw.ID,
 		DashboardID: dashID,
@@ -542,15 +356,21 @@ func snapshotWidgetToModel(dashID string, sw snapshotWidget) models.Widget {
 		Query:       sw.Query,
 		Language:    sw.Language,
 		Type:        models.WidgetType(sw.Type),
-		Layout:      sw.Layout,
-		Config:      sw.Config,
+		Layout: models.WidgetLayout{
+			Row:    sw.Layout.Row,
+			Col:    sw.Layout.Col,
+			Width:  sw.Layout.Width,
+			Height: sw.Layout.Height,
+			Tab:    sw.Layout.Tab,
+		},
+		Config: sw.Config,
 	}
 }
 
 // dashboardWidgetsFromSnapshot converts a whole snapshot widget list into the
 // REST shape. The result is non-nil even when empty, so callers can tell a
 // published-but-empty widget set from "no snapshot served".
-func dashboardWidgetsFromSnapshot(dashID string, widgets []snapshotWidget) []models.Widget {
+func dashboardWidgetsFromSnapshot(dashID string, widgets []dashboarddoc.SnapshotWidget) []models.Widget {
 	out := make([]models.Widget, 0, len(widgets))
 	for _, sw := range widgets {
 		out = append(out, snapshotWidgetToModel(dashID, sw))
@@ -934,7 +754,7 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate the widget's tab assignment (empty falls back to the first tab).
-	if err := validateWidgetTab(req.Layout.Tab); err != nil {
+	if err := validate.WidgetTab(req.Layout.Tab); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -1078,7 +898,7 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.Layout != nil {
-		if err := validateWidgetTab(req.Layout.Tab); err != nil {
+		if err := validate.WidgetTab(req.Layout.Tab); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}

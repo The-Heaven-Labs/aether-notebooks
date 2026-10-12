@@ -2,13 +2,10 @@ package api
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"sort"
 	"strconv"
 	"time"
 
@@ -25,153 +22,6 @@ import (
 // draft (publishing stays explicit). Viewers read the published snapshot
 // through the existing REST shapes; the document itself is never rewritten by
 // a read.
-
-// errSnapshotWarnings reports that a dashboard document cannot be published
-// because one or more widgets failed projection validation. The concrete
-// snapshotWarningsError carries the warnings for the 422 response;
-// errors.Is(err, errSnapshotWarnings) matches it and errors.As retrieves them.
-var errSnapshotWarnings = errors.New("dashboard snapshot refused: document has invalid widgets")
-
-// snapshotWarningsError carries the per-widget projection warnings that
-// refused a publish.
-type snapshotWarningsError struct {
-	Warnings []string
-}
-
-func (e *snapshotWarningsError) Error() string {
-	return fmt.Sprintf("%s (%d warning(s))", errSnapshotWarnings.Error(), len(e.Warnings))
-}
-
-func (e *snapshotWarningsError) Unwrap() error { return errSnapshotWarnings }
-
-// snapshotWidget is one widget's full definition inside a published snapshot.
-// Its JSON shape matches the content fields of models.Widget, so a snapshot
-// can be served through the existing dashboard REST shapes without
-// translation.
-type snapshotWidget struct {
-	ID          string                 `json:"id"`
-	Type        string                 `json:"type"`
-	Layout      models.WidgetLayout    `json:"layout"`
-	ConnectorID *string                `json:"connector_id,omitempty"`
-	Query       *string                `json:"query,omitempty"`
-	Language    string                 `json:"language"`
-	NotebookID  *string                `json:"notebook_id,omitempty"`
-	CellID      *string                `json:"cell_id,omitempty"`
-	Config      map[string]interface{} `json:"config"`
-}
-
-// dashboardSnapshot is the publishable content of a dashboard document: title,
-// settings (with variables folded in as settings["variables"]), and widgets
-// sorted by ID.
-type dashboardSnapshot struct {
-	Title    string
-	Settings map[string]any
-	Widgets  []snapshotWidget
-}
-
-// dashboardSnapshotFromProjection builds the canonical snapshot for a
-// projection. Settings copy the projection's map and re-inject variables under
-// settings["variables"] — the shape models.DashboardSettings stores and the
-// shape published execute/options validate against. Widgets are sorted by ID
-// so the snapshot encoding is deterministic.
-func dashboardSnapshotFromProjection(proj *dashboarddoc.Projection) *dashboardSnapshot {
-	settings := make(map[string]any, len(proj.Settings)+1)
-	for k, v := range proj.Settings {
-		settings[k] = v
-	}
-	variables := proj.Variables
-	if variables == nil {
-		variables = []map[string]any{}
-	}
-	settings["variables"] = variables
-
-	widgets := make([]snapshotWidget, 0, len(proj.Widgets))
-	for _, w := range proj.Widgets {
-		widgets = append(widgets, snapshotWidget{
-			ID:          w.ID,
-			Type:        w.Type,
-			Layout:      models.WidgetLayout{Row: w.Layout.Row, Col: w.Layout.Col, Width: w.Layout.Width, Height: w.Layout.Height, Tab: w.Layout.Tab},
-			ConnectorID: w.ConnectorID,
-			Query:       w.Query,
-			Language:    w.Language,
-			NotebookID:  w.NotebookID,
-			CellID:      w.CellID,
-			Config:      w.Config,
-		})
-	}
-	sort.Slice(widgets, func(i, j int) bool { return widgets[i].ID < widgets[j].ID })
-	return &dashboardSnapshot{Title: proj.Title, Settings: settings, Widgets: widgets}
-}
-
-// dashboardSnapshotFromDoc projects a dashboard document and refuses to
-// snapshot it when any widget failed validation: publishing a document whose
-// widget set is partially unreadable would silently drop those widgets from
-// the published app. The refusal is errSnapshotWarnings via
-// snapshotWarningsError, carrying the warnings.
-//
-// Two deliberate policies:
-//
-//   - Only widget warnings refuse a publish. Settings/variables warnings are
-//     skipped by Project and are simply dropped from the snapshot, matching
-//     the materializer, so one malformed setting can never block publishing.
-//   - Restore cannot remove draft widgets that fail projection: the restore
-//     diff is driven by Projection.Widgets, which omits warned widgets, so a
-//     corrupt widget survives in the document (invisible to readers and the
-//     materializer) until a raw-key document primitive can delete it by ID.
-func dashboardSnapshotFromDoc(state []byte) (*dashboardSnapshot, error) {
-	proj, err := dashboarddoc.Project(state)
-	if err != nil {
-		return nil, err
-	}
-	if len(proj.WidgetWarnings) > 0 {
-		return nil, &snapshotWarningsError{Warnings: proj.WidgetWarnings}
-	}
-	return dashboardSnapshotFromProjection(proj), nil
-}
-
-// dashboardContentHash returns the canonical SHA-256 (hex) of a dashboard's
-// publishable content. Both publish and the versions status endpoint use it,
-// so "has unpublished changes" is a hash comparison. Canonicalization is
-// JSON-based: encoding/json sorts map keys, and widgets are sorted by ID
-// before hashing, so map iteration order and widget order never affect the
-// hash while any content change (title, settings, a widget field) does.
-func dashboardContentHash(title string, settings map[string]any, widgets []snapshotWidget) string {
-	sorted := make([]snapshotWidget, len(widgets))
-	copy(sorted, widgets)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i].ID < sorted[j].ID })
-
-	payload := struct {
-		Title    string           `json:"title"`
-		Settings map[string]any   `json:"settings"`
-		Widgets  []snapshotWidget `json:"widgets"`
-	}{Title: title, Settings: settings, Widgets: sorted}
-
-	raw, err := json.Marshal(payload)
-	if err != nil {
-		// Unreachable for projection/JSONB-domain values (Project normalizes
-		// its output and snapshots are decoded from JSONB); hash the error so
-		// the function stays total instead of panicking on the request path.
-		raw = []byte("marshal-error:" + err.Error())
-	}
-	sum := sha256.Sum256(raw)
-	return hex.EncodeToString(sum[:])
-}
-
-// snapshotWidgetToDoc converts a stored snapshot widget into the document
-// write shape. Layout fields map one-to-one, including the tab placement.
-func snapshotWidgetToDoc(w snapshotWidget) dashboarddoc.WidgetDoc {
-	return dashboarddoc.WidgetDoc{
-		ID:          w.ID,
-		Type:        w.Type,
-		Layout:      dashboarddoc.Layout{Row: w.Layout.Row, Col: w.Layout.Col, Width: w.Layout.Width, Height: w.Layout.Height, Tab: w.Layout.Tab},
-		ConnectorID: w.ConnectorID,
-		Query:       w.Query,
-		Language:    w.Language,
-		NotebookID:  w.NotebookID,
-		CellID:      w.CellID,
-		Config:      w.Config,
-	}
-}
 
 // dashboardVersionRow is one dashboard_versions row plus the publisher's email
 // for the version-history response.
@@ -227,47 +77,18 @@ func (s *Server) loadDashboardVersion(ctx context.Context, orgID, dashID string,
 }
 
 // publishDashboardVersion snapshots the dashboard's current document into a
-// new dashboard_versions row and audits the publish. The version number is
-// allocated by the INSERT ... SELECT MAX(version)+1 and the UNIQUE
-// (dashboard_id, version) constraint arbitrates concurrent publishes: a unique
-// violation is retried once against the then-current max. A missing or trashed
-// dashboard returns errDashboardDocNotFound; a document with invalid widgets
-// returns errSnapshotWarnings.
+// new dashboard_versions row and audits the publish. The snapshot, content
+// hash, and version numbering are shared with the agent publish tool through
+// dashboarddoc.PublishVersion (internal/agent cannot import internal/api).
+// A missing or trashed dashboard returns errDashboardDocNotFound; a document
+// with invalid widgets returns dashboarddoc.ErrSnapshotWarnings.
 func (s *Server) publishDashboardVersion(ctx context.Context, orgID, dashID, userID string) (version int, contentHash string, createdAt time.Time, err error) {
 	state, err := s.loadOrSeedDashboardDoc(ctx, orgID, dashID)
 	if err != nil {
 		return 0, "", time.Time{}, err
 	}
-	snap, err := dashboardSnapshotFromDoc(state)
+	version, contentHash, createdAt, err = dashboarddoc.PublishVersion(ctx, s.db.Pool, orgID, dashID, userID, state)
 	if err != nil {
-		return 0, "", time.Time{}, err
-	}
-	settingsJSON, err := json.Marshal(snap.Settings)
-	if err != nil {
-		return 0, "", time.Time{}, fmt.Errorf("encode dashboard version settings: %w", err)
-	}
-	widgetsJSON, err := json.Marshal(snap.Widgets)
-	if err != nil {
-		return 0, "", time.Time{}, fmt.Errorf("encode dashboard version widgets: %w", err)
-	}
-	contentHash = dashboardContentHash(snap.Title, snap.Settings, snap.Widgets)
-
-	for attempt := 0; attempt < 2; attempt++ {
-		err = s.db.Pool.QueryRow(ctx, `
-			INSERT INTO dashboard_versions
-				(dashboard_id, org_id, version, title, settings, widgets, content_hash, created_by)
-			SELECT $1, $2, COALESCE(MAX(version), 0) + 1, $3, $4, $5, $6, $7
-			FROM dashboard_versions
-			WHERE dashboard_id = $1
-			RETURNING version, created_at`,
-			dashID, orgID, snap.Title, settingsJSON, widgetsJSON, contentHash, userID,
-		).Scan(&version, &createdAt)
-		if err == nil {
-			break
-		}
-		if attempt == 0 && isUniqueViolation(err) {
-			continue
-		}
 		return 0, "", time.Time{}, err
 	}
 
@@ -319,7 +140,7 @@ func (s *Server) handlePublishDashboard(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusNotFound, "dashboard not found")
 		return
 	}
-	var warnings *snapshotWarningsError
+	var warnings *dashboarddoc.SnapshotWarningsError
 	if errors.As(err, &warnings) {
 		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
 			"error":    "dashboard document has invalid widgets",
@@ -369,8 +190,8 @@ func (s *Server) handleListDashboardVersions(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to load dashboard")
 		return
 	}
-	draft := dashboardSnapshotFromProjection(proj)
-	draftHash := dashboardContentHash(draft.Title, draft.Settings, draft.Widgets)
+	draft := dashboarddoc.SnapshotFromProjection(proj)
+	draftHash := dashboarddoc.ContentHash(draft.Title, draft.Settings, draft.Widgets)
 
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT v.version, v.content_hash, v.created_at, COALESCE(u.email, '')
@@ -450,7 +271,7 @@ func (s *Server) handleRestoreDashboardVersion(w http.ResponseWriter, r *http.Re
 		return
 	}
 
-	var widgets []snapshotWidget
+	var widgets []dashboarddoc.SnapshotWidget
 	if err := json.Unmarshal(row.Widgets, &widgets); err != nil {
 		writeError(w, http.StatusInternalServerError, "restore failed")
 		return
@@ -495,11 +316,11 @@ func (s *Server) handleRestoreDashboardVersion(w http.ResponseWriter, r *http.Re
 	// Upsert every snapshot widget, then delete the draft widgets the snapshot
 	// does not contain, so the draft's widget set is exactly the snapshot's.
 	// Draft widgets that fail projection are absent from proj.Widgets and are
-	// deliberately left in the document (see dashboardSnapshotFromDoc).
+	// deliberately left in the document (see dashboarddoc.SnapshotFromDoc).
 	snapshotIDs := make(map[string]struct{}, len(widgets))
 	for _, sw := range widgets {
 		snapshotIDs[sw.ID] = struct{}{}
-		newState, err = dashboarddoc.UpsertWidget(newState, snapshotWidgetToDoc(sw))
+		newState, err = dashboarddoc.UpsertWidget(newState, dashboarddoc.SnapshotWidgetToDoc(sw))
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "restore failed")
 			return

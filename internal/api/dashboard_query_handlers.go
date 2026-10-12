@@ -49,7 +49,7 @@ type publishedDashboardSnapshot struct {
 	Version   int
 	CreatedAt time.Time
 	Title     string
-	Widgets   []snapshotWidget
+	Widgets   []dashboarddoc.SnapshotWidget
 	Settings  models.DashboardSettings
 }
 
@@ -65,7 +65,7 @@ func (s *Server) loadPublishedDashboardSnapshot(ctx context.Context, orgID, dash
 	if err != nil {
 		return nil, err
 	}
-	var widgets []snapshotWidget
+	var widgets []dashboarddoc.SnapshotWidget
 	if err := json.Unmarshal(ver.Widgets, &widgets); err != nil {
 		return nil, fmt.Errorf("decode dashboard version widgets: %w", err)
 	}

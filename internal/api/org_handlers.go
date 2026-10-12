@@ -16,6 +16,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/config"
 	"github.com/the-heaven-labs/aether/internal/models"
+	"github.com/the-heaven-labs/aether/internal/validate"
 )
 
 type orgCreateRequest struct {
@@ -724,14 +725,14 @@ func validateOrgBranding(branding *models.OrgBranding) error {
 	if len([]rune(branding.AppName)) > maxOrgAppNameRunes {
 		return fmt.Errorf("branding app_name must be at most %d characters", maxOrgAppNameRunes)
 	}
-	if branding.AccentColor != "" && !isHexColor(branding.AccentColor) {
+	if branding.AccentColor != "" && !validate.IsHexColor(branding.AccentColor) {
 		return fmt.Errorf("branding accent_color must be a hex color like #rrggbb")
 	}
 	if len(branding.DefaultChartPalette) > maxOrgBrandingPaletteColors {
 		return fmt.Errorf("branding default_chart_palette must have at most %d colors", maxOrgBrandingPaletteColors)
 	}
 	for _, c := range branding.DefaultChartPalette {
-		if !isHexColor(c) {
+		if !validate.IsHexColor(c) {
 			return fmt.Errorf("branding default_chart_palette entries must be hex colors like #rrggbb")
 		}
 	}

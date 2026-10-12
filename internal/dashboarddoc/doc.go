@@ -4,7 +4,9 @@
 // backend-originated mutation operations (apply.go) that write widget and meta
 // changes into the document, and the merge-on-store path (store.go,
 // materialize.go) that persists relay state into dashboard_yjs_documents and
-// derives the dashboards/widgets rows from it.
+// derives the dashboards/widgets rows from it. It also owns the publishable
+// snapshot shape, content hash, and version insert (publish.go) shared by the
+// REST publish handlers and the agent publish_dashboard tool.
 //
 // # Document shape
 //
