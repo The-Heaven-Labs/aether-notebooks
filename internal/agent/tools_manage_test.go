@@ -1163,3 +1163,217 @@ func TestDashboardUpdateWidgetMergesConfigAndTab(t *testing.T) {
 	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
 		"a rejected tab must not rewrite the document")
 }
+
+// TestDashboardGetDashboardShowsQueryWidgets pins the inspect path for
+// query-backed widgets: get_dashboard must return their connector, query,
+// language, and config (their notebook_id/cell_id are NULL, and a failed scan
+// used to drop the row entirely), while cell widgets keep their references.
+func TestDashboardGetDashboardShowsQueryWidgets(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	cellID := createTestCell(t, db.Pool, nbID, "SELECT 1", 0)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Inspect Dashboard")
+
+	connID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		VALUES ($1, $2, 'inspect-connector', 'postgres', $3)
+	`, connID, orgID, []byte("encrypted"))
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	create := dashboardTool(t, reg, "create_dashboard_widget")
+
+	queryArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"connector_id": connID,
+		"query":        "SELECT 1 AS value",
+		"type":         "metric",
+		"config":       map[string]any{"metric": map[string]any{"value_column": "value"}},
+	})
+	require.NoError(t, err)
+	queryOut, err := create(queryArgs, ctx)
+	require.NoError(t, err)
+	queryWidgetID := queryOut.(map[string]any)["widget_id"].(string)
+
+	cellArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"notebook_id":  nbID,
+		"cell_id":      cellID,
+		"type":         "table",
+		"row":          4,
+	})
+	require.NoError(t, err)
+	cellOut, err := create(cellArgs, ctx)
+	require.NoError(t, err)
+	cellWidgetID := cellOut.(map[string]any)["widget_id"].(string)
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+	out, err := dashboardTool(t, reg, "get_dashboard")(args, ctx)
+	require.NoError(t, err)
+	widgets, ok := out.(map[string]any)["widgets"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, widgets, 2, "both widgets must be visible")
+
+	byID := map[string]map[string]any{}
+	for _, w := range widgets {
+		byID[w["id"].(string)] = w
+	}
+
+	// Query widget: connector/query/config are exposed, cell refs are null.
+	qw, ok := byID[queryWidgetID]
+	require.True(t, ok, "the query widget must not be dropped")
+	require.Equal(t, "metric", qw["type"])
+	require.Equal(t, "sql", qw["language"])
+	require.Nil(t, qw["notebook_id"])
+	require.Nil(t, qw["cell_id"])
+	require.NotNil(t, qw["connector_id"])
+	require.Equal(t, connID, *qw["connector_id"].(*string))
+	require.NotNil(t, qw["query"])
+	require.Equal(t, "SELECT 1 AS value", *qw["query"].(*string))
+	config, ok := qw["config"].(map[string]any)
+	require.True(t, ok)
+	metric, ok := config["metric"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "value", metric["value_column"])
+
+	// Cell widget: notebook/cell refs are exposed, connector/query are null.
+	cw, ok := byID[cellWidgetID]
+	require.True(t, ok)
+	require.NotNil(t, cw["notebook_id"])
+	require.Equal(t, nbID, *cw["notebook_id"].(*string))
+	require.NotNil(t, cw["cell_id"])
+	require.Equal(t, cellID, *cw["cell_id"].(*string))
+	require.Nil(t, cw["connector_id"])
+	require.Nil(t, cw["query"])
+}
+
+// TestDashboardUpdateSettingsValidatesLogoAttachment pins REST parity for the
+// app logo reference: an unknown or notebook-scoped attachment id must be
+// rejected (and must not rewrite the document), while an org-scoped
+// attachment id is accepted.
+func TestDashboardUpdateSettingsValidatesLogoAttachment(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Logo Dashboard")
+
+	logoID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO attachments (id, org_id, notebook_id, filename, mime_type, size_bytes, storage_path, created_by)
+		VALUES ($1, $2, NULL, 'logo.png', 'image/png', 10, '/tmp/logo.png', $3)
+	`, logoID, orgID, userID)
+	require.NoError(t, err)
+	notebookAttachmentID := uuid.NewString()
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO attachments (id, org_id, notebook_id, filename, mime_type, size_bytes, storage_path, created_by)
+		VALUES ($1, $2, $3, 'cell.png', 'image/png', 10, '/tmp/cell.png', $4)
+	`, notebookAttachmentID, orgID, nbID, userID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "update_dashboard_settings")
+
+	// An org-scoped attachment is accepted and materializes.
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": logoID},
+	})
+	require.NoError(t, err)
+	_, err = handler(args, ctx)
+	require.NoError(t, err)
+	var settingsOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT settings::text FROM dashboards WHERE id = $1`, dashID).Scan(&settingsOut))
+	require.JSONEq(t, `{"app":{"logo_attachment_id":"`+logoID+`"},"variables":[]}`, settingsOut)
+
+	// An unknown id is rejected without rewriting the document.
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	missingArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": uuid.NewString()},
+	})
+	require.NoError(t, err)
+	_, err = handler(missingArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "logo attachment not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected logo must not rewrite the document")
+
+	// A notebook-scoped attachment is rejected too: logos are served through
+	// the public attachment route, which has no notebook view ACL.
+	notebookArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": notebookAttachmentID},
+	})
+	require.NoError(t, err)
+	_, err = handler(notebookArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "logo attachment not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
+
+	// A malformed id can never match an attachment and is reported as missing.
+	malformedArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": "not-a-uuid"},
+	})
+	require.NoError(t, err)
+	_, err = handler(malformedArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "logo attachment not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
+}
+
+// TestDashboardSetLayoutComposesAppearanceEntries pins sequential application:
+// two appearance entries for the same widget must compose (the second keeps
+// the first's fields) instead of overwriting them.
+func TestDashboardSetLayoutComposesAppearanceEntries(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Compose Dashboard")
+
+	widgetID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT 1 AS x', 'sql', 'table',
+		        '{"row":0,"col":0,"width":6,"height":6}', '{"showLegend":true}')
+	`, widgetID, dashID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "set_dashboard_layout")
+
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"appearance": []map[string]any{
+			{"widget_id": widgetID, "appearance": map[string]any{"background": "transparent"}},
+			{"widget_id": widgetID, "appearance": map[string]any{"padding": "md"}},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "updated", out.(map[string]any)["status"])
+
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, true, w.Config["showLegend"], "unrelated config keys must survive")
+	appearance, ok := w.Config["appearance"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "transparent", appearance["background"], "the first entry's fields must survive")
+	require.Equal(t, "md", appearance["padding"])
+
+	var configOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT config::text FROM widgets WHERE id = $1`, widgetID).Scan(&configOut))
+	require.JSONEq(t, `{"showLegend":true,"appearance":{"background":"transparent","padding":"md"}}`, configOut)
+}

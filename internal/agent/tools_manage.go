@@ -157,7 +157,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Description: "Update a dashboard's App settings: title, app (e.g. app.title, app.subtitle, app.theme with hex colors), and tabs (App chapters, e.g. [{id, title}]).",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string","description":"Dashboard title"},"app":{"type":"object","description":"App surface settings; theme fields are hex colors, e.g. {\"title\":\"Sales\",\"theme\":{\"accent\":\"#7c5cff\",\"color_scheme\":\"dark\"}}"},"tabs":{"type":"array","description":"App chapters; ids are lowercase letters/digits/dashes","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}}},"required":["dashboard_id"]}`,
 		},
-		Handler: makeUpdateDashboardSettingsHandler(),
+		Handler: makeUpdateDashboardSettingsHandler(pool),
 		Timeout: 15 * time.Second,
 	})
 
@@ -376,6 +376,32 @@ func validateDashboardWidgetConnectorRef(ctx context.Context, pool *pgxpool.Pool
 	}
 	if !exists {
 		return fmt.Errorf("connector not found")
+	}
+	return nil
+}
+
+// validateDashboardLogoAttachment verifies attachmentID names an org-scoped,
+// non-notebook attachment in orgID, mirroring the REST validateLogoAttachment:
+// rejecting unknown ids at write time keeps app surfaces from rendering broken
+// images, and notebook attachments are rejected too because a logo is served
+// through the public attachment route, which has no notebook view ACL. An
+// empty id is valid (no logo) and a malformed id can never match, so it is
+// reported as not found.
+func validateDashboardLogoAttachment(ctx context.Context, pool *pgxpool.Pool, orgID, attachmentID string) error {
+	if attachmentID == "" {
+		return nil
+	}
+	if _, err := uuid.Parse(attachmentID); err != nil {
+		return fmt.Errorf("logo attachment not found")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM attachments WHERE id = $1 AND org_id = $2 AND notebook_id IS NULL)`,
+		attachmentID, orgID).Scan(&exists); err != nil {
+		return fmt.Errorf("logo attachment lookup: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("logo attachment not found")
 	}
 	return nil
 }
@@ -693,9 +719,13 @@ func makeGetDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 		var settings map[string]any
 		json.Unmarshal(settingsJSON, &settings)
 
-		// Fetch widgets
+		// Fetch widgets. Query-backed widgets have NULL notebook_id/cell_id
+		// (and cell widgets NULL connector_id/query), so the references are
+		// scanned as nullable pointers: a non-nullable scan fails on the first
+		// query widget and aborts the whole iteration, hiding every widget.
 		rows, err := pool.Query(ctx.Context,
-			`SELECT id, notebook_id, cell_id, type, layout FROM widgets WHERE dashboard_id = $1 ORDER BY created_at ASC`,
+			`SELECT id, notebook_id, cell_id, connector_id, query, language, type, layout, config
+			 FROM widgets WHERE dashboard_id = $1 ORDER BY created_at ASC`,
 			req.DashboardID)
 		if err != nil {
 			return nil, fmt.Errorf("load widgets: %w", err)
@@ -704,17 +734,27 @@ func makeGetDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 
 		var widgets []map[string]any
 		for rows.Next() {
-			var id, nbID, cellID, wType string
-			var layoutJSON []byte
-			if err := rows.Scan(&id, &nbID, &cellID, &wType, &layoutJSON); err != nil {
-				continue
+			var id, language, wType string
+			var nbID, cellID, connectorID, query *string
+			var layoutJSON, configJSON []byte
+			if err := rows.Scan(&id, &nbID, &cellID, &connectorID, &query, &language, &wType, &layoutJSON, &configJSON); err != nil {
+				return nil, fmt.Errorf("scan widget: %w", err)
 			}
 			var layout map[string]any
 			json.Unmarshal(layoutJSON, &layout)
+			config := map[string]any{}
+			if len(configJSON) > 0 {
+				json.Unmarshal(configJSON, &config)
+			}
 			widgets = append(widgets, map[string]any{
-				"id": id, "notebook_id": nbID, "cell_id": cellID,
-				"type": wType, "layout": layout,
+				"id": id, "type": wType, "layout": layout, "language": language,
+				"notebook_id": nbID, "cell_id": cellID,
+				"connector_id": connectorID, "query": query,
+				"config": config,
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("load widgets iter: %w", err)
 		}
 		if widgets == nil {
 			widgets = []map[string]any{}
@@ -828,7 +868,7 @@ func makeUpdateDashboardHandler() ToolHandler {
 // title/app/tabs are validated with the same validators the REST paths use,
 // shallow-merged over the document's projected settings (absent keys stay),
 // and written through the dashboard document in one store.
-func makeUpdateDashboardSettingsHandler() ToolHandler {
+func makeUpdateDashboardSettingsHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
 			DashboardID string          `json:"dashboard_id"`
@@ -855,6 +895,15 @@ func makeUpdateDashboardSettingsHandler() ToolHandler {
 		if req.App != nil {
 			if err := validate.DashboardSettingsValue(map[string]any{"app": req.App}); err != nil {
 				return nil, err
+			}
+			// The logo reference points at an org attachment; the existence
+			// check needs the database, so it runs after the pure validators
+			// (mirroring the REST update path) and before the document load,
+			// so a rejected reference never seeds the document.
+			if id, _ := req.App["logo_attachment_id"].(string); id != "" {
+				if err := validateDashboardLogoAttachment(ctx.Context, pool, ctx.OrgID, id); err != nil {
+					return nil, err
+				}
 			}
 		}
 		var tabs []models.DashboardTab
@@ -1019,17 +1068,26 @@ func makeSetDashboardLayoutHandler() ToolHandler {
 				return nil, fmt.Errorf("set layout: %w", err)
 			}
 		}
+		// Appearance entries apply sequentially over a working copy of each
+		// widget's config (seeded from the projection on first touch), so two
+		// entries for the same widget compose instead of the second
+		// overwriting the first.
+		workingConfigs := make(map[string]map[string]any, len(req.Appearance))
 		for _, a := range req.Appearance {
 			existing, ok := proj.Widgets[a.WidgetID]
 			if !ok {
 				return nil, fmt.Errorf("widget not found")
 			}
 			// Config is a whole-value document field, so the appearance patch
-			// is merged over a copy of the widget's config and the whole map
-			// is written back.
-			config := make(map[string]any, len(existing.Config)+1)
-			for k, v := range existing.Config {
-				config[k] = v
+			// is merged over the widget's working config and the whole map is
+			// written back.
+			config, ok := workingConfigs[a.WidgetID]
+			if !ok {
+				config = make(map[string]any, len(existing.Config)+1)
+				for k, v := range existing.Config {
+					config[k] = v
+				}
+				workingConfigs[a.WidgetID] = config
 			}
 			appearance := map[string]any{}
 			if current, ok := config["appearance"].(map[string]any); ok {
