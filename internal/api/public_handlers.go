@@ -67,7 +67,9 @@ func (s *Server) handlePublicAttachment(w http.ResponseWriter, r *http.Request) 
 	// enabled for that org. Notebook attachments are excluded: the authed route
 	// enforces notebook view on them, and a public token must never become a
 	// bypass around that ACL. Only org/dashboard-scoped files (logos) are
-	// reachable here.
+	// reachable here, and only when they are images: the route serves inline
+	// from the API origin, so a non-image row (e.g. one stored before the
+	// upload guard existed) must never be streamed.
 	var mimeType, filename string
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT a.mime_type, a.filename
@@ -75,7 +77,7 @@ func (s *Server) handlePublicAttachment(w http.ResponseWriter, r *http.Request) 
 		 JOIN public_tokens pt ON pt.org_id = a.org_id
 		 JOIN orgs o ON o.id = pt.org_id
 		 WHERE a.id = $1 AND pt.token = $2 AND o.public_sharing_enabled = true
-		   AND a.notebook_id IS NULL`,
+		   AND a.notebook_id IS NULL AND a.mime_type LIKE 'image/%'`,
 		attID, token,
 	).Scan(&mimeType, &filename)
 	if errors.Is(err, pgx.ErrNoRows) {

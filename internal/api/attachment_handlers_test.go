@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -631,4 +632,103 @@ func TestPublicLogo(t *testing.T) {
 	rw = httptest.NewRecorder()
 	srv.ServeHTTP(rw, req)
 	assert.Equal(t, http.StatusNotFound, rw.Code)
+}
+
+// TestLogoAttachmentRejectsNonImage pins the logo upload guard: org- and
+// dashboard-scoped attachments are served inline through the unauthenticated
+// public route, so only image MIME types may be stored. An HTML file (or SVG,
+// which Go sniffs as text/xml) would otherwise execute script on the API
+// origin, which holds the SPA's session token. Notebook attachments keep the
+// broader MIME set: they are only served through ACL-gated routes.
+func TestLogoAttachmentRejectsNonImage(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	t.Setenv("AETHER_RATE_LIMIT_LOGIN", "500")
+	srv := setupTestServerWithAttachDir(t)
+	_, token := createTestOrgAndAdmin(t, srv)
+	dashID := createDashWithSettings(t, srv, token, nil)
+
+	html := []byte("<!DOCTYPE html><html><body><script>alert(document.domain)</script></body></html>")
+	svg := []byte(`<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>`)
+
+	for _, tc := range []struct {
+		name    string
+		path    string
+		content []byte
+	}{
+		{"org html", "/api/v1/org/attachments", html},
+		{"org svg", "/api/v1/org/attachments", svg},
+		{"dashboard html", "/api/v1/dashboards/" + dashID + "/attachments", html},
+		{"dashboard svg", "/api/v1/dashboards/" + dashID + "/attachments", svg},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := uploadFileTo(t, srv, token, tc.path, "logo.html", tc.content)
+			require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		})
+	}
+
+	// The rejected uploads stored nothing.
+	var nonImage int
+	require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM attachments WHERE filename = 'logo.html'`).Scan(&nonImage))
+	require.Zero(t, nonImage, "a rejected logo upload must not insert an attachment row")
+
+	// A real image still uploads through both logo routes.
+	orgRec := uploadFileTo(t, srv, token, "/api/v1/org/attachments", "logo.png", testLogoPNG)
+	require.Equal(t, http.StatusCreated, orgRec.Code, orgRec.Body.String())
+	dashRec := uploadFileTo(t, srv, token, "/api/v1/dashboards/"+dashID+"/attachments", "logo.png", testLogoPNG)
+	require.Equal(t, http.StatusCreated, dashRec.Code, dashRec.Body.String())
+
+	// Notebook attachments are unchanged: HTML is accepted there because the
+	// notebook route is ACL-gated and never serves inline on the API origin.
+	nbID := createTestNotebook(t, srv, token)
+	nbRec := uploadFileTo(t, srv, token, "/api/v1/notebooks/"+nbID+"/attachments", "notes.html", html)
+	require.Equal(t, http.StatusCreated, nbRec.Code, nbRec.Body.String())
+}
+
+// TestPublicAttachmentRefusesNonImageRow pins the defense-in-depth public
+// guard: even if a non-image org-scoped row exists (e.g. uploaded before the
+// upload guard), the unauthenticated public route refuses to serve it, while
+// image rows are served with X-Content-Type-Options: nosniff.
+func TestPublicAttachmentRefusesNonImageRow(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	t.Setenv("AETHER_RATE_LIMIT_LOGIN", "500")
+	srv := setupTestServerWithAttachDir(t)
+	db := setupTestDB(t)
+	orgID, token := createTestOrgAndAdmin(t, srv)
+	userID := currentUserID(t, srv, token)
+
+	dashID := createDashWithSettings(t, srv, token, nil)
+	publicToken := shareDashboard(t, srv, token, dashID)
+
+	// Simulate a pre-existing non-image row with a valid storage_path: the
+	// row alone must not make the public route serve it.
+	htmlID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(),
+		`INSERT INTO attachments (id, org_id, notebook_id, filename, mime_type, size_bytes, storage_path, created_by)
+		 VALUES ($1, $2, NULL, 'evil.html', 'text/html', 10, $4, $3)`,
+		htmlID, orgID, userID, htmlID)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest("GET", "/api/v1/public/"+publicToken+"/attachments/"+htmlID, nil)
+	rw := httptest.NewRecorder()
+	srv.ServeHTTP(rw, req)
+	assert.Equal(t, http.StatusNotFound, rw.Code, rw.Body.String())
+
+	// A real image row is served, with the nosniff header.
+	logoID := uploadOrgAttachment(t, srv, token)
+	req = httptest.NewRequest("GET", "/api/v1/public/"+publicToken+"/attachments/"+logoID, nil)
+	rw = httptest.NewRecorder()
+	srv.ServeHTTP(rw, req)
+	require.Equal(t, http.StatusOK, rw.Code, rw.Body.String())
+	assert.Equal(t, string(testLogoPNG), rw.Body.String())
+	assert.Equal(t, "image/png", rw.Header().Get("Content-Type"))
+	assert.Equal(t, "nosniff", rw.Header().Get("X-Content-Type-Options"))
+
+	// The authed attachment route serves nosniff too.
+	req = httptest.NewRequest("GET", "/api/v1/attachments/"+logoID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rw = httptest.NewRecorder()
+	srv.ServeHTTP(rw, req)
+	require.Equal(t, http.StatusOK, rw.Code, rw.Body.String())
+	assert.Equal(t, "nosniff", rw.Header().Get("X-Content-Type-Options"))
 }

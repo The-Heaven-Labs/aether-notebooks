@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -145,6 +146,17 @@ func (s *Server) uploadAttachment(w http.ResponseWriter, r *http.Request, orgID 
 	mimeType := http.DetectContentType(sniff)
 	reader := io.MultiReader(bytes.NewReader(sniff), file)
 
+	// Org/dashboard-scoped attachments (logos) are served inline through the
+	// unauthenticated public route, so they must be images: an HTML file
+	// served from the API origin would execute script in the SPA's origin,
+	// which holds the session token. Go sniffs SVG as text/xml, so the
+	// image/ prefix check closes that too. Notebook attachments keep the
+	// broader MIME set; they are only served through ACL-gated routes.
+	if notebookID == nil && !strings.HasPrefix(mimeType, "image/") {
+		writeError(w, http.StatusBadRequest, "logo attachments must be images")
+		return
+	}
+
 	// Insert DB row first to get the UUID, then store bytes keyed by UUID
 	var attID string
 	err = s.db.Pool.QueryRow(ctx,
@@ -233,6 +245,7 @@ func (s *Server) serveAttachment(w http.ResponseWriter, attID, mimeType, filenam
 	defer rc.Close()
 
 	w.Header().Set("Content-Type", mimeType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
 	_, _ = io.Copy(w, rc)
 }
