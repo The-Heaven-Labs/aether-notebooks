@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
-import { screen, act, waitFor } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { screen, act, waitFor, fireEvent } from '@testing-library/react'
+import { Route, Routes, useLocation } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import type { Awareness } from 'y-protocols/awareness'
 import { server } from '../test/server'
@@ -93,13 +93,24 @@ vi.mock('../components/OutputRenderer', () => ({
 // the handle registered for a widget when a live definition change fires; the
 // probe maps that call onto the test's spy for the widget.
 const rerunSpies = vi.hoisted(() => new Map<string, () => void>())
+// Registered (cache-bypassing) refresh handles, keyed by widget id — what the
+// masthead's Refresh action invokes across every mounted widget.
+const refreshSpies = vi.hoisted(() => new Map<string, () => void>())
 
 vi.mock('../components/QueryDataWidget', async () => {
   const { useEffect } = await import('react')
-  function QueryDataWidgetProbe({ widget, registerRerunner }: {
+  function QueryDataWidgetProbe({ widget, registerRefresher, registerRerunner }: {
     widget: { id: string; query?: string | null }
+    registerRefresher?: (refresh: () => Promise<unknown>) => (() => void) | void
     registerRerunner?: (rerun: () => Promise<unknown>) => (() => void) | void
   }) {
+    useEffect(
+      () => registerRefresher?.(() => {
+        refreshSpies.get(widget.id)?.()
+        return Promise.resolve()
+      }),
+      [registerRefresher, widget.id],
+    )
     useEffect(
       () => registerRerunner?.(() => {
         rerunSpies.get(widget.id)?.()
@@ -197,12 +208,22 @@ function fakeAwareness(states: Array<{ email: string; name: string; color: strin
   } as unknown as Awareness
 }
 
-function renderDashboard() {
+// Exposes the router's current location so tests can assert URL writes
+// (`?tab=`) without reaching into router internals.
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname + location.search}</div>
+}
+
+function renderDashboard(initialPath = '/dashboards/d1/view') {
   return renderWithProviders(
-    <Routes>
-      <Route path="/dashboards/:id/view" element={<DashboardPage />} />
-    </Routes>,
-    { initialPath: '/dashboards/d1/view' },
+    <>
+      <LocationProbe />
+      <Routes>
+        <Route path="/dashboards/:id/view" element={<DashboardPage />} />
+      </Routes>
+    </>,
+    { initialPath },
   )
 }
 
@@ -214,6 +235,7 @@ beforeEach(() => {
   localStorage.setItem('aether_user_email', 'me@test.com')
   docStore.reset()
   rerunSpies.clear()
+  refreshSpies.clear()
   server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json(REST_DASHBOARD)))
 })
 
@@ -486,5 +508,72 @@ describe('DashboardPage live auto re-run', () => {
 
     await advance(1_000)
     expect(dashboardGets).toBe(2)
+  })
+})
+
+describe('DashboardPage chapter tabs', () => {
+  const TABS = [
+    { id: 'overview', title: 'Overview' },
+    { id: 'orders', title: 'Orders' },
+  ]
+
+  function tabWidget(id: string, tab: string): Widget {
+    return queryWidget({
+      id,
+      query: `SELECT '${id}'`,
+      layout: { row: 0, col: tab === 'overview' ? 0 : 6, width: 6, height: 8, tab },
+    })
+  }
+
+  beforeEach(() => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      settings: { ...REST_DASHBOARD.settings, tabs: TABS },
+      widgets: [tabWidget('w2', 'overview'), tabWidget('w3', 'orders')],
+    })))
+  })
+
+  test('renders the tab bar and shows only the active chapter, switching by click', async () => {
+    renderDashboard()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+    // Both chapters stay mounted (refreshers registered); only the active one
+    // is visible.
+    expect(screen.getByTestId('query-w2')).toBeVisible()
+    expect(screen.getByTestId('query-w3')).not.toBeVisible()
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1/view')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
+
+    expect(screen.getByRole('tab', { name: 'Orders' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('query-w2')).not.toBeVisible()
+    expect(screen.getByTestId('query-w3')).toBeVisible()
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1/view?tab=orders')
+  })
+
+  test('an unknown ?tab falls back to the first chapter', async () => {
+    renderDashboard('/dashboards/d1/view?tab=nope')
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('query-w2')).toBeVisible()
+    expect(screen.getByTestId('query-w3')).not.toBeVisible()
+  })
+
+  test('the refresh action runs the hidden chapter’s widgets too', async () => {
+    const overviewRefresh = vi.fn()
+    const ordersRefresh = vi.fn()
+    refreshSpies.set('w2', overviewRefresh)
+    refreshSpies.set('w3', ordersRefresh)
+
+    renderDashboard()
+    await screen.findByRole('tab', { name: 'Overview' })
+    expect(screen.getByTestId('query-w3')).not.toBeVisible()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Refresh data' }))
+
+    await waitFor(() => expect(ordersRefresh).toHaveBeenCalledTimes(1))
+    expect(overviewRefresh).toHaveBeenCalledTimes(1)
   })
 })

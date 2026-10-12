@@ -11,7 +11,7 @@ import { AppThemeProvider } from '../components/AppThemeProvider'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { AppTabs } from '../components/AppTabs'
-import { activeTabId, widgetsInTab } from '../utils/dashboardTabs'
+import { activeTabId, widgetsInTab, widgetTabId } from '../utils/dashboardTabs'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { TextWidget } from '../components/TextWidget'
 import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
@@ -142,7 +142,7 @@ export function PublicDashboardPage() {
       </header>
       <main style={{ ...pageStyles.body, ...contentWidth }}>
         {tabs.length > 0 && (
-          <div style={{ marginBottom: 20 }}>
+          <div className="app-tabs app-tabs-inset" style={{ marginBottom: 20 }}>
             <AppTabs tabs={tabs} activeId={activeTab} onChange={handleTabChange} />
           </div>
         )}
@@ -158,7 +158,7 @@ export function PublicDashboardPage() {
           </div>
         ) : (
           <div ref={measureRef} style={{ minHeight: totalHeight, position: 'relative' }}>
-            {tabWidgets.map((widget) => {
+            {shownWidgets.map((widget) => {
               const l = widget.layout
               const left = l.col * (colWidth + gap)
               const top = l.row * (ROW_HEIGHT + gap)
@@ -172,7 +172,9 @@ export function PublicDashboardPage() {
                 border: '1px solid var(--border)',
                 borderRadius: 4,
                 overflow: 'hidden',
-                display: 'flex',
+                // Inactive chapters stay mounted (refreshers registered, data
+                // fetched in one pass) but are hidden from view.
+                display: widgetTabId(widget, tabs) === activeTab ? 'flex' : 'none',
                 flexDirection: 'column',
               }
 

@@ -12,10 +12,21 @@ export function activeTabId(tabs: DashboardTab[], requested: string | null | und
 }
 
 /**
- * The widgets to render for a tab. With no tabs configured every widget
- * renders (and the tab bar stays hidden). A widget whose `layout.tab` is
- * empty or names a tab that no longer exists falls into the first tab, so a
- * deleted tab never strands its widgets off-screen.
+ * The tab a widget renders under: its own `layout.tab` when it names a known
+ * tab, else the first tab — a widget whose tab is empty or names a tab that
+ * no longer exists falls back to the first tab, so a deleted tab never
+ * strands its widgets off-screen. Null when the dashboard defines no tabs.
+ */
+export function widgetTabId(widget: Widget, tabs: DashboardTab[]): string | null {
+  if (tabs.length === 0) return null
+  const tab = widget.layout?.tab
+  return tab && tabs.some((t) => t.id === tab) ? tab : tabs[0].id
+}
+
+/**
+ * The widgets that belong to one tab. With no tabs configured every widget
+ * matches (and the tab bar stays hidden); an unknown requested id resolves to
+ * the first tab, mirroring `activeTabId`.
  */
 export function widgetsInTab(
   widgets: Widget[],
@@ -24,10 +35,5 @@ export function widgetsInTab(
 ): Widget[] {
   if (tabs.length === 0) return widgets
   const active = activeTabId(tabs, requested)
-  const known = new Set(tabs.map((t) => t.id))
-  return widgets.filter((w) => {
-    const tab = w.layout?.tab
-    const effective = tab && known.has(tab) ? tab : tabs[0].id
-    return effective === active
-  })
+  return widgets.filter((w) => widgetTabId(w, tabs) === active)
 }

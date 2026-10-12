@@ -1213,6 +1213,21 @@ input[type="color"] {
   padding: 0;
 }
 
+/* The chapter tab strip (AppTabs): the strip's own gutter matches the filter
+   strip below it and tightens on small screens the same way.
+   `.app-tabs-inset` pulls that gutter back when the strip is nested inside an
+   already-padded container (the public page's main), so the tablist still
+   lines up with the page content. */
+.app-tabs {
+  --app-tabs-gutter: 32px;
+  padding: 8px var(--app-tabs-gutter) 0;
+}
+
+.app-tabs-inset {
+  margin-left: calc(-1 * var(--app-tabs-gutter));
+  margin-right: calc(-1 * var(--app-tabs-gutter));
+}
+
 /* The widget body's page-canvas padding; the page constrains its inner width
    to APP_CONTENT_MAX_WIDTH when settings.app.width is 'fixed'. */
 .app-body {
@@ -1280,6 +1295,10 @@ input[type="color"] {
 
   .app-filter-strip {
     padding: 8px 16px;
+  }
+
+  .app-tabs {
+    --app-tabs-gutter: 16px;
   }
 
   .app-body {

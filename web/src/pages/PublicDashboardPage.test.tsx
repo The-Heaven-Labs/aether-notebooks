@@ -1,6 +1,6 @@
-import { describe, test, expect } from 'vitest'
-import { screen } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { describe, test, expect, beforeEach } from 'vitest'
+import { screen, fireEvent } from '@testing-library/react'
+import { Route, Routes, useLocation } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
@@ -30,12 +30,22 @@ function mockPublicDashboard(payload: Record<string, unknown>) {
   server.use(http.get(`/api/v1/public/${PUBLIC_TOKEN}`, () => HttpResponse.json(payload)))
 }
 
-function renderPublicPage() {
+// Exposes the router's current location so tests can assert that switching
+// tabs keeps the token route and only sets the `tab` search param.
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname + location.search}</div>
+}
+
+function renderPublicPage(initialPath = `/public/dashboards/${PUBLIC_TOKEN}`) {
   return renderWithProviders(
-    <Routes>
-      <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
-    </Routes>,
-    { initialPath: `/public/dashboards/${PUBLIC_TOKEN}` },
+    <>
+      <LocationProbe />
+      <Routes>
+        <Route path="/public/dashboards/:token" element={<PublicDashboardPage />} />
+      </Routes>
+    </>,
+    { initialPath },
   )
 }
 
@@ -92,5 +102,63 @@ describe('PublicDashboardPage app surface', () => {
 
     expect(screen.getByText('Powered by Heaven Labs')).toBeInTheDocument()
     expect(screen.queryByText('Powered by Aether')).not.toBeInTheDocument()
+  })
+})
+
+describe('PublicDashboardPage chapter tabs', () => {
+  const TABS = [
+    { id: 'overview', title: 'Overview' },
+    { id: 'orders', title: 'Orders' },
+  ]
+
+  function panelWidget(id: string, tabId: string, label: string, col: number): Record<string, unknown> {
+    return {
+      id,
+      dashboard_id: 'd1',
+      notebook_id: null,
+      cell_id: null,
+      connector_id: null,
+      query: null,
+      language: 'sql',
+      type: 'text',
+      layout: { row: 0, col, width: 6, height: 6, tab: tabId },
+      config: { text: { markdown: `${label} panel` } },
+      created_at: '2026-01-01T00:00:00Z',
+    }
+  }
+
+  beforeEach(() => {
+    mockPublicDashboard(publicDashboard({
+      settings: { tabs: TABS },
+      widgets: [panelWidget('w1', 'overview', 'Overview', 0), panelWidget('w2', 'orders', 'Orders', 6)],
+    }))
+  })
+
+  test('renders the tab bar, hides the inactive chapter, and keeps the token route on switch', async () => {
+    renderPublicPage()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    // Both chapters stay mounted (their data loads in one pass); only the
+    // active one is visible.
+    expect(screen.getByText('Overview panel')).toBeVisible()
+    expect(screen.getByText('Orders panel')).not.toBeVisible()
+    expect(screen.getByTestId('location')).toHaveTextContent(`/public/dashboards/${PUBLIC_TOKEN}`)
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
+
+    expect(screen.getByRole('tab', { name: 'Orders' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Overview panel')).not.toBeVisible()
+    expect(screen.getByText('Orders panel')).toBeVisible()
+    // The token route is intact; only the `tab` param was set.
+    expect(screen.getByTestId('location')).toHaveTextContent(`/public/dashboards/${PUBLIC_TOKEN}?tab=orders`)
+  })
+
+  test('an unknown ?tab falls back to the first chapter', async () => {
+    renderPublicPage(`/public/dashboards/${PUBLIC_TOKEN}?tab=nope`)
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(screen.getByRole('tab', { name: 'Overview' })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByText('Overview panel')).toBeVisible()
+    expect(screen.getByText('Orders panel')).not.toBeVisible()
   })
 })

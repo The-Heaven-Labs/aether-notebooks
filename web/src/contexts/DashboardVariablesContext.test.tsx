@@ -253,6 +253,41 @@ describe('DashboardVariablesContext', () => {
     expect(state.values!.sel).toEqual(['A', 'B'])
     expect(state.params!.toString()).toBe('')
   })
+
+  test('variable changes preserve unrelated URL params', () => {
+    const vars: DashboardVariable[] = [
+      { name: 'region', type: 'text', default: 'EMEA' },
+      { name: 'sel', type: 'multi_select', default: ['A', 'B'] },
+    ]
+    const state: { setValue?: (name: string, value: unknown) => void; resetAll?: () => void; params?: URLSearchParams } = {}
+    function Probe() {
+      const { setValue, resetAll } = useDashboardVariables()
+      const [sp] = useSearchParams()
+      state.setValue = setValue
+      state.resetAll = resetAll
+      state.params = sp
+      return null
+    }
+    render(
+      <MemoryRouter initialEntries={['/dash/d1?tab=orders&keep=1']}>
+        <DashboardVariablesProvider dashboardId="d1" variables={vars}>
+          <Probe />
+        </DashboardVariablesProvider>
+      </MemoryRouter>,
+    )
+
+    // The App surface keeps the active chapter in `?tab=`; a filter change
+    // must rebuild only the variable keys, not the whole query string.
+    act(() => state.setValue!('region', 'AMER'))
+    expect(state.params!.get('region')).toBe('AMER')
+    expect(state.params!.get('tab')).toBe('orders')
+    expect(state.params!.get('keep')).toBe('1')
+
+    act(() => state.resetAll!())
+    expect(state.params!.has('region')).toBe(false)
+    expect(state.params!.get('tab')).toBe('orders')
+    expect(state.params!.get('keep')).toBe('1')
+  })
 })
 
 describe('DashboardVariablesContext live definition changes', () => {

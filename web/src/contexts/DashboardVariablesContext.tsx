@@ -138,14 +138,20 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
 
   const persist = useCallback((next: Record<string, unknown>) => {
     try { localStorage.setItem(storageKey(storageNamespace), JSON.stringify(next)) } catch { /* ignore quota */ }
-    const params = new URLSearchParams()
-    for (const v of variables) {
-      const serialized = serializeValue(v, next[v.name])
-      // Defaults are omitted from the URL; anything else (including an
-      // explicit "(none)") is encoded so shared links reproduce this view.
-      if (!isVariableDefault(v, next[v.name])) serialized.forEach(s => params.append(v.name, s))
-    }
-    setSearchParams(params, { replace: true })
+    // Rebuild only the variable keys onto the params already in the URL:
+    // unrelated params (e.g. the App surface's `?tab=`) must survive a filter
+    // change instead of being dropped.
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      for (const v of variables) {
+        params.delete(v.name)
+        const serialized = serializeValue(v, next[v.name])
+        // Defaults are omitted from the URL; anything else (including an
+        // explicit "(none)") is encoded so shared links reproduce this view.
+        if (!isVariableDefault(v, next[v.name])) serialized.forEach(s => params.append(v.name, s))
+      }
+      return params
+    }, { replace: true })
   }, [storageNamespace, variables, setSearchParams])
 
   const setValue = useCallback((name: string, value: unknown) => {

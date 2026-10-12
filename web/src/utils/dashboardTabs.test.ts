@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { activeTabId, widgetsInTab } from './dashboardTabs'
+import { activeTabId, widgetsInTab, widgetTabId } from './dashboardTabs'
 import type { DashboardTab, Widget } from '../types'
 
 const TABS: DashboardTab[] = [
@@ -44,6 +44,20 @@ describe('activeTabId', () => {
   test('returns null when the dashboard defines no tabs', () => {
     expect(activeTabId([], 'orders')).toBeNull()
     expect(activeTabId([], null)).toBeNull()
+  })
+})
+
+describe('widgetTabId', () => {
+  test('maps a widget to its tab with the first-tab fallback', () => {
+    expect(widgetTabId(widget('w1', 'orders'), TABS)).toBe('orders')
+    expect(widgetTabId(widget('w2'), TABS)).toBe('overview')
+    expect(widgetTabId(widget('w3', ''), TABS)).toBe('overview')
+    expect(widgetTabId(widget('w4', 'gone'), TABS)).toBe('overview')
+  })
+
+  test('returns null when the dashboard defines no tabs', () => {
+    expect(widgetTabId(widget('w1', 'orders'), [])).toBeNull()
+    expect(widgetTabId(widget('w2'), [])).toBeNull()
   })
 })
 

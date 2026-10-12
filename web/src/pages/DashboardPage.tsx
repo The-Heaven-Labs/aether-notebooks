@@ -18,7 +18,7 @@ import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { AppTabs } from '../components/AppTabs'
-import { activeTabId, widgetsInTab } from '../utils/dashboardTabs'
+import { activeTabId, widgetsInTab, widgetTabId } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { isTextPanel } from '../utils/widgetKind'
@@ -56,6 +56,11 @@ interface DashboardWithWidgets extends Dashboard {
 
 // Widget type extended with input widget variants (config is typed loosely)
 type AnyWidget = Widget & { type: string; config: any }
+
+// Grid metrics shared by react-grid-layout's config and the container-height
+// pin below (RGL sizes its container from the layout, not the DOM).
+const GRID_ROW_HEIGHT = 30
+const GRID_MARGIN = 4
 
 function isQueryWidget(w: AnyWidget): w is AnyWidget & { connector_id: string; query: string } {
   return !!w.connector_id && !!w.query
@@ -449,6 +454,22 @@ function DashboardContent({ id }: { id: string }) {
     }, { replace: true })
   }, [setSearchParams])
 
+  // Every chapter's widgets stay mounted (refreshers registered, data loaded
+  // in one pass) and inactive ones are hidden with `display: none`. RGL sizes
+  // its container from every layout item, so pin the height to the active
+  // chapter's own rows — otherwise a short chapter sits above the tallest
+  // chapter's worth of dead space.
+  const activeTabBottom = useMemo(
+    () => tabWidgets.reduce((max, w) => {
+      const item = toGridItem(w)
+      return Math.max(max, item.y + item.h)
+    }, 0),
+    [tabWidgets],
+  )
+  const activeTabHeight = activeTabBottom > 0
+    ? activeTabBottom * GRID_ROW_HEIGHT + (activeTabBottom - 1) * GRID_MARGIN + GRID_MARGIN * 2
+    : 0
+
   // Grid density and the refresh cadence are persisted dashboard settings, so
   // they are edit actions — viewers don't get to restyle the shared board.
   const canEdit = dashboard?.can_edit === true
@@ -688,7 +709,7 @@ function DashboardContent({ id }: { id: string }) {
       {/* Chapter tablist (The Story): the dashboard's tabs under the masthead;
           hidden entirely when no tabs are defined. */}
       {tabs.length > 0 && (
-        <div style={styles.tabStrip}>
+        <div className="app-tabs">
           <div style={contentWidth}>
             <AppTabs tabs={tabs} activeId={activeTab} onChange={handleTabChange} />
           </div>
@@ -713,18 +734,25 @@ function DashboardContent({ id }: { id: string }) {
             title="This app has no widgets yet"
             text="Add widgets in the dashboard editor."
           />
-        ) : tabWidgets.length === 0 ? null : (
+        ) : widgets.length === 0 ? null : (
           <div ref={gridRef}>
             <GridLayout
-              layout={tabWidgets.map(toGridItem)}
+              layout={widgets.map(toGridItem)}
               width={containerWidth}
-              gridConfig={{ cols: settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
+              gridConfig={{ cols: settings?.grid_cols ?? 12, rowHeight: GRID_ROW_HEIGHT, margin: [GRID_MARGIN, GRID_MARGIN] }}
               dragConfig={{ enabled: false }}
               resizeConfig={{ enabled: false }}
-              style={{ minHeight: 240 }}
+              style={{ minHeight: activeTabBottom > 0 ? 240 : 0, height: activeTabHeight }}
             >
-              {tabWidgets.map((widget) => (
-                <WidgetFrame key={widget.id} appearance={appearanceFrom(widget.config)}>
+              {widgets.map((widget) => (
+                <WidgetFrame
+                  key={widget.id}
+                  appearance={appearanceFrom(widget.config)}
+                  // Inactive chapters stay mounted (their refreshers stay
+                  // registered and their data loads in one pass) but are
+                  // hidden from view.
+                  style={widgetTabId(widget, tabs) === activeTab ? undefined : { display: 'none' }}
+                >
                   {isQueryWidget(widget) ? (
                     <QueryDataWidget
                       dashboardId={dashboard.id}
@@ -787,11 +815,6 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     background: 'var(--accent)',
     opacity: 0.5,
-  },
-  // The chapter strip: same side padding rhythm as the filter strip below it;
-  // the tablist draws its own hairline.
-  tabStrip: {
-    padding: '8px 32px 0',
   },
   // Masthead controls sit on the page canvas (not the dark nav chrome), so
   // they use the body token family. min-height 36 keeps the app surface's
