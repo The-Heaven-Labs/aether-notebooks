@@ -14,7 +14,7 @@ import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import type { Dashboard, DashboardVariableType, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
@@ -32,6 +32,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
 import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
 import { AppSettingsPanel } from '../components/AppSettingsPanel'
+import { DashboardVersionsPanel, useDashboardVersions } from '../components/DashboardVersionsPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
 import { useDashboardDoc } from '../hooks/useDashboardDoc'
@@ -58,6 +59,20 @@ function widgetDisplayName(widget: Widget): string {
   const cfg = widget.config as Record<string, unknown> | undefined
   const t = typeof cfg?.title === 'string' ? cfg.title : typeof cfg?.label === 'string' ? cfg.label : ''
   return t || 'widget'
+}
+
+/**
+ * A refused publish (422) carries the per-widget projection warnings that
+ * blocked it; fold them into the single message the error banner shows.
+ */
+function publishErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const warnings = (err.body as { warnings?: unknown } | null)?.warnings
+    if (Array.isArray(warnings) && warnings.length > 0) {
+      return `${err.message}: ${warnings.join('; ')}`
+    }
+  }
+  return err instanceof Error ? err.message : 'Publish failed'
 }
 
 /** Drop coordinates of a drag/resize stop event (mouse or touch). */
@@ -184,28 +199,34 @@ const markSaved = useCallback(() => {
   const [containerWidth, setContainerWidth] = useState(0)
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
   const isMobileLayout = containerWidth < 600
-  const gridContainerRef = useRef<HTMLDivElement | null>(null)
+  const layoutContainerRef = useRef<HTMLDivElement | null>(null)
 
-  // Observe the grid as soon as it mounts (a mount-time effect would run
-  // while the loading skeleton is up and never attach), so window resizes
-  // reflow the layout without a reload.
-  const gridObserverRef = useRef<ResizeObserver | null>(null)
-  const gridRef = useCallback((el: HTMLDivElement | null) => {
-    gridContainerRef.current = el
-    gridObserverRef.current?.disconnect()
-    gridObserverRef.current = null
+  // Observe the always-rendered body wrapper, not the grid: an empty
+  // dashboard has no grid to mount, and measuring only the grid left the
+  // width at 0 — so a brand-new dashboard on desktop read as "mobile" and
+  // hid the desktop-only controls (App settings, publish). A mount-time
+  // effect would run while the loading skeleton is up and never attach, so
+  // the ref callback sets the width as soon as the element exists and the
+  // ResizeObserver keeps it fresh on window resizes.
+  const layoutObserverRef = useRef<ResizeObserver | null>(null)
+  const layoutRef = useCallback((el: HTMLDivElement | null) => {
+    layoutContainerRef.current = el
+    layoutObserverRef.current?.disconnect()
+    layoutObserverRef.current = null
     if (el) {
       setContainerWidth(el.clientWidth)
-      const obs = new ResizeObserver(([entry]) => {
-        setContainerWidth(entry.contentRect.width)
+      const obs = new ResizeObserver(() => {
+        // clientWidth (not entry.contentRect) so resize events report the
+        // same box the initial measure and the layout effect use.
+        setContainerWidth(el.clientWidth)
       })
       obs.observe(el)
-      gridObserverRef.current = obs
+      layoutObserverRef.current = obs
     }
   }, [])
 
   useLayoutEffect(() => {
-    const el = gridContainerRef.current
+    const el = layoutContainerRef.current
     if (!el) return
     const w = el.clientWidth
     if (w !== containerWidth) {
@@ -219,6 +240,20 @@ const markSaved = useCallback(() => {
     enabled: !!id,
     staleTime: 0,
     refetchOnMount: true,
+  })
+
+  // Published-version status for the header chip. The endpoint requires
+  // dashboard `edit`, so read-only visitors never poll it; it refreshes on
+  // publish/restore invalidation and polls while the editor stays open.
+  const versionsQuery = useDashboardVersions(id, dashboard?.can_edit !== false)
+  const [showVersions, setShowVersions] = useState(false)
+  const publishDashboard = useMutation({
+    mutationFn: () => api.post(`/api/v1/dashboards/${id}/publish`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['dashboard-versions', id] })
+      qc.invalidateQueries({ queryKey: ['dashboard', id] })
+    },
+    onError: (err: unknown) => setMutationError(publishErrorMessage(err)),
   })
 
   // Live dashboard document: connects as soon as the page mounts and becomes
@@ -243,7 +278,7 @@ const markSaved = useCallback(() => {
 
   useEffect(() => {
     if (!dashboard) return
-    const el = gridContainerRef.current
+    const el = layoutContainerRef.current
     if (el) setContainerWidth(el.clientWidth)
   }, [dashboard])
 
@@ -428,6 +463,19 @@ const markSaved = useCallback(() => {
   const variables = liveDashboard.settings?.variables ?? []
   const gridCols = liveDashboard.settings?.grid_cols ?? 12
 
+  // Status chip: the amber dot flags a published app that is behind the draft
+  // (or a draft that publish would refuse). A never-published dashboard reads
+  // "Not published" instead — a dot there would add nothing.
+  const latestVersion = versionsQuery.data?.latest ?? null
+  const versionWarnings = versionsQuery.data?.warnings ?? []
+  const versionNeedsPublish = !!latestVersion && !!versionsQuery.data?.has_unpublished_changes
+  const versionHasDot = versionNeedsPublish || versionWarnings.length > 0
+  const versionChipTitle = versionWarnings.length > 0
+    ? `Draft cannot be published: ${versionWarnings.join('; ')}`
+    : versionNeedsPublish
+      ? 'Unpublished changes'
+      : 'Version history'
+
   return (
     <DashboardVariablesProvider dashboardId={id!} variables={variables}>
     <AppShell noPadding>
@@ -534,6 +582,32 @@ const markSaved = useCallback(() => {
             }}>
               {saveStatus === 'saving' ? 'Saving…' : 'Saved'}
             </span>
+          )}
+          {/* Publish controls are editor-only (the versions API requires
+              dashboard `edit`) and hidden on mobile like the App button. */}
+          {!isMobileLayout && canEdit && (
+            <>
+              <button
+                type="button"
+                className="nav-btn"
+                data-testid="publish-status"
+                onClick={() => setShowVersions(true)}
+                disabled={!editingEnabled}
+                title={editingEnabled ? versionChipTitle : 'Editing is paused'}
+              >
+                {versionHasDot && <span data-testid="publish-status-dot" style={styles.publishDot} aria-hidden="true" />}
+                {latestVersion ? `v${latestVersion.version}` : 'Not published'}
+              </button>
+              <button
+                type="button"
+                className="nav-btn"
+                onClick={() => publishDashboard.mutate()}
+                disabled={!editingEnabled || publishDashboard.isPending}
+                title={editingEnabled ? 'Publish the current draft' : 'Editing is paused'}
+              >
+                {publishDashboard.isPending ? 'Publishing…' : 'Publish'}
+              </button>
+            </>
           )}
           <Link to={`/dashboards/${id}/view`} className="nav-btn" title="View dashboard">
             <Eye size={12} /> View
@@ -748,7 +822,7 @@ const markSaved = useCallback(() => {
       )}
 
       {/* Main body */}
-      <div style={styles.body}>
+      <div ref={layoutRef} style={styles.body}>
         {variables.length > 0 && <DashboardVariableBar />}
         {widgets.length === 0 ? (
           <EmptyState
@@ -757,11 +831,11 @@ const markSaved = useCallback(() => {
             action={editingEnabled ? { label: '+ Add Widget', onClick: () => setShowPicker(true) } : undefined}
           />
         ) : (
-          // One persistent measured wrapper: the mobile/desktop branch is
-          // chosen only after the width is known, otherwise the first render
-          // (width 0) mounts the mobile branch and the flip to desktop
-          // remounts every widget — doubling its query fetches.
-          <div ref={gridRef} style={{ minHeight: 240 }}>
+          // The mobile/desktop branch is chosen only after the body width is
+          // known (see layoutRef), otherwise the first render would mount the
+          // mobile branch and the flip to desktop would remount every widget —
+          // doubling its query fetches.
+          <div style={{ minHeight: 240 }}>
             {shownWidgets.length === 0 ? (
               <p style={styles.emptyChapterNote}>No widgets in this chapter yet.</p>
             ) : containerWidth === 0 ? null : isMobileLayout ? (
@@ -925,6 +999,9 @@ const markSaved = useCallback(() => {
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
         />
       )}
+      {showVersions && (
+        <DashboardVersionsPanel dashboardId={id!} onClose={() => setShowVersions(false)} />
+      )}
     </AppShell>
     </DashboardVariablesProvider>
   )
@@ -1019,6 +1096,14 @@ const styles: Record<string, React.CSSProperties> = {
   disabledControl: {
     opacity: 0.5,
     cursor: 'not-allowed',
+  },
+  // Amber "published app is behind the draft" dot on the status chip.
+  publishDot: {
+    width: 7,
+    height: 7,
+    borderRadius: '50%',
+    background: 'var(--warning)',
+    flexShrink: 0,
   },
   pickerOverlay: {
     position: 'fixed',

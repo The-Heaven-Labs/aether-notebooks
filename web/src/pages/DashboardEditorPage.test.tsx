@@ -191,6 +191,27 @@ const DASHBOARD = {
   widgets: [widget()],
 }
 
+const V1 = {
+  version: 1,
+  created_by_email: 'nova@heaven-labs.com',
+  created_at: '2026-01-01T00:00:00Z',
+  content_hash: 'hash-1',
+}
+
+const NO_VERSIONS = {
+  versions: [],
+  latest: null,
+  has_unpublished_changes: true,
+  draft_hash: 'draft-hash',
+}
+
+const PUBLISHED_VERSIONS = {
+  versions: [V1],
+  latest: V1,
+  has_unpublished_changes: false,
+  draft_hash: 'hash-1',
+}
+
 const NOTEBOOK = {
   id: 'nb-1',
   org_id: 'org-1',
@@ -222,6 +243,7 @@ beforeEach(() => {
   docStore.reset()
   server.use(
     http.get('/api/v1/dashboards/d1', () => HttpResponse.json(DASHBOARD)),
+    http.get('/api/v1/dashboards/d1/versions', () => HttpResponse.json(NO_VERSIONS)),
     http.get('/api/v1/notebooks/nb-1', () => HttpResponse.json(NOTEBOOK)),
   )
 })
@@ -302,6 +324,8 @@ describe('DashboardEditorPage live document wiring', () => {
     expect(screen.getByRole('button', { name: '+ Add Widget' })).toBeDisabled()
     expect(screen.getByRole('button', { name: 'Variables' })).toBeDisabled()
     expect(screen.getByLabelText('Remove Rest widget')).toBeDisabled()
+    expect(screen.getByTestId('publish-status')).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeDisabled()
 
     // The title cannot enter edit mode.
     fireEvent.click(screen.getByText('Ops board'))
@@ -566,5 +590,129 @@ describe('DashboardEditorPage tabs', () => {
 
     expect(await screen.findByRole('heading', { name: 'Tabs', level: 3 })).toBeInTheDocument()
     expect(screen.getByLabelText('Tab 1 title')).toHaveValue('Alpha')
+  })
+})
+
+describe('DashboardEditorPage publish controls', () => {
+  test('reports Not published when there is no version', async () => {
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    const chip = await screen.findByTestId('publish-status')
+    expect(chip).toHaveTextContent('Not published')
+    expect(screen.queryByTestId('publish-status-dot')).not.toBeInTheDocument()
+  })
+
+  test('marks unpublished changes with an amber dot and a title', async () => {
+    server.use(
+      http.get('/api/v1/dashboards/d1/versions', () =>
+        HttpResponse.json({ ...PUBLISHED_VERSIONS, has_unpublished_changes: true }),
+      ),
+    )
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    const chip = await screen.findByTestId('publish-status')
+    expect(chip).toHaveTextContent('v1')
+    expect(chip).toHaveAttribute('title', 'Unpublished changes')
+    expect(screen.getByTestId('publish-status-dot')).toBeInTheDocument()
+  })
+
+  test('publishes with a busy state, then refreshes the chip and both queries', async () => {
+    let published = false
+    let publishPosts = 0
+    let versionsGets = 0
+    let dashboardGets = 0
+    let release: (() => void) | undefined
+    server.use(
+      http.get('/api/v1/dashboards/d1', () => {
+        dashboardGets++
+        return HttpResponse.json(DASHBOARD)
+      }),
+      http.get('/api/v1/dashboards/d1/versions', () => {
+        versionsGets++
+        return HttpResponse.json(published ? PUBLISHED_VERSIONS : NO_VERSIONS)
+      }),
+      http.post('/api/v1/dashboards/d1/publish', async () => {
+        publishPosts++
+        await new Promise<void>((resolve) => { release = resolve })
+        published = true
+        return HttpResponse.json({ version: 1, content_hash: 'hash-1', created_at: '2026-01-01T00:00:00Z' })
+      }),
+    )
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    expect(await screen.findByTestId('publish-status')).toHaveTextContent('Not published')
+    await waitFor(() => expect(versionsGets).toBe(1))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    expect(await screen.findByRole('button', { name: 'Publishing…' })).toBeDisabled()
+    expect(publishPosts).toBe(1)
+
+    release?.()
+    const chip = await screen.findByTestId('publish-status')
+    await waitFor(() => expect(chip).toHaveTextContent('v1'))
+    expect(screen.queryByTestId('publish-status-dot')).not.toBeInTheDocument()
+
+    // Both invalidations refetch: the chip flips to v1 and the REST dashboard
+    // row is pulled again.
+    await waitFor(() => expect(versionsGets).toBeGreaterThan(1))
+    await waitFor(() => expect(dashboardGets).toBeGreaterThan(1))
+  })
+
+  test('a refused publish surfaces the widget warnings', async () => {
+    server.use(
+      http.post('/api/v1/dashboards/d1/publish', () =>
+        HttpResponse.json(
+          { error: 'dashboard document has invalid widgets', warnings: ['widget w1: connector not found'] },
+          { status: 422 },
+        ),
+      ),
+    )
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
+
+    expect(await screen.findByText(/dashboard document has invalid widgets/)).toHaveTextContent(
+      'widget w1: connector not found',
+    )
+  })
+
+  test('the status chip opens the version history panel', async () => {
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    fireEvent.click(await screen.findByTestId('publish-status'))
+    expect(await screen.findByRole('dialog', { name: 'Version history' })).toBeInTheDocument()
+  })
+
+  test('publish controls are hidden on mobile layouts', async () => {
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
+    Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 500 })
+    try {
+      docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+      renderEditor()
+      await screen.findByLabelText('Edit Rest widget')
+
+      expect(screen.queryByTestId('publish-status')).not.toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument()
+    } finally {
+      if (original) Object.defineProperty(HTMLElement.prototype, 'clientWidth', original)
+      else delete (HTMLElement.prototype as { clientWidth?: unknown }).clientWidth
+    }
+  })
+
+  test('publish controls show on an empty dashboard at desktop width', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({ ...DASHBOARD, widgets: [] })))
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [] })
+    renderEditor()
+
+    // An empty dashboard renders no grid to measure, so the width must come
+    // from the always-rendered body wrapper; otherwise the desktop-only
+    // controls are hidden on every brand-new dashboard.
+    expect(await screen.findByTestId('publish-status')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Publish' })).toBeInTheDocument()
   })
 })

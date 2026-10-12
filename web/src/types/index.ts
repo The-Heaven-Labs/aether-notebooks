@@ -310,6 +310,27 @@ export interface DashboardTab {
   title: string
 }
 
+/** One published dashboard snapshot in the version history (summary only). */
+export interface DashboardVersionSummary {
+  version: number
+  created_by_email: string
+  created_at: string
+  content_hash: string
+}
+
+/**
+ * `GET /api/v1/dashboards/{id}/versions` body. `warnings` carries the draft's
+ * widget projection warnings: a non-empty list means publish would refuse the
+ * draft (and forces `has_unpublished_changes` server-side).
+ */
+export interface DashboardVersionsResponse {
+  versions: DashboardVersionSummary[]
+  latest: DashboardVersionSummary | null
+  has_unpublished_changes: boolean
+  draft_hash: string
+  warnings?: string[]
+}
+
 export interface Dashboard {
   id: string
   org_id: string
