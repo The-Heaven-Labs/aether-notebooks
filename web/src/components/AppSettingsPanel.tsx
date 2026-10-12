@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom'
 import { X } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import { getApiUrl } from '../config'
-import { CHART_PALETTE_PRESETS } from '../charts/palettes'
+import { CHART_PALETTE_PRESETS, MAX_PALETTE_COLORS } from '../charts/palettes'
+import type { ChartPalettePresetValue } from '../charts/palettes'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 import type { Dashboard, DashboardAppSettings, DashboardAppTheme, OrgBranding } from '../types'
@@ -73,7 +74,6 @@ const COLOR_LABELS: Record<ColorField, string> = {
   accent: 'Accent', background: 'Background', surface: 'Surface', text: 'Text', border: 'Border',
 }
 
-type PalettePreset = 'default' | 'aether' | 'amber' | 'teal' | 'custom'
 type LogoMode = 'none' | 'org' | 'upload'
 
 /** The app block as saved: `theme: null` clears a stored theme. */
@@ -85,18 +85,22 @@ function isHexColor(value: string): boolean {
   return HEX_RE.test(value)
 }
 
-/** `<input type="color">` only accepts 7-char hex; anything else shows black. */
+/** `<input type="color">` only accepts 7-char hex; `#rgb` expands, anything else shows black. */
 function swatchValue(value: string): string {
-  return /^#[0-9a-f]{6}$/i.test(value) ? value : '#000000'
+  const trimmed = value.trim()
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) return trimmed.toLowerCase()
+  const short = /^#([0-9a-f])([0-9a-f])([0-9a-f])$/i.exec(trimmed)
+  if (short) return `#${short[1]}${short[1]}${short[2]}${short[2]}${short[3]}${short[3]}`.toLowerCase()
+  return '#000000'
 }
 
 /** The preset whose colors match `palette`; unmatched palettes are Custom. */
-function presetFor(palette: string[] | undefined): PalettePreset {
+function presetFor(palette: string[] | undefined): ChartPalettePresetValue {
   if (!palette?.length) return 'default'
   const match = CHART_PALETTE_PRESETS.find(
-    (p) => p.colors && p.colors.length === palette.length && p.colors.every((c, i) => c === palette[i]),
+    (p) => 'colors' in p && p.colors.length === palette.length && p.colors.every((c, i) => c === palette[i]),
   )
-  return (match?.value as PalettePreset) ?? 'custom'
+  return match?.value ?? 'custom'
 }
 
 /**
@@ -112,10 +116,13 @@ function presetFor(palette: string[] | undefined): PalettePreset {
  *
  * Theme semantics: only non-empty fields are sent, so a cleared field is
  * dropped rather than saved as `''`; clearing every field of a stored theme
- * sends `theme: null` to clear it. The logo control is dashboard-local: "None"
- * and "Use org logo" both drop `logo_attachment_id` (the surface falls back to
- * the org logo when one exists) while "Upload…" stores the uploaded
- * attachment id.
+ * sends `theme: null` to clear it. Custom chart palettes are capped at
+ * `MAX_PALETTE_COLORS` client-side, mirroring the server's validator. The logo
+ * control is dashboard-local: "None" and "Use org logo" both drop
+ * `logo_attachment_id` (the surface falls back to the org logo when one exists)
+ * while "Upload…" stores the uploaded attachment id. The logo radios are
+ * disabled while an upload is in flight so a resolving request can never
+ * resurrect a logo the user just cleared.
  *
  * The save merges into the existing app block (logo_attachment_id, layout)
  * and into the dashboard's other settings (variables, public_live, …).
@@ -144,7 +151,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
   const [fontFamily, setFontFamily] = useState<NonNullable<DashboardAppTheme['font_family']> | ''>(app?.theme?.font_family ?? '')
   const [colorScheme, setColorScheme] = useState<NonNullable<DashboardAppTheme['color_scheme']>>(app?.theme?.color_scheme ?? 'auto')
   const initialPreset = presetFor(app?.theme?.chart_palette)
-  const [palettePreset, setPalettePreset] = useState<PalettePreset>(initialPreset)
+  const [palettePreset, setPalettePreset] = useState<ChartPalettePresetValue>(initialPreset)
   const [customPalette, setCustomPalette] = useState(
     initialPreset === 'custom' ? (app?.theme?.chart_palette ?? []).join(', ') : '',
   )
@@ -190,10 +197,13 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
       const entries = customPalette.split(',').map((entry) => entry.trim()).filter(Boolean)
       const invalid = entries.find((entry) => !isHexColor(entry))
       if (invalid) return { error: `Chart color "${invalid}" must be a hex color like #6366f1` }
+      if (entries.length > MAX_PALETTE_COLORS) {
+        return { error: `Chart palettes support at most ${MAX_PALETTE_COLORS} colors` }
+      }
       if (entries.length) theme.chart_palette = entries
     } else {
-      const presetColors = CHART_PALETTE_PRESETS.find((p) => p.value === palettePreset)?.colors
-      if (presetColors) theme.chart_palette = [...presetColors]
+      const preset = CHART_PALETTE_PRESETS.find((p) => p.value === palettePreset)
+      if (preset && 'colors' in preset) theme.chart_palette = [...preset.colors]
     }
     return { theme: Object.keys(theme).length > 0 ? theme : null }
   }
@@ -243,14 +253,10 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
     try {
       const form = new FormData()
       form.append('file', file)
-      const token = getToken()
-      const res = await fetch(`${getApiUrl()}/api/v1/dashboards/${dashboardId}/attachments`, {
-        method: 'POST',
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-        body: form,
-      })
-      if (!res.ok) throw new Error(`Logo upload failed (${res.status})`)
-      const attachment = (await res.json()) as { id: string }
+      const attachment = await api.upload<{ id: string }>(
+        `/api/v1/dashboards/${dashboardId}/attachments`,
+        form,
+      )
       setLogoId(attachment.id)
       setSaved(false)
     } catch (e) {
@@ -349,7 +355,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
             <label htmlFor="app-show-last-updated">Show last updated</label>
           </div>
 
-          <div style={styles.section}>Theme</div>
+          <div style={styles.section} role="heading" aria-level={3}>Theme</div>
           {COLOR_FIELDS.map((field) => (
             <div key={field} style={styles.field}>
               <label style={styles.label} htmlFor={`app-theme-${field}`}>{COLOR_LABELS[field]}</label>
@@ -431,7 +437,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
               aria-label="Chart palette"
               style={styles.input}
               value={palettePreset}
-              onChange={(e) => { setSaved(false); setPalettePreset(e.target.value as PalettePreset) }}
+              onChange={(e) => { setSaved(false); setPalettePreset(e.target.value as ChartPalettePresetValue) }}
             >
               {CHART_PALETTE_PRESETS.map((preset) => (
                 <option key={preset.value} value={preset.value}>{preset.label}</option>
@@ -452,7 +458,10 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
             </div>
           )}
 
-          <div style={styles.section}>Logo</div>
+          <div style={styles.section} role="heading" aria-level={3}>Logo</div>
+          {/* Disabled while an upload is in flight: switching modes mid-upload
+              would let the resolving request resurrect a logo the user just
+              cleared — the radio is the only path that drops the draft id. */}
           <div role="radiogroup" aria-label="Logo source" style={styles.radioRow}>
             {([['none', 'None'], ['org', 'Use org logo'], ['upload', 'Upload…']] as const).map(([value, label]) => (
               <label key={value} style={styles.radioOption}>
@@ -462,6 +471,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
                   value={value}
                   checked={logoMode === value}
                   aria-label={label}
+                  disabled={uploading}
                   onChange={() => {
                     setSaved(false)
                     setLogoMode(value)

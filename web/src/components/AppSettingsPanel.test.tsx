@@ -3,7 +3,6 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { AppSettingsPanel } from './AppSettingsPanel'
-import { LIGHT_CHART_COLORS } from '../charts/palettes'
 import type { Dashboard, OrgBranding } from '../types'
 
 type PanelDashboard = Dashboard & { org_branding?: OrgBranding }
@@ -74,14 +73,14 @@ describe('AppSettingsPanel', () => {
     expect((screen.getByLabelText('Show header') as HTMLInputElement).checked).toBe(false)
     expect((screen.getByLabelText('Show refresh') as HTMLInputElement).checked).toBe(true)
     expect((screen.getByLabelText('Show last updated') as HTMLInputElement).checked).toBe(false)
-    expect(screen.getByText('Theme')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Theme', level: 3 })).toBeInTheDocument()
     expect((screen.getByLabelText('Accent') as HTMLInputElement).value).toBe('#ff0000')
     expect((screen.getByLabelText('Corner radius') as HTMLInputElement).value).toBe('8')
     expect((screen.getByLabelText('Font family') as HTMLSelectElement).value).toBe('jetbrains-mono')
     expect((screen.getByLabelText('Color scheme') as HTMLSelectElement).value).toBe('dark')
     expect((screen.getByLabelText('Chart palette') as HTMLSelectElement).value).toBe('custom')
     expect((screen.getByLabelText('Custom chart colors') as HTMLInputElement).value).toBe('#111111, #222222')
-    expect(screen.getByText('Logo')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'Logo', level: 3 })).toBeInTheDocument()
   })
 
   test('unset toggles default to shown and the width to fixed', () => {
@@ -205,7 +204,10 @@ describe('AppSettingsPanel', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
 
     await waitFor(() => expect(bodies.length).toBe(1))
-    expect((savedApp(bodies).theme as Record<string, unknown>).chart_palette).toEqual(LIGHT_CHART_COLORS)
+    const palette = (savedApp(bodies).theme as Record<string, unknown>).chart_palette as string[]
+    expect(palette).toHaveLength(8)
+    expect(palette[0]).toBe('#6366f1')
+    expect(palette[7]).toBe('#84cc16')
   })
 
   test('a custom chart palette saves the parsed hex list', async () => {
@@ -218,6 +220,25 @@ describe('AppSettingsPanel', () => {
 
     await waitFor(() => expect(bodies.length).toBe(1))
     expect((savedApp(bodies).theme as Record<string, unknown>).chart_palette).toEqual(['#111111', '#222222'])
+  })
+
+  test('a custom palette accepts 12 colors and rejects 13', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: {} }))
+
+    fireEvent.change(screen.getByLabelText('Chart palette'), { target: { value: 'custom' } })
+    const colors = Array.from({ length: 13 }, (_, i) => `#${i.toString(16).padStart(6, '0')}`)
+    fireEvent.change(screen.getByLabelText('Custom chart colors'), { target: { value: colors.slice(0, 12).join(', ') } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((savedApp(bodies).theme as Record<string, unknown>).chart_palette).toEqual(colors.slice(0, 12))
+
+    fireEvent.change(screen.getByLabelText('Custom chart colors'), { target: { value: colors.join(', ') } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Chart palettes support at most 12 colors')
+    expect(bodies.length).toBe(1)
   })
 
   test('the radius persists as a number', async () => {
@@ -288,16 +309,87 @@ describe('AppSettingsPanel', () => {
     expect(bodies.length).toBe(0)
   })
 
+  test('an invalid color is rejected before saving', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: {} }))
+
+    fireEvent.change(screen.getByLabelText('Accent'), { target: { value: 'red' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Accent must be a hex color like #6366f1')
+    expect(bodies.length).toBe(0)
+  })
+
+  test('a 3-digit hex fills the color swatch', () => {
+    renderPanel(dashboardWith({ app: { theme: { accent: '#fff' } } }))
+    expect((screen.getByLabelText('Accent picker') as HTMLInputElement).value).toBe('#ffffff')
+  })
+
   test('uploading a logo POSTs to the dashboard attachments endpoint and saves the id', async () => {
     const bodies = capturePuts()
-    const uploads: Array<{ auth: string | null; hasFile: boolean }> = []
+    const uploads: Array<{ auth: string | null; adminMode: string | null; type: string | null }> = []
     server.use(
       http.post('/api/v1/dashboards/d1/attachments', async ({ request }) => {
         const form = await request.formData()
+        const file = form.get('file') as File | null
         uploads.push({
           auth: request.headers.get('Authorization'),
-          hasFile: form.get('file') != null,
+          adminMode: request.headers.get('X-AETHER-Admin-Mode'),
+          type: file?.type ?? null,
         })
+        return HttpResponse.json(
+          { id: 'att-9', filename: 'logo.png', mime_type: 'image/png', size: 3 },
+          { status: 201 },
+        )
+      }),
+    )
+    const appendSpy = vi.spyOn(FormData.prototype, 'append')
+    localStorage.setItem('aether_token', 'test-token')
+    localStorage.setItem('aether_admin_mode', 'true')
+    try {
+      renderPanel(dashboardWith({ app: {} }, { logo_attachment_id: 'org-logo' }))
+      // No dashboard logo yet: the org logo is the effective fallback.
+      expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/org-logo?token=test-token')
+
+      fireEvent.click(screen.getByLabelText('Upload…'))
+      const file = new File(['png'], 'logo.png', { type: 'image/png' })
+      fireEvent.change(screen.getByLabelText('Logo file'), { target: { files: [file] } })
+
+      await waitFor(() => expect(uploads.length).toBe(1))
+      expect(uploads[0]).toEqual({
+        auth: 'Bearer test-token',
+        adminMode: 'true',
+        type: 'image/png',
+      })
+      // jsdom's FormData → undici bridge mangles the part on the wire (name
+      // becomes "blob", bytes become the string "undefined"), so the panel's
+      // append call is the authoritative check that the chosen file (name and
+      // type) goes into the `file` field.
+      const fileCall = appendSpy.mock.calls.find(([field]) => field === 'file')
+      expect(fileCall?.[1]).toBe(file)
+      expect((fileCall?.[1] as File).name).toBe('logo.png')
+      expect((fileCall?.[1] as File).type).toBe('image/png')
+      await waitFor(() =>
+        expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/att-9?token=test-token'),
+      )
+
+      fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+      await waitFor(() => expect(bodies.length).toBe(1))
+      expect(savedApp(bodies).logo_attachment_id).toBe('att-9')
+    } finally {
+      appendSpy.mockRestore()
+      localStorage.removeItem('aether_token')
+      localStorage.removeItem('aether_admin_mode')
+    }
+  })
+
+  test('the logo source radios are disabled while an upload is in flight', async () => {
+    let started = false
+    let release: (() => void) | undefined
+    server.use(
+      http.post('/api/v1/dashboards/d1/attachments', async () => {
+        started = true
+        await new Promise<void>((resolve) => { release = resolve })
         return HttpResponse.json(
           { id: 'att-9', filename: 'logo.png', mime_type: 'image/png', size: 3 },
           { status: 201 },
@@ -307,23 +399,65 @@ describe('AppSettingsPanel', () => {
     localStorage.setItem('aether_token', 'test-token')
     try {
       renderPanel(dashboardWith({ app: {} }, { logo_attachment_id: 'org-logo' }))
-      // No dashboard logo yet: the org logo is the effective fallback.
-      expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/org-logo?token=test-token')
-
       fireEvent.click(screen.getByLabelText('Upload…'))
       fireEvent.change(screen.getByLabelText('Logo file'), {
         target: { files: [new File(['png'], 'logo.png', { type: 'image/png' })] },
       })
 
-      await waitFor(() => expect(uploads.length).toBe(1))
-      expect(uploads[0]).toEqual({ auth: 'Bearer test-token', hasFile: true })
+      await waitFor(() => expect(started).toBe(true))
+      expect(screen.getByLabelText('None')).toBeDisabled()
+      expect(screen.getByLabelText('Use org logo')).toBeDisabled()
+      expect(screen.getByLabelText('Upload…')).toBeDisabled()
+
+      release?.()
+      await waitFor(() => expect(screen.getByLabelText('Upload…')).not.toBeDisabled())
       await waitFor(() =>
         expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/att-9?token=test-token'),
+      )
+    } finally {
+      localStorage.removeItem('aether_token')
+    }
+  })
+
+  test('a failed logo upload surfaces the error and keeps the fallback', async () => {
+    server.use(
+      http.post('/api/v1/dashboards/d1/attachments', () =>
+        HttpResponse.json({ error: 'storage error' }, { status: 500 }),
+      ),
+    )
+    localStorage.setItem('aether_token', 'test-token')
+    try {
+      renderPanel(dashboardWith({ app: {} }, { logo_attachment_id: 'org-logo' }))
+      fireEvent.click(screen.getByLabelText('Upload…'))
+      fireEvent.change(screen.getByLabelText('Logo file'), {
+        target: { files: [new File(['png'], 'logo.png', { type: 'image/png' })] },
+      })
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('storage error')
+      expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/org-logo?token=test-token')
+    } finally {
+      localStorage.removeItem('aether_token')
+    }
+  })
+
+  test('"None" clears the dashboard logo and previews the org fallback', async () => {
+    const bodies = capturePuts()
+    localStorage.setItem('aether_token', 'test-token')
+    try {
+      renderPanel(dashboardWith(
+        { app: { logo_attachment_id: 'att-dash' } },
+        { logo_attachment_id: 'org-logo' },
+      ))
+      expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/att-dash?token=test-token')
+
+      fireEvent.click(screen.getByLabelText('None'))
+      await waitFor(() =>
+        expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/org-logo?token=test-token'),
       )
 
       fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
       await waitFor(() => expect(bodies.length).toBe(1))
-      expect(savedApp(bodies).logo_attachment_id).toBe('att-9')
+      expect('logo_attachment_id' in savedApp(bodies)).toBe(false)
     } finally {
       localStorage.removeItem('aether_token')
     }

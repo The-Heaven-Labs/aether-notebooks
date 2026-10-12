@@ -18,16 +18,11 @@ export const DARK_CHART_COLORS = [
   '#fb7185', '#a78bfa', '#38bdf8', '#a3e635',
 ]
 
-/** A named chart-palette preset for the app settings picker. */
-export interface ChartPalettePreset {
-  value: string
-  label: string
-  /** The preset's colors; absent for Default (no override) and Custom. */
-  colors?: string[]
-}
+/** The maximum number of colors a custom chart palette may carry (mirrors the server's limit). */
+export const MAX_PALETTE_COLORS = 12
 
 /** The curated app-surface chart palettes offered by the settings picker. */
-export const CHART_PALETTE_PRESETS: ChartPalettePreset[] = [
+export const CHART_PALETTE_PRESETS = [
   { value: 'default', label: 'Default' },
   { value: 'aether', label: 'Aether', colors: LIGHT_CHART_COLORS },
   {
@@ -39,4 +34,10 @@ export const CHART_PALETTE_PRESETS: ChartPalettePreset[] = [
     colors: ['#14b8a6', '#06b6d4', '#0ea5e9', '#6366f1', '#8b5cf6', '#10b981', '#f59e0b', '#f43f5e'],
   },
   { value: 'custom', label: 'Custom' },
-]
+] as const
+
+/**
+ * A preset id, derived from `CHART_PALETTE_PRESETS` so adding a preset widens
+ * the union automatically instead of silently bypassing the consumers' types.
+ */
+export type ChartPalettePresetValue = (typeof CHART_PALETTE_PRESETS)[number]['value']

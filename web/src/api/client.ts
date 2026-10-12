@@ -67,6 +67,9 @@ export const api = {
   put: <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => request<T>('PUT', path, body, options),
   patch: <T>(path: string, body?: unknown, options?: { signal?: AbortSignal }) => request<T>('PATCH', path, body, options),
   delete: <T>(path: string, options?: { signal?: AbortSignal }) => request<T>('DELETE', path, undefined, options),
+  /** Multipart POST: the same auth/admin headers as every call, raw FormData body. */
+  upload: <T>(path: string, body: FormData, options?: { signal?: AbortSignal }) =>
+    request<T>('POST', path, body, { binary: true, signal: options?.signal }),
 }
 
 export const toolsApi = {
