@@ -322,6 +322,21 @@ func uploadOrgAttachment(t *testing.T, srv *api.Server, token string) string {
 	return attID
 }
 
+// currentUserID returns the authenticated user's id for the given token.
+func currentUserID(t *testing.T, srv *api.Server, token string) string {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1/users/me", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	id, _ := resp["id"].(string)
+	require.NotEmpty(t, id)
+	return id
+}
+
 // inviteNonAdminMember registers a fresh user, adds them to orgID as a
 // non-admin member, and returns a session token scoped to that org.
 func inviteNonAdminMember(t *testing.T, srv *api.Server, adminToken, orgID string) string {
@@ -384,7 +399,7 @@ func TestDashboardLogoAttachment(t *testing.T) {
 	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	t.Setenv("AETHER_RATE_LIMIT_LOGIN", "500")
 	srv := setupTestServerWithAttachDir(t)
-	_, token := createTestOrgAndAdmin(t, srv)
+	orgID, token := createTestOrgAndAdmin(t, srv)
 
 	dashID := createDashWithSettings(t, srv, token, nil)
 
@@ -427,6 +442,15 @@ func TestDashboardLogoAttachment(t *testing.T) {
 	})
 	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
 
+	// A notebook attachment is rejected: the public logo route never serves
+	// notebook-scoped files, so it cannot back a logo.
+	nbID := createTestNotebook(t, srv, token)
+	nbAttID := uploadTestAttachment(t, srv, token, nbID)
+	rec = versionsRequest(t, srv, token, "PUT", "/api/v1/dashboards/"+dashID, map[string]any{
+		"settings": map[string]any{"app": map[string]any{"logo_attachment_id": nbAttID}},
+	})
+	require.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+
 	// The create path enforces the same invariant.
 	badCreateBody, _ := json.Marshal(map[string]any{
 		"title":    "Bad Logo",
@@ -449,6 +473,52 @@ func TestDashboardLogoAttachment(t *testing.T) {
 
 	// The rejected writes left the stored logo untouched.
 	require.Equal(t, attID, getLogo())
+
+	// --- Negative authorization coverage for the upload route ---
+
+	// A non-admin member with an explicit dashboard edit ACL can upload.
+	memberToken := inviteNonAdminMember(t, srv, token, orgID)
+	memberID := currentUserID(t, srv, memberToken)
+	putACL := func(actions []string) {
+		t.Helper()
+		body, _ := json.Marshal(map[string]any{
+			"entries": []map[string]any{
+				{"subject_type": "user", "subject_id": memberID, "actions": actions},
+			},
+		})
+		r := httptest.NewRequest("PUT", "/api/v1/acl/dashboard/"+dashID, bytes.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("Authorization", "Bearer "+token)
+		r.Header.Set("X-AETHER-Admin-Mode", "true")
+		w := httptest.NewRecorder()
+		srv.ServeHTTP(w, r)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	}
+
+	putACL([]string{"view", "edit"})
+	rec = uploadFileTo(t, srv, memberToken, "/api/v1/dashboards/"+dashID+"/attachments", "member-logo.png", testLogoPNG)
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	// Downgrading the same member to view-only rejects the upload.
+	putACL([]string{"view"})
+	rec = uploadFileTo(t, srv, memberToken, "/api/v1/dashboards/"+dashID+"/attachments", "member-logo.png", testLogoPNG)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	// A dashboard that does not exist (or belongs to another org) is a 404.
+	rec = uploadFileTo(t, srv, token, "/api/v1/dashboards/"+uuid.NewString()+"/attachments", "logo.png", testLogoPNG)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+	// A trashed dashboard is a 404 too; its ACL rows survive the soft delete,
+	// so the handler's liveness check is what rejects the upload.
+	trashID := createDashWithSettings(t, srv, token, nil)
+	delReq := httptest.NewRequest("DELETE", "/api/v1/dashboards/"+trashID, nil)
+	delReq.Header.Set("Authorization", "Bearer "+token)
+	delReq.Header.Set("X-AETHER-Admin-Mode", "true")
+	delRW := httptest.NewRecorder()
+	srv.ServeHTTP(delRW, delReq)
+	require.Equal(t, http.StatusNoContent, delRW.Code, delRW.Body.String())
+	rec = uploadFileTo(t, srv, token, "/api/v1/dashboards/"+trashID+"/attachments", "logo.png", testLogoPNG)
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
 }
 
 func TestDashboardGetOrgBranding(t *testing.T) {
@@ -523,6 +593,17 @@ func TestPublicLogo(t *testing.T) {
 	require.True(t, ok, "expected org_branding, got %v", body["org_branding"])
 	assert.Equal(t, "Acme Analytics", ob["app_name"])
 
+	// A notebook attachment in the same org is not reachable through the
+	// public logo route: it has a notebook view ACL enforced by the authed
+	// route, and the public route must never become a bypass around it. Before
+	// the notebook_id scope this lookup returned 200.
+	nbID := createTestNotebook(t, srv, token)
+	nbAttID := uploadTestAttachment(t, srv, token, nbID)
+	req = httptest.NewRequest("GET", "/api/v1/public/"+publicToken+"/attachments/"+nbAttID, nil)
+	rw = httptest.NewRecorder()
+	srv.ServeHTTP(rw, req)
+	assert.Equal(t, http.StatusNotFound, rw.Code)
+
 	// Another org's attachment is never served through this token.
 	_, foreignToken := createTestOrgAndAdmin(t, srv)
 	foreignLogo := uploadOrgAttachment(t, srv, foreignToken)
@@ -533,6 +614,20 @@ func TestPublicLogo(t *testing.T) {
 
 	// An unknown attachment is a 404 too.
 	req = httptest.NewRequest("GET", "/api/v1/public/"+publicToken+"/attachments/"+uuid.NewString(), nil)
+	rw = httptest.NewRecorder()
+	srv.ServeHTTP(rw, req)
+	assert.Equal(t, http.StatusNotFound, rw.Code)
+
+	// Disabling org public sharing closes the public logo route even for the
+	// org's own logo.
+	sharingBody, _ := json.Marshal(map[string]bool{"public_sharing_enabled": false})
+	sharingReq := httptest.NewRequest("PUT", "/api/v1/org/sharing", bytes.NewReader(sharingBody))
+	sharingReq.Header.Set("Content-Type", "application/json")
+	sharingReq.Header.Set("Authorization", "Bearer "+token)
+	sharingRec := httptest.NewRecorder()
+	srv.ServeHTTP(sharingRec, sharingReq)
+	require.Equal(t, http.StatusOK, sharingRec.Code, sharingRec.Body.String())
+	req = httptest.NewRequest("GET", "/api/v1/public/"+publicToken+"/attachments/"+logoID, nil)
 	rw = httptest.NewRecorder()
 	srv.ServeHTTP(rw, req)
 	assert.Equal(t, http.StatusNotFound, rw.Code)

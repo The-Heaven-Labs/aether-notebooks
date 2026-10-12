@@ -197,6 +197,11 @@ func TestOrgBranding(t *testing.T) {
 
 	// Branding logos reference an org attachment uploaded through the org route.
 	logoID := uploadOrgAttachment(t, srv, token)
+	// A notebook attachment is not a valid logo reference: the public logo
+	// route can never serve one, so pointing branding at it would render a
+	// broken image (and must not be accepted as an ACL end-run).
+	nbID := createTestNotebook(t, srv, token)
+	nbAttID := uploadTestAttachment(t, srv, token, nbID)
 
 	// Valid branding round-trips through PUT → GET.
 	rec := putOrgSettings(t, srv, token, map[string]any{
@@ -238,6 +243,7 @@ func TestOrgBranding(t *testing.T) {
 		{"branding": map[string]any{"app_name": strings.Repeat("x", 61)}},
 		{"branding": map[string]any{"logo_attachment_id": "00000000-0000-0000-0000-000000000000"}},
 		{"branding": map[string]any{"logo_attachment_id": "not-a-uuid"}},
+		{"branding": map[string]any{"logo_attachment_id": nbAttID}},
 	}
 	for i, settings := range invalid {
 		if rec := putOrgSettings(t, srv, token, settings); rec.Code != http.StatusBadRequest {
@@ -256,4 +262,16 @@ func TestOrgBranding(t *testing.T) {
 	if _, code := getOrgBranding(t, srv, memberToken); code != http.StatusForbidden {
 		t.Fatalf("non-admin GET: expected 403, got %d", code)
 	}
+
+	// `"branding": {}` is the documented clear path: a JSON null is dropped by
+	// the typed struct's omitempty re-marshal and would leave the old value.
+	rec = putOrgSettings(t, srv, token, map[string]any{"branding": map[string]any{}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	cleared, code := getOrgBranding(t, srv, token)
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, cleared)
+	assert.Empty(t, cleared.AppName)
+	assert.Empty(t, cleared.AccentColor)
+	assert.Empty(t, cleared.LogoAttachmentID)
+	assert.Empty(t, cleared.DefaultChartPalette)
 }

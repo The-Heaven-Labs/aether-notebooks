@@ -84,8 +84,8 @@ func (s *Server) handleUploadDashboardAttachment(w http.ResponseWriter, r *http.
 	dashID := r.PathValue("id")
 	ctx := r.Context()
 
-	// The route's permission middleware already required dashboard edit; this
-	// only distinguishes a live dashboard from a trashed or missing one.
+	// Existence first, so a missing, cross-org, or trashed dashboard is a 404
+	// rather than the 403 a permission-first check would return.
 	var exists bool
 	if err := s.db.Pool.QueryRow(ctx,
 		`SELECT true FROM dashboards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
@@ -95,6 +95,16 @@ func (s *Server) handleUploadDashboardAttachment(w http.ResponseWriter, r *http.
 	}
 	if !exists {
 		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+
+	ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !ok {
+		writeError(w, http.StatusForbidden, "edit permission required")
 		return
 	}
 
@@ -231,9 +241,12 @@ func (s *Server) serveAttachment(w http.ResponseWriter, attID, mimeType, filenam
 // attachment in the caller's org.
 var errLogoAttachmentNotFound = errors.New("logo attachment not found")
 
-// validateLogoAttachment verifies attachmentID names an attachment in orgID.
-// Logos are referenced by attachment id; rejecting unknown ids at write time
-// keeps app surfaces from rendering broken images. An empty id is valid (no
+// validateLogoAttachment verifies attachmentID names an org-scoped attachment
+// in orgID. Logos are referenced by attachment id; rejecting unknown ids at
+// write time keeps app surfaces from rendering broken images. Notebook
+// attachments are rejected too: a logo can be served through the public
+// attachment route, which has no notebook view ACL, so pointing a logo at a
+// notebook attachment would leak a private file. An empty id is valid (no
 // logo) and a malformed id can never match, so it is treated as not found.
 func (s *Server) validateLogoAttachment(ctx context.Context, orgID, attachmentID string) error {
 	if attachmentID == "" {
@@ -244,7 +257,7 @@ func (s *Server) validateLogoAttachment(ctx context.Context, orgID, attachmentID
 	}
 	var exists bool
 	err := s.db.Pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM attachments WHERE id = $1 AND org_id = $2)`,
+		`SELECT EXISTS(SELECT 1 FROM attachments WHERE id = $1 AND org_id = $2 AND notebook_id IS NULL)`,
 		attachmentID, orgID,
 	).Scan(&exists)
 	if err != nil {

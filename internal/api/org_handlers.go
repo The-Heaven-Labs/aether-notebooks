@@ -754,6 +754,10 @@ func (s *Server) handleUpdateOrgSettings(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
+	// Branding is replaced wholesale when provided: sending `"branding": {}` is
+	// the documented clear path. An explicit JSON null decodes to a nil pointer
+	// and is dropped by the struct's omitempty re-marshal, so it leaves the
+	// stored value untouched (the settings merge only replaces provided keys).
 	_, err := s.db.Pool.Exec(r.Context(),
 		`UPDATE orgs SET settings = settings || $1::jsonb WHERE id = $2`,
 		req, claims.OrgID,
@@ -777,6 +781,7 @@ func (s *Server) orgBranding(ctx context.Context, orgID string) *models.OrgBrand
 	}
 	var settings models.OrgSettings
 	if err := json.Unmarshal(settingsJSON, &settings); err != nil {
+		slog.Debug("org branding decode failed", "org_id", orgID, "error", err)
 		return nil
 	}
 	return settings.Branding

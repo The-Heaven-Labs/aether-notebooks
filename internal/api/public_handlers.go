@@ -63,15 +63,19 @@ func (s *Server) handlePublicAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// The token's org must own the attachment, so a token never exposes another
-	// org's files, and public sharing must still be enabled for that org.
+	// The token's org must own the attachment and public sharing must still be
+	// enabled for that org. Notebook attachments are excluded: the authed route
+	// enforces notebook view on them, and a public token must never become a
+	// bypass around that ACL. Only org/dashboard-scoped files (logos) are
+	// reachable here.
 	var mimeType, filename string
 	err := s.db.Pool.QueryRow(ctx,
 		`SELECT a.mime_type, a.filename
 		 FROM attachments a
 		 JOIN public_tokens pt ON pt.org_id = a.org_id
 		 JOIN orgs o ON o.id = pt.org_id
-		 WHERE a.id = $1 AND pt.token = $2 AND o.public_sharing_enabled = true`,
+		 WHERE a.id = $1 AND pt.token = $2 AND o.public_sharing_enabled = true
+		   AND a.notebook_id IS NULL`,
 		attID, token,
 	).Scan(&mimeType, &filename)
 	if errors.Is(err, pgx.ErrNoRows) {
