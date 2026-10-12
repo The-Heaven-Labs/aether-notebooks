@@ -75,6 +75,20 @@ function publishErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : 'Publish failed'
 }
 
+/**
+ * Horizontal padding of the editor body (`styles.body`). The body itself is
+ * the width probe — unlike the grid it is always rendered — so its
+ * clientWidth includes this padding; subtracting it reports the same
+ * content-box width the old grid wrapper did and keeps the mobile breakpoint
+ * where it was.
+ */
+const BODY_PADDING_X = 12
+
+/** The body's content-box width: clientWidth minus its horizontal padding. */
+function bodyContentWidth(el: HTMLElement): number {
+  return el.clientWidth - BODY_PADDING_X * 2
+}
+
 /** Drop coordinates of a drag/resize stop event (mouse or touch). */
 function eventPoint(event: Event): { x: number; y: number } | null {
   if ('clientX' in event && 'clientY' in event) {
@@ -214,11 +228,9 @@ const markSaved = useCallback(() => {
     layoutObserverRef.current?.disconnect()
     layoutObserverRef.current = null
     if (el) {
-      setContainerWidth(el.clientWidth)
+      setContainerWidth(bodyContentWidth(el))
       const obs = new ResizeObserver(() => {
-        // clientWidth (not entry.contentRect) so resize events report the
-        // same box the initial measure and the layout effect use.
-        setContainerWidth(el.clientWidth)
+        setContainerWidth(bodyContentWidth(el))
       })
       obs.observe(el)
       layoutObserverRef.current = obs
@@ -228,7 +240,7 @@ const markSaved = useCallback(() => {
   useLayoutEffect(() => {
     const el = layoutContainerRef.current
     if (!el) return
-    const w = el.clientWidth
+    const w = bodyContentWidth(el)
     if (w !== containerWidth) {
       setContainerWidth(w)
     }
@@ -243,13 +255,17 @@ const markSaved = useCallback(() => {
   })
 
   // Published-version status for the header chip. The endpoint requires
-  // dashboard `edit`, so read-only visitors never poll it; it refreshes on
-  // publish/restore invalidation and polls while the editor stays open.
-  const versionsQuery = useDashboardVersions(id, dashboard?.can_edit !== false)
+  // dashboard `edit`, so the query stays off until the dashboard response
+  // confirms access — enabling it while the dashboard is still loading would
+  // fire a 403 (plus a retry) for viewers. It refreshes on publish/restore
+  // invalidation and polls while the editor stays open.
+  const versionsQuery = useDashboardVersions(id, !!dashboard && dashboard.can_edit !== false)
   const [showVersions, setShowVersions] = useState(false)
   const publishDashboard = useMutation({
     mutationFn: () => api.post(`/api/v1/dashboards/${id}/publish`),
     onSuccess: () => {
+      // A failed publish's banner must not outlive a later success.
+      setMutationError(null)
       qc.invalidateQueries({ queryKey: ['dashboard-versions', id] })
       qc.invalidateQueries({ queryKey: ['dashboard', id] })
     },
@@ -279,7 +295,7 @@ const markSaved = useCallback(() => {
   useEffect(() => {
     if (!dashboard) return
     const el = layoutContainerRef.current
-    if (el) setContainerWidth(el.clientWidth)
+    if (el) setContainerWidth(bodyContentWidth(el))
   }, [dashboard])
 
   // Once the document has synced it is the source of truth for the widget
@@ -591,9 +607,10 @@ const markSaved = useCallback(() => {
                 type="button"
                 className="nav-btn"
                 data-testid="publish-status"
+                aria-label={`${latestVersion ? `v${latestVersion.version}` : 'Not published'} — ${versionChipTitle}`}
                 onClick={() => setShowVersions(true)}
                 disabled={!editingEnabled}
-                title={editingEnabled ? versionChipTitle : 'Editing is paused'}
+                title={editingEnabled ? versionChipTitle : `${versionChipTitle} — editing is paused`}
               >
                 {versionHasDot && <span data-testid="publish-status-dot" style={styles.publishDot} aria-hidden="true" />}
                 {latestVersion ? `v${latestVersion.version}` : 'Not published'}
@@ -1294,7 +1311,7 @@ const styles: Record<string, React.CSSProperties> = {
   body: {
     flex: 1,
     margin: 0,
-    padding: '8px 12px',
+    padding: `8px ${BODY_PADDING_X}px`,
     width: '100%',
   },
   // Transparent shell around the editor's head bar (kind badge + actions)

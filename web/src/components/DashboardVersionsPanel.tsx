@@ -13,8 +13,9 @@ import type { DashboardVersionsResponse } from '../types'
 /**
  * The dashboard's published-version status. Polled while the editor is open so
  * a publish from another tab (or this client's own invalidation) refreshes the
- * header chip; the endpoint requires dashboard `edit`, so read-only visitors
- * pass `enabled = false` instead of polling a 403.
+ * header chip. The endpoint requires dashboard `edit`, so callers must keep
+ * `enabled` false until the dashboard response has confirmed access: enabling
+ * it while the dashboard is still loading would fire a 403 for viewers.
  */
 export function useDashboardVersions(dashboardId: string | undefined, enabled = true) {
   return useQuery<DashboardVersionsResponse>({
@@ -48,6 +49,9 @@ export function DashboardVersionsPanel({ dashboardId, onClose }: {
   const [confirmVersion, setConfirmVersion] = useState<number | null>(null)
   const [restoredVersion, setRestoredVersion] = useState<number | null>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  // The row button that opened the confirmation; the focus trap re-focuses it
+  // when the dialog closes (the dialog's Cancel button is gone by then).
+  const lastRestoreRef = useRef<HTMLButtonElement | null>(null)
 
   const restore = useMutation({
     mutationFn: (version: number) =>
@@ -61,7 +65,10 @@ export function DashboardVersionsPanel({ dashboardId, onClose }: {
 
   const confirmOpen = confirmVersion !== null
   useEscapeToClose(onClose, !confirmOpen)
-  useFocusTrap(panelRef, !confirmOpen)
+  // The initial focus target is the row's Restore button so closing the
+  // confirmation lands back on it; on mount (no button yet) it falls back to
+  // the panel itself.
+  useFocusTrap(panelRef, !confirmOpen, lastRestoreRef)
 
   const versions = data?.versions ?? []
   const latest = data?.latest ?? null
@@ -84,7 +91,7 @@ export function DashboardVersionsPanel({ dashboardId, onClose }: {
             <div style={styles.warningBox}>
               <strong>This draft cannot be published yet.</strong>
               <ul style={styles.warningList}>
-                {warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                {warnings.map((warning, index) => <li key={`${index}-${warning}`}>{warning}</li>)}
               </ul>
             </div>
           )}
@@ -98,7 +105,9 @@ export function DashboardVersionsPanel({ dashboardId, onClose }: {
 
           {isLoading ? (
             <span style={styles.muted}>Loading…</span>
-          ) : versions.length === 0 ? (
+          ) : versions.length === 0 && !error ? (
+            // The error branch above renders its own message; never stack the
+            // empty state on top of it.
             <span style={styles.muted}>No versions published yet — publish the draft to create v1.</span>
           ) : (
             <div style={styles.list}>
@@ -118,7 +127,10 @@ export function DashboardVersionsPanel({ dashboardId, onClose }: {
                     style={styles.restoreBtn}
                     aria-label={`Restore v${v.version}`}
                     disabled={restore.isPending}
-                    onClick={() => setConfirmVersion(v.version)}
+                    onClick={(e) => {
+                      lastRestoreRef.current = e.currentTarget
+                      setConfirmVersion(v.version)
+                    }}
                   >
                     <RotateCcw size={11} /> Restore
                   </button>

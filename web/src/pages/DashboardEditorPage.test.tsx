@@ -613,9 +613,27 @@ describe('DashboardEditorPage publish controls', () => {
     renderEditor()
 
     const chip = await screen.findByTestId('publish-status')
-    expect(chip).toHaveTextContent('v1')
+    await waitFor(() => expect(chip).toHaveTextContent('v1'))
     expect(chip).toHaveAttribute('title', 'Unpublished changes')
     expect(screen.getByTestId('publish-status-dot')).toBeInTheDocument()
+  })
+
+  test('a draft with blocking warnings shows the dot and the informative title', async () => {
+    server.use(
+      http.get('/api/v1/dashboards/d1/versions', () =>
+        HttpResponse.json({ ...NO_VERSIONS, warnings: ['widget w1: connector not found'] }),
+      ),
+    )
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    const chip = await screen.findByTestId('publish-status')
+    // The query only starts once the dashboard (with edit access) has landed;
+    // the dot appears when the response does.
+    expect(await screen.findByTestId('publish-status-dot')).toBeInTheDocument()
+    expect(chip).toHaveTextContent('Not published')
+    expect(chip).toHaveAttribute('title', 'Draft cannot be published: widget w1: connector not found')
+    expect(chip).toHaveAttribute('aria-label', 'Not published — Draft cannot be published: widget w1: connector not found')
   })
 
   test('publishes with a busy state, then refreshes the chip and both queries', async () => {
@@ -659,6 +677,51 @@ describe('DashboardEditorPage publish controls', () => {
     // row is pulled again.
     await waitFor(() => expect(versionsGets).toBeGreaterThan(1))
     await waitFor(() => expect(dashboardGets).toBeGreaterThan(1))
+  })
+
+  test('double-clicking Publish sends a single POST', async () => {
+    let publishPosts = 0
+    let release: (() => void) | undefined
+    server.use(
+      http.post('/api/v1/dashboards/d1/publish', async () => {
+        publishPosts++
+        await new Promise<void>((resolve) => { release = resolve })
+        return HttpResponse.json({ version: 1, content_hash: 'hash-1', created_at: '2026-01-01T00:00:00Z' })
+      }),
+    )
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    const publish = await screen.findByRole('button', { name: 'Publish' })
+    fireEvent.click(publish)
+    expect(await screen.findByRole('button', { name: 'Publishing…' })).toBeDisabled()
+    fireEvent.click(publish)
+
+    expect(publishPosts).toBe(1)
+    release?.()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Publish' })).not.toBeDisabled())
+    expect(publishPosts).toBe(1)
+  })
+
+  test('a stale publish error clears on a later successful publish', async () => {
+    let failNext = true
+    server.use(
+      http.post('/api/v1/dashboards/d1/publish', () => {
+        if (failNext) {
+          failNext = false
+          return HttpResponse.json({ error: 'publish failed' }, { status: 500 })
+        }
+        return HttpResponse.json({ version: 1, content_hash: 'hash-1', created_at: '2026-01-01T00:00:00Z' })
+      }),
+    )
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
+    expect(await screen.findByText('publish failed')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Publish' }))
+    await waitFor(() => expect(screen.queryByText('publish failed')).not.toBeInTheDocument())
   })
 
   test('a refused publish surfaces the widget warnings', async () => {
@@ -714,5 +777,31 @@ describe('DashboardEditorPage publish controls', () => {
     // controls are hidden on every brand-new dashboard.
     expect(await screen.findByTestId('publish-status')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Publish' })).toBeInTheDocument()
+  })
+
+  test('a viewer (can_edit: false) never fetches versions and sees no publish controls', async () => {
+    let dashboardGets = 0
+    let versionGets = 0
+    server.use(
+      http.get('/api/v1/dashboards/d1', () => {
+        dashboardGets++
+        return HttpResponse.json({ ...DASHBOARD, can_edit: false })
+      }),
+      http.get('/api/v1/dashboards/d1/versions', () => {
+        versionGets++
+        return HttpResponse.json(NO_VERSIONS)
+      }),
+    )
+    renderEditor()
+
+    // Wait for the dashboard to land: once edit access is known to be false
+    // the versions query must stay disabled, so the counter stays at zero
+    // (enabling it while the dashboard is loading fires a 403 + retry).
+    expect(await screen.findByText('Ops board')).toBeInTheDocument()
+    await waitFor(() => expect(dashboardGets).toBe(1))
+
+    expect(screen.queryByTestId('publish-status')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument()
+    expect(versionGets).toBe(0)
   })
 })

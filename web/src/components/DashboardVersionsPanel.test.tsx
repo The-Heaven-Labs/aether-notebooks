@@ -179,4 +179,52 @@ describe('DashboardVersionsPanel', () => {
     expect(await screen.findByText('widget w1: connector not found')).toBeInTheDocument()
     expect(screen.getByText(/cannot be published/)).toBeInTheDocument()
   })
+
+  test('an in-flight restore shows progress and disables every Restore button', async () => {
+    let release: (() => void) | undefined
+    server.use(
+      http.get('/api/v1/dashboards/d1/versions', () => HttpResponse.json(PUBLISHED)),
+      http.post('/api/v1/dashboards/d1/versions/:version/restore', async () => {
+        await new Promise<void>((resolve) => { release = resolve })
+        return HttpResponse.json({ restored: 1 })
+      }),
+    )
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore v1' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Restore' }))
+
+    expect(await screen.findByText('Restoring v1…')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Restore v1' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: 'Restore v2' })).toBeDisabled()
+
+    release?.()
+    expect(await screen.findByText('Restored v1 into the draft.')).toBeInTheDocument()
+  })
+
+  test('closing the confirmation returns focus to the triggering Restore button', async () => {
+    withVersions(PUBLISHED)
+    renderPanel()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Restore v1' }))
+    expect(await screen.findByRole('dialog', { name: 'Restore version v1?' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }))
+    await waitFor(() =>
+      expect(screen.queryByRole('dialog', { name: 'Restore version v1?' })).not.toBeInTheDocument(),
+    )
+    expect(screen.getByRole('button', { name: 'Restore v1' })).toHaveFocus()
+  })
+
+  test('a load failure shows only the error, not the empty state', async () => {
+    server.use(
+      http.get('/api/v1/dashboards/d1/versions', () =>
+        HttpResponse.json({ error: 'failed to load versions' }, { status: 500 }),
+      ),
+    )
+    renderPanel()
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('failed to load versions')
+    expect(screen.queryByText(/No versions published yet/)).not.toBeInTheDocument()
+  })
 })
