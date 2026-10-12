@@ -493,6 +493,57 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dashboards)
 }
 
+// dashboardPublishedVersion identifies the published snapshot a read served,
+// so clients can show provenance and detect staleness.
+type dashboardPublishedVersion struct {
+	Version   int       `json:"version"`
+	CreatedAt time.Time `json:"created_at"`
+}
+
+// dashboardSnapshotSettings decodes a published snapshot's settings map
+// (variables folded in under settings["variables"]) into the typed settings
+// shape the REST read paths serve.
+func dashboardSnapshotSettings(settings map[string]any) (models.DashboardSettings, error) {
+	var out models.DashboardSettings
+	raw, err := json.Marshal(settings)
+	if err != nil {
+		return out, err
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return out, err
+	}
+	return out, nil
+}
+
+// snapshotWidgetToModel converts one published snapshot widget into the REST
+// widget shape, scoped to its dashboard. Timestamps stay zero: a snapshot
+// carries content, not row metadata.
+func snapshotWidgetToModel(dashID string, sw snapshotWidget) models.Widget {
+	return models.Widget{
+		ID:          sw.ID,
+		DashboardID: dashID,
+		NotebookID:  sw.NotebookID,
+		CellID:      sw.CellID,
+		ConnectorID: sw.ConnectorID,
+		Query:       sw.Query,
+		Language:    sw.Language,
+		Type:        models.WidgetType(sw.Type),
+		Layout:      sw.Layout,
+		Config:      sw.Config,
+	}
+}
+
+// dashboardWidgetsFromSnapshot converts a whole snapshot widget list into the
+// REST shape. The result is non-nil even when empty, so callers can tell a
+// published-but-empty widget set from "no snapshot served".
+func dashboardWidgetsFromSnapshot(dashID string, widgets []snapshotWidget) []models.Widget {
+	out := make([]models.Widget, 0, len(widgets))
+	for _, sw := range widgets {
+		out = append(out, snapshotWidgetToModel(dashID, sw))
+	}
+	return out
+}
+
 // @Summary Get a dashboard
 // @Description Get a dashboard with its widgets
 // @Tags dashboards
@@ -548,27 +599,49 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 	shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "share")
 	editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
 
-	widgets, err := s.loadWidgets(ctx, dashID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "load widgets failed")
-		return
+	// Wave-2 reads: viewers see the latest published snapshot and never draft
+	// edits; editors see the draft unless ?published=1 explicitly asks for
+	// the snapshot. A never-published dashboard has nothing to substitute, so
+	// the draft serves everyone (the pre-publish behavior).
+	var publishedVersion *dashboardPublishedVersion
+	var widgets []models.Widget
+	if r.URL.Query().Get("published") == "1" || !editOK {
+		snapshot, snapErr := s.loadPublishedDashboardSnapshot(ctx, claims.OrgID, dashID)
+		if snapErr == nil {
+			dash.Title = snapshot.Title
+			dash.Settings = snapshot.Settings
+			widgets = dashboardWidgetsFromSnapshot(dashID, snapshot.Widgets)
+			publishedVersion = &dashboardPublishedVersion{Version: snapshot.Version, CreatedAt: snapshot.CreatedAt}
+		} else if !errors.Is(snapErr, errNoPublishedVersion) {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+	}
+	if widgets == nil {
+		widgets, err = s.loadWidgets(ctx, dashID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "load widgets failed")
+			return
+		}
 	}
 
 	type dashboardWithWidgets struct {
 		models.Dashboard
-		Widgets         []models.Widget           `json:"widgets"`
-		WidgetsData     map[string]widgetCellData `json:"widgets_data,omitempty"`
-		CanViewWithData bool                      `json:"can_view_with_data"`
-		CanShare        bool                      `json:"can_share"`
-		CanEdit         bool                      `json:"can_edit"`
+		Widgets          []models.Widget            `json:"widgets"`
+		WidgetsData      map[string]widgetCellData  `json:"widgets_data,omitempty"`
+		CanViewWithData  bool                       `json:"can_view_with_data"`
+		CanShare         bool                       `json:"can_share"`
+		CanEdit          bool                       `json:"can_edit"`
+		PublishedVersion *dashboardPublishedVersion `json:"published_version,omitempty"`
 	}
 
 	resp := dashboardWithWidgets{
-		Dashboard:       dash,
-		Widgets:         widgets,
-		CanViewWithData: viewWithData,
-		CanShare:        shareOK,
-		CanEdit:         editOK,
+		Dashboard:        dash,
+		Widgets:          widgets,
+		CanViewWithData:  viewWithData,
+		CanShare:         shareOK,
+		CanEdit:          editOK,
+		PublishedVersion: publishedVersion,
 	}
 
 	if viewWithData && len(widgets) > 0 {
@@ -1381,13 +1454,30 @@ func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, da
 	}
 	json.Unmarshal(settingsOut, &dash.Settings)
 
-	widgets, err := s.loadWidgets(ctx, dash.ID)
-	if err != nil {
+	// Public pages serve the latest published snapshot and never draft edits;
+	// only a dashboard that has never been published falls back to the draft.
+	var (
+		widgets          []models.Widget
+		publishedVersion *dashboardPublishedVersion
+	)
+	snapshot, snapErr := s.loadPublishedDashboardSnapshot(ctx, dash.OrgID, dashID)
+	if snapErr == nil {
+		dash.Title = snapshot.Title
+		dash.Settings = snapshot.Settings
+		widgets = dashboardWidgetsFromSnapshot(dashID, snapshot.Widgets)
+		publishedVersion = &dashboardPublishedVersion{Version: snapshot.Version, CreatedAt: snapshot.CreatedAt}
+	} else if errors.Is(snapErr, errNoPublishedVersion) {
+		widgets, err = s.loadWidgets(ctx, dash.ID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "load widgets failed")
+			return
+		}
+	} else {
 		writeError(w, http.StatusInternalServerError, "load widgets failed")
 		return
 	}
 
-	// Load cell data for all widgets
+	// Load cell data for all served widgets
 	widgetsData := make(map[string]widgetCellData)
 	cellIDs := make([]string, 0, len(widgets))
 	for _, w := range widgets {
@@ -1418,10 +1508,16 @@ func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, da
 
 	type publicDashboardWithWidgets struct {
 		models.Dashboard
-		Widgets     []models.Widget           `json:"widgets"`
-		WidgetsData map[string]widgetCellData `json:"widgets_data"`
+		Widgets          []models.Widget            `json:"widgets"`
+		WidgetsData      map[string]widgetCellData  `json:"widgets_data"`
+		PublishedVersion *dashboardPublishedVersion `json:"published_version,omitempty"`
 	}
-	writeJSON(w, http.StatusOK, publicDashboardWithWidgets{Dashboard: dash, Widgets: widgets, WidgetsData: widgetsData})
+	writeJSON(w, http.StatusOK, publicDashboardWithWidgets{
+		Dashboard:        dash,
+		Widgets:          widgets,
+		WidgetsData:      widgetsData,
+		PublishedVersion: publishedVersion,
+	})
 }
 
 func (s *Server) loadWidgets(ctx context.Context, dashID string) ([]models.Widget, error) {

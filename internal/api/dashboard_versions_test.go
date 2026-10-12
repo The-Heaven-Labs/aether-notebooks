@@ -49,6 +49,10 @@ type dashboardDetailBody struct {
 		} `json:"layout"`
 		Config map[string]any `json:"config"`
 	} `json:"widgets"`
+	PublishedVersion *struct {
+		Version   int       `json:"version"`
+		CreatedAt time.Time `json:"created_at"`
+	} `json:"published_version"`
 }
 
 // versionsRequest dispatches one request against the dashboard routes with a
@@ -335,4 +339,370 @@ func TestDashboardVersionRoutesNotFound(t *testing.T) {
 		versionsRequest(t, srv, token, "GET", "/api/v1/dashboards/"+dashID+"/versions", nil).Code)
 	require.Equal(t, http.StatusNotFound,
 		versionsRequest(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/versions/1/restore", nil).Code)
+}
+
+// updateWidgetQuery rewrites one widget's SQL through the REST widget update,
+// the same partial write the editor UI uses.
+func updateWidgetQuery(t *testing.T, srv *api.Server, token, dashID, widgetID, query, connectorID string) {
+	t.Helper()
+	rec := versionsRequest(t, srv, token, "PUT", "/api/v1/dashboards/"+dashID+"/widgets/"+widgetID,
+		map[string]any{"query": query, "connector_id": connectorID})
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+}
+
+// firstCellValue decodes a dashboard query response and returns the first
+// result cell of its first table output.
+func firstCellValue(t *testing.T, rec *httptest.ResponseRecorder) any {
+	t.Helper()
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	outputs, ok := resp["outputs"].([]any)
+	require.True(t, ok && len(outputs) > 0, "expected outputs, got %v", resp)
+	data, ok := outputs[0].(map[string]any)["data"].(map[string]any)
+	require.True(t, ok, "expected table data, got %v", outputs[0])
+	rows, ok := data["rows"].([]any)
+	require.True(t, ok && len(rows) > 0, "expected rows, got %v", data)
+	return rows[0].([]any)[0]
+}
+
+// getPublicDashboard fetches the public dashboard payload for a token.
+func getPublicDashboard(t *testing.T, srv *api.Server, token string) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1/public/"+token, nil)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var resp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	return resp
+}
+
+// TestDashboardGetPublished pins the wave-2 read split: once a dashboard is
+// published, a viewer's plain GET serves the latest snapshot (never draft
+// edits) with published_version set, while an editor keeps the draft and
+// ?published=1 serves the snapshot to anyone.
+func TestDashboardGetPublished(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("dash-getpub-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Dash GetPub Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, map[string]any{"auto_refresh_seconds": 15})
+	widgetA := addVersionsQueryWidget(t, srv, token, dashID, connID, "SELECT 1 AS x", 0)
+
+	// Publish v1 with the original title, settings, and one widget.
+	publishVersionsDashboard(t, srv, token, dashID)
+
+	// Draft edits after the publish: rename, change a setting, change the
+	// widget query, and add a second widget.
+	rec := versionsRequest(t, srv, token, "PUT", "/api/v1/dashboards/"+dashID,
+		map[string]any{"title": "Renamed", "settings": map[string]any{"auto_refresh_seconds": 30}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	updateWidgetQuery(t, srv, token, dashID, widgetA, "SELECT 2 AS x", connID)
+	addVersionsQueryWidget(t, srv, token, dashID, connID, "SELECT 3 AS x", 6)
+
+	var orgID string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+	viewerID := insertUser(t, srv, fmt.Sprintf("dash-getpub-viewer-%d@example.com", ts), "GetPub Viewer")
+	addOrgMember(t, srv, orgID, viewerID, "editor")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", viewerID, "view")
+	viewerToken := issueToken(t, viewerID, orgID, "editor")
+
+	// The editor's plain GET is the draft: the rename, the changed setting,
+	// both widgets, and no published_version.
+	draft := getVersionsDashboard(t, srv, token, dashID)
+	require.Equal(t, "Renamed", draft.Title)
+	require.Equal(t, 30, draft.Settings.AutoRefreshSeconds)
+	require.Nil(t, draft.PublishedVersion)
+	require.Len(t, draft.Widgets, 2)
+	foundDraftA := false
+	for _, wgt := range draft.Widgets {
+		if wgt.ID == widgetA {
+			foundDraftA = true
+			require.Equal(t, "SELECT 2 AS x", wgt.Query)
+		}
+	}
+	require.True(t, foundDraftA, "the draft must keep the edited widget")
+
+	// The view-only member's plain GET is the v1 snapshot.
+	published := getVersionsDashboard(t, srv, viewerToken, dashID)
+	require.Equal(t, "Query Dash", published.Title)
+	require.Equal(t, 15, published.Settings.AutoRefreshSeconds)
+	require.NotNil(t, published.PublishedVersion)
+	require.Equal(t, 1, published.PublishedVersion.Version)
+	require.False(t, published.PublishedVersion.CreatedAt.IsZero())
+	require.Len(t, published.Widgets, 1)
+	require.Equal(t, widgetA, published.Widgets[0].ID)
+	require.Equal(t, "SELECT 1 AS x", published.Widgets[0].Query)
+
+	// ?published=1 serves the snapshot to the editor too.
+	rec = versionsRequest(t, srv, token, "GET", "/api/v1/dashboards/"+dashID+"?published=1", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	var explicit dashboardDetailBody
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&explicit))
+	require.Equal(t, "Query Dash", explicit.Title)
+	require.Equal(t, 15, explicit.Settings.AutoRefreshSeconds)
+	require.NotNil(t, explicit.PublishedVersion)
+	require.Equal(t, 1, explicit.PublishedVersion.Version)
+	require.Len(t, explicit.Widgets, 1)
+	require.Equal(t, "SELECT 1 AS x", explicit.Widgets[0].Query)
+
+	// The view-only member's explicit request serves the same snapshot.
+	rec = versionsRequest(t, srv, viewerToken, "GET", "/api/v1/dashboards/"+dashID+"?published=1", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&explicit))
+	require.NotNil(t, explicit.PublishedVersion)
+	require.Equal(t, 1, explicit.PublishedVersion.Version)
+	require.Len(t, explicit.Widgets, 1)
+}
+
+// TestDashboardExecutePublished pins published-mode execution: an explicit
+// published:true request runs the snapshot's SQL and variable defaults and
+// 404s instead of silently falling back when nothing is published, while the
+// editor's plain run keeps the draft.
+func TestDashboardExecutePublished(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("dash-execpub-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Dash ExecPub Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 1 AS x")
+
+	publishVersionsDashboard(t, srv, token, dashID)
+	updateWidgetQuery(t, srv, token, dashID, widgetID, "SELECT 2 AS x", connID)
+
+	// published:true runs the snapshot's SQL.
+	rec := executeDashboardWidget(t, srv, token, dashID, map[string]any{
+		"widget_id": widgetID, "published": true, "bypass_cache": true,
+	})
+	require.Equal(t, float64(1), firstCellValue(t, rec))
+
+	// The editor's plain run uses the draft.
+	rec = executeDashboardWidget(t, srv, token, dashID, map[string]any{
+		"widget_id": widgetID, "bypass_cache": true,
+	})
+	require.Equal(t, float64(2), firstCellValue(t, rec))
+
+	// published:true with no published version is a 404, never a draft
+	// fallback.
+	dashUnpublished := createDashWithSettings(t, srv, token, nil)
+	widgetUnpublished := addQueryWidget(t, srv, token, dashUnpublished, connID, "SELECT 3 AS x")
+	rec = executeDashboardWidget(t, srv, token, dashUnpublished, map[string]any{
+		"widget_id": widgetUnpublished, "published": true,
+	})
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+	// A widget added after the publish is not part of the snapshot: 404.
+	widgetLater := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"connector_id": connID,
+		"query":        "SELECT 4 AS x",
+		"type":         "table",
+		"layout":       map[string]int{"row": 0, "col": 6, "width": 6, "height": 6},
+	})["id"].(string)
+	rec = executeDashboardWidget(t, srv, token, dashID, map[string]any{
+		"widget_id": widgetLater, "published": true,
+	})
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+
+	// The snapshot's variable defaults interpolate, not the draft's.
+	dashVars := createDashWithSettings(t, srv, token, map[string]any{
+		"variables": []map[string]any{
+			{"name": "who", "label": "Who", "type": "text", "default": "published"},
+		},
+	})
+	widgetVars := addQueryWidget(t, srv, token, dashVars, connID, "SELECT {{who}} AS v")
+	publishVersionsDashboard(t, srv, token, dashVars)
+	rec = versionsRequest(t, srv, token, "PUT", "/api/v1/dashboards/"+dashVars, map[string]any{
+		"settings": map[string]any{"variables": []map[string]any{
+			{"name": "who", "label": "Who", "type": "text", "default": "draft"},
+		}},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	rec = executeDashboardWidget(t, srv, token, dashVars, map[string]any{
+		"widget_id": widgetVars, "published": true, "bypass_cache": true,
+	})
+	require.Equal(t, "published", firstCellValue(t, rec))
+	rec = executeDashboardWidget(t, srv, token, dashVars, map[string]any{
+		"widget_id": widgetVars, "bypass_cache": true,
+	})
+	require.Equal(t, "draft", firstCellValue(t, rec))
+
+	// Variable options resolve the variable from the snapshot too.
+	dashOpts := createDashWithSettings(t, srv, token, map[string]any{
+		"variables": []map[string]any{{
+			"name": "city", "type": "single_select",
+			"options": map[string]any{
+				"mode": "query",
+				"query": map[string]any{
+					"connector_id": connID,
+					"sql":          "SELECT 'snap' AS label, 'snap' AS value",
+				},
+				"label_column": "label", "value_column": "value",
+			},
+		}},
+	})
+	publishVersionsDashboard(t, srv, token, dashOpts)
+	rec = versionsRequest(t, srv, token, "PUT", "/api/v1/dashboards/"+dashOpts, map[string]any{
+		"settings": map[string]any{"variables": []map[string]any{{
+			"name": "city", "type": "single_select",
+			"options": map[string]any{
+				"mode": "query",
+				"query": map[string]any{
+					"connector_id": connID,
+					"sql":          "SELECT 'draft' AS label, 'draft' AS value",
+				},
+				"label_column": "label", "value_column": "value",
+			},
+		}}},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var optsResp struct {
+		Options []struct {
+			Label string `json:"label"`
+			Value string `json:"value"`
+		} `json:"options"`
+	}
+	rec = dashboardVariableOptions(t, srv, token, dashOpts, "city", map[string]any{"published": true})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&optsResp))
+	require.Len(t, optsResp.Options, 1)
+	require.Equal(t, "snap", optsResp.Options[0].Value)
+
+	rec = dashboardVariableOptions(t, srv, token, dashOpts, "city", nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&optsResp))
+	require.Len(t, optsResp.Options, 1)
+	require.Equal(t, "draft", optsResp.Options[0].Value)
+
+	// published:true options on a never-published dashboard are a 404.
+	dashOptsUnpublished := createDashWithSettings(t, srv, token, map[string]any{
+		"variables": []map[string]any{{
+			"name": "city", "type": "single_select",
+			"options": map[string]any{
+				"mode": "query",
+				"query": map[string]any{
+					"connector_id": connID,
+					"sql":          "SELECT 'x' AS label, 'x' AS value",
+				},
+				"label_column": "label", "value_column": "value",
+			},
+		}},
+	})
+	rec = dashboardVariableOptions(t, srv, token, dashOptsUnpublished, "city", map[string]any{"published": true})
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// TestPublicDashboardPublished pins the public read split: once a version
+// exists, the public page and its live queries serve the snapshot, and a
+// widget that only exists in the draft is a 404.
+func TestPublicDashboardPublished(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("dash-pubpub-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Dash PubPub Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, map[string]any{"public_live": true})
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 1 AS x")
+	publicToken := shareDashboard(t, srv, token, dashID)
+
+	publishVersionsDashboard(t, srv, token, dashID)
+
+	// Draft edits after the publish: rename, change the widget query, and add
+	// a widget.
+	rec := versionsRequest(t, srv, token, "PUT", "/api/v1/dashboards/"+dashID, map[string]any{"title": "Renamed"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	updateWidgetQuery(t, srv, token, dashID, widgetID, "SELECT 2 AS x", connID)
+	widgetLater := addWidgetRaw(t, srv, token, dashID, map[string]any{
+		"connector_id": connID,
+		"query":        "SELECT 3 AS x",
+		"type":         "table",
+		"layout":       map[string]int{"row": 0, "col": 6, "width": 6, "height": 6},
+	})["id"].(string)
+
+	// The public page serves the snapshot.
+	resp := getPublicDashboard(t, srv, publicToken)
+	require.Equal(t, "Query Dash", resp["title"])
+	publishedVersion, ok := resp["published_version"].(map[string]any)
+	require.True(t, ok, "published_version missing: %v", resp)
+	require.Equal(t, float64(1), publishedVersion["version"])
+	widgets, ok := resp["widgets"].([]any)
+	require.True(t, ok)
+	require.Len(t, widgets, 1)
+	require.Equal(t, widgetID, widgets[0].(map[string]any)["id"])
+	require.Equal(t, "SELECT 1 AS x", widgets[0].(map[string]any)["query"])
+
+	// Public execution runs the snapshot's SQL.
+	rec = publicDashboardExecute(t, srv, publicToken, map[string]any{"widget_id": widgetID, "bypass_cache": true})
+	require.Equal(t, float64(1), firstCellValue(t, rec))
+
+	// A widget that exists only in the draft is not served: 404, no fallback.
+	rec = publicDashboardExecute(t, srv, publicToken, map[string]any{"widget_id": widgetLater})
+	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+// TestDashboardDocAclPublished pins the draft-doc ACL change: once a
+// dashboard has a published version, the live document is editor-only for
+// both the relay's GET/PUT and the collab authorize endpoint, while a
+// never-published dashboard keeps the #245 viewer behavior (read-only).
+func TestDashboardDocAclPublished(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	db := setupTestDB(t)
+	ctx := context.Background()
+
+	ts := time.Now().UnixNano()
+	ownerToken := registerAndGetToken(t, srv, fmt.Sprintf("dash-docacl-owner-%d@example.com", ts), "Dash DocACL Org")
+	dashID := createDashWithSettings(t, srv, ownerToken, nil)
+	var orgID string
+	require.NoError(t, db.Pool.QueryRow(ctx, `SELECT org_id FROM dashboards WHERE id = $1`, dashID).Scan(&orgID))
+
+	viewerID := insertUser(t, srv, fmt.Sprintf("dash-docacl-viewer-%d@example.com", ts), "DocACL Viewer")
+	addOrgMember(t, srv, orgID, viewerID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", viewerID, "view")
+	viewerToken := issueToken(t, viewerID, orgID, "non-admin")
+
+	editorID := insertUser(t, srv, fmt.Sprintf("dash-docacl-editor-%d@example.com", ts), "DocACL Editor")
+	addOrgMember(t, srv, orgID, editorID, "non-admin")
+	grantACL(t, srv, orgID, "dashboard", dashID, "user", editorID, "edit")
+	editorToken := issueToken(t, editorID, orgID, "non-admin")
+
+	// Before any publish the #245 behavior stands: a viewer loads the draft
+	// read-only through the relay and authorize says can_edit=false.
+	rec := internalDashboardDocRequest(t, srv, viewerToken, "GET", dashID, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = collabAuthorize(t, srv, viewerToken, "dashboard:"+dashID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, false, decodeCollabAuthorize(t, rec)["can_edit"])
+
+	// Publish v1.
+	publishVersionsDashboard(t, srv, ownerToken, dashID)
+
+	// The viewer loses both draft reads and relay authorization.
+	rec = internalDashboardDocRequest(t, srv, viewerToken, "GET", dashID, nil)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+	rec = collabAuthorize(t, srv, viewerToken, "dashboard:"+dashID)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	// A viewer's idempotent store is refused too: the draft is editor-only.
+	rec = internalDashboardDocRequest(t, srv, viewerToken, "PUT", dashID, dashboardDocState(t, srv, dashID))
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+
+	// The editor keeps the draft, read-write.
+	rec = internalDashboardDocRequest(t, srv, editorToken, "GET", dashID, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	rec = collabAuthorize(t, srv, editorToken, "dashboard:"+dashID)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Equal(t, true, decodeCollabAuthorize(t, rec)["can_edit"])
 }

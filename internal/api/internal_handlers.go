@@ -117,6 +117,18 @@ func (s *Server) handleInternalYjsPut(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// dashboardHasPublishedVersion reports whether the dashboard has at least one
+// published version. The internal relay routes use it to make the draft
+// document editor-only once a dashboard is published: viewers read the
+// snapshot through the REST shapes instead.
+func (s *Server) dashboardHasPublishedVersion(ctx context.Context, orgID, dashID string) (bool, error) {
+	var exists bool
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM dashboard_versions WHERE dashboard_id = $1 AND org_id = $2)`,
+		dashID, orgID).Scan(&exists)
+	return exists, err
+}
+
 // @Summary Get dashboard Yjs document
 // @Description Returns the Yjs document state for a dashboard, lazily seeding it from the dashboards/widgets rows on first access (internal relay endpoint)
 // @Tags internal
@@ -160,10 +172,29 @@ func (s *Server) handleInternalDashboardYjsGet(w http.ResponseWriter, r *http.Re
 	// denied caller cannot create state. loadOrSeedDashboardDoc locks the
 	// dashboards row FOR UPDATE exactly like MergeAndStore, so a lazy seed and
 	// a concurrent store serialize on the same row.
+	//
+	// Once a version is published the draft document is editor-only: viewers
+	// read the snapshot through the REST shapes instead. Before the first
+	// publish the pre-publish behavior (edit / view / view_with_data) still
+	// applies.
 	allowed, err := s.dashboardDocReadable(ctx, claims, dashID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "permission check failed")
 		return
+	}
+	if allowed {
+		published, err := s.dashboardHasPublishedVersion(ctx, claims.OrgID, dashID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		if published {
+			allowed, err = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "permission check failed")
+				return
+			}
+		}
 	}
 	if !allowed {
 		writeError(w, http.StatusForbidden, "forbidden")
@@ -232,6 +263,26 @@ func (s *Server) handleInternalDashboardYjsPut(w http.ResponseWriter, r *http.Re
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
+	}
+
+	// Once a version is published the draft document is editor-only, so even
+	// a viewer token's idempotent flush is refused here (the merged-projection
+	// validator below would allow it).
+	published, err := s.dashboardHasPublishedVersion(ctx, claims.OrgID, dashID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	if published {
+		canEdit, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "edit")
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		if !canEdit {
+			writeError(w, http.StatusForbidden, "forbidden")
+			return
+		}
 	}
 
 	// The validator runs inside the merge transaction: the actor must hold
@@ -342,6 +393,18 @@ func (s *Server) handleInternalCollabAuthorize(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if !canEdit {
+		// Once a version is published the draft document is editor-only:
+		// viewers read the snapshot through the REST shapes instead of a
+		// read-only relay connection.
+		published, err := s.dashboardHasPublishedVersion(ctx, claims.OrgID, dashID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		if published {
+			writeError(w, http.StatusForbidden, "access denied")
+			return
+		}
 		// view_with_data does not imply view in the ACL resolver, so a
 		// data-only viewer must be checked explicitly (mirrors handleGetDashboard).
 		canView, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", dashID, "view")

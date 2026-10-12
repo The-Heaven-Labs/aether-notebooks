@@ -34,16 +34,68 @@ const (
 // from HTTP cell execution, which treats timeout_seconds = 0 as unlimited.
 const dashboardQueryDefaultTimeout = 5 * time.Minute
 
+// errNoPublishedVersion reports that a published-mode read addressed a
+// dashboard that has never been published. Published-mode callers never fall
+// back to the draft: the draft may contain unpublished edits.
+var errNoPublishedVersion = errors.New("dashboard has no published version")
+
+// publishedDashboardSnapshot is a decoded latest-version read: the snapshot
+// identity plus the content the REST read paths serve.
+type publishedDashboardSnapshot struct {
+	Version   int
+	CreatedAt time.Time
+	Title     string
+	Widgets   []snapshotWidget
+	Settings  models.DashboardSettings
+}
+
+// loadPublishedDashboardSnapshot loads and decodes the dashboard's latest
+// published version. It returns errNoPublishedVersion when the dashboard has
+// never been published, so callers can distinguish "nothing published yet"
+// from a real failure without ever falling back to the draft.
+func (s *Server) loadPublishedDashboardSnapshot(ctx context.Context, orgID, dashID string) (*publishedDashboardSnapshot, error) {
+	ver, err := s.loadLatestDashboardVersion(ctx, orgID, dashID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, errNoPublishedVersion
+	}
+	if err != nil {
+		return nil, err
+	}
+	var widgets []snapshotWidget
+	if err := json.Unmarshal(ver.Widgets, &widgets); err != nil {
+		return nil, fmt.Errorf("decode dashboard version widgets: %w", err)
+	}
+	settings, err := dashboardSnapshotSettings(ver.Settings)
+	if err != nil {
+		return nil, fmt.Errorf("decode dashboard version settings: %w", err)
+	}
+	return &publishedDashboardSnapshot{
+		Version:   ver.Version,
+		CreatedAt: ver.CreatedAt,
+		Title:     ver.Title,
+		Widgets:   widgets,
+		Settings:  settings,
+	}, nil
+}
+
 type dashboardExecuteRequest struct {
 	WidgetID    string         `json:"widget_id"`
 	ConnectorID string         `json:"connector_id,omitempty"` // viewer's dashboard selector
 	Variables   map[string]any `json:"variables,omitempty"`
 	BypassCache bool           `json:"bypass_cache,omitempty"`
+	// Published selects the latest published snapshot instead of the draft.
+	// A published-mode request never falls back: an unpublished dashboard is
+	// a 404.
+	Published bool `json:"published,omitempty"`
 }
 
 type dashboardVariableOptionsRequest struct {
 	ConnectorID string         `json:"connector_id,omitempty"` // viewer's dashboard selector
 	Variables   map[string]any `json:"variables,omitempty"`
+	// Published selects the latest published snapshot instead of the draft.
+	// A published-mode request never falls back: an unpublished dashboard is
+	// a 404.
+	Published bool `json:"published,omitempty"`
 }
 
 type dashboardQueryResponse struct {
@@ -128,14 +180,51 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	widget, err := s.loadQueryWidget(ctx, dashID, req.WidgetID)
-	if err == pgx.ErrNoRows {
-		writeError(w, http.StatusNotFound, "widget not found")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
+	var (
+		widget       *models.Widget
+		variables    []models.DashboardVariable
+		cacheSeconds *int
+	)
+	if req.Published {
+		// Published mode never falls back to the draft: a missing version is
+		// a 404, and the snapshot's widget set and variables are authoritative.
+		snapshot, snapErr := s.loadPublishedDashboardSnapshot(ctx, claims.OrgID, dashID)
+		if errors.Is(snapErr, errNoPublishedVersion) {
+			writeError(w, http.StatusNotFound, "dashboard has no published version")
+			return
+		}
+		if snapErr != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		for _, sw := range snapshot.Widgets {
+			if sw.ID == req.WidgetID {
+				wgt := snapshotWidgetToModel(dashID, sw)
+				widget = &wgt
+				break
+			}
+		}
+		if widget == nil {
+			writeError(w, http.StatusNotFound, "widget not found")
+			return
+		}
+		variables = snapshot.Settings.Variables
+		cacheSeconds = snapshot.Settings.QueryCacheSeconds
+		if cacheSeconds == nil {
+			cacheSeconds = dash.Settings.QueryCacheSeconds
+		}
+	} else {
+		widget, err = s.loadQueryWidget(ctx, dashID, req.WidgetID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "widget not found")
+			return
+		}
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		variables = dash.Settings.Variables
+		cacheSeconds = dash.Settings.QueryCacheSeconds
 	}
 	if widget.ConnectorID == nil || widget.Query == nil {
 		writeError(w, http.StatusBadRequest, "widget is not a query widget")
@@ -152,11 +241,11 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+	if err := dashboard.ValidateVariables(variables); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sqlText, err := dashboard.Interpolate(*widget.Query, dash.Settings.Variables, req.Variables)
+	sqlText, err := dashboard.Interpolate(*widget.Query, variables, req.Variables)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -169,7 +258,7 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 		WarehouseID:  warehouseID,
 		SQL:          sqlText,
 		BypassCache:  req.BypassCache,
-		CacheSeconds: dash.Settings.QueryCacheSeconds,
+		CacheSeconds: cacheSeconds,
 	})
 	if err != nil {
 		writeDashboardQueryError(w, err)
@@ -241,7 +330,33 @@ func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	v := findDashboardVariable(dash.Settings.Variables, name)
+	// Published mode resolves the variable from the snapshot (never the
+	// draft); an unpublished dashboard is a 404, never a silent fallback.
+	var (
+		variables    []models.DashboardVariable
+		cacheSeconds *int
+	)
+	if req.Published {
+		snapshot, snapErr := s.loadPublishedDashboardSnapshot(ctx, claims.OrgID, dashID)
+		if errors.Is(snapErr, errNoPublishedVersion) {
+			writeError(w, http.StatusNotFound, "dashboard has no published version")
+			return
+		}
+		if snapErr != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		variables = snapshot.Settings.Variables
+		cacheSeconds = snapshot.Settings.QueryCacheSeconds
+		if cacheSeconds == nil {
+			cacheSeconds = dash.Settings.QueryCacheSeconds
+		}
+	} else {
+		variables = dash.Settings.Variables
+		cacheSeconds = dash.Settings.QueryCacheSeconds
+	}
+
+	v := findDashboardVariable(variables, name)
 	if v == nil {
 		writeError(w, http.StatusNotFound, "variable not found")
 		return
@@ -250,11 +365,11 @@ func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusBadRequest, "variable has no query-backed options")
 		return
 	}
-	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+	if err := dashboard.ValidateVariables(variables); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sqlText, err := dashboard.Interpolate(v.Options.Query.SQL, dash.Settings.Variables, req.Variables)
+	sqlText, err := dashboard.Interpolate(v.Options.Query.SQL, variables, req.Variables)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -272,7 +387,7 @@ func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.R
 		ConnectorID:     servedConnector,
 		WarehouseID:     warehouseID,
 		SQL:             sqlText,
-		CacheSeconds:    dash.Settings.QueryCacheSeconds,
+		CacheSeconds:    cacheSeconds,
 		MaxRowsOverride: dashboardOptionMaxRows,
 		Timeout:         dashboardOptionTimeout,
 	})
@@ -628,6 +743,36 @@ func (s *Server) resolvePublicDashboard(ctx context.Context, token string) (*mod
 	return &d, nil
 }
 
+// publicDashboardQueryContent resolves the widget, variable set, and cache TTL
+// a public run must use: the latest published snapshot when one exists (public
+// pages never show drafts), the live draft when the dashboard has never been
+// published. pgx.ErrNoRows means the served content has no such widget; other
+// errors are load failures.
+func (s *Server) publicDashboardQueryContent(ctx context.Context, dash *models.Dashboard, widgetID string) (*models.Widget, []models.DashboardVariable, *int, error) {
+	snapshot, err := s.loadPublishedDashboardSnapshot(ctx, dash.OrgID, dash.ID)
+	if errors.Is(err, errNoPublishedVersion) {
+		widget, err := s.loadQueryWidget(ctx, dash.ID, widgetID)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		return widget, dash.Settings.Variables, dash.Settings.QueryCacheSeconds, nil
+	}
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	cacheSeconds := snapshot.Settings.QueryCacheSeconds
+	if cacheSeconds == nil {
+		cacheSeconds = dash.Settings.QueryCacheSeconds
+	}
+	for _, sw := range snapshot.Widgets {
+		if sw.ID == widgetID {
+			widget := snapshotWidgetToModel(dash.ID, sw)
+			return &widget, snapshot.Settings.Variables, cacheSeconds, nil
+		}
+	}
+	return nil, nil, nil, pgx.ErrNoRows
+}
+
 // @Summary Execute a public dashboard query widget
 // @Description Runs one query widget of a publicly shared dashboard when settings.public_live is enabled. Queries run as the dashboard creator and are rate-limited per token and client IP.
 // @Tags public
@@ -658,8 +803,8 @@ func (s *Server) handlePublicDashboardExecute(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusForbidden, "live queries are not enabled for this dashboard")
 		return
 	}
-	widget, err := s.loadQueryWidget(ctx, dash.ID, req.WidgetID)
-	if err == pgx.ErrNoRows {
+	widget, variables, cacheSeconds, err := s.publicDashboardQueryContent(ctx, dash, req.WidgetID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "widget not found")
 		return
 	}
@@ -671,11 +816,11 @@ func (s *Server) handlePublicDashboardExecute(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusBadRequest, "only SQL query widgets can be executed")
 		return
 	}
-	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+	if err := dashboard.ValidateVariables(variables); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sqlText, err := dashboard.Interpolate(*widget.Query, dash.Settings.Variables, req.Variables)
+	sqlText, err := dashboard.Interpolate(*widget.Query, variables, req.Variables)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -686,7 +831,7 @@ func (s *Server) handlePublicDashboardExecute(w http.ResponseWriter, r *http.Req
 		ConnectorID:  *widget.ConnectorID,
 		SQL:          sqlText,
 		BypassCache:  req.BypassCache,
-		CacheSeconds: dash.Settings.QueryCacheSeconds,
+		CacheSeconds: cacheSeconds,
 		CacheScope:   "token:" + token,
 	})
 	if err != nil {
@@ -727,7 +872,28 @@ func (s *Server) handlePublicDashboardVariableOptions(w http.ResponseWriter, r *
 		writeError(w, http.StatusForbidden, "live queries are not enabled for this dashboard")
 		return
 	}
-	v := findDashboardVariable(dash.Settings.Variables, name)
+	// Public pages always serve the latest published snapshot; only a
+	// never-published dashboard resolves against the draft.
+	var (
+		variables    []models.DashboardVariable
+		cacheSeconds *int
+	)
+	snapshot, snapErr := s.loadPublishedDashboardSnapshot(ctx, dash.OrgID, dash.ID)
+	if snapErr == nil {
+		variables = snapshot.Settings.Variables
+		cacheSeconds = snapshot.Settings.QueryCacheSeconds
+	} else if errors.Is(snapErr, errNoPublishedVersion) {
+		variables = dash.Settings.Variables
+		cacheSeconds = dash.Settings.QueryCacheSeconds
+	} else {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	if cacheSeconds == nil {
+		cacheSeconds = dash.Settings.QueryCacheSeconds
+	}
+
+	v := findDashboardVariable(variables, name)
 	if v == nil {
 		writeError(w, http.StatusNotFound, "variable not found")
 		return
@@ -736,11 +902,11 @@ func (s *Server) handlePublicDashboardVariableOptions(w http.ResponseWriter, r *
 		writeError(w, http.StatusBadRequest, "variable has no query-backed options")
 		return
 	}
-	if err := dashboard.ValidateVariables(dash.Settings.Variables); err != nil {
+	if err := dashboard.ValidateVariables(variables); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	sqlText, err := dashboard.Interpolate(v.Options.Query.SQL, dash.Settings.Variables, req.Variables)
+	sqlText, err := dashboard.Interpolate(v.Options.Query.SQL, variables, req.Variables)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
@@ -750,7 +916,7 @@ func (s *Server) handlePublicDashboardVariableOptions(w http.ResponseWriter, r *
 		Identity:        dashboardIdentity{UserID: dash.CreatedBy, Role: "viewer"},
 		ConnectorID:     v.Options.Query.ConnectorID,
 		SQL:             sqlText,
-		CacheSeconds:    dash.Settings.QueryCacheSeconds,
+		CacheSeconds:    cacheSeconds,
 		MaxRowsOverride: dashboardOptionMaxRows,
 		Timeout:         dashboardOptionTimeout,
 		CacheScope:      "token:" + token,
