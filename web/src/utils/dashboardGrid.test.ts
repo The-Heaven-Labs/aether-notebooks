@@ -21,6 +21,13 @@ describe('rescaleWidgetLayouts', () => {
     ])
   })
 
+  test('preserves layout.tab across a rescale', () => {
+    const w = widget('a', 0, 0, 6, 8)
+    w.layout.tab = 'overview'
+    const out = rescaleWidgetLayouts([w], 12, 6)
+    expect(out).toEqual([{ id: 'a', layout: { col: 0, row: 0, width: 3, height: 8, tab: 'overview' } }])
+  })
+
   test('keeps every widget inside the new grid', () => {
     const widgets = [widget('a', 8, 0, 4, 5)]
     const out = rescaleWidgetLayouts(widgets, 12, 8)

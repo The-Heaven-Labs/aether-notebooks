@@ -238,7 +238,7 @@ describe('DashboardEditorPage live document wiring', () => {
     expect(screen.queryByLabelText('Edit Rest widget')).not.toBeInTheDocument()
   })
 
-  test('a drag/resize stop writes the layout to the document and never PUTs the widget', async () => {
+  test('a drag/resize stop writes the layout, tab included, to the document and never PUTs the widget', async () => {
     let widgetPuts = 0
     server.use(
       http.put('/api/v1/dashboards/d1/widgets/w1', () => {
@@ -250,7 +250,7 @@ describe('DashboardEditorPage live document wiring', () => {
       synced: true,
       connected: true,
       title: 'Ops board',
-      widgets: [widget()],
+      widgets: [widget({ layout: { row: 0, col: 0, width: 6, height: 8, tab: 'overview' } })],
     })
 
     renderEditor()
@@ -258,12 +258,14 @@ describe('DashboardEditorPage live document wiring', () => {
     expect(screen.getByTestId('grid')).toHaveAttribute('data-drag-enabled', 'true')
 
     fireEvent.click(screen.getByTestId('drag-stop'))
-    expect(docStore.mutators.updateLayout).toHaveBeenCalledWith('w1', { row: 4, col: 3, width: 6, height: 8 })
+    expect(docStore.mutators.updateLayout).toHaveBeenCalledWith(
+      'w1', { row: 4, col: 3, width: 6, height: 8, tab: 'overview' })
 
     // The mocked store does not echo the doc write back, so the resize still
     // starts from the REST/doc layout the page rendered.
     fireEvent.click(screen.getByTestId('resize-stop'))
-    expect(docStore.mutators.updateLayout).toHaveBeenCalledWith('w1', { row: 0, col: 0, width: 8, height: 10 })
+    expect(docStore.mutators.updateLayout).toHaveBeenCalledWith(
+      'w1', { row: 0, col: 0, width: 8, height: 10, tab: 'overview' })
 
     expect(widgetPuts).toBe(0)
   })

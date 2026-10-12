@@ -53,6 +53,6 @@ export function rescaleWidgetLayouts(
   const byId = new Map(placed.map(r => [r.id, r]))
   return widgets.map(w => {
     const r = byId.get(w.id)!
-    return { id: w.id, layout: { row: r.y, col: r.x, width: r.w, height: r.h } }
+    return { id: w.id, layout: { ...w.layout, row: r.y, col: r.x, width: r.w, height: r.h } }
   })
 }

@@ -188,7 +188,8 @@ function projectLayout(value: unknown): Widget['layout'] {
     height: layoutNumber(lm?.get('height')),
   }
   const tab = lm?.get('tab')
-  if (typeof tab === 'string' && tab !== '') layout.tab = tab
+  // Go's readLayout treats a tab over 64 chars as unset; mirror it.
+  if (typeof tab === 'string' && tab !== '' && tab.length <= 64) layout.tab = tab
   return layout
 }
 

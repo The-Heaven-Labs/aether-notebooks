@@ -192,7 +192,7 @@ func validateWidgetTab(tab string) error {
 		return nil
 	}
 	if len(tab) > maxDashboardTabIDLen || !dashboardTabIDPattern.MatchString(tab) {
-		return fmt.Errorf("invalid tab id %q (lowercase letters, digits, and dashes only, at most %d characters)", tab, maxDashboardTabIDLen)
+		return fmt.Errorf("invalid tab id %q (lowercase letters, digits, and dashes only, must start with a letter or digit, at most %d characters)", tab, maxDashboardTabIDLen)
 	}
 	return nil
 }

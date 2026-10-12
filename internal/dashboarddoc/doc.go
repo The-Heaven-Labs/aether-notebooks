@@ -17,7 +17,7 @@
 //	widgets         Y.Map<widgetUUID, Y.Map>
 //	 ├ type, connector_id, language, notebook_id, cell_id   (strings; "" = unset)
 //	 ├ config       JSON string      (whole-value LWW; chart options don't merge field-wise)
-//	 ├ layout       Y.Map { row, col, width, height }
+//	 ├ layout       Y.Map { row, col, width, height, tab? }
 //	 └ query        Y.Text           (SQL — character-level co-editing in the drawer)
 //
 // This matches docs/plans/2026-10-09-dashboard-live-collab-and-shared-cache-design.md

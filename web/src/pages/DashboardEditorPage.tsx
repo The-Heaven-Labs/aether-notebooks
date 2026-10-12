@@ -291,7 +291,7 @@ const markSaved = useCallback(() => {
       const prev = widget.layout
       if (prev.col === item.x && prev.row === item.y &&
           prev.width === item.w && prev.height === item.h) return
-      updateDocLayout(item.i, { row: item.y, col: item.x, width: item.w, height: item.h })
+      updateDocLayout(item.i, { ...prev, row: item.y, col: item.x, width: item.w, height: item.h })
     })
   }, [editingEnabled, widgets, updateDocLayout])
 
