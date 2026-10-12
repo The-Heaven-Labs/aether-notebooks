@@ -24,12 +24,23 @@ const TEXT_CONTRAST_MIN = 4.5
 const ACCENT_CONTRAST_MIN = 3
 
 /**
- * The scheme's default page-canvas value (theme.css `--bg-primary`), used as
- * the contrast baseline when the theme does not override the background.
+ * The scheme's default canvas / card / text values (theme.css `--bg-primary`,
+ * `--bg-card`, `--text-primary`), used as the contrast baseline whenever the
+ * theme does not override the corresponding token.
  */
 const DEFAULT_CANVAS: Record<AppColorScheme, string> = {
   light: '#f5f5f5',
   dark: '#141414',
+}
+
+const DEFAULT_CARD: Record<AppColorScheme, string> = {
+  light: '#ffffff',
+  dark: '#1c1c1c',
+}
+
+const DEFAULT_TEXT: Record<AppColorScheme, string> = {
+  light: '#111',
+  dark: '#e8e8e8',
 }
 
 /** The curated, self-hosted font choices. No third-party font requests. */
@@ -75,7 +86,14 @@ export function contrastRatio(fg: string, bg: string): number | null {
 }
 
 function validHex(value: unknown): string | undefined {
-  return typeof value === 'string' && hexToRgb(value) !== null ? value : undefined
+  if (typeof value !== 'string') return undefined
+  const trimmed = value.trim()
+  return hexToRgb(trimmed) !== null ? trimmed : undefined
+}
+
+/** Whether `fg` clears `min` against `bg`. Unparseable pairs count as failures. */
+function readable(fg: string, bg: string, min: number): boolean {
+  return (contrastRatio(fg, bg) ?? 0) >= min
 }
 
 /**
@@ -87,15 +105,15 @@ function validHex(value: unknown): string | undefined {
 function firstContrasting(candidates: Array<string | undefined>, background: string, min: number): string | undefined {
   for (const candidate of candidates) {
     const hex = validHex(candidate)
-    if (hex && (contrastRatio(hex, background) ?? 0) >= min) return hex
+    if (hex && readable(hex, background, min)) return hex
   }
   return undefined
 }
 
-/** Filters a palette down to its hex entries; absent/empty results mean "no override". */
+/** Filters a palette down to its hex entries (trimmed); absent/empty results mean "no override". */
 function pickPalette(palette: string[] | undefined): string[] | undefined {
   if (!palette) return undefined
-  const valid = palette.filter((c): c is string => validHex(c) !== undefined)
+  const valid = palette.map(validHex).filter((c): c is string => c !== undefined)
   return valid.length > 0 ? valid : undefined
 }
 
@@ -103,9 +121,12 @@ function pickPalette(palette: string[] | undefined): string[] | undefined {
  * Resolves the app surface's theme.
  *
  * Precedence: dashboard tokens > org branding > the stylesheet defaults.
- * Color overrides that fail their WCAG guardrail (text ≥ 4.5:1, accent ≥ 3:1
- * against the effective canvas) are dropped independently, as are non-hex
- * values and invalid palettes.
+ * Guardrails validate the *effective* pairs, not just the overrides: text
+ * (override or scheme default) must clear 4.5:1 against both the canvas and
+ * the card it can sit on, and accent must clear 3:1 against the final canvas.
+ * Failing tokens fall back independently — a text override that can't be read
+ * drops to the scheme default, and a background/surface override the default
+ * text can't be read on reverts to the scheme default.
  */
 export function resolveAppTheme(
   theme: DashboardAppTheme | null | undefined,
@@ -119,21 +140,43 @@ export function resolveAppTheme(
 
   // background maps to the page canvas (`--bg-primary`); surface maps to the
   // card background (`--bg-card`), matching what Wave 1's app surface uses.
-  const background = validHex(theme?.background)
-  if (background) vars['--bg-primary'] = background
-  const surface = validHex(theme?.surface)
-  if (surface) vars['--bg-card'] = surface
+  // `border` deliberately targets only `--border-light` (the card/app-surface
+  // hairline token), not the heavier `--border` used by editor controls.
+  let background = validHex(theme?.background)
+  let surface = validHex(theme?.surface)
   const border = validHex(theme?.border)
+
+  // A text override must be readable on every surface it can sit on: the
+  // effective canvas and the effective card (override when it applies, the
+  // scheme default otherwise).
+  const textOverride = validHex(theme?.text)
+  const text =
+    textOverride !== undefined &&
+    readable(textOverride, background ?? DEFAULT_CANVAS[scheme], TEXT_CONTRAST_MIN) &&
+    readable(textOverride, surface ?? DEFAULT_CARD[scheme], TEXT_CONTRAST_MIN)
+      ? textOverride
+      : undefined
+
+  // No text override survives: the scheme-default text is what renders, so a
+  // background/surface override that makes it unreadable falls back too.
+  if (!text) {
+    const defaultText = DEFAULT_TEXT[scheme]
+    if (background && !readable(defaultText, background, TEXT_CONTRAST_MIN)) background = undefined
+    if (surface && !readable(defaultText, surface, TEXT_CONTRAST_MIN)) surface = undefined
+  }
+
+  if (background) vars['--bg-primary'] = background
+  if (surface) vars['--bg-card'] = surface
   if (border) vars['--border-light'] = border
-
-  // Overrides must be readable on the canvas they actually sit on: the themed
-  // background when it applies, otherwise the scheme's default canvas.
-  const canvas = background ?? DEFAULT_CANVAS[scheme]
-
-  const accent = firstContrasting([theme?.accent, branding?.accent_color], canvas, ACCENT_CONTRAST_MIN)
-  if (accent) vars['--accent'] = accent
-  const text = firstContrasting([theme?.text], canvas, TEXT_CONTRAST_MIN)
   if (text) vars['--text-primary'] = text
+
+  // Accent is validated against the final canvas, after any reversion above.
+  const accent = firstContrasting(
+    [theme?.accent, branding?.accent_color],
+    background ?? DEFAULT_CANVAS[scheme],
+    ACCENT_CONTRAST_MIN,
+  )
+  if (accent) vars['--accent'] = accent
 
   const radius = theme?.radius
   if (typeof radius === 'number' && Number.isFinite(radius) && radius >= 0) {
