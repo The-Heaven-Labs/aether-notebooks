@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect, useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
 import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
@@ -17,6 +17,8 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
+import { AppTabs } from '../components/AppTabs'
+import { activeTabId, widgetsInTab } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { isTextPanel } from '../utils/widgetKind'
@@ -240,6 +242,9 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit, onFetchingCh
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
   const { user } = useAuth()
+  // The active chapter rides the URL (`?tab=`) so shared links and reloads
+  // land on the same tab.
+  const [searchParams, setSearchParams] = useSearchParams()
   const userEmail = localStorage.getItem('aether_user_email') ?? ''
   const { selected, suggestion, select, resolving } = useDashboardConnector(id, user?.user_id ?? '')
   // The live default (viewer's sole warehouse preference) is preselected;
@@ -424,6 +429,25 @@ function DashboardContent({ id }: { id: string }) {
       : dashboard?.settings),
     [liveDoc.synced, liveDoc.settings, liveDoc.variables, dashboard?.settings],
   )
+
+  // Chapters: `settings.tabs` arrives with the dashboard response (draft or
+  // published snapshot). No tabs means no bar and every widget renders.
+  const tabs = settings?.tabs ?? []
+  const requestedTab = searchParams.get('tab')
+  const activeTab = activeTabId(tabs, requestedTab)
+  const tabWidgets = useMemo(
+    () => widgetsInTab(widgets, tabs, requestedTab),
+    [widgets, tabs, requestedTab],
+  )
+  // Replacing (not pushing) keeps tab switches out of the back stack, like
+  // the filter strip's own URL writes.
+  const handleTabChange = useCallback((tabId: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('tab', tabId)
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
 
   // Grid density and the refresh cadence are persisted dashboard settings, so
   // they are edit actions — viewers don't get to restyle the shared board.
@@ -661,6 +685,16 @@ function DashboardContent({ id }: { id: string }) {
           )}
       </AppHeader>
 
+      {/* Chapter tablist (The Story): the dashboard's tabs under the masthead;
+          hidden entirely when no tabs are defined. */}
+      {tabs.length > 0 && (
+        <div style={styles.tabStrip}>
+          <div style={contentWidth}>
+            <AppTabs tabs={tabs} activeId={activeTab} onChange={handleTabChange} />
+          </div>
+        </div>
+      )}
+
       {/* Quiet filter strip: the variable bar loses its panel chrome inside
           (see .app-filter-strip) and is constrained to the masthead width. */}
       {variables.length > 0 && (
@@ -679,17 +713,17 @@ function DashboardContent({ id }: { id: string }) {
             title="This app has no widgets yet"
             text="Add widgets in the dashboard editor."
           />
-        ) : widgets.length === 0 ? null : (
+        ) : tabWidgets.length === 0 ? null : (
           <div ref={gridRef}>
             <GridLayout
-              layout={widgets.map(toGridItem)}
+              layout={tabWidgets.map(toGridItem)}
               width={containerWidth}
               gridConfig={{ cols: settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
               dragConfig={{ enabled: false }}
               resizeConfig={{ enabled: false }}
               style={{ minHeight: 240 }}
             >
-              {widgets.map((widget) => (
+              {tabWidgets.map((widget) => (
                 <WidgetFrame key={widget.id} appearance={appearanceFrom(widget.config)}>
                   {isQueryWidget(widget) ? (
                     <QueryDataWidget
@@ -753,6 +787,11 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: '50%',
     background: 'var(--accent)',
     opacity: 0.5,
+  },
+  // The chapter strip: same side padding rhythm as the filter strip below it;
+  // the tablist draws its own hairline.
+  tabStrip: {
+    padding: '8px 32px 0',
   },
   // Masthead controls sit on the page canvas (not the dark nav chrome), so
   // they use the body token family. min-height 36 keeps the app surface's

@@ -1,5 +1,5 @@
 import { useRef, useState, useCallback } from 'react'
-import { useParams } from 'react-router-dom'
+import { useParams, useSearchParams } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -10,6 +10,8 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { AppThemeProvider } from '../components/AppThemeProvider'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
+import { AppTabs } from '../components/AppTabs'
+import { activeTabId, widgetsInTab } from '../utils/dashboardTabs'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { TextWidget } from '../components/TextWidget'
 import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
@@ -32,6 +34,8 @@ const MARGIN = 4
 
 export function PublicDashboardPage() {
   const { token } = useParams<{ token: string }>()
+  // The active chapter rides the URL (`?tab=`) next to the token route.
+  const [searchParams, setSearchParams] = useSearchParams()
   const { data: dashboard, isLoading, error } = useQuery({
     queryKey: ['public', token],
     queryFn: () => api.get<DashboardWithWidgets>(`/api/v1/public/${token}`),
@@ -88,6 +92,19 @@ export function PublicDashboardPage() {
   const defaults = variableDefaults(variables)
   const endpointBase = `/api/v1/public/${token}`
   const shownWidgets = visibleWidgets(widgets, widgetsData, publicLive)
+  // Chapters: `settings.tabs` rides the published snapshot; the public page
+  // filters client-side exactly like the viewer. No tabs means no bar.
+  const tabs = dashboard.settings?.tabs ?? []
+  const requestedTab = searchParams.get('tab')
+  const activeTab = activeTabId(tabs, requestedTab)
+  const tabWidgets = widgetsInTab(shownWidgets, tabs, requestedTab)
+  const handleTabChange = (tabId: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('tab', tabId)
+      return next
+    }, { replace: true })
+  }
   const cols = dashboard.settings?.grid_cols ?? 12
   const colWidth = (containerWidth - (cols - 1) * gap) / cols
   // The dashboard logo wins over the org fallback. Public pages stream the
@@ -99,7 +116,7 @@ export function PublicDashboardPage() {
     : undefined
   // Widgets are never shorter than 6 rows here either: below that the chart
   // area collapses under the widget chrome (~40px plots).
-  const totalHeight = shownWidgets.reduce((max, w) => {
+  const totalHeight = tabWidgets.reduce((max, w) => {
     return Math.max(max, (w.layout?.row ?? 0) + Math.max(w.layout?.height ?? 4, 6))
   }, 0) * (ROW_HEIGHT + gap)
 
@@ -124,6 +141,11 @@ export function PublicDashboardPage() {
         </div>
       </header>
       <main style={{ ...pageStyles.body, ...contentWidth }}>
+        {tabs.length > 0 && (
+          <div style={{ marginBottom: 20 }}>
+            <AppTabs tabs={tabs} activeId={activeTab} onChange={handleTabChange} />
+          </div>
+        )}
         {publicLive && variables.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <DashboardVariableBar />
@@ -136,7 +158,7 @@ export function PublicDashboardPage() {
           </div>
         ) : (
           <div ref={measureRef} style={{ minHeight: totalHeight, position: 'relative' }}>
-            {shownWidgets.map((widget) => {
+            {tabWidgets.map((widget) => {
               const l = widget.layout
               const left = l.col * (colWidth + gap)
               const top = l.row * (ROW_HEIGHT + gap)
