@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 	"time"
@@ -706,12 +708,51 @@ func (s *Server) handleGetOrgSettings(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, settings)
 }
 
+// Org branding bounds, mirroring the dashboard app theme validators.
+const (
+	maxOrgAppNameRunes          = 60
+	maxOrgBrandingPaletteColors = 12
+)
+
+// validateOrgBranding bounds the org-level branding overrides. Unknown JSON
+// keys are already dropped by the struct round-trip; this only rejects values
+// that would render incorrectly.
+func validateOrgBranding(branding *models.OrgBranding) error {
+	if branding == nil {
+		return nil
+	}
+	if len([]rune(branding.AppName)) > maxOrgAppNameRunes {
+		return fmt.Errorf("branding app_name must be at most %d characters", maxOrgAppNameRunes)
+	}
+	if branding.AccentColor != "" && !isHexColor(branding.AccentColor) {
+		return fmt.Errorf("branding accent_color must be a hex color like #rrggbb")
+	}
+	if len(branding.DefaultChartPalette) > maxOrgBrandingPaletteColors {
+		return fmt.Errorf("branding default_chart_palette must have at most %d colors", maxOrgBrandingPaletteColors)
+	}
+	for _, c := range branding.DefaultChartPalette {
+		if !isHexColor(c) {
+			return fmt.Errorf("branding default_chart_palette entries must be hex colors like #rrggbb")
+		}
+	}
+	return nil
+}
+
 func (s *Server) handleUpdateOrgSettings(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 	var req models.OrgSettings
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid body")
 		return
+	}
+	if err := validateOrgBranding(req.Branding); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if req.Branding != nil {
+		if writeLogoAttachmentError(w, s.validateLogoAttachment(r.Context(), claims.OrgID, req.Branding.LogoAttachmentID)) {
+			return
+		}
 	}
 	_, err := s.db.Pool.Exec(r.Context(),
 		`UPDATE orgs SET settings = settings || $1::jsonb WHERE id = $2`,
@@ -722,6 +763,23 @@ func (s *Server) handleUpdateOrgSettings(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	writeJSON(w, http.StatusOK, req)
+}
+
+// orgBranding returns the org's branding settings, or nil when none are set.
+// Dashboard read paths embed it so app surfaces render without a second
+// request; a read failure deliberately degrades to nil rather than failing the
+// whole dashboard payload.
+func (s *Server) orgBranding(ctx context.Context, orgID string) *models.OrgBranding {
+	var settingsJSON []byte
+	if err := s.db.Pool.QueryRow(ctx, `SELECT settings FROM orgs WHERE id = $1`, orgID).Scan(&settingsJSON); err != nil {
+		slog.Debug("org branding read failed", "org_id", orgID, "error", err)
+		return nil
+	}
+	var settings models.OrgSettings
+	if err := json.Unmarshal(settingsJSON, &settings); err != nil {
+		return nil
+	}
+	return settings.Branding
 }
 
 // @Summary Get org output limits

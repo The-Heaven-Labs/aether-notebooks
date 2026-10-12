@@ -276,6 +276,11 @@ func (s *Server) handleCreateDashboard(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Settings.App != nil {
+		if writeLogoAttachmentError(w, s.validateLogoAttachment(r.Context(), claims.OrgID, req.Settings.App.LogoAttachmentID)) {
+			return
+		}
+	}
 
 	settingsJSON, _ := json.Marshal(req.Settings)
 	ctx := r.Context()
@@ -372,6 +377,15 @@ func (s *Server) handleUpdateDashboard(w http.ResponseWriter, r *http.Request) {
 			if err := validateDashboardSettingsValue(req.Settings); err != nil {
 				writeError(w, http.StatusBadRequest, err.Error())
 				return
+			}
+			// The logo reference points at an org attachment; the existence
+			// check needs the database, so it runs after the pure validators.
+			if app, ok := req.Settings["app"].(map[string]any); ok {
+				if id, _ := app["logo_attachment_id"].(string); id != "" {
+					if writeLogoAttachmentError(w, s.validateLogoAttachment(ctx, claims.OrgID, id)) {
+						return
+					}
+				}
 			}
 			mergedSettings = make(map[string]any, len(proj.Settings)+len(req.Settings))
 			for k, v := range proj.Settings {
@@ -637,6 +651,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		CanShare         bool                       `json:"can_share"`
 		CanEdit          bool                       `json:"can_edit"`
 		PublishedVersion *dashboardPublishedVersion `json:"published_version,omitempty"`
+		OrgBranding      *models.OrgBranding        `json:"org_branding"`
 	}
 
 	resp := dashboardWithWidgets{
@@ -646,6 +661,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		CanShare:         shareOK,
 		CanEdit:          editOK,
 		PublishedVersion: publishedVersion,
+		OrgBranding:      s.orgBranding(ctx, dash.OrgID),
 	}
 
 	if viewWithData && len(widgets) > 0 {
@@ -1515,12 +1531,14 @@ func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, da
 		Widgets          []models.Widget            `json:"widgets"`
 		WidgetsData      map[string]widgetCellData  `json:"widgets_data"`
 		PublishedVersion *dashboardPublishedVersion `json:"published_version,omitempty"`
+		OrgBranding      *models.OrgBranding        `json:"org_branding"`
 	}
 	writeJSON(w, http.StatusOK, publicDashboardWithWidgets{
 		Dashboard:        dash,
 		Widgets:          widgets,
 		WidgetsData:      widgetsData,
 		PublishedVersion: publishedVersion,
+		OrgBranding:      s.orgBranding(ctx, dash.OrgID),
 	})
 }
 

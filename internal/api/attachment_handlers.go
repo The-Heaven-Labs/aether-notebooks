@@ -2,6 +2,8 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -47,6 +49,65 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	s.uploadAttachment(w, r, claims.OrgID, &nbID, claims.UserID)
+}
+
+// @Summary Upload org attachment
+// @Description Upload an org-scoped file attachment (app logo)
+// @Tags attachments
+// @Accept multipart/form-data
+// @Produce json
+// @Param file formData file true "File to upload"
+// @Success 201 {object} map[string]any
+// @Failure 403 {object} map[string]string
+// @Security BearerAuth
+// @Router /org/attachments [post]
+func (s *Server) handleUploadOrgAttachment(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	s.uploadAttachment(w, r, claims.OrgID, nil, claims.UserID)
+}
+
+// @Summary Upload dashboard attachment
+// @Description Upload a file attachment for a dashboard (app logo)
+// @Tags attachments
+// @Accept multipart/form-data
+// @Produce json
+// @Param id path string true "Dashboard ID"
+// @Param file formData file true "File to upload"
+// @Success 201 {object} map[string]any
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /dashboards/{id}/attachments [post]
+func (s *Server) handleUploadDashboardAttachment(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	dashID := r.PathValue("id")
+	ctx := r.Context()
+
+	// The route's permission middleware already required dashboard edit; this
+	// only distinguishes a live dashboard from a trashed or missing one.
+	var exists bool
+	if err := s.db.Pool.QueryRow(ctx,
+		`SELECT true FROM dashboards WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL`,
+		dashID, claims.OrgID).Scan(&exists); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusInternalServerError, "db error")
+		return
+	}
+	if !exists {
+		writeError(w, http.StatusNotFound, "dashboard not found")
+		return
+	}
+
+	s.uploadAttachment(w, r, claims.OrgID, nil, claims.UserID)
+}
+
+// uploadAttachment parses a multipart upload, stores the bytes, and inserts the
+// attachments row, returning its id. notebookID is nil for org-level and
+// dashboard logos, which are not tied to a notebook. Callers own the
+// existence and permission checks.
+func (s *Server) uploadAttachment(w http.ResponseWriter, r *http.Request, orgID string, notebookID *string, userID string) {
+	ctx := r.Context()
+
 	maxBytes := s.maxAttachmentBytes
 	if maxBytes == 0 {
 		maxBytes = 32 << 20
@@ -79,7 +140,7 @@ func (s *Server) handleUploadAttachment(w http.ResponseWriter, r *http.Request) 
 	err = s.db.Pool.QueryRow(ctx,
 		`INSERT INTO attachments (org_id, notebook_id, filename, mime_type, size_bytes, storage_path, created_by)
 		 VALUES ($1, $2, $3, $4, 0, $5, $6) RETURNING id`,
-		claims.OrgID, nbID, header.Filename, mimeType, "pending", claims.UserID,
+		orgID, notebookID, header.Filename, mimeType, "pending", userID,
 	).Scan(&attID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "db error")
@@ -148,6 +209,12 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	s.serveAttachment(w, attID, mimeType, filename)
+}
+
+// serveAttachment streams an attachment's stored bytes with its stored content
+// type and filename. Callers own access control.
+func (s *Server) serveAttachment(w http.ResponseWriter, attID, mimeType, filename string) {
 	rc, err := s.store.Get(attID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "file not found")
@@ -158,6 +225,49 @@ func (s *Server) handleGetAttachment(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", mimeType)
 	w.Header().Set("Content-Disposition", fmt.Sprintf(`inline; filename="%s"`, filename))
 	_, _ = io.Copy(w, rc)
+}
+
+// errLogoAttachmentNotFound marks a logo reference that does not resolve to an
+// attachment in the caller's org.
+var errLogoAttachmentNotFound = errors.New("logo attachment not found")
+
+// validateLogoAttachment verifies attachmentID names an attachment in orgID.
+// Logos are referenced by attachment id; rejecting unknown ids at write time
+// keeps app surfaces from rendering broken images. An empty id is valid (no
+// logo) and a malformed id can never match, so it is treated as not found.
+func (s *Server) validateLogoAttachment(ctx context.Context, orgID, attachmentID string) error {
+	if attachmentID == "" {
+		return nil
+	}
+	if !isValidUUID(attachmentID) {
+		return errLogoAttachmentNotFound
+	}
+	var exists bool
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM attachments WHERE id = $1 AND org_id = $2)`,
+		attachmentID, orgID,
+	).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("logo attachment lookup: %w", err)
+	}
+	if !exists {
+		return errLogoAttachmentNotFound
+	}
+	return nil
+}
+
+// writeLogoAttachmentError maps a validateLogoAttachment error to an HTTP
+// response. It reports whether the caller should stop.
+func writeLogoAttachmentError(w http.ResponseWriter, err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, errLogoAttachmentNotFound) {
+		writeError(w, http.StatusBadRequest, "logo attachment not found")
+		return true
+	}
+	writeError(w, http.StatusInternalServerError, "logo attachment check failed")
+	return true
 }
 
 // @Summary List attachments
