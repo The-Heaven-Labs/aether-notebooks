@@ -1,6 +1,6 @@
 import { describe, test, expect, vi } from 'vitest'
 import * as Y from 'yjs'
-import { projectDashboardDoc, updateWidgetLayout } from './dashboardCollabRuntime'
+import { projectDashboardDoc, updateWidgetLayout, setWidgetTab } from './dashboardCollabRuntime'
 import type { DashboardCollab } from './dashboardCollabRuntime'
 
 // The runtime imports the Hocuspocus provider at module load; these tests
@@ -75,5 +75,45 @@ describe('updateWidgetLayout', () => {
     const lm = wm.get('layout') as Y.Map<unknown>
     expect(lm.has('tab')).toBe(false)
     expect('tab' in projectDashboardDoc(doc, 'd1').widgets[0].layout).toBe(false)
+  })
+})
+
+describe('setWidgetTab', () => {
+  test('sets the tab and preserves the current grid fields', () => {
+    const doc = new Y.Doc()
+    seedWidget(doc, { row: 2, col: 3, width: 8, height: 5 })
+
+    setWidgetTab(fakeCollab(doc), 'w1', 'deep-dive')
+
+    expect(projectDashboardDoc(doc, 'd1').widgets[0].layout).toEqual(
+      { row: 2, col: 3, width: 8, height: 5, tab: 'deep-dive' },
+    )
+  })
+
+  test('replaces an existing tab', () => {
+    const doc = new Y.Doc()
+    seedWidget(doc, { tab: 'overview' })
+
+    setWidgetTab(fakeCollab(doc), 'w1', 'details')
+
+    expect(projectDashboardDoc(doc, 'd1').widgets[0].layout.tab).toBe('details')
+  })
+
+  test('an empty tab clears the placement', () => {
+    const doc = new Y.Doc()
+    seedWidget(doc, { tab: 'overview' })
+
+    setWidgetTab(fakeCollab(doc), 'w1', '')
+
+    const wm = doc.getMap('widgets').get('w1') as Y.Map<unknown>
+    expect((wm.get('layout') as Y.Map<unknown>).has('tab')).toBe(false)
+  })
+
+  test('a missing widget is ignored', () => {
+    const doc = new Y.Doc()
+    seedWidget(doc)
+
+    expect(() => setWidgetTab(fakeCollab(doc), 'nope', 'overview')).not.toThrow()
+    expect(projectDashboardDoc(doc, 'd1').widgets[0].layout.tab).toBeUndefined()
   })
 })

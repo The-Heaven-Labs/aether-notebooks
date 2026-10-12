@@ -1,9 +1,17 @@
-import { describe, test, expect, vi } from 'vitest'
+import { describe, test, expect, beforeEach, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { AppSettingsPanel } from './AppSettingsPanel'
-import type { Dashboard, OrgBranding } from '../types'
+import type { Dashboard, OrgBranding, Widget } from '../types'
+
+// The panel clears a deleted tab's placements through the shared document when
+// one is bound; these tests stub the runtime so no provider is ever created.
+vi.mock('./dashboardCollabRuntime', () => ({
+  peekDashboardCollab: vi.fn(),
+  setWidgetTab: vi.fn(),
+}))
+import { peekDashboardCollab, setWidgetTab } from './dashboardCollabRuntime'
 
 type PanelDashboard = Dashboard & { org_branding?: OrgBranding }
 
@@ -20,6 +28,26 @@ function dashboardWith(settings: Dashboard['settings'], orgBranding?: OrgBrandin
   }
 }
 
+function widget(overrides: Partial<Widget> = {}): Widget {
+  return {
+    id: 'w1',
+    dashboard_id: 'd1',
+    connector_id: 'conn-1',
+    query: 'SELECT 1',
+    language: 'sql',
+    type: 'table',
+    layout: { row: 0, col: 0, width: 6, height: 6 },
+    config: {},
+    created_at: '2026-01-01T00:00:00Z',
+    ...overrides,
+  }
+}
+
+beforeEach(() => {
+  vi.mocked(peekDashboardCollab).mockReset()
+  vi.mocked(setWidgetTab).mockClear()
+})
+
 function capturePuts() {
   const bodies: Array<Record<string, unknown>> = []
   server.use(
@@ -31,11 +59,18 @@ function capturePuts() {
   return bodies
 }
 
-function renderPanel(dashboard: PanelDashboard, onSaved = vi.fn(), onClose = vi.fn()) {
+function renderPanel(
+  dashboard: PanelDashboard,
+  onSaved = vi.fn(),
+  onClose = vi.fn(),
+  options: { widgets?: Widget[]; initialSection?: 'app' | 'tabs' } = {},
+) {
   render(
     <AppSettingsPanel
       dashboardId="d1"
       dashboard={dashboard}
+      widgets={options.widgets}
+      initialSection={options.initialSection}
       onClose={onClose}
       onSaved={onSaved}
     />,
@@ -127,6 +162,7 @@ describe('AppSettingsPanel', () => {
         show_refresh: false,
         show_last_updated: true,
       },
+      tabs: [],
     })
     expect(onSaved).toHaveBeenCalledTimes(1)
   })
@@ -484,5 +520,153 @@ describe('AppSettingsPanel', () => {
     } finally {
       localStorage.removeItem('aether_token')
     }
+  })
+
+  test('renders the Tabs section with the stored chapters', () => {
+    renderPanel(dashboardWith({
+      tabs: [
+        { id: 'overview', title: 'Overview' },
+        { id: 'details', title: 'Details' },
+      ],
+    }))
+    expect(screen.getByRole('heading', { name: 'Tabs', level: 3 })).toBeInTheDocument()
+    expect((screen.getByLabelText('Tab 1 title') as HTMLInputElement).value).toBe('Overview')
+    expect((screen.getByLabelText('Tab 2 title') as HTMLInputElement).value).toBe('Details')
+    expect(screen.getByRole('button', { name: 'Remove Overview' })).toBeInTheDocument()
+  })
+
+  test('adding tabs slugs ids from the default title and saves them', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({}))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add tab' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add tab' }))
+    expect(screen.getByLabelText('Tab 1 title')).toHaveValue('Tab 1')
+    expect(screen.getByLabelText('Tab 2 title')).toHaveValue('Tab 2')
+
+    fireEvent.change(screen.getByLabelText('Tab 1 title'), { target: { value: 'Overview' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    // The id was slugged at add time and did not follow the rename: widgets
+    // reference the id, so renaming a chapter must not strand them.
+    expect((bodies[0].settings as Record<string, unknown>).tabs).toEqual([
+      { id: 'tab-1', title: 'Overview' },
+      { id: 'tab-2', title: 'Tab 2' },
+    ])
+  })
+
+  test('a new tab id gets a uniqueness suffix when the slug is taken', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ tabs: [{ id: 'tab-1', title: 'Overview' }] }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add tab' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((bodies[0].settings as Record<string, unknown>).tabs).toEqual([
+      { id: 'tab-1', title: 'Overview' },
+      { id: 'tab-1-2', title: 'Tab 1' },
+    ])
+  })
+
+  test('renaming and moving tabs reorders the saved list', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({
+      tabs: [
+        { id: 'a', title: 'A' },
+        { id: 'b', title: 'B' },
+      ],
+    }))
+
+    fireEvent.change(screen.getByLabelText('Tab 1 title'), { target: { value: 'Alpha' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Move Alpha down' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((bodies[0].settings as Record<string, unknown>).tabs).toEqual([
+      { id: 'b', title: 'B' },
+      { id: 'a', title: 'Alpha' },
+    ])
+  })
+
+  test('disables Add tab at the server limit of ten', () => {
+    renderPanel(dashboardWith({
+      tabs: Array.from({ length: 10 }, (_, i) => ({ id: `t${i}`, title: `T${i}` })),
+    }))
+    expect(screen.getByRole('button', { name: 'Add tab' })).toBeDisabled()
+  })
+
+  test('deleting a tab clears its widgets over REST without a document, then removes it', async () => {
+    const clears: Array<{ widgetId: string; body: Record<string, unknown> }> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/:widgetId', async ({ request, params }) => {
+        clears.push({
+          widgetId: String(params.widgetId),
+          body: (await request.json()) as Record<string, unknown>,
+        })
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    const bodies = capturePuts()
+    renderPanel(
+      dashboardWith({
+        tabs: [
+          { id: 'a', title: 'A' },
+          { id: 'b', title: 'B' },
+        ],
+      }),
+      vi.fn(),
+      vi.fn(),
+      {
+        widgets: [
+          widget({ id: 'w1', layout: { row: 1, col: 2, width: 3, height: 4, tab: 'a' } }),
+          widget({ id: 'w2', layout: { row: 0, col: 0, width: 6, height: 6, tab: 'b' } }),
+          widget({ id: 'w3' }),
+        ],
+      },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove A' }))
+
+    await waitFor(() => expect(clears.length).toBe(1))
+    expect(clears[0]).toEqual({
+      widgetId: 'w1',
+      body: { layout: { row: 1, col: 2, width: 3, height: 4, tab: '' } },
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((bodies[0].settings as Record<string, unknown>).tabs).toEqual([{ id: 'b', title: 'B' }])
+  })
+
+  test('deleting a tab clears its widgets through the live document when bound', async () => {
+    const entry = { doc: {}, provider: {}, refCount: 1, synced: true, connected: true }
+    vi.mocked(peekDashboardCollab).mockReturnValue(entry as never)
+    renderPanel(
+      dashboardWith({ tabs: [{ id: 'a', title: 'A' }] }),
+      vi.fn(),
+      vi.fn(),
+      { widgets: [widget({ id: 'w1', layout: { row: 0, col: 0, width: 6, height: 6, tab: 'a' } })] },
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove A' }))
+
+    await waitFor(() => expect(setWidgetTab).toHaveBeenCalledWith(entry, 'w1', ''))
+  })
+
+  test('initialSection tabs reveals and focuses the first title input', () => {
+    renderPanel(
+      dashboardWith({ tabs: [{ id: 'a', title: 'A' }] }),
+      vi.fn(),
+      vi.fn(),
+      { initialSection: 'tabs' },
+    )
+    expect(screen.getByLabelText('Tab 1 title')).toHaveFocus()
+  })
+
+  test('initialSection tabs focuses Add tab when there are no chapters yet', () => {
+    renderPanel(dashboardWith({}), vi.fn(), vi.fn(), { initialSection: 'tabs' })
+    expect(screen.getByRole('button', { name: 'Add tab' })).toHaveFocus()
   })
 })

@@ -256,6 +256,26 @@ export function updateWidgetLayout(collab: DashboardCollab, widgetId: string, la
   })
 }
 
+/**
+ * Moves a widget to a tab, preserving its grid fields. Reads the current
+ * layout from the document (a caller's `widget` prop may be a stale snapshot)
+ * and writes everything in one transaction; an empty tab removes the key so
+ * the widget falls back to the first tab.
+ */
+export function setWidgetTab(collab: DashboardCollab, widgetId: string, tab: string): void {
+  const wm = getWidgetMap(collab.doc, widgetId)
+  if (!wm) return
+  const current = wm.get('layout')
+  const lm = current instanceof Y.Map ? (current as Y.Map<unknown>) : null
+  updateWidgetLayout(collab, widgetId, {
+    row: layoutNumber(lm?.get('row')),
+    col: layoutNumber(lm?.get('col')),
+    width: layoutNumber(lm?.get('width')),
+    height: layoutNumber(lm?.get('height')),
+    tab,
+  })
+}
+
 /** Replaces a widget's SQL text; character-level edits bind to the Y.Text directly. */
 export function setWidgetQuery(collab: DashboardCollab, widgetId: string, query: string): void {
   const wm = getWidgetMap(collab.doc, widgetId)

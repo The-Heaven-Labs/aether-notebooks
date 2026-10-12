@@ -90,7 +90,7 @@ vi.mock('react-grid-layout', () => ({
     layout: Array<{ i: string; x: number; y: number; w: number; h: number }>
     dragConfig?: { enabled?: boolean }
     resizeConfig?: { enabled?: boolean }
-    onDragStop?: (layout: unknown[], oldItem: unknown, newItem: unknown) => void
+    onDragStop?: (layout: unknown[], oldItem: unknown, newItem: unknown, placeholder?: unknown, e?: Event) => void
     onResizeStop?: (layout: unknown[], oldItem: unknown, newItem: unknown) => void
   }) => {
     const move = (patch: { x?: number; y?: number; w?: number; h?: number }) => {
@@ -113,6 +113,16 @@ vi.mock('react-grid-layout', () => ({
           }}
         >
           drag
+        </button>
+        <button
+          type="button"
+          data-testid="drag-stop-on-chip"
+          onClick={() => {
+            const { next, changed } = move({ x: 3, y: 4 })
+            onDragStop?.(next, null, changed, null, { clientX: 20, clientY: 30 } as unknown as Event)
+          }}
+        >
+          drag onto chip
         </button>
         <button
           type="button"
@@ -379,5 +389,125 @@ describe('DashboardEditorPage live document wiring', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Remove' }))
 
     await waitFor(() => expect(deletes).toBe(1))
+  })
+})
+
+const TABS = [
+  { id: 'alpha', title: 'Alpha' },
+  { id: 'beta', title: 'Beta' },
+]
+
+function docWidget(id: string, tab: string, title: string): Widget {
+  return widget({ id, layout: { row: 0, col: 0, width: 6, height: 8, tab }, config: { title } })
+}
+
+function syncedTabs(): void {
+  docStore.set({
+    synced: true,
+    connected: true,
+    title: 'Ops board',
+    settings: { tabs: TABS },
+    widgets: [
+      docWidget('w1', 'alpha', 'Alpha widget'),
+      docWidget('w2', 'beta', 'Beta widget'),
+    ],
+  })
+}
+
+/** Stubs the drop-point hit test; returns a restoring cleanup. */
+function stubElementFromPoint(el: Element): () => void {
+  Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: () => el })
+  return () => { delete (document as unknown as { elementFromPoint?: unknown }).elementFromPoint }
+}
+
+describe('DashboardEditorPage tabs', () => {
+  test('hides the strip and the filter entirely without tabs', async () => {
+    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+    await screen.findByTestId('grid')
+
+    expect(screen.queryByRole('button', { name: 'All' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add tab' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Edit Rest widget')).toBeInTheDocument()
+  })
+
+  test('renders a chip per tab and filters the grid from editor-local state', async () => {
+    syncedTabs()
+    renderEditor()
+
+    expect(await screen.findByRole('button', { name: 'Alpha' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Beta' })).toBeInTheDocument()
+    expect(screen.getByLabelText('Edit Alpha widget')).toBeInTheDocument()
+    expect(screen.getByLabelText('Edit Beta widget')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+    expect(screen.queryByLabelText('Edit Alpha widget')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Edit Beta widget')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Beta' })).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+    expect(screen.getByLabelText('Edit Alpha widget')).toBeInTheDocument()
+    expect(screen.getByLabelText('Edit Beta widget')).toBeInTheDocument()
+  })
+
+  test('dropping a card on a tab chip moves it there in one document write', async () => {
+    syncedTabs()
+    renderEditor()
+    await screen.findByTestId('grid')
+
+    const restore = stubElementFromPoint(screen.getByRole('button', { name: 'Beta' }))
+    try {
+      fireEvent.click(screen.getByTestId('drag-stop-on-chip'))
+    } finally {
+      restore()
+    }
+
+    // The final (dropped) position plus the new chapter, written as one layout.
+    expect(docStore.mutators.updateLayout).toHaveBeenCalledWith(
+      'w1', { row: 4, col: 3, width: 6, height: 8, tab: 'beta' })
+  })
+
+  test('dropping a card on All clears its chapter without touching the position', async () => {
+    syncedTabs()
+    renderEditor()
+    await screen.findByTestId('grid')
+
+    const restore = stubElementFromPoint(screen.getByRole('button', { name: 'All' }))
+    try {
+      fireEvent.click(screen.getByTestId('drag-stop-on-chip'))
+    } finally {
+      restore()
+    }
+
+    expect(docStore.mutators.updateLayout).toHaveBeenCalledWith(
+      'w1', { row: 4, col: 3, width: 6, height: 8, tab: '' })
+  })
+
+  test('dropping outside any chip leaves the chapter unchanged', async () => {
+    syncedTabs()
+    renderEditor()
+    await screen.findByTestId('grid')
+
+    const restore = stubElementFromPoint(document.body)
+    try {
+      fireEvent.click(screen.getByTestId('drag-stop-on-chip'))
+    } finally {
+      restore()
+    }
+
+    // Only the position write happened; the tab write was skipped.
+    expect(docStore.mutators.updateLayout).toHaveBeenCalledTimes(1)
+    expect(docStore.mutators.updateLayout).toHaveBeenCalledWith(
+      'w1', { row: 4, col: 3, width: 6, height: 8, tab: 'alpha' })
+  })
+
+  test('the + chip opens the app settings panel at the Tabs section', async () => {
+    syncedTabs()
+    renderEditor()
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Add tab' }))
+
+    expect(await screen.findByRole('heading', { name: 'Tabs', level: 3 })).toBeInTheDocument()
+    expect(screen.getByLabelText('Tab 1 title')).toHaveValue('Alpha')
   })
 })

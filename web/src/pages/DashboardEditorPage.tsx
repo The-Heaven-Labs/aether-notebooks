@@ -9,6 +9,7 @@ import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPa
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
 import { isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
+import { widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { EmptyState } from '../components/EmptyState'
@@ -57,6 +58,35 @@ function widgetDisplayName(widget: Widget): string {
   const cfg = widget.config as Record<string, unknown> | undefined
   const t = typeof cfg?.title === 'string' ? cfg.title : typeof cfg?.label === 'string' ? cfg.label : ''
   return t || 'widget'
+}
+
+/** Drop coordinates of a drag/resize stop event (mouse or touch). */
+function eventPoint(event: Event): { x: number; y: number } | null {
+  if ('clientX' in event && 'clientY' in event) {
+    const { clientX, clientY } = event as MouseEvent
+    if (Number.isFinite(clientX) && Number.isFinite(clientY)) return { x: clientX, y: clientY }
+  }
+  const touch = (event as TouchEvent).changedTouches?.[0]
+  return touch ? { x: touch.clientX, y: touch.clientY } : null
+}
+
+/**
+ * The `data-tab-id` chip under a drop point: a tab id, "" for the All chip
+ * (clears the placement), or null when the drop landed anywhere else. The
+ * full hit-test stack is scanned because the dragged card floats above the
+ * strip at drop time and would otherwise shadow the chip.
+ */
+function tabIdAtPoint(event: Event): string | null {
+  const point = eventPoint(event)
+  if (!point) return null
+  const stack: Array<Element | null> = typeof document.elementsFromPoint === 'function'
+    ? document.elementsFromPoint(point.x, point.y)
+    : [document.elementFromPoint(point.x, point.y)]
+  for (const el of stack) {
+    const chip = el?.closest('[data-tab-id]')
+    if (chip) return chip.getAttribute('data-tab-id') ?? ''
+  }
+  return null
 }
 
 function WidgetContent({ widget, editingEnabled, onConfigSave, onConfigReset }: { widget: Widget; editingEnabled: boolean; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
@@ -144,6 +174,10 @@ const markSaved = useCallback(() => {
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showVariables, setShowVariables] = useState(false)
   const [showAppSettings, setShowAppSettings] = useState(false)
+  // Editor-local chapter filter (NOT URL state) and the App settings panel's
+  // opening section (the strip's + reveals Tabs).
+  const [editorTab, setEditorTab] = useState<string | null>(null)
+  const [appSettingsSection, setAppSettingsSection] = useState<'tabs' | undefined>(undefined)
   const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
   const [variablePrefillType, setVariablePrefillType] = useState<DashboardVariableType | null>(null)
 
@@ -218,6 +252,21 @@ const markSaved = useCallback(() => {
   const widgets = useMemo(
     () => (liveDoc.synced ? liveDoc.widgets : (dashboard?.widgets ?? [])),
     [liveDoc.synced, liveDoc.widgets, dashboard?.widgets],
+  )
+
+  // Chapters: doc-sourced once synced. An empty list hides the strip, the
+  // filter, and the drawer's Placement select (no tabs = old behavior).
+  const tabs = liveDoc.synced
+    ? (liveDoc.settings.tabs ?? NO_TABS)
+    : (dashboard?.settings?.tabs ?? NO_TABS)
+  // An unknown/deleted editor selection falls back to All so the grid never
+  // silently strands every widget off-screen.
+  const activeEditorTab = editorTab && tabs.some((t) => t.id === editorTab) ? editorTab : null
+  const shownWidgets = useMemo(
+    () => (tabs.length === 0 || activeEditorTab === null
+      ? widgets
+      : widgets.filter((w: Widget) => widgetTabId(w, tabs) === activeEditorTab)),
+    [widgets, tabs, activeEditorTab],
   )
 
   const { data: notebooks = [] } = useQuery({
@@ -300,11 +349,29 @@ const markSaved = useCallback(() => {
     applyLayoutStop(layout)
   }, [applyLayoutStop])
 
-  const onDragStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+  const onDragStop = useCallback((
+    layout: Layout,
+    _oldItem: LayoutItem | null,
+    newItem: LayoutItem | null,
+    _placeholder: LayoutItem | null,
+    e?: Event,
+  ) => {
     if (!newItem || !layout) return
     // The library's compactor handles overlap prevention.
     applyLayoutStop(layout)
-  }, [applyLayoutStop])
+    // Dropping a card on a tab chip re-places it; the All chip (data-tab-id="")
+    // clears the tab so the widget falls back to the first chapter.
+    if (!editingEnabled || tabs.length === 0 || !e) return
+    const tabId = tabIdAtPoint(e)
+    if (tabId === null) return
+    const widget = widgets.find((w: Widget) => w.id === newItem.i)
+    if (!widget || (widget.layout?.tab ?? '') === tabId) return
+    // The final layout item (newItem can predate the last move) carries the
+    // dropped position; in practice only the tab differs from applyLayoutStop.
+    const item = layout.find((it) => it.i === newItem.i)
+    if (!item) return
+    updateDocLayout(item.i, { row: item.y, col: item.x, width: item.w, height: item.h, tab: tabId })
+  }, [applyLayoutStop, editingEnabled, tabs, widgets, updateDocLayout])
 
   if (isLoading) {
     return (
@@ -446,7 +513,7 @@ const markSaved = useCallback(() => {
             <button
               type="button"
               className="nav-btn"
-              onClick={() => setShowAppSettings(true)}
+              onClick={() => { setAppSettingsSection(undefined); setShowAppSettings(true) }}
               disabled={!editingEnabled}
               title={editingEnabled ? 'App settings' : 'Editing is paused'}
             >
@@ -494,6 +561,53 @@ const markSaved = useCallback(() => {
 
       {mutationError && (
         <ErrorBanner message={mutationError} onDismiss={() => setMutationError(null)} />
+      )}
+
+      {/* Chapter strip (editor-local filter, not URL state): All + one chip per
+          tab + the add shortcut that opens the App settings panel's Tabs
+          section. Hidden entirely when the dashboard defines no tabs. */}
+      {tabs.length > 0 && (
+        <div
+          style={{ ...styles.tabStrip, ...(isMobileLayout ? styles.tabStripMobile : {}) }}
+          role="group"
+          aria-label="Dashboard chapters"
+        >
+          <button
+            type="button"
+            data-tab-id=""
+            aria-pressed={activeEditorTab === null}
+            style={activeEditorTab === null ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
+            onClick={() => setEditorTab(null)}
+          >
+            All
+          </button>
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              data-tab-id={tab.id}
+              aria-pressed={activeEditorTab === tab.id}
+              style={activeEditorTab === tab.id ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
+              onClick={() => setEditorTab(tab.id)}
+            >
+              {tab.title}
+            </button>
+          ))}
+          <button
+            type="button"
+            style={styles.tabAddBtn}
+            aria-label="Add tab"
+            title="Add a tab"
+            disabled={!editingEnabled}
+            onClick={() => {
+              if (!editingEnabled) return
+              setAppSettingsSection('tabs')
+              setShowAppSettings(true)
+            }}
+          >
+            ＋
+          </button>
+        </div>
       )}
 
       {/* Widget picker panel */}
@@ -637,9 +751,11 @@ const markSaved = useCallback(() => {
           // (width 0) mounts the mobile branch and the flip to desktop
           // remounts every widget — doubling its query fetches.
           <div ref={gridRef} style={{ minHeight: 240 }}>
-            {containerWidth === 0 ? null : isMobileLayout ? (
+            {shownWidgets.length === 0 ? (
+              <p style={styles.emptyChapterNote}>No widgets in this chapter yet.</p>
+            ) : containerWidth === 0 ? null : isMobileLayout ? (
               <div style={styles.mobileGrid}>
-                {widgets.map((widget: Widget) => (
+                {shownWidgets.map((widget: Widget) => (
                   <div key={widget.id} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
                       <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
@@ -679,7 +795,7 @@ const markSaved = useCallback(() => {
               </div>
             ) : (
               <GridLayout
-                layout={widgets.map(toGridItem)}
+                layout={shownWidgets.map(toGridItem)}
                 width={containerWidth}
                 gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
                 // Whole-card drag: any non-interactive part of the widget moves
@@ -692,7 +808,7 @@ const markSaved = useCallback(() => {
                 onDragStop={onDragStop}
                 style={{ minHeight: 240 }}
               >
-                {widgets.map((widget: Widget) => (
+                {shownWidgets.map((widget: Widget) => (
                   <div key={widget.id} style={{ position: 'relative' }}>
                     <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
                     <div className="dash-widget-card" style={styles.widgetCard}>
@@ -792,6 +908,8 @@ const markSaved = useCallback(() => {
         <AppSettingsPanel
           dashboardId={id!}
           dashboard={liveDashboard}
+          widgets={widgets}
+          initialSection={appSettingsSection}
           onClose={() => setShowAppSettings(false)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
         />
@@ -995,6 +1113,68 @@ const styles: Record<string, React.CSSProperties> = {
     padding: '8px 16px',
     flexWrap: 'wrap',
     gap: 8,
+  },
+  // The editor chapter strip: quiet chips under the sub-header. Chips carry
+  // `data-tab-id` (All carries "") so a card dropped on one is re-placed.
+  tabStrip: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 12px',
+    background: 'var(--nav-bg)',
+    borderBottom: '1px solid var(--nav-border)',
+    flexShrink: 0,
+    overflowX: 'auto',
+    position: 'sticky',
+    top: 44,
+    zIndex: 98,
+  },
+  tabChip: {
+    padding: '3px 12px',
+    background: 'rgba(255,255,255,0.06)',
+    color: 'var(--nav-text-muted)',
+    border: '1px solid transparent',
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  tabChipActive: {
+    background: 'var(--accent)',
+    borderColor: 'var(--accent)',
+    color: 'var(--button-primary-text, #fff)',
+    fontWeight: 600,
+  },
+  tabAddBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 22,
+    height: 22,
+    padding: 0,
+    background: 'rgba(255,255,255,0.06)',
+    color: 'var(--nav-text-muted)',
+    border: '1px dashed var(--nav-border)',
+    borderRadius: 999,
+    fontSize: 13,
+    lineHeight: 1,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  // The mobile sub-header wraps to its own height, so the strip stays in flow
+  // instead of sticky-positioning under a fixed header height.
+  tabStripMobile: {
+    position: 'relative',
+    top: 'auto',
+  },
+  emptyChapterNote: {
+    margin: 0,
+    padding: '24px 0',
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: 'var(--text-muted)',
   },
   addWidgetBtnMobile: {
     padding: '5px 12px',

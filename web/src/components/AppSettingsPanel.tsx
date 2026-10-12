@@ -1,13 +1,13 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { X } from 'lucide-react'
+import { ArrowDown, ArrowUp, X } from 'lucide-react'
 import { api, getToken } from '../api/client'
 import { getApiUrl } from '../config'
 import { CHART_PALETTE_PRESETS, MAX_PALETTE_COLORS } from '../charts/palettes'
 import type { ChartPalettePresetValue } from '../charts/palettes'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useFocusTrap } from '../hooks/useFocusTrap'
-import type { Dashboard, DashboardAppSettings, DashboardAppTheme, OrgBranding } from '../types'
+import type { Dashboard, DashboardAppSettings, DashboardAppTheme, DashboardTab, OrgBranding, Widget } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
   // The panel covers the top bar (z-index 1550/1600), so it must sit above it:
@@ -47,6 +47,18 @@ const styles: Record<string, React.CSSProperties> = {
   resetBtn: {
     background: 'none', border: 'none', padding: 0, color: 'var(--text-muted)',
     fontSize: 11, cursor: 'pointer', textDecoration: 'underline', flexShrink: 0,
+  },
+  tabRow: { display: 'flex', alignItems: 'center', gap: 6 },
+  iconBtn: {
+    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+    width: 26, height: 26, padding: 0, flexShrink: 0,
+    background: 'var(--bg-input)', color: 'var(--text-secondary)',
+    border: '1px solid var(--border)', borderRadius: 4, cursor: 'pointer',
+  },
+  addTabBtn: {
+    alignSelf: 'flex-start', padding: '6px 12px',
+    background: 'var(--bg-input)', color: 'var(--text-primary)',
+    border: '1px solid var(--border)', borderRadius: 4, fontSize: 12, cursor: 'pointer',
   },
   radioRow: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' },
   radioOption: { display: 'flex', alignItems: 'center', gap: 5, fontSize: 13, color: 'var(--text-secondary)' },
@@ -103,6 +115,53 @@ function presetFor(palette: string[] | undefined): ChartPalettePresetValue {
   return match?.value ?? 'custom'
 }
 
+/** Server-side bound on `settings.tabs` (validateDashboardTabs). */
+const MAX_DASHBOARD_TABS = 10
+
+/** Tab ids mirror the server's `^[a-z0-9][a-z0-9-]*$` charset and 64-char cap. */
+function slugifyTabTitle(title: string): string {
+  const slug = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+  return slug || 'tab'
+}
+
+/** `slug`, `slug-2`, … until the id is free; trimmed so the 64-char cap holds. */
+function uniqueTabId(slug: string, taken: string[]): string {
+  const existing = new Set(taken)
+  if (!existing.has(slug)) return slug
+  let n = 1
+  let id = slug
+  while (existing.has(id)) {
+    n++
+    const suffix = `-${n}`
+    id = `${slug.slice(0, 64 - suffix.length)}${suffix}`
+  }
+  return id
+}
+
+/**
+ * Clears a removed tab's placement on its widgets before the tab leaves
+ * `settings.tabs`. A live dashboard document takes the write directly (one
+ * Yjs transaction per widget); without one the same write goes over REST.
+ * Failures are non-fatal: a widget whose tab no longer exists falls back to
+ * the first tab anyway.
+ */
+async function clearWidgetTabs(dashboardId: string, affected: Widget[]): Promise<void> {
+  if (affected.length === 0) return
+  try {
+    const mod = await import('./dashboardCollabRuntime')
+    const entry = mod.peekDashboardCollab(dashboardId)
+    if (entry) {
+      for (const widget of affected) mod.setWidgetTab(entry, widget.id, '')
+      return
+    }
+  } catch { /* fall through to REST */ }
+  await Promise.all(affected.map((widget) =>
+    api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, {
+      layout: { ...widget.layout, tab: '' },
+    }).catch(() => { /* the tab is removed either way; the widget falls back */ }),
+  ))
+}
+
 /**
  * Editor drawer for the App surface configuration (`settings.app`).
  *
@@ -126,10 +185,21 @@ function presetFor(palette: string[] | undefined): ChartPalettePresetValue {
  *
  * The save merges into the existing app block (logo_attachment_id, layout)
  * and into the dashboard's other settings (variables, public_live, …).
+ *
+ * Tabs (`settings.tabs`) are edited as local draft rows — title, order and
+ * membership commit with the same Save button as everything else — while a
+ * tab's removal immediately clears its placement on the dashboard's widgets
+ * (see clearWidgetTabs) so no widget is ever left pointing at a deleted
+ * chapter. New tab ids are slugged from the default title (`tab-1`, …) and
+ * stay stable across renames: widgets reference the id, not the title.
  */
-export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
+export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initialSection, onClose, onSaved }: {
   dashboardId: string
   dashboard: Dashboard & { org_branding?: OrgBranding }
+  /** The dashboard's live widgets; used to clear a deleted tab's placements. */
+  widgets?: Widget[]
+  /** Opens with the Tabs section revealed and focused (the editor strip's +). */
+  initialSection?: 'app' | 'tabs'
   onClose: () => void
   onSaved: () => void
 }) {
@@ -163,11 +233,63 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
   const [error, setError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
+  const [tabs, setTabs] = useState<DashboardTab[]>(() => dashboard.settings?.tabs ?? [])
   const fileInputRef = useRef<HTMLInputElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const tabsSectionRef = useRef<HTMLDivElement>(null)
+  const tabsFocusRef = useRef<HTMLInputElement>(null)
+  const addTabBtnRef = useRef<HTMLButtonElement>(null)
 
   useEscapeToClose(onClose)
   useFocusTrap(panelRef)
+
+  // The editor strip's + opens this panel to add/arrange chapters: reveal the
+  // section and put focus on its first control. One-shot: the panel is mounted
+  // per open, and later tab edits must not steal focus mid-typing.
+  useEffect(() => {
+    if (initialSection !== 'tabs') return
+    tabsSectionRef.current?.scrollIntoView?.({ block: 'start' })
+    if (tabs.length > 0) tabsFocusRef.current?.focus()
+    else addTabBtnRef.current?.focus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const addTab = () => {
+    if (tabs.length >= MAX_DASHBOARD_TABS) return
+    setSaved(false)
+    const titles = new Set(tabs.map((t) => t.title))
+    let n = 1
+    while (titles.has(`Tab ${n}`)) n++
+    const title = `Tab ${n}`
+    const id = uniqueTabId(slugifyTabTitle(title), tabs.map((t) => t.id))
+    setTabs((prev) => [...prev, { id, title }])
+  }
+
+  const renameTab = (index: number, title: string) => {
+    setSaved(false)
+    setTabs((prev) => prev.map((tab, i) => (i === index ? { ...tab, title } : tab)))
+  }
+
+  const moveTab = (index: number, delta: -1 | 1) => {
+    setSaved(false)
+    setTabs((prev) => {
+      const target = index + delta
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+  }
+
+  const removeTab = (index: number) => {
+    const target = tabs[index]
+    if (!target) return
+    setSaved(false)
+    // Drop the placement first so a widget can never keep pointing at the tab
+    // being removed (even if the panel is closed without saving).
+    void clearWidgetTabs(dashboardId, widgets.filter((w) => w.layout?.tab === target.id))
+    setTabs((prev) => prev.filter((_, i) => i !== index))
+  }
 
   const setColor = (field: ColorField, value: string) => {
     setSaved(false)
@@ -236,7 +358,9 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
       else if (app?.theme) next.theme = null
       else delete next.theme
       await api.put(`/api/v1/dashboards/${dashboardId}`, {
-        settings: { ...dashboard.settings, app: next },
+        // `tabs` is always sent: the server merges settings shallowly, so an
+        // omitted key would strand the stored chapter list.
+        settings: { ...dashboard.settings, app: next, tabs },
       })
       setSaved(true)
       onSaved()
@@ -354,6 +478,63 @@ export function AppSettingsPanel({ dashboardId, dashboard, onClose, onSaved }: {
             />
             <label htmlFor="app-show-last-updated">Show last updated</label>
           </div>
+
+          <div ref={tabsSectionRef} style={styles.section} role="heading" aria-level={3}>Tabs</div>
+          {tabs.map((tab, index) => (
+            <div key={tab.id} style={styles.tabRow}>
+              <input
+                ref={index === 0 ? tabsFocusRef : undefined}
+                aria-label={`Tab ${index + 1} title`}
+                style={styles.input}
+                maxLength={60}
+                value={tab.title}
+                placeholder={`Tab ${index + 1}`}
+                onChange={(e) => renameTab(index, e.target.value)}
+              />
+              <button
+                type="button"
+                style={styles.iconBtn}
+                aria-label={`Move ${tab.title} up`}
+                disabled={index === 0}
+                onClick={() => moveTab(index, -1)}
+              >
+                <ArrowUp size={13} />
+              </button>
+              <button
+                type="button"
+                style={styles.iconBtn}
+                aria-label={`Move ${tab.title} down`}
+                disabled={index === tabs.length - 1}
+                onClick={() => moveTab(index, 1)}
+              >
+                <ArrowDown size={13} />
+              </button>
+              <button
+                type="button"
+                style={styles.iconBtn}
+                aria-label={`Remove ${tab.title}`}
+                onClick={() => removeTab(index)}
+              >
+                <X size={13} />
+              </button>
+            </div>
+          ))}
+          <button
+            ref={addTabBtnRef}
+            type="button"
+            style={{ ...styles.addTabBtn, ...(tabs.length >= MAX_DASHBOARD_TABS ? { opacity: 0.5, cursor: 'not-allowed' } : {}) }}
+            disabled={tabs.length >= MAX_DASHBOARD_TABS}
+            title={tabs.length >= MAX_DASHBOARD_TABS ? `At most ${MAX_DASHBOARD_TABS} tabs` : 'Add a tab'}
+            onClick={addTab}
+          >
+            Add tab
+          </button>
+          {tabs.length === 0 && (
+            <span style={styles.muted}>
+              Tabs chapter the app surface: assign widgets from a widget's Placement
+              section, or drag a widget onto a tab chip in the editor.
+            </span>
+          )}
 
           <div style={styles.section} role="heading" aria-level={3}>Theme</div>
           {COLOR_FIELDS.map((field) => (
