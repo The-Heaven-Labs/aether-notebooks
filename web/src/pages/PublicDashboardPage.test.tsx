@@ -81,5 +81,16 @@ describe('PublicDashboardPage app surface', () => {
     renderPublicPage()
     expect(await screen.findByRole('heading', { name: 'Quarterly Review' })).toBeInTheDocument()
     expect(logoImage()).toBeNull()
+    // No org app name: the footer keeps the platform attribution.
+    expect(screen.getByText('Powered by Aether')).toBeInTheDocument()
+  })
+
+  test('uses the org app name in the footer attribution when set', async () => {
+    mockPublicDashboard(publicDashboard({ org_branding: { app_name: 'Heaven Labs' } }))
+    renderPublicPage()
+    expect(await screen.findByRole('heading', { name: 'Quarterly Review' })).toBeInTheDocument()
+
+    expect(screen.getByText('Powered by Heaven Labs')).toBeInTheDocument()
+    expect(screen.queryByText('Powered by Aether')).not.toBeInTheDocument()
   })
 })

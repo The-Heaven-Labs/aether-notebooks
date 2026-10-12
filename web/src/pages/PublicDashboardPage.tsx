@@ -73,6 +73,8 @@ export function PublicDashboardPage() {
   const app = dashboard.settings?.app
   const appWidth = app?.width ?? 'fixed'
   const appTitle = app?.title || dashboard.title
+  // The org's app name takes over the footer attribution when set.
+  const footerBrand = dashboard.org_branding?.app_name || 'Aether'
   // show_header=false hides the title block; the sr-only h1 keeps the
   // document outline (same treatment as the internal app view).
   const showMasthead = app?.show_header !== false
@@ -210,7 +212,7 @@ export function PublicDashboardPage() {
         )}
       </main>
       <footer style={pageStyles.footer}>
-        <span style={pageStyles.footerText}>Powered by Aether</span>
+        <span style={pageStyles.footerText}>Powered by {footerBrand}</span>
       </footer>
     </div>
   )

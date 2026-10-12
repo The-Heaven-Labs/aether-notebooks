@@ -157,9 +157,10 @@ test('saves the full settings object with the updated branding', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Save branding' }))
 
   await waitFor(() => expect(bodies.length).toBe(1))
-  // The save must carry the full settings object — the fetched fields
-  // (audit retention, max rows) alongside the new branding — not just
-  // the branding block.
+  // The save carries the full settings object — the fetched fields (audit
+  // retention, max rows) alongside the new branding. The handler top-level-
+  // merges the body and replaces only `branding` wholesale; the full payload is
+  // the plan's invariant, so the assertion pins it.
   expect(bodies[0]).toEqual({
     audit_retention_days: 30,
     default_max_rows: 1000,
@@ -278,4 +279,108 @@ test('non-admins do not see the branding section', async () => {
   expect(await screen.findByText('Public Sharing')).toBeInTheDocument()
   expect(screen.queryByText('Branding')).not.toBeInTheDocument()
   expect(screen.queryByLabelText('App name')).not.toBeInTheDocument()
+})
+
+test('keeps Save disabled until the settings GET resolves', async () => {
+  let release: (() => void) | undefined
+  server.use(http.get('/api/v1/org/settings', async () => {
+    await new Promise<void>(resolve => { release = resolve })
+    return HttpResponse.json(BRANDED_SETTINGS)
+  }))
+  renderWithProviders(<OrgSettingsPage />, { initialPath: '/settings' })
+
+  const save = await screen.findByRole('button', { name: 'Save branding' })
+  expect(save).toBeDisabled()
+
+  await waitFor(() => expect(release).toBeDefined())
+  release?.()
+  await waitFor(() => expect(save).not.toBeDisabled())
+})
+
+test('shows a load error and keeps Save disabled when the settings GET fails', async () => {
+  server.use(http.get('/api/v1/org/settings', () =>
+    HttpResponse.json({ error: 'settings unavailable' }, { status: 500 }),
+  ))
+  renderWithProviders(<OrgSettingsPage />, { initialPath: '/settings' })
+
+  const alert = await screen.findByRole('alert')
+  expect(alert).toHaveTextContent('Failed to load org settings')
+  expect(alert).toHaveTextContent('settings unavailable')
+  expect(screen.getByRole('button', { name: 'Save branding' })).toBeDisabled()
+})
+
+test('matches a stored palette against presets case-insensitively', async () => {
+  server.use(http.get('/api/v1/org/settings', () => HttpResponse.json({
+    audit_retention_days: 7,
+    branding: { default_chart_palette: TEAL_PALETTE.map(color => color.toUpperCase()) },
+  })))
+  renderWithProviders(<OrgSettingsPage />, { initialPath: '/settings' })
+
+  await waitFor(() => expect(screen.getByLabelText('Chart palette')).toHaveValue('teal'))
+})
+
+test('a failed logo upload surfaces the error and keeps the current logo', async () => {
+  await renderBranding(BRANDED_SETTINGS)
+  server.use(http.post('/api/v1/org/attachments', () =>
+    HttpResponse.json({ error: 'storage error' }, { status: 500 }),
+  ))
+
+  fireEvent.change(screen.getByLabelText('Logo file'), {
+    target: { files: [new File(['png'], 'logo.png', { type: 'image/png' })] },
+  })
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('storage error')
+  expect(screen.getByAltText('Logo preview')).toHaveAttribute('src', '/api/v1/attachments/att-1')
+})
+
+test('rejects a custom palette with more than 12 colors', async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  await renderBranding(BRANDED_SETTINGS)
+  server.use(captureSettingsPuts(bodies))
+
+  fireEvent.change(screen.getByLabelText('Chart palette'), { target: { value: 'custom' } })
+  const tooMany = Array.from({ length: 13 }, (_, i) => `#${i.toString(16).padStart(6, '0')}`).join(', ')
+  fireEvent.change(screen.getByLabelText('Custom chart colors'), { target: { value: tooMany } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save branding' }))
+
+  expect(await screen.findByRole('alert')).toHaveTextContent('at most 12 colors')
+  expect(bodies.length).toBe(0)
+})
+
+test('counts the app name in runes, not UTF-16 units', async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  const appName = await renderBranding(BRANDED_SETTINGS)
+  server.use(captureSettingsPuts(bodies))
+
+  fireEvent.change(appName, { target: { value: 'é'.repeat(61) } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save branding' }))
+  expect(await screen.findByRole('alert')).toHaveTextContent('at most 60 characters')
+  expect(bodies.length).toBe(0)
+
+  // 60 code points but 120 UTF-16 units: a naive `.length` check would reject it.
+  fireEvent.change(appName, { target: { value: 'é'.repeat(60) } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save branding' }))
+  await waitFor(() => expect(bodies.length).toBe(1))
+  const branding = bodies[0].branding as Record<string, unknown>
+  expect(branding.app_name).toBe('é'.repeat(60))
+})
+
+test('keeps Save disabled while a logo upload is in flight', async () => {
+  let started = false
+  let release: (() => void) | undefined
+  await renderBranding(BRANDED_SETTINGS)
+  server.use(http.post('/api/v1/org/attachments', async () => {
+    started = true
+    await new Promise<void>(resolve => { release = resolve })
+    return HttpResponse.json({ id: 'att-9', filename: 'logo.png', mime_type: 'image/png', size: 3 }, { status: 201 })
+  }))
+
+  fireEvent.change(screen.getByLabelText('Logo file'), {
+    target: { files: [new File(['png'], 'logo.png', { type: 'image/png' })] },
+  })
+
+  await waitFor(() => expect(started).toBe(true))
+  expect(screen.getByRole('button', { name: 'Save branding' })).toBeDisabled()
+  release?.()
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save branding' })).not.toBeDisabled())
 })

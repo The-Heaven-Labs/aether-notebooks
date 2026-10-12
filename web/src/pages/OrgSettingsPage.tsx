@@ -23,11 +23,12 @@ interface OrgSettingsPayload {
   branding?: OrgBranding
 }
 
-/** The preset whose colors match `palette`; unmatched palettes are Custom. */
+/** The preset whose colors match `palette` (case-insensitive, order-sensitive); unmatched palettes are Custom. */
 function brandingPreset(palette: string[] | undefined): ChartPalettePresetValue {
   if (!palette?.length) return 'default'
+  const lower = palette.map(color => color.toLowerCase())
   const match = CHART_PALETTE_PRESETS.find(
-    p => 'colors' in p && p.colors.length === palette.length && p.colors.every((c, i) => c === palette[i]),
+    p => 'colors' in p && p.colors.length === lower.length && p.colors.every((c, i) => c.toLowerCase() === lower[i]),
   )
   return match?.value ?? 'custom'
 }
@@ -444,9 +445,11 @@ export function OrgSettingsPage() {
   const [auditRetentionError, setAuditRetentionError] = useState<string | null>(null)
 
   // ── Branding ──────────────────────────────────────────────────────────────
-  // orgSettings keeps the full GET payload so the branding save can merge into
-  // it and always send the complete settings object (the backend replaces the
-  // `branding` block wholesale when the key is present).
+  // orgSettings keeps the full GET payload so saves always send the complete
+  // settings object. The handler top-level-merges the body into
+  // `orgs.settings` (`settings || $1::jsonb`) and replaces only the `branding`
+  // key wholesale — sibling keys are last-write-wins, which the retention save
+  // below mitigates by refreshing this snapshot.
   const [orgSettings, setOrgSettings] = useState<OrgSettingsPayload>({})
   const [brandingAppName, setBrandingAppName] = useState('')
   const [brandingAccentColor, setBrandingAccentColor] = useState('')
@@ -457,6 +460,12 @@ export function OrgSettingsPage() {
   const [brandingSaving, setBrandingSaving] = useState(false)
   const [brandingSaved, setBrandingSaved] = useState(false)
   const [brandingError, setBrandingError] = useState<string | null>(null)
+  // Hydration gate: the save merges the fetched snapshot, so it must not run
+  // before the GET settles. A failed load flips `brandingLoaded` too (the
+  // attempt is over) but keeps the save disabled via `brandingLoadError` —
+  // a save built from the empty pre-hydration snapshot would clear branding.
+  const [brandingLoaded, setBrandingLoaded] = useState(false)
+  const [brandingLoadError, setBrandingLoadError] = useState<string | null>(null)
   const brandingFileRef = useRef<HTMLInputElement>(null)
   const brandingAppNameId = useId()
   const brandingAccentId = useId()
@@ -512,8 +521,15 @@ export function OrgSettingsPage() {
         const preset = brandingPreset(branding?.default_chart_palette)
         setBrandingPalette(preset)
         setBrandingCustomPalette(preset === 'custom' ? (branding?.default_chart_palette ?? []).join(', ') : '')
+        setBrandingLoaded(true)
       })
-      .catch(() => {})
+      .catch((e: unknown) => {
+        // The save merges this snapshot, so a failed load surfaces a visible
+        // error and leaves the save disabled rather than letting it PUT an
+        // empty snapshot that would clear the stored branding.
+        setBrandingLoadError(`Failed to load org settings: ${String(e)}`)
+        setBrandingLoaded(true)
+      })
   }, [])
 
   async function handleToggleSharing(enabled: boolean) {
@@ -588,6 +604,10 @@ export function OrgSettingsPage() {
   }
 
   async function handleSaveBranding() {
+    // Defense in depth beside the disabled button: never save from a snapshot
+    // that hasn't hydrated (or whose load failed) — the PUT would clear the
+    // stored branding with `branding: {}`.
+    if (!brandingLoaded || brandingLoadError) return
     setBrandingError(null)
     const appName = brandingAppName.trim()
     if ([...appName].length > 60) {
@@ -599,7 +619,7 @@ export function OrgSettingsPage() {
       setBrandingError('Accent color must be a hex color like #6366f1')
       return
     }
-    // `branding` is replaced wholesale by the handler, so the object always
+    // The top-level merge replaces `branding` wholesale, so the object always
     // carries every field the panel owns: `{}` is the documented clear path
     // (an explicit JSON null is dropped by omitempty).
     const branding: OrgBranding = {}
@@ -624,9 +644,11 @@ export function OrgSettingsPage() {
     }
     setBrandingSaving(true)
     try {
-      // Always the full settings object (the fields fetched on load plus the
-      // branding block): the save never depends on a partial payload being
-      // merged server-side, and `branding` itself is replaced wholesale.
+      // The full settings object goes out by design: the handler top-level-
+      // merges the body into `orgs.settings` and replaces only the `branding`
+      // key wholesale, so sibling keys are last-write-wins. The fetched
+      // snapshot is refreshed after the retention save so this page's own
+      // sibling value can't go stale between loads.
       await api.put('/api/v1/org/settings', { ...orgSettings, branding })
       setBrandingSaved(true)
       setTimeout(() => setBrandingSaved(false), 2000)
@@ -641,6 +663,9 @@ export function OrgSettingsPage() {
   const brandingLogoUrl = brandingLogoId
     ? `${getApiUrl()}/api/v1/attachments/${brandingLogoId}${brandingSessionToken ? `?token=${encodeURIComponent(brandingSessionToken)}` : ''}`
     : undefined
+  // Disabled until the settings GET settles and after a failed load: saving
+  // pre-hydration would PUT an empty snapshot and clear the stored branding.
+  const brandingSaveDisabled = !brandingLoaded || brandingLoadError !== null || brandingSaving || brandingUploading
 
   const createProvider = useMutation({
     mutationFn: (body: Record<string, unknown>) => api.post<SSOProvider>('/api/v1/sso/providers', body),
@@ -1303,8 +1328,9 @@ const formInput: React.CSSProperties = {
                 setAuditRetentionSaving(true)
                 try {
                   await api.put('/api/v1/org/settings', { audit_retention_days: auditRetentionDays })
-                  // Keep the full settings snapshot fresh: the branding save
-                  // merges into it, so it must not clobber this just-saved value.
+                  // Refresh the fetched snapshot: the branding save PUTs the
+                  // full object (siblings are last-write-wins), so it must not
+                  // send a stale audit value back.
                   setOrgSettings(prev => ({ ...prev, audit_retention_days: auditRetentionDays }))
                   setAuditRetentionSaved(true)
                   setTimeout(() => setAuditRetentionSaved(false), 2000)
@@ -1327,6 +1353,11 @@ const formInput: React.CSSProperties = {
             <p style={styles.sectionDesc}>
               Organization-wide defaults for app surfaces. A dashboard's app settings override these values.
             </p>
+            {brandingLoadError && (
+              <p role="alert" style={{ fontSize: 12, color: 'var(--error)', marginTop: 0, marginBottom: 12 }}>
+                {brandingLoadError}
+              </p>
+            )}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 12 }}>
               <div style={formLabel}>
                 <label htmlFor={brandingAppNameId}>App name</label>
@@ -1424,9 +1455,9 @@ const formInput: React.CSSProperties = {
             </div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <button
-                style={{ ...styles.saveBtn, opacity: brandingSaving || brandingUploading ? 0.6 : 1 }}
+                style={{ ...styles.saveBtn, opacity: brandingSaveDisabled ? 0.6 : 1 }}
                 onClick={handleSaveBranding}
-                disabled={brandingSaving || brandingUploading}
+                disabled={brandingSaveDisabled}
               >
                 {brandingSaving ? 'Saving…' : 'Save branding'}
               </button>
