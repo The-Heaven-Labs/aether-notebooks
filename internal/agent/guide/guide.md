@@ -22,9 +22,9 @@ The chapter grids sit on `settings.grid_cols` (default 12, editor: App settings
 
 ## Widget types
 
-Widgets are `chart`, `table`, `metric`, or `text`. A widget reads a notebook
-cell (`notebook_id` + `cell_id`) or a query (`connector_id` + `query`); text
-panels need neither.
+Widgets are `chart`, `table`, `metric`, `text`, or `html`. A widget reads a
+notebook cell (`notebook_id` + `cell_id`) or a query (`connector_id` + `query`);
+text and html panels need neither.
 
 ### metric
 
@@ -60,6 +60,24 @@ values (escaped as plain text, never raw HTML). A date_range renders as
 ```json
 { "text": { "markdown": "## Events\n\nWindow: {{window}}" } }
 ```
+
+### html
+
+A script-free panel for bespoke sections: your markup + stylesheet, rendered
+in a sandboxed frame. Source-less like a text panel. Set it with
+`set_widget_config`'s `html` block (or create with `type: "html"`):
+
+```json
+{ "html": "<div class=\"stat\">42</div>", "css": ".stat { font-size: 28px; color: var(--accent); }" }
+```
+
+- Scripts, forms, links, and third-party images are stripped; images may use
+  `data:` URIs or same-origin attachments only.
+- `{{variable}}` tokens interpolate the current values as escaped text.
+- The app theme's CSS variables (`var(--accent)`, `var(--text-primary)`, …)
+  are available inside the panel.
+- Org admins can disable panels org-wide (`html_panels_enabled`); creating one
+  while disabled fails — fall back to `text`.
 
 ### table
 
