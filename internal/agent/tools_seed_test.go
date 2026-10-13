@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Dashboard widget/share tools promised by the agent prompt must be seeded,
@@ -120,5 +122,70 @@ func TestSeedBuiltinTools_CoversManageRegistry(t *testing.T) {
 		if !seeded[def.Function.Name] {
 			t.Errorf("registry tool %q is not seeded in BuiltinTools (uncallable by agents)", def.Function.Name)
 		}
+	}
+}
+
+// TestSeedBuiltinTools_RefreshesStaleDescriptions pins the seed revision
+// mechanism: a builtin row seeded before the app-era descriptions (stale text,
+// seed_rev 0) is refreshed to the catalog's current description and schema,
+// while a row already at the current revision keeps its text until the next
+// catalog bump. Builtin descriptions are platform-managed.
+func TestSeedBuiltinTools_RefreshesStaleDescriptions(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, _ := createEngineTestOrgAndUser(t, db)
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+
+	var want BuiltinToolDef
+	for _, bt := range BuiltinTools {
+		if bt.HandlerName == "review_dashboard" {
+			want = bt
+		}
+	}
+	if want.Name == "" {
+		t.Fatal("review_dashboard is not in BuiltinTools")
+	}
+
+	// Simulate an org seeded before this catalog revision.
+	if _, err := db.Pool.Exec(context.Background(), `
+		UPDATE tools SET description = 'stale description', schema = '{}'::jsonb, seed_rev = 0
+		WHERE org_id = $1 AND type = 'builtin' AND config->>'handler_name' = 'review_dashboard'`, orgID); err != nil {
+		t.Fatalf("simulate stale row: %v", err)
+	}
+
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+
+	var description, schema string
+	var rev int
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT description, schema::text, seed_rev FROM tools
+		WHERE org_id = $1 AND type = 'builtin' AND config->>'handler_name' = 'review_dashboard'`, orgID).
+		Scan(&description, &schema, &rev); err != nil {
+		t.Fatalf("read refreshed row: %v", err)
+	}
+	if description != want.Description {
+		t.Fatalf("stale description not refreshed:\n got: %q\nwant: %q", description, want.Description)
+	}
+	require.JSONEq(t, `{"type":"object","properties":{}}`, schema, "stale schema not refreshed")
+	if rev != want.Rev {
+		t.Fatalf("seed_rev not advanced: got %d, want %d", rev, want.Rev)
+	}
+
+	// A row at the current revision keeps its text: the mechanism only
+	// overwrites when the catalog is newer (so the next revision bump is what
+	// replaces a user edit to a builtin).
+	if _, err := db.Pool.Exec(context.Background(), `
+		UPDATE tools SET description = 'user-edited description'
+		WHERE org_id = $1 AND type = 'builtin' AND config->>'handler_name' = 'review_dashboard'`, orgID); err != nil {
+		t.Fatalf("edit row: %v", err)
+	}
+	SeedBuiltinTools(context.Background(), db.Pool, orgID)
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT description FROM tools
+		WHERE org_id = $1 AND type = 'builtin' AND config->>'handler_name' = 'review_dashboard'`, orgID).
+		Scan(&description); err != nil {
+		t.Fatalf("re-read row: %v", err)
+	}
+	if description != "user-edited description" {
+		t.Fatalf("a current-revision row must not be overwritten, got %q", description)
 	}
 }

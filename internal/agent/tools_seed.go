@@ -14,62 +14,72 @@ type BuiltinToolDef struct {
 	Description string
 	Schema      map[string]any
 	HandlerName string
+	// Rev is the description/schema revision of this builtin. Seeding upserts
+	// the stored row when its seed_rev is older, so changed descriptions and
+	// parameters reach existing orgs. Bump the entry (or builtinSeedRev for
+	// the whole catalog) when a description or schema changes.
+	Rev int
 }
 
+// builtinSeedRev is the current revision of the builtin catalog: every entry
+// below carries it. Builtin descriptions are platform-managed — a user edit
+// to a builtin's text is overwritten when the catalog revision advances.
+const builtinSeedRev = 1
+
 var BuiltinTools = []BuiltinToolDef{
-	{Name: "notebook_create_notebook", Description: "Create a new notebook", HandlerName: "create_notebook"},
-	{Name: "notebook_delete_notebook", Description: "Delete a notebook", HandlerName: "delete_notebook"},
-	{Name: "notebook_update_notebook", Description: "Update a notebook", HandlerName: "update_notebook"},
-	{Name: "notebook_read_cells", Description: "Read cells from a notebook", HandlerName: "read_cell"},
-	{Name: "notebook_create_cell", Description: "Create a new cell (optionally run it immediately with run=true)", HandlerName: "create_cell"},
-	{Name: "notebook_update_cell", Description: "Update an existing cell", HandlerName: "update_cell"},
-	{Name: "notebook_delete_cell", Description: "Delete a cell", HandlerName: "delete_cell"},
-	{Name: "notebook_run_cell", Description: "Run a code cell and get inline results", HandlerName: "run_cell"},
-	{Name: "notebook_list_cells", Description: "List all cells in a notebook", HandlerName: "list_cells"},
-	{Name: "execute_sql", Description: "Run ad-hoc SQL queries (default 30s timeout; timeout_ms raises it up to the server ceiling — use create_cell with run=true for long queries)", HandlerName: "execute_sql"},
-	{Name: "create_dashboard", Description: "Create a dashboard", HandlerName: "create_dashboard"},
-	{Name: "list_dashboards", Description: "List dashboards", HandlerName: "list_dashboards"},
-	{Name: "delete_dashboard", Description: "Delete a dashboard", HandlerName: "delete_dashboard"},
-	{Name: "get_dashboard", Description: "Get a dashboard with its widgets. Use this to see the current state of a dashboard before making changes.", HandlerName: "get_dashboard"},
-	{Name: "create_dashboard_widget", Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); config carries per-widget options (e.g. config.metric for metric widgets).", HandlerName: "create_dashboard_widget"},
-	{Name: "update_dashboard_widget", Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or config keys to shallow-merge into the widget's config.", HandlerName: "update_dashboard_widget"},
-	{Name: "set_widget_config", Description: "Set a dashboard widget's typed render config: chart (create_chart's vocabulary, e.g. chart_type/x_column/y_columns/group_by/bar_mode/series_colors), metric (value_column/aggregation/label/format/comparison/sparkline), or table (per-column number/currency/percent formats). Each block replaces its config section; unrelated keys stay.", HandlerName: "set_widget_config"},
-	{Name: "delete_dashboard_widget", Description: "Remove a widget from a dashboard.", HandlerName: "delete_dashboard_widget"},
-	{Name: "update_dashboard", Description: "Update a dashboard's title or grid settings (e.g., grid_cols: 12 for 12-column grid).", HandlerName: "update_dashboard"},
-	{Name: "update_dashboard_settings", Description: "Update a dashboard's App settings: title, app (e.g. app.title, app.theme), and tabs (App chapters).", HandlerName: "update_dashboard_settings"},
-	{Name: "set_dashboard_layout", Description: "Arrange a dashboard's App surface: set tabs, place widgets into tabs, and merge widget appearance (background/padding/align/border).", HandlerName: "set_dashboard_layout"},
-	{Name: "publish_dashboard", Description: "Publish the dashboard's current draft as a new version. Viewers see the latest published version until the next publish.", HandlerName: "publish_dashboard"},
-	{Name: "review_dashboard", Description: "Review a dashboard's App composition (layout, content, surface): prioritized findings naming the widget/chapter and the fix tool, plus app view/draft-preview links (and the public link when shared).", HandlerName: "review_dashboard"},
-	{Name: "dashboard_guide", Description: "Read the App Builder guide: widget configs (metric/text/table/chart), chapters and filter scoping, theming tokens and guardrails, publish/version semantics, troubleshooting, and composition guidance.", HandlerName: "dashboard_guide"},
-	{Name: "share_dashboard", Description: "Generate a public shareable link for a dashboard. Returns the public token and the full URL.", HandlerName: "share_dashboard"},
-	{Name: "create_schedule", Description: "Schedule a notebook", HandlerName: "create_schedule"},
-	{Name: "delete_schedule", Description: "Delete a schedule", HandlerName: "delete_schedule"},
-	{Name: "read_permissions", Description: "Read ACL entries", HandlerName: "read_permissions"},
-	{Name: "update_permissions", Description: "Update ACL entries", HandlerName: "update_permissions"},
-	{Name: "export_notebook", Description: "Export notebook as ipynb", HandlerName: "export_notebook"},
-	{Name: "import_notebook", Description: "Import notebook from ipynb", HandlerName: "import_notebook"},
-	{Name: "get_notebook_context", Description: "Get full notebook context", HandlerName: "get_notebook_context"},
-	{Name: "list_skills", Description: "List available skills", HandlerName: "list_skills"},
-	{Name: "load_skill", Description: "Load a skill's full instructions", HandlerName: "load_skill"},
-	{Name: "update_agent", Description: "Update agent configuration", HandlerName: "update_agent"},
-	{Name: "create_skill", Description: "Create a new skill", HandlerName: "create_skill"},
-	{Name: "update_skill", Description: "Update an existing skill", HandlerName: "update_skill"},
-	{Name: "spawn_subagents", Description: "Spawn parallel subagents", HandlerName: "spawn_subagents"},
-	{Name: "create_tasks", Description: "Create tasks for subagents", HandlerName: "create_tasks"},
-	{Name: "update_task", Description: "Update a task's status", HandlerName: "update_task"},
-	{Name: "get_tasks", Description: "Get current tasks", HandlerName: "get_tasks"},
-	{Name: "create_chart", Description: "Create a chart from cell output. Types: bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey, funnel, heatmap, histogram. Bar supports bar_mode (grouped|stacked|horizontal) layout. Area supports area_mode (area|stacked) layout. group_by splits data into series (not for pie/donut/big_number/funnel/heatmap/histogram). For heatmap use x_column, y_axis_column, value_column. For funnel use category_column, value_column. For histogram use value_column, bin_count.", HandlerName: "create_chart"},
-	{Name: "update_chart", Description: "Update an existing chart's config. Supports same types and params as create_chart. For bar: bar_mode for layout. For area: area_mode for layout. For heatmap: x_column, y_axis_column, value_column. For funnel: category_column, value_column, funnel_sort. For histogram: value_column, bin_count.", HandlerName: "update_chart"},
-	{Name: "list_notebooks", Description: "List notebooks", HandlerName: "list_notebooks"},
-	{Name: "list_connectors", Description: "List connectors", HandlerName: "list_connectors"},
-	{Name: "list_folders", Description: "List folders", HandlerName: "list_folders"},
-	{Name: "get_folder_tree", Description: "Get folder tree", HandlerName: "get_folder_tree"},
-	{Name: "create_snapshot", Description: "Create a notebook snapshot", HandlerName: "create_snapshot"},
-	{Name: "list_snapshots", Description: "List notebook snapshots", HandlerName: "list_snapshots"},
-	{Name: "restore_snapshot", Description: "Restore a notebook snapshot", HandlerName: "restore_snapshot"},
-	{Name: "list_notebook_parameters", Description: "List a notebook's parameter definitions", HandlerName: "list_notebook_parameters"},
-	{Name: "set_notebook_parameters", Description: "Replace a notebook's parameter definitions", HandlerName: "set_notebook_parameters"},
-	{Name: "ask_question", Description: "Ask the user a question and wait for their response. Use this when you need a decision, clarification, or input from the user to proceed. You can provide multiple choice options for the user to pick from, or leave it open-ended.", HandlerName: "ask_question", Schema: map[string]any{"type": "object", "properties": map[string]any{"question": map[string]any{"type": "string", "description": "The question to ask the user"}, "options": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"title": map[string]any{"type": "string", "description": "The option title/label"}, "description": map[string]any{"type": "string", "description": "Optional subtitle or explanation"}}, "required": []any{"title"}}, "description": "Optional multiple choice options"}, "allow_custom": map[string]any{"type": "boolean", "description": "Whether to allow the user to type a custom answer (default: true)"}}, "required": []any{"question"}}},
+	{Name: "notebook_create_notebook", Description: "Create a new notebook", HandlerName: "create_notebook", Rev: builtinSeedRev},
+	{Name: "notebook_delete_notebook", Description: "Delete a notebook", HandlerName: "delete_notebook", Rev: builtinSeedRev},
+	{Name: "notebook_update_notebook", Description: "Update a notebook", HandlerName: "update_notebook", Rev: builtinSeedRev},
+	{Name: "notebook_read_cells", Description: "Read cells from a notebook", HandlerName: "read_cell", Rev: builtinSeedRev},
+	{Name: "notebook_create_cell", Description: "Create a new cell (optionally run it immediately with run=true)", HandlerName: "create_cell", Rev: builtinSeedRev},
+	{Name: "notebook_update_cell", Description: "Update an existing cell", HandlerName: "update_cell", Rev: builtinSeedRev},
+	{Name: "notebook_delete_cell", Description: "Delete a cell", HandlerName: "delete_cell", Rev: builtinSeedRev},
+	{Name: "notebook_run_cell", Description: "Run a code cell and get inline results", HandlerName: "run_cell", Rev: builtinSeedRev},
+	{Name: "notebook_list_cells", Description: "List all cells in a notebook", HandlerName: "list_cells", Rev: builtinSeedRev},
+	{Name: "execute_sql", Description: "Run ad-hoc SQL queries (default 30s timeout; timeout_ms raises it up to the server ceiling — use create_cell with run=true for long queries)", HandlerName: "execute_sql", Rev: builtinSeedRev},
+	{Name: "create_dashboard", Description: "Create a dashboard", HandlerName: "create_dashboard", Rev: builtinSeedRev},
+	{Name: "list_dashboards", Description: "List dashboards", HandlerName: "list_dashboards", Rev: builtinSeedRev},
+	{Name: "delete_dashboard", Description: "Delete a dashboard", HandlerName: "delete_dashboard", Rev: builtinSeedRev},
+	{Name: "get_dashboard", Description: "Get a dashboard with its widgets. Use this to see the current state of a dashboard before making changes.", HandlerName: "get_dashboard", Rev: builtinSeedRev},
+	{Name: "create_dashboard_widget", Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); config carries per-widget options (e.g. config.metric for metric widgets).", HandlerName: "create_dashboard_widget", Rev: builtinSeedRev},
+	{Name: "update_dashboard_widget", Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or config keys to shallow-merge into the widget's config.", HandlerName: "update_dashboard_widget", Rev: builtinSeedRev},
+	{Name: "set_widget_config", Description: "Set a dashboard widget's typed render config: chart (create_chart's vocabulary, e.g. chart_type/x_column/y_columns/group_by/bar_mode/series_colors), metric (value_column/aggregation/label/format/comparison/sparkline), or table (per-column number/currency/percent formats). Each block replaces its config section; unrelated keys stay.", HandlerName: "set_widget_config", Rev: builtinSeedRev},
+	{Name: "delete_dashboard_widget", Description: "Remove a widget from a dashboard.", HandlerName: "delete_dashboard_widget", Rev: builtinSeedRev},
+	{Name: "update_dashboard", Description: "Update a dashboard's title or grid settings (e.g., grid_cols: 12 for 12-column grid).", HandlerName: "update_dashboard", Rev: builtinSeedRev},
+	{Name: "update_dashboard_settings", Description: "Update a dashboard's App settings: title, app (e.g. app.title, app.theme), and tabs (App chapters).", HandlerName: "update_dashboard_settings", Rev: builtinSeedRev},
+	{Name: "set_dashboard_layout", Description: "Arrange a dashboard's App surface: set tabs, place widgets into tabs, and merge widget appearance (background/padding/align/border).", HandlerName: "set_dashboard_layout", Rev: builtinSeedRev},
+	{Name: "publish_dashboard", Description: "Publish the dashboard's current draft as a new version. Viewers see the latest published version until the next publish.", HandlerName: "publish_dashboard", Rev: builtinSeedRev},
+	{Name: "review_dashboard", Description: "Review a dashboard's App composition (layout, content, surface): prioritized findings naming the widget/chapter and the fix tool, plus app view/draft-preview links (and the public link when shared).", HandlerName: "review_dashboard", Rev: builtinSeedRev},
+	{Name: "dashboard_guide", Description: "Read the App Builder guide: widget configs (metric/text/table/chart), chapters and filter scoping, theming tokens and guardrails, publish/version semantics, troubleshooting, and composition guidance.", HandlerName: "dashboard_guide", Rev: builtinSeedRev},
+	{Name: "share_dashboard", Description: "Generate a public shareable link for a dashboard. Returns the public token and the full URL.", HandlerName: "share_dashboard", Rev: builtinSeedRev},
+	{Name: "create_schedule", Description: "Schedule a notebook", HandlerName: "create_schedule", Rev: builtinSeedRev},
+	{Name: "delete_schedule", Description: "Delete a schedule", HandlerName: "delete_schedule", Rev: builtinSeedRev},
+	{Name: "read_permissions", Description: "Read ACL entries", HandlerName: "read_permissions", Rev: builtinSeedRev},
+	{Name: "update_permissions", Description: "Update ACL entries", HandlerName: "update_permissions", Rev: builtinSeedRev},
+	{Name: "export_notebook", Description: "Export notebook as ipynb", HandlerName: "export_notebook", Rev: builtinSeedRev},
+	{Name: "import_notebook", Description: "Import notebook from ipynb", HandlerName: "import_notebook", Rev: builtinSeedRev},
+	{Name: "get_notebook_context", Description: "Get full notebook context", HandlerName: "get_notebook_context", Rev: builtinSeedRev},
+	{Name: "list_skills", Description: "List available skills", HandlerName: "list_skills", Rev: builtinSeedRev},
+	{Name: "load_skill", Description: "Load a skill's full instructions", HandlerName: "load_skill", Rev: builtinSeedRev},
+	{Name: "update_agent", Description: "Update agent configuration", HandlerName: "update_agent", Rev: builtinSeedRev},
+	{Name: "create_skill", Description: "Create a new skill", HandlerName: "create_skill", Rev: builtinSeedRev},
+	{Name: "update_skill", Description: "Update an existing skill", HandlerName: "update_skill", Rev: builtinSeedRev},
+	{Name: "spawn_subagents", Description: "Spawn parallel subagents", HandlerName: "spawn_subagents", Rev: builtinSeedRev},
+	{Name: "create_tasks", Description: "Create tasks for subagents", HandlerName: "create_tasks", Rev: builtinSeedRev},
+	{Name: "update_task", Description: "Update a task's status", HandlerName: "update_task", Rev: builtinSeedRev},
+	{Name: "get_tasks", Description: "Get current tasks", HandlerName: "get_tasks", Rev: builtinSeedRev},
+	{Name: "create_chart", Description: "Create a chart from cell output. Types: bar, line, area, scatter, pie, donut, timeline, hierarchy_tree, big_number, map, sankey, funnel, heatmap, histogram. Bar supports bar_mode (grouped|stacked|horizontal) layout. Area supports area_mode (area|stacked) layout. group_by splits data into series (not for pie/donut/big_number/funnel/heatmap/histogram). For heatmap use x_column, y_axis_column, value_column. For funnel use category_column, value_column. For histogram use value_column, bin_count.", HandlerName: "create_chart", Rev: builtinSeedRev},
+	{Name: "update_chart", Description: "Update an existing chart's config. Supports same types and params as create_chart. For bar: bar_mode for layout. For area: area_mode for layout. For heatmap: x_column, y_axis_column, value_column. For funnel: category_column, value_column, funnel_sort. For histogram: value_column, bin_count.", HandlerName: "update_chart", Rev: builtinSeedRev},
+	{Name: "list_notebooks", Description: "List notebooks", HandlerName: "list_notebooks", Rev: builtinSeedRev},
+	{Name: "list_connectors", Description: "List connectors", HandlerName: "list_connectors", Rev: builtinSeedRev},
+	{Name: "list_folders", Description: "List folders", HandlerName: "list_folders", Rev: builtinSeedRev},
+	{Name: "get_folder_tree", Description: "Get folder tree", HandlerName: "get_folder_tree", Rev: builtinSeedRev},
+	{Name: "create_snapshot", Description: "Create a notebook snapshot", HandlerName: "create_snapshot", Rev: builtinSeedRev},
+	{Name: "list_snapshots", Description: "List notebook snapshots", HandlerName: "list_snapshots", Rev: builtinSeedRev},
+	{Name: "restore_snapshot", Description: "Restore a notebook snapshot", HandlerName: "restore_snapshot", Rev: builtinSeedRev},
+	{Name: "list_notebook_parameters", Description: "List a notebook's parameter definitions", HandlerName: "list_notebook_parameters", Rev: builtinSeedRev},
+	{Name: "set_notebook_parameters", Description: "Replace a notebook's parameter definitions", HandlerName: "set_notebook_parameters", Rev: builtinSeedRev},
+	{Name: "ask_question", Description: "Ask the user a question and wait for their response. Use this when you need a decision, clarification, or input from the user to proceed. You can provide multiple choice options for the user to pick from, or leave it open-ended.", HandlerName: "ask_question", Rev: builtinSeedRev, Schema: map[string]any{"type": "object", "properties": map[string]any{"question": map[string]any{"type": "string", "description": "The question to ask the user"}, "options": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"title": map[string]any{"type": "string", "description": "The option title/label"}, "description": map[string]any{"type": "string", "description": "Optional subtitle or explanation"}}, "required": []any{"title"}}, "description": "Optional multiple choice options"}, "allow_custom": map[string]any{"type": "boolean", "description": "Whether to allow the user to type a custom answer (default: true)"}}, "required": []any{"question"}}},
 }
 
 func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
@@ -79,10 +89,20 @@ func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 		return
 	}
 
-	// Check if already seeded for this org
-	var count int
-	pool.QueryRow(ctx, `SELECT COUNT(*) FROM tools WHERE org_id = $1 AND type = 'builtin'`, orgID).Scan(&count)
-	if count >= len(BuiltinTools) {
+	// Fast path: every builtin row exists and none is older than the catalog.
+	// Two conditions matter — missing rows (a pre-tools org) and stale rows
+	// (seeded before a catalog revision bump).
+	maxRev := 0
+	for _, bt := range BuiltinTools {
+		if bt.Rev > maxRev {
+			maxRev = bt.Rev
+		}
+	}
+	var count, stale int
+	pool.QueryRow(ctx, `
+		SELECT COUNT(*), COUNT(*) FILTER (WHERE seed_rev < $2)
+		FROM tools WHERE org_id = $1 AND type = 'builtin'`, orgID, maxRev).Scan(&count, &stale)
+	if count >= len(BuiltinTools) && stale == 0 {
 		return
 	}
 
@@ -95,13 +115,22 @@ func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 		config, _ := json.Marshal(map[string]string{"handler_name": bt.HandlerName})
 		toolID := uuid.New().String()
 		_, err := pool.Exec(ctx, `
-			INSERT INTO tools (id, org_id, name, description, type, schema, config, created_by, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, 'builtin', $5, $6, $7, NOW(), NOW())
+			INSERT INTO tools (id, org_id, name, description, type, schema, config, seed_rev, created_by, created_at, updated_at)
+			VALUES ($1, $2, $3, $4, 'builtin', $5, $6, $7, $8, NOW(), NOW())
 			ON CONFLICT (org_id, name) DO NOTHING`,
-			toolID, orgID, bt.Name, bt.Description, string(schemaJSON), string(config), systemUserID)
+			toolID, orgID, bt.Name, bt.Description, string(schemaJSON), string(config), bt.Rev, systemUserID)
 		if err != nil {
 			slog.Warn("seed builtin tool failed", "tool", bt.Name, "error", err)
 			continue
+		}
+		// Refresh a stale row: builtin descriptions and parameters are
+		// platform-managed, so a row older than the catalog's revision is
+		// overwritten (a user edit to a builtin is replaced on the next bump).
+		if _, err := pool.Exec(ctx, `
+			UPDATE tools SET description = $1, schema = $2, config = $3, seed_rev = $4, updated_at = NOW()
+			WHERE org_id = $5 AND name = $6 AND type = 'builtin' AND seed_rev < $4`,
+			bt.Description, string(schemaJSON), string(config), bt.Rev, orgID, bt.Name); err != nil {
+			slog.Warn("refresh builtin tool failed", "tool", bt.Name, "error", err)
 		}
 		// Seed management ACL: all org members can view tools (UI listing);
 		// 'use' is not needed — assignment is gated by validateToolAccess which checks
