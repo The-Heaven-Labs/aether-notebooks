@@ -454,7 +454,7 @@ Agent updates (`agent_updated_at`) now also update the local cell cache via WebS
 
 ### Release Process
 
-Releases are fully automated via **goreleaser** — no manual steps.
+Once a PR is merged, releases are built and published automatically by **goreleaser** — the only manual step is choosing the tag.
 
 ```bash
 # 1. Ensure main has all desired changes merged
@@ -469,7 +469,11 @@ The release workflow:
 - Builds & pushes Docker image to `ghcr.io/the-heaven-labs/aether-server` (`:<tag>` and `:latest`)
 - Creates a GitHub Release with all archives and checksums
 
-The `v0.1.1` release is already published — tag `v0.2.0` for the next one.
+**Choosing the version:** tag by hand, one release per merged PR, following the squash commit's conventional type — bump the **minor** (`v0.X.0`) when the commit is a `feat:`, the **patch** (`v0.X.Y+1`) when it is a `fix:` (e.g. `v0.60.1` ← #228 fix, `v0.71.0` ← #245 feat, `v0.72.0` ← #246 feat). Never guess the next number from this file — read the tags, they are the source of truth:
+
+```bash
+git tag -l 'v*' --sort=version:refname | tail -1
+```
 
 ### Changelog
 
