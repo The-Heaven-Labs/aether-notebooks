@@ -18,11 +18,11 @@ const REPORT: ReviewReport = {
     },
     {
       severity: 'info', category: 'content', chapter_id: 'overview', widget_id: 'w1',
-      message: 'metric w1 has no label — viewers see the column name', fix_tool: 'set_widget_config',
+      message: 'the metric has no label — viewers see the column name', fix_tool: 'set_widget_config',
     },
     {
       severity: 'error', category: 'layout', chapter_id: 'overview', widget_id: 'w1',
-      message: 'widgets w1 and w2 overlap in chapter "overview"', fix_tool: 'set_dashboard_layout',
+      message: 'the metric and "Revenue" overlap in chapter "overview"', fix_tool: 'set_dashboard_layout',
     },
   ],
 }

@@ -132,6 +132,46 @@ func sortFindings(findings []Finding) {
 	})
 }
 
+// widgetName returns the widget's human name — the config title/label, or the
+// metric block's label — when one is set.
+func widgetName(proj *dashboarddoc.Projection, id string) (string, bool) {
+	w, ok := proj.Widgets[id]
+	if !ok {
+		return "", false
+	}
+	if t := strValue(w.Config, "title"); t != "" {
+		return t, true
+	}
+	if t := strValue(w.Config, "label"); t != "" {
+		return t, true
+	}
+	if metric := configBlock(w.Config, "metric"); metric != nil {
+		if t := strValue(metric, "label"); t != "" {
+			return t, true
+		}
+	}
+	return "", false
+}
+
+// humanRef names a widget for finding messages: `"Revenue"` when the widget
+// has a name, else `the metric` / `the table` / `the chart` / `the text
+// panel`. The structured WidgetID stays on the finding, so the agent always
+// has the exact target even when the message reads naturally.
+func humanRef(proj *dashboarddoc.Projection, id string) string {
+	if name, ok := widgetName(proj, id); ok {
+		return fmt.Sprintf("%q", name)
+	}
+	if w, ok := proj.Widgets[id]; ok {
+		switch w.Type {
+		case "metric", "table", "chart":
+			return "the " + w.Type
+		case "text":
+			return "the text panel"
+		}
+	}
+	return "the widget"
+}
+
 // layoutFindings checks the per-chapter grids: invalid bounds, overlaps,
 // leading gaps, empty chapters, chapter balance, and widget tab placement.
 func layoutFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab, gridCols int) []Finding {
@@ -144,7 +184,7 @@ func layoutFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab, g
 		if w.Layout.Row < 0 || w.Layout.Col < 0 || w.Layout.Width <= 0 || w.Layout.Height <= 0 {
 			findings = append(findings, Finding{
 				Severity: SeverityError, Category: "layout", ChapterID: chapter, WidgetID: id,
-				Message: fmt.Sprintf("widget %s has invalid dimensions (row/col must be ≥ 0 and width/height > 0)", id),
+				Message: fmt.Sprintf("%s has invalid dimensions (row/col must be ≥ 0 and width/height > 0)", humanRef(proj, id)),
 				FixTool: "set_dashboard_layout",
 			})
 			continue
@@ -152,8 +192,8 @@ func layoutFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab, g
 		if w.Layout.Col+w.Layout.Width > gridCols {
 			findings = append(findings, Finding{
 				Severity: SeverityError, Category: "layout", ChapterID: chapter, WidgetID: id,
-				Message: fmt.Sprintf("widget %s exceeds the %d-column grid (col %d + width %d)",
-					id, gridCols, w.Layout.Col, w.Layout.Width),
+				Message: fmt.Sprintf("%s exceeds the %d-column grid (col %d + width %d)",
+					humanRef(proj, id), gridCols, w.Layout.Col, w.Layout.Width),
 				FixTool: "set_dashboard_layout",
 			})
 		}
@@ -172,9 +212,9 @@ func layoutFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab, g
 				a.Layout.Col+a.Layout.Width > b.Layout.Col &&
 				a.Layout.Row < b.Layout.Row+b.Layout.Height &&
 				a.Layout.Row+a.Layout.Height > b.Layout.Row {
-				message := fmt.Sprintf("widgets %s and %s overlap", ids[i], ids[j])
+				message := fmt.Sprintf("%s and %s overlap", humanRef(proj, ids[i]), humanRef(proj, ids[j]))
 				if chapterA != "" {
-					message = fmt.Sprintf("widgets %s and %s overlap in chapter %q", ids[i], ids[j], chapterA)
+					message = fmt.Sprintf("%s and %s overlap in chapter %q", humanRef(proj, ids[i]), humanRef(proj, ids[j]), chapterA)
 				}
 				findings = append(findings, Finding{
 					Severity: SeverityError, Category: "layout", ChapterID: chapterA, WidgetID: ids[i],
@@ -259,7 +299,7 @@ func layoutFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab, g
 			if tab == "" {
 				findings = append(findings, Finding{
 					Severity: SeverityInfo, Category: "layout", ChapterID: first, WidgetID: id,
-					Message: fmt.Sprintf("widget %s has no chapter; it renders in %q", id, first),
+					Message: fmt.Sprintf("%s has no chapter; it renders in %q", humanRef(proj, id), first),
 					FixTool: "set_dashboard_layout",
 				})
 				continue
@@ -267,8 +307,8 @@ func layoutFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab, g
 			if !tabExists(tab, tabs) {
 				findings = append(findings, Finding{
 					Severity: SeverityWarning, Category: "layout", ChapterID: first, WidgetID: id,
-					Message: fmt.Sprintf("widget %s names chapter %q, which no longer exists; it falls back to %q",
-						id, tab, first),
+					Message: fmt.Sprintf("%s names chapter %q, which no longer exists; it falls back to %q",
+						humanRef(proj, id), tab, first),
 					FixTool: "set_dashboard_layout",
 				})
 			}
@@ -291,14 +331,14 @@ func contentFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab) 
 			if strValue(metric, "value_column") == "" {
 				findings = append(findings, Finding{
 					Severity: SeverityWarning, Category: "content", ChapterID: chapter, WidgetID: id,
-					Message: fmt.Sprintf("metric %s has no value column", id),
+					Message: fmt.Sprintf("%s has no value column", humanRef(proj, id)),
 					FixTool: "set_widget_config",
 				})
 			}
 			if strValue(metric, "label") == "" {
 				findings = append(findings, Finding{
 					Severity: SeverityInfo, Category: "content", ChapterID: chapter, WidgetID: id,
-					Message: fmt.Sprintf("metric %s has no label — viewers see the column name", id),
+					Message: fmt.Sprintf("%s has no label — viewers see the column name", humanRef(proj, id)),
 					FixTool: "set_widget_config",
 				})
 			}
@@ -308,7 +348,7 @@ func contentFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab) 
 			if len(columns) == 0 {
 				findings = append(findings, Finding{
 					Severity: SeverityInfo, Category: "content", ChapterID: chapter, WidgetID: id,
-					Message: fmt.Sprintf("table %s has no column formats — values render as stored", id),
+					Message: fmt.Sprintf("%s has no column formats — values render as stored", humanRef(proj, id)),
 					FixTool: "set_widget_config",
 				})
 			}
@@ -317,7 +357,7 @@ func contentFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab) 
 			if strings.TrimSpace(markdown) == "" {
 				findings = append(findings, Finding{
 					Severity: SeverityWarning, Category: "content", ChapterID: chapter, WidgetID: id,
-					Message: fmt.Sprintf("text panel %s is empty", id),
+					Message: fmt.Sprintf("%s is empty", humanRef(proj, id)),
 					FixTool: "set_widget_config",
 				})
 				continue
@@ -325,7 +365,7 @@ func contentFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab) 
 			if !headingPattern.MatchString(markdown) {
 				findings = append(findings, Finding{
 					Severity: SeverityInfo, Category: "content", ChapterID: chapter, WidgetID: id,
-					Message: fmt.Sprintf("text panel %s has no heading — start with a markdown heading (## …)", id),
+					Message: fmt.Sprintf("%s has no heading — start with a markdown heading (## …)", humanRef(proj, id)),
 					FixTool: "set_widget_config",
 				})
 			}
