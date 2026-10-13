@@ -158,6 +158,22 @@ export function loadResponseDisposition(kind: DocumentKind, status: number): Loa
   return 'empty'
 }
 
+/** How onLoadDocument must react when a 2xx load carries no state bytes. */
+export type FailedStateLoadDisposition = 'empty' | 'fail'
+
+/**
+ * Classifies a load that fetched no usable state — a 2xx with an empty body,
+ * or no token to fetch with. Dashboards always have state server-side (the GET
+ * seeds and heals), so both are real failures: returning an empty document
+ * would show a blank editor while REST reads stay correct, and — because the
+ * store guards fail closed rather than overwrite — the blank state could
+ * persist across reconnects. Throwing aborts the load and the provider
+ * retries. Notebooks keep the historical empty-document behavior.
+ */
+export function failedStateLoadDisposition(kind: DocumentKind): FailedStateLoadDisposition {
+  return kind === 'dashboard' ? 'fail' : 'empty'
+}
+
 /** How a live dashboard connection must react to a revalidation outcome. */
 export type RevalidationDisposition = 'keep' | 'readonly' | 'close' | 'retry'
 

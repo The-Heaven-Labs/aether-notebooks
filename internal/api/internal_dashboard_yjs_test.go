@@ -538,6 +538,78 @@ func TestInternalDashboardYjsGetOrgScoped(t *testing.T) {
 // TestInternalDashboardYjsMissingTrashedAndEmptyBody pins the explicit error
 // answers: unknown/trashed dashboards are 404 (never a silent seed or store),
 // and an empty PUT body is a 400.
+// TestInternalDashboardYjsHealsEmptyAndCorruptState pins the read-side heal: a
+// stored state that is zero-length or projects empty over a populated
+// dashboard is rebuilt from the derived rows instead of being served as a
+// successful empty document — which would blank every draft surface (editor,
+// draft preview) while REST reads stayed correct, permanently, because no
+// store guard ever overwrites it.
+func TestInternalDashboardYjsHealsEmptyAndCorruptState(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	token := registerAndGetToken(t, srv, fmt.Sprintf("dash-yjs-heal-%d@example.com", ts), "Dash Yjs Heal Org")
+	connID := createConnector(t, srv, token)
+	dashID := createDashWithSettings(t, srv, token, nil)
+	widgetID := addQueryWidget(t, srv, token, dashID, connID, "SELECT 7")
+
+	projectWidgets := func(state []byte) map[string]dashboarddoc.WidgetDoc {
+		proj, err := dashboarddoc.Project(state)
+		require.NoError(t, err)
+		return proj.Widgets
+	}
+
+	// Seed a healthy document first.
+	rec := internalDashboardDocRequest(t, srv, token, "GET", dashID, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.Contains(t, projectWidgets(rec.Body.Bytes()), widgetID)
+
+	t.Run("zero-length stored state is rebuilt from the rows", func(t *testing.T) {
+		_, err := srv.DB().Pool.Exec(context.Background(),
+			`UPDATE dashboard_yjs_documents SET state = $2 WHERE dashboard_id = $1`, dashID, []byte{})
+		require.NoError(t, err)
+
+		rec := internalDashboardDocRequest(t, srv, token, "GET", dashID, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.NotEmpty(t, rec.Body.Bytes())
+		require.Contains(t, projectWidgets(rec.Body.Bytes()), widgetID)
+
+		var healed []byte
+		require.NoError(t, srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT state FROM dashboard_yjs_documents WHERE dashboard_id = $1`, dashID).Scan(&healed))
+		require.NotEmpty(t, healed, "the corrupt row must be healed in place")
+	})
+
+	t.Run("empty-projecting state over populated rows is rebuilt", func(t *testing.T) {
+		empty, err := dashboarddoc.Seed(dashboarddoc.Projection{
+			Settings: map[string]any{},
+			Widgets:  map[string]dashboarddoc.WidgetDoc{},
+		})
+		require.NoError(t, err)
+		_, err = srv.DB().Pool.Exec(context.Background(),
+			`UPDATE dashboard_yjs_documents SET state = $2 WHERE dashboard_id = $1`, dashID, empty)
+		require.NoError(t, err)
+
+		rec := internalDashboardDocRequest(t, srv, token, "GET", dashID, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		require.Contains(t, projectWidgets(rec.Body.Bytes()), widgetID)
+	})
+
+	t.Run("a healthy state is served byte-identical across reads", func(t *testing.T) {
+		healthy := internalDashboardDocRequest(t, srv, token, "GET", dashID, nil).Body.Bytes()
+		again := internalDashboardDocRequest(t, srv, token, "GET", dashID, nil).Body.Bytes()
+		require.Equal(t, healthy, again)
+	})
+
+	t.Run("a valid empty dashboard is stable", func(t *testing.T) {
+		emptyDash := createDashWithSettings(t, srv, token, nil)
+		first := internalDashboardDocRequest(t, srv, token, "GET", emptyDash, nil).Body.Bytes()
+		require.NotEmpty(t, first)
+		second := internalDashboardDocRequest(t, srv, token, "GET", emptyDash, nil).Body.Bytes()
+		require.Equal(t, first, second)
+	})
+}
+
 func TestInternalDashboardYjsMissingTrashedAndEmptyBody(t *testing.T) {
 	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
 	srv := setupTestServer(t)
