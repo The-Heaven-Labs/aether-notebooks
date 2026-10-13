@@ -111,6 +111,20 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "set_widget_config",
+			Description: "Set a dashboard widget's typed render config. chart uses create_chart's vocabulary (chart_type, x_column, y_columns, group_by, bar_mode, series_colors, mark_lines, …) and stores the converted chart config; metric sets the metric widget's value_column/aggregation/label/format/comparison/sparkline; table sets per-column number/currency/percent formats (columns: [{name, format}]). Each block replaces its config section; unrelated keys stay.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"widget_id":{"type":"string"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `},"required":["dashboard_id","widget_id"]}`,
+		},
+		Handler: makeSetWidgetConfigHandler(),
+		Timeout: 15 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "get_dashboard",
 			Description: "Get a dashboard with its widgets. Use this to see the current state of a dashboard before making changes.",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
@@ -696,6 +710,130 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 
 		return map[string]any{"widget_id": widgetID}, nil
+	}
+}
+
+// The typed config-block schemas shared by set_widget_config and
+// create_dashboard_widget. The chart block mirrors create_chart's parameter
+// vocabulary; validate.WidgetChartConfig is the enforcement side (one source
+// of truth for both the schema and the conversion).
+const widgetChartBlockSchema = `{"type":"object","description":"Chart config using create_chart's vocabulary; converted to the stored chart config.","properties":{"chart_type":{"type":"string","enum":["bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey","funnel","heatmap","histogram"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"lat_column":{"type":"string","description":"Latitude column (map charts only)"},"lon_column":{"type":"string","description":"Longitude column (map charts only)"},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"category_column":{"type":"string","description":"Category/label column for funnel charts"},"y_axis_column":{"type":"string","description":"Second category column for heatmap (y-axis categories)"},"funnel_sort":{"type":"string","enum":["ascending","descending","none"]},"bin_count":{"type":"number","description":"Number of bins for histogram"},"bar_mode":{"type":"string","enum":["grouped","stacked","horizontal"]},"area_mode":{"type":"string","enum":["area","stacked"]},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors, e.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"},"mark_lines":{"type":"array","items":{"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"},"position":{"type":"string","enum":["horizontal","vertical"]},"color":{"type":"string"}}}}},"required":["chart_type"]}`
+
+const widgetMetricBlockSchema = `{"type":"object","description":"Metric widget config.","properties":{"value_column":{"type":"string"},"aggregation":{"type":"string","enum":["none","sum","avg","min","max","median","count","count_distinct","first"]},"label":{"type":"string"},"format":{"type":"object","properties":{"style":{"type":"string","enum":["number","currency","percent"]},"currency":{"type":"string","description":"3-letter code like USD"},"decimals":{"type":"number"},"compact":{"type":"boolean"}}},"comparison":{"type":"object","properties":{"column":{"type":"string"},"mode":{"type":"string","enum":["delta","percent"]}}},"sparkline":{"type":"object","properties":{"x_column":{"type":"string"},"y_column":{"type":"string"}}}}}`
+
+const widgetTableBlockSchema = `{"type":"object","description":"Per-column formats for a table widget.","properties":{"columns":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"format":{"type":"object","properties":{"style":{"type":"string","enum":["number","currency","percent"]},"currency":{"type":"string","description":"3-letter code like USD"},"decimals":{"type":"number"},"compact":{"type":"boolean"}}}},"required":["name"]}}},"required":["columns"]}`
+
+// makeSetWidgetConfigHandler implements set_widget_config: typed chart/metric/
+// table blocks are validated and converted to the stored shapes (see
+// internal/validate/widget_config.go), merged over the widget's projected
+// config, and written through the dashboard document in one store. Every
+// block is validated before the document loads, so a rejected request never
+// lazily seeds it.
+func makeSetWidgetConfigHandler() ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string                       `json:"dashboard_id"`
+			WidgetID    string                       `json:"widget_id"`
+			Chart       *validate.WidgetChartConfig  `json:"chart"`
+			Metric      *validate.WidgetMetricConfig `json:"metric"`
+			Table       *validate.WidgetTableConfig  `json:"table"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+		if ctx.DashboardDocStore == nil {
+			return nil, fmt.Errorf("dashboard document store not configured")
+		}
+		if req.Chart == nil && req.Metric == nil && req.Table == nil {
+			return nil, fmt.Errorf("nothing to update")
+		}
+		if req.Chart != nil {
+			if err := validate.ValidateWidgetChart(*req.Chart); err != nil {
+				return nil, err
+			}
+		}
+		if req.Metric != nil {
+			if err := validate.ValidateWidgetMetric(*req.Metric); err != nil {
+				return nil, err
+			}
+		}
+		if req.Table != nil {
+			if err := validate.ValidateWidgetTable(*req.Table); err != nil {
+				return nil, err
+			}
+		}
+
+		// Document widget keys are canonical lowercase UUIDs; canonicalize the
+		// requested ID so any UUID spelling addresses the same widget.
+		widgetUUID, err := uuid.Parse(req.WidgetID)
+		if err != nil {
+			return nil, fmt.Errorf("widget not found")
+		}
+		widgetID := widgetUUID.String()
+
+		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("load dashboard document: %w", err)
+		}
+		proj, err := dashboarddoc.Project(state)
+		if err != nil {
+			return nil, fmt.Errorf("read dashboard document: %w", err)
+		}
+		existing, ok := proj.Widgets[widgetID]
+		if !ok {
+			return nil, fmt.Errorf("widget not found")
+		}
+
+		// Read-merge: config is a whole-value document field, so the converted
+		// blocks merge over a working copy of the projected config and the
+		// whole map is written back. Chart keys merge at the config root;
+		// metric/table replace their sections (their typed blocks are the
+		// complete spec for that section).
+		config := make(map[string]any, len(existing.Config)+3)
+		for k, v := range existing.Config {
+			config[k] = v
+		}
+		if req.Chart != nil {
+			for k, v := range validate.ToStoredWidgetChart(*req.Chart) {
+				config[k] = v
+			}
+		}
+		if req.Metric != nil {
+			config["metric"] = validate.ToStoredWidgetMetric(*req.Metric)
+		}
+		if req.Table != nil {
+			config["table"] = validate.ToStoredWidgetTable(*req.Table)
+		}
+
+		newState, err := dashboarddoc.SetWidgetConfig(state, widgetID, config)
+		if errors.Is(err, dashboarddoc.ErrWidgetNotFound) {
+			return nil, fmt.Errorf("widget not found")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("set widget config: %w", err)
+		}
+		if err := ctx.DashboardDocStore.Store(ctx.Context, req.DashboardID, newState); err != nil {
+			return nil, fmt.Errorf("set widget config: %w", err)
+		}
+
+		keys := make([]string, 0, 3)
+		if req.Chart != nil {
+			keys = append(keys, "chart")
+		}
+		if req.Metric != nil {
+			keys = append(keys, "metric")
+		}
+		if req.Table != nil {
+			keys = append(keys, "table")
+		}
+		_ = ctx.AuditLogWithMetadata("widget.update", "dashboard", req.DashboardID, map[string]any{
+			"widget_id": widgetID,
+			"keys":      keys,
+		})
+		return map[string]any{"widget_id": widgetID, "status": "updated", "keys": keys}, nil
 	}
 }
 

@@ -1425,3 +1425,155 @@ func TestDashboardGetDashboardExposesOrgBranding(t *testing.T) {
 	require.Equal(t, "#7c5cff", branding["accent_color"])
 	require.Equal(t, []any{"#7c5cff", "#22c55e"}, branding["default_chart_palette"])
 }
+
+// TestDashboardSetWidgetConfig pins the typed config tool: snake_case blocks
+// are validated and converted to the stored shapes (camelCase chart keys at
+// the config root, config.metric, config.table), each block replaces its
+// section while unrelated config keys survive, and a rejected block leaves
+// the document untouched.
+func TestDashboardSetWidgetConfig(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Widget Config Dashboard")
+
+	widgetID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT day, revenue, cost FROM sales', 'sql', 'chart',
+		        '{"row":0,"col":0,"width":6,"height":6}',
+		        '{"appearance":{"background":"transparent"},"showLegend":true}')
+	`, widgetID, dashID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "set_widget_config")
+
+	// Chart block: snake_case in, camelCase ChartConfig out at the root.
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"chart": map[string]any{
+			"chart_type":    "bar",
+			"x_column":      "day",
+			"y_columns":     []string{"revenue", "cost"},
+			"group_by":      "region",
+			"bar_mode":      "stacked",
+			"series_colors": map[string]string{"revenue": "#ff0000"},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, widgetID, out.(map[string]any)["widget_id"])
+
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	require.Empty(t, proj.Warnings)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, "bar", w.Config["chartType"])
+	require.Equal(t, "day", w.Config["xAxis"])
+	require.Equal(t, []any{"revenue", "cost"}, w.Config["yAxis"])
+	require.Equal(t, "region", w.Config["groupBy"])
+	require.Equal(t, "stacked", w.Config["barMode"])
+	require.Equal(t, map[string]any{"revenue": "#ff0000"}, w.Config["seriesColors"])
+	require.Equal(t, true, w.Config["showLegend"], "unrelated config keys must survive")
+	require.Equal(t, map[string]any{"background": "transparent"}, w.Config["appearance"])
+
+	// Materialized row mirrors the document.
+	var configOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT config::text FROM widgets WHERE id = $1`, widgetID).Scan(&configOut))
+	require.JSONEq(t, `{
+		"appearance":{"background":"transparent"},
+		"showLegend":true,
+		"chartType":"bar","xAxis":"day","yAxis":["revenue","cost"],
+		"groupBy":"region","barMode":"stacked","seriesColors":{"revenue":"#ff0000"}
+	}`, configOut)
+
+	// Metric block: stored under config.metric in the snake_case shape, with
+	// the currency normalized; the chart keys survive.
+	metricArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"metric": map[string]any{
+			"value_column": "revenue",
+			"aggregation":  "sum",
+			"label":        "Revenue",
+			"format":       map[string]any{"style": "currency", "currency": "usd", "decimals": 2, "compact": true},
+			"comparison":   map[string]any{"column": "prev_revenue", "mode": "percent"},
+			"sparkline":    map[string]any{"x_column": "day", "y_column": "revenue"},
+		},
+	})
+	require.NoError(t, err)
+	_, err = handler(metricArgs, ctx)
+	require.NoError(t, err)
+
+	proj = storedDashboardDoc(t, db.Pool, dashID)
+	w = proj.Widgets[widgetID]
+	metric, ok := w.Config["metric"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "revenue", metric["value_column"])
+	require.Equal(t, "sum", metric["aggregation"])
+	require.Equal(t, "Revenue", metric["label"])
+	require.Equal(t, map[string]any{"style": "currency", "currency": "USD", "decimals": float64(2), "compact": true}, metric["format"])
+	require.Equal(t, map[string]any{"column": "prev_revenue", "mode": "percent"}, metric["comparison"])
+	require.Equal(t, map[string]any{"x_column": "day", "y_column": "revenue"}, metric["sparkline"])
+	require.Equal(t, "bar", w.Config["chartType"], "the chart section must survive a metric update")
+
+	// Table block: stored under config.table with per-column formats.
+	tableArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"table": map[string]any{
+			"columns": []map[string]any{
+				{"name": "revenue", "format": map[string]any{"style": "currency", "currency": "usd", "decimals": 2}},
+				{"name": "notes"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	_, err = handler(tableArgs, ctx)
+	require.NoError(t, err)
+
+	proj = storedDashboardDoc(t, db.Pool, dashID)
+	w = proj.Widgets[widgetID]
+	require.Equal(t, map[string]any{"columns": []any{
+		map[string]any{"name": "revenue", "format": map[string]any{"style": "currency", "currency": "USD", "decimals": float64(2)}},
+		map[string]any{"name": "notes"},
+	}}, w.Config["table"])
+	require.Equal(t, "bar", w.Config["chartType"])
+	require.NotNil(t, w.Config["metric"])
+
+	// A bad chart type is rejected before the document is rewritten.
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	badArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"chart":        map[string]any{"chart_type": "waffle"},
+	})
+	require.NoError(t, err)
+	_, err = handler(badArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not supported")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected block must not rewrite the document")
+
+	// A request with no blocks is a no-op error, and a missing widget fails
+	// without touching the document.
+	noBlocks, err := json.Marshal(map[string]any{"dashboard_id": dashID, "widget_id": widgetID})
+	require.NoError(t, err)
+	_, err = handler(noBlocks, ctx)
+	require.ErrorContains(t, err, "nothing to update")
+
+	missing, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    uuid.NewString(),
+		"chart":        map[string]any{"chart_type": "bar", "x_column": "day", "y_columns": []string{"revenue"}},
+	})
+	require.NoError(t, err)
+	_, err = handler(missing, ctx)
+	require.ErrorContains(t, err, "widget not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
+}
