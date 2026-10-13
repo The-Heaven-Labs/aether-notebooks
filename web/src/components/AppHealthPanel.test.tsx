@@ -1,5 +1,6 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
@@ -109,12 +110,22 @@ describe('AppHealthPanel', () => {
       requests += 1
       return HttpResponse.json({ ...REPORT, count: 0, findings: [] })
     }))
-    const first = renderWithProviders(<AppHealthPanel dashboardId="d1" onClose={() => {}} />)
+    // Mirror the app: one shared client with the app-wide 30s staleTime — a
+    // reopen must still run a fresh check.
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, staleTime: 30_000 } } })
+    function Harness({ open }: { open: boolean }) {
+      return (
+        <QueryClientProvider client={qc}>
+          {open ? <AppHealthPanel dashboardId="d1" onClose={() => {}} /> : null}
+        </QueryClientProvider>
+      )
+    }
+    const view = render(<Harness open />)
     await screen.findByText('No issues found')
     expect(requests).toBe(1)
-    first.unmount()
 
-    renderWithProviders(<AppHealthPanel dashboardId="d1" onClose={() => {}} />)
+    view.rerender(<Harness open={false} />)
+    view.rerender(<Harness open />)
     await waitFor(() => expect(requests).toBe(2))
   })
 

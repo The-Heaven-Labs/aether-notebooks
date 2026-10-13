@@ -757,6 +757,7 @@ const markSaved = useCallback(() => {
               <span style={styles.pickerTitle}>Add Widget</span>
               <button
                 type="button"
+                aria-label="Close add widget"
                 style={{ ...styles.pickerClose, display: 'flex', alignItems: 'center' }}
                 onClick={() => {
                   setShowPicker(false)

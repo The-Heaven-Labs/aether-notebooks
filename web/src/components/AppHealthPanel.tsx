@@ -111,10 +111,14 @@ export function AppHealthPanel({ dashboardId, onJumpToChapter, onClose }: {
   useEscapeToClose(onClose)
   useFocusTrap(panelRef, true)
 
-  // Mounted only while open, so every open is a fresh check.
+  // Mounted only while open, and each open is an explicit "check now": the
+  // app-wide 30s staleTime must not serve a stale report when the author
+  // reopens the panel after fixing something.
   const { data, isLoading, error } = useQuery<ReviewReport>({
     queryKey: ['dashboard-review', dashboardId],
     queryFn: () => api.get<ReviewReport>(`/api/v1/dashboards/${dashboardId}/review`),
+    staleTime: 0,
+    refetchOnMount: 'always',
   })
 
   const jumpToWidget = (finding: ReviewFinding) => {
