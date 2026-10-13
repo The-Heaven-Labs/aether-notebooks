@@ -1774,3 +1774,173 @@ func TestDashboardGuide(t *testing.T) {
 		require.Contains(t, text, key, "the guide must document %q", key)
 	}
 }
+
+// TestWidgetHTMLTooling pins the html authoring surface on the dashboard
+// tools: create accepts a source-less html widget with an html/css block,
+// set_widget_config merges the block onto an html widget only, oversize markup
+// is rejected, and the org kill switch fails every write closed.
+func TestWidgetHTMLTooling(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "HTML Tooling")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	createHandler := dashboardTool(t, reg, "create_dashboard_widget")
+	configHandler := dashboardTool(t, reg, "set_widget_config")
+	updateHandler := dashboardTool(t, reg, "update_dashboard_widget")
+
+	// Two query rows seeded before the first tool write: the lazy document
+	// seed projects every existing row, so later tool calls can address them.
+	tableWidgetID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT 1 AS x', 'sql', 'table',
+		        '{"row":0,"col":4,"width":4,"height":4}', '{}')`,
+		tableWidgetID, dashID)
+	require.NoError(t, err)
+	thirdWidgetID := uuid.NewString()
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT 2 AS y', 'sql', 'table',
+		        '{"row":4,"col":0,"width":4,"height":4}', '{}')`,
+		thirdWidgetID, dashID)
+	require.NoError(t, err)
+
+	// create_dashboard_widget with type html + html block → widget config
+	// carries html/css; no source required.
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"type":         "html",
+		"row":          0,
+		"col":          0,
+		"width":        4,
+		"height":       4,
+		"html": map[string]any{
+			"html": `<div class="stat">42</div>`,
+			"css":  ".stat{font-size:28px}",
+		},
+	})
+	require.NoError(t, err)
+	out, err := createHandler(args, ctx)
+	require.NoError(t, err)
+	widgetID := out.(map[string]any)["widget_id"].(string)
+
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, "html", w.Type)
+	require.Nil(t, w.NotebookID)
+	require.Nil(t, w.CellID)
+	require.Nil(t, w.ConnectorID)
+	require.Nil(t, w.Query)
+	require.Equal(t, `<div class="stat">42</div>`, w.Config["html"])
+	require.Equal(t, ".stat{font-size:28px}", w.Config["css"])
+
+	// Materialized row mirrors the doc.
+	var typeOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT type FROM widgets WHERE id = $1`, widgetID).Scan(&typeOut))
+	require.Equal(t, "html", typeOut)
+
+	// create with connector_id + type html → error (html is source-less).
+	connID := uuid.NewString()
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		VALUES ($1, $2, 'test-connector', 'postgres', $3)`,
+		connID, orgID, []byte("encrypted"))
+	require.NoError(t, err)
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"type":         "html",
+		"connector_id": connID,
+		"query":        "SELECT 1",
+	})
+	require.NoError(t, err)
+	_, err = createHandler(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "source-less")
+
+	// set_widget_config html block merges over existing config (unset keys
+	// survive, set keys replace).
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"html":         map[string]any{"css": ".stat{color:red}"},
+	})
+	require.NoError(t, err)
+	out, err = configHandler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"html"}, out.(map[string]any)["keys"])
+	proj = storedDashboardDoc(t, db.Pool, dashID)
+	w = proj.Widgets[widgetID]
+	require.Equal(t, `<div class="stat">42</div>`, w.Config["html"], "unset block keys must survive")
+	require.Equal(t, ".stat{color:red}", w.Config["css"])
+
+	// set_widget_config on a non-html widget is rejected.
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    tableWidgetID,
+		"html":         map[string]any{"html": "<p>x</p>"},
+	})
+	require.NoError(t, err)
+	_, err = configHandler(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "set the widget type to html first")
+
+	// Oversize html → error naming 256 KiB.
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"html":         map[string]any{"html": strings.Repeat("x", 256<<10+1)},
+	})
+	require.NoError(t, err)
+	_, err = configHandler(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "256 KiB")
+
+	// update_dashboard_widget converts the table widget to html.
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    tableWidgetID,
+		"type":         "html",
+	})
+	require.NoError(t, err)
+	_, err = updateHandler(args, ctx)
+	require.NoError(t, err)
+	proj = storedDashboardDoc(t, db.Pool, dashID)
+	require.Equal(t, "html", proj.Widgets[tableWidgetID].Type)
+
+	// Org disabled → create, config, and conversion all fail closed.
+	_, err = db.Pool.Exec(context.Background(),
+		`UPDATE orgs SET settings = COALESCE(settings, '{}'::jsonb) || '{"html_panels_enabled":false}'::jsonb WHERE id = $1`, orgID)
+	require.NoError(t, err)
+
+	args, err = json.Marshal(map[string]any{"dashboard_id": dashID, "type": "html", "row": 4, "col": 0, "width": 4, "height": 4})
+	require.NoError(t, err)
+	_, err = createHandler(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disabled")
+
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"html":         map[string]any{"html": "<p>nope</p>"},
+	})
+	require.NoError(t, err)
+	_, err = configHandler(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disabled")
+
+	// Conversion while disabled: the second seeded table widget cannot flip.
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    thirdWidgetID,
+		"type":         "html",
+	})
+	require.NoError(t, err)
+	_, err = updateHandler(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disabled")
+}
