@@ -7,12 +7,13 @@ import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPayload'
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
-import { isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
+import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
 import { widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { htmlConfigFrom } from '../utils/htmlConfig'
+import { customConfigFrom } from '../utils/customConfig'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../api/client'
@@ -24,6 +25,7 @@ import { QueryDataWidget } from '../components/QueryDataWidget'
 import { WidgetFrame } from '../components/WidgetFrame'
 import { TextWidget } from '../components/TextWidget'
 import { HtmlWidget } from '../components/HtmlWidget'
+import { CustomWidget } from '../components/CustomWidget'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
@@ -491,6 +493,9 @@ export function DashboardEditorPage() {
   const displayTitle = liveDashboard.title
   const variables = liveDashboard.settings?.variables ?? []
   const gridCols = liveDashboard.settings?.grid_cols ?? 12
+  // On the full custom page every non-custom widget is a hidden data source —
+  // the editor badges them so their role is visible while authoring.
+  const customPageLayout = liveDashboard.settings?.app?.layout === 'custom'
 
   // Status chip: the amber dot flags a published app that is behind the draft
   // (or a draft that publish would refuse). A never-published dashboard reads
@@ -846,6 +851,15 @@ export function DashboardEditorPage() {
                   <div key={widget.id} id={`dash-widget-${widget.id}`} tabIndex={-1} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
                       <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
+                      {customPageLayout && !isCustomWidget(widget) && (
+                        <span
+                          className="dash-widget-kind"
+                          style={styles.dataSourceChip}
+                          title="Hidden on the custom page; available to components as a data binding"
+                        >
+                          Data source
+                        </span>
+                      )}
                       <div className="dash-widget-head-actions">
                         <button
                           type="button"
@@ -881,6 +895,17 @@ export function DashboardEditorPage() {
                           theme={liveDashboard.settings?.app?.theme}
                           branding={liveDashboard.org_branding}
                         />
+                      ) : isCustomWidget(widget) ? (
+                        <CustomWidget
+                          {...customConfigFrom(widget.config)}
+                          enabled={dashboard.custom_code_enabled === true}
+                          widgets={liveDashboard.widgets}
+                          endpointBase={`/api/v1/dashboards/${id!}`}
+                          widgetsData={liveDashboard.widgets_data}
+                          dataEnabled={dashboard.can_view_with_data !== false}
+                          theme={liveDashboard.settings?.app?.theme}
+                          branding={liveDashboard.org_branding}
+                        />
                       ) : (
                         <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                       )}
@@ -897,7 +922,7 @@ export function DashboardEditorPage() {
                 // it. Buttons/links/fields and the chart canvas (tooltips,
                 // dataZoom) are excluded. Drag/resize are off while editing is
                 // paused (document not synced or relay disconnected).
-                dragConfig={{ enabled: editingEnabled, cancel: 'button, a, input, select, textarea, canvas, .react-resizable-handle' }}
+                dragConfig={{ enabled: editingEnabled, cancel: 'button, a, input, select, textarea, canvas, iframe, .react-resizable-handle' }}
                 resizeConfig={{ enabled: editingEnabled }}
                 onResizeStop={onResizeStop}
                 onDragStop={onDragStop}
@@ -909,6 +934,15 @@ export function DashboardEditorPage() {
                     <div className="dash-widget-card" style={styles.widgetCard}>
                       <div className="dash-widget-head">
                         <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
+                        {customPageLayout && !isCustomWidget(widget) && (
+                          <span
+                            className="dash-widget-kind"
+                            style={styles.dataSourceChip}
+                            title="Hidden on the custom page; available to components as a data binding"
+                          >
+                            Data source
+                          </span>
+                        )}
                         <div className="dash-widget-head-actions">
                           <button
                             type="button"
@@ -941,6 +975,17 @@ export function DashboardEditorPage() {
                             html={htmlConfigFrom(widget.config).html}
                             css={htmlConfigFrom(widget.config).css}
                             enabled={dashboard.html_panels_enabled !== false}
+                            theme={liveDashboard.settings?.app?.theme}
+                            branding={liveDashboard.org_branding}
+                          />
+                        ) : isCustomWidget(widget) ? (
+                          <CustomWidget
+                            {...customConfigFrom(widget.config)}
+                            enabled={dashboard.custom_code_enabled === true}
+                            widgets={liveDashboard.widgets}
+                            endpointBase={`/api/v1/dashboards/${id!}`}
+                            widgetsData={liveDashboard.widgets_data}
+                            dataEnabled={dashboard.can_view_with_data !== false}
                             theme={liveDashboard.settings?.app?.theme}
                             branding={liveDashboard.org_branding}
                           />
@@ -1315,6 +1360,11 @@ const styles: Record<string, React.CSSProperties> = {
     margin: 0,
     padding: '24px 0',
     fontSize: 13,
+    fontStyle: 'italic',
+    color: 'var(--text-muted)',
+  },
+  dataSourceChip: {
+    marginLeft: 6,
     fontStyle: 'italic',
     color: 'var(--text-muted)',
   },

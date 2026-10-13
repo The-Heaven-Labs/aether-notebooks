@@ -359,6 +359,8 @@ export interface Dashboard {
   org_branding?: OrgBranding
   /** Resolved org switch for html panels (served on dashboard + public GETs). */
   html_panels_enabled?: boolean
+  /** Resolved org switch for custom components (absent/off by default). */
+  custom_code_enabled?: boolean
   /**
    * Set when the response served the latest published snapshot (never on a
    * draft read); identifies the version and its publish time.
@@ -382,7 +384,7 @@ export interface Widget {
   connector_id?: string | null
   query?: string | null
   language?: string
-  type: 'chart' | 'table' | 'text' | 'metric' | 'html'
+  type: 'chart' | 'table' | 'text' | 'metric' | 'html' | 'custom'
   layout: WidgetLayout
   config: Record<string, unknown>
   created_at: string

@@ -23,7 +23,8 @@ import { variablesForChapter } from '../utils/chapterFilters'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { htmlConfigFrom } from '../utils/htmlConfig'
-import { isHTMLPanel, isTextPanel } from '../utils/widgetKind'
+import { isCustomWidget, isHTMLPanel, isTextPanel } from '../utils/widgetKind'
+import { customConfigFrom } from '../utils/customConfig'
 import { toGridItem } from '../utils/widgetLayout'
 import {
   createPerWidgetDebouncer,
@@ -36,6 +37,7 @@ import { QueryDataWidget } from '../components/QueryDataWidget'
 import { WidgetFrame } from '../components/WidgetFrame'
 import { TextWidget } from '../components/TextWidget'
 import { HtmlWidget } from '../components/HtmlWidget'
+import { CustomWidget } from '../components/CustomWidget'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { useDashboardConnector } from '../hooks/useDashboardConnector'
 import { useDashboardDoc } from '../hooks/useDashboardDoc'
@@ -490,6 +492,11 @@ function DashboardContent({ id }: { id: string }) {
   // filter scope (which picks the visible variable set) is a stable hook.
   const variables = settings?.variables ?? []
   const app = settings?.app ?? dashboard?.settings?.app
+  // Full custom page (`settings.app.layout: "custom"`): the first custom
+  // component (widgets arrive created_at-ordered) renders full-bleed with no
+  // card chrome; every other widget is a hidden data source for its bindings.
+  // No custom widget → today's grid.
+  const customPage = app?.layout === 'custom' ? widgets.find(isCustomWidget) : undefined
   // Filter scoping: under `filter_scope: "tab"` the strip shows only the
   // active chapter's variables (plus everything they depend on); the default
   // `all` keeps every filter visible, and tabs-free dashboards never scope.
@@ -775,8 +782,9 @@ function DashboardContent({ id }: { id: string }) {
       </AppHeader>
 
       {/* Chapter tablist (The Story): the dashboard's tabs under the masthead;
-          hidden entirely when no tabs are defined. */}
-      {tabs.length > 0 && (
+          hidden entirely when no tabs are defined, and on the full custom page
+          (chapters do not apply to a single full-bleed component). */}
+      {tabs.length > 0 && !customPage && (
         <div className="app-tabs">
           <div style={contentWidth}>
             <AppTabs tabs={tabs} activeId={activeTab} onChange={handleTabChange} />
@@ -797,8 +805,23 @@ function DashboardContent({ id }: { id: string }) {
 
       <div className="app-body">
         <div style={{ ...contentWidth, display: 'flex', flexDirection: 'column', gap: 24 }}>
-        {/* Widgets grid */}
-        {widgets.length === 0 && variables.length === 0 ? (
+        {/* Widgets grid (or the full custom page: one component, no chrome) */}
+        {customPage ? (
+          <div style={{ width: '100%', minHeight: 480, height: 'calc(100vh - 220px)' }}>
+            <CustomWidget
+              {...customConfigFrom(customPage.config)}
+              enabled={dashboard.custom_code_enabled === true}
+              widgets={widgets}
+              endpointBase={`/api/v1/dashboards/${id}`}
+              published={published}
+              viewerConnectorId={viewerConnectorId}
+              widgetsData={dashboard.widgets_data}
+              dataEnabled={dashboard.can_view_with_data !== false}
+              theme={app?.theme}
+              branding={dashboard.org_branding}
+            />
+          </div>
+        ) : widgets.length === 0 && variables.length === 0 ? (
           <EmptyState
             title="This app has no widgets yet"
             text="Add widgets in the editor — viewers see them here as chapters, filters, and readings."
@@ -849,6 +872,19 @@ function DashboardContent({ id }: { id: string }) {
                             html={htmlConfigFrom(widget.config).html}
                             css={htmlConfigFrom(widget.config).css}
                             enabled={dashboard.html_panels_enabled !== false}
+                          />
+                        ) : isCustomWidget(widget) ? (
+                          <CustomWidget
+                            {...customConfigFrom(widget.config)}
+                            enabled={dashboard.custom_code_enabled === true}
+                            widgets={widgets}
+                            endpointBase={`/api/v1/dashboards/${id}`}
+                            published={published}
+                            viewerConnectorId={viewerConnectorId}
+                            widgetsData={dashboard.widgets_data}
+                            dataEnabled={dashboard.can_view_with_data !== false}
+                            theme={app?.theme}
+                            branding={dashboard.org_branding}
                           />
                         ) : (
                           <WidgetCard
