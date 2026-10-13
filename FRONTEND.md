@@ -577,6 +577,7 @@ summary rail on the left, configuration fields on the right, and a full-screen t
 - **metric** — one reading computed client-side over the query's returned rows (`config.metric`: `value_column`, `aggregation`, `format`, optional `comparison` delta/percent, optional `sparkline`). Values use the reading type role (see DESIGN.md): JetBrains Mono, tabular numerals, `clamp(20px, 9cqw, 32px)` at 700 with -0.5px tracking, above a 10px uppercase tracked mono label; comparison deltas take semantic color + a direction icon on up/down moves
 - **text** — markdown panel with `{{variable}}` interpolation; values insert as plain text and raw HTML never renders (no `rehypeRaw`), so interpolation cannot become a rendering surface
 - **html** — script-free HTML/CSS panel (source-less), rendered by `HtmlWidget` (see below): sanitized markup in a `sandbox=""` frame with a CSP meta and the resolved app-theme tokens as CSS variables. The picker offers "HTML panel" only while the org switch is on; disabling shows `HTML panels are disabled for this organization.` in the app, public page, and editor, and blocks new panels
+- **custom** — sandboxed HTML/CSS/JS component with data bindings (source-less), rendered by `CustomWidget` + `SandboxedFrame` (see below): the author bundle runs in an `allow-scripts` opaque-origin frame (`connect-src 'none'`) and receives bound widget data through a validated postMessage bridge. Only offered while `custom_code_enabled` is on; disabling shows `Custom code is disabled for this organization.` on every surface and blocks new components. `settings.app.layout: "custom"` renders the first component full-bleed; the others badge as "Data source" in the editor
 - **Table column formats** — `config.table.columns` stores an array of `{ name, format: { style: number | currency | percent, currency, decimals, compact } }` entries; `tableConfigFrom` parses them into the name→format map applied in `OutputRenderer`'s table
 - **Appearance** — every widget accepts `config.appearance`: `background` (`card` | `transparent`), `border` (drawn only on cards), outer `padding` (`none` | `sm` | `md`), `align` (`left` | `center` | `right`). The defaults reproduce the standard widget card exactly
 
@@ -596,6 +597,20 @@ See also: `DashboardEditorPage.tsx` for the editor; `e2e/dashboard-app.spec.ts` 
 - **Authoring preview**: the widget drawer renders the same component under the Panel HTML / Panel CSS editors (200px), resolved with the dashboard's app theme, so the preview is exactly what viewers get
 
 **Component**: `web/src/components/HtmlWidget.tsx`; see also `web/src/components/WidgetConfigDrawer.tsx`, `e2e/html-panel.spec.ts`.
+
+### SandboxedFrame + CustomWidget (custom component)
+
+**Purpose**: Render a dashboard `custom` widget — an author's HTML/CSS/JS with data bindings — on the app, public, and editor surfaces, safely.
+
+**Visual**:
+- `SandboxedFrame` fills its container (`100% × 100%`, borderless) with `<iframe sandbox="allow-scripts" referrerPolicy="no-referrer" title="Custom component">` — **no** `allow-same-origin`, so the frame is an opaque origin: `document.cookie` and `localStorage` are unreachable, and every outbound request is blocked by the CSP `<meta>` (`default-src 'none'`; inline script/style only; `img-src`/`font-src` `data:` + origin; `connect-src 'none'`; `form-action 'none'`; `base-uri 'none'`). The author bundle is composed into one `srcdoc` document; `</script>`/`</style>` breakouts are neutralized, and the resolved app-theme tokens inject as `:root` variables plus body defaults
+- **States**: the rendered frame; `Custom code is disabled for this organization.` (org switch off — app, public page, and editor); `Empty custom component — edit it in the dashboard editor.` (no html/css/js). A dangling binding renders as a per-key error inside the component, never a crash
+- **Bridge**: frame→host `ready` / `request_data {key}` / `open_link {href}`; host→frame `init {theme, variables, bindings}` / `data {key, result}` / `error {key?, message}`; the host accepts a frame only when `event.source === iframe.contentWindow` and `event.origin === 'null'`, posts with `targetOrigin: '*'`, and ignores malformed frames. A request before its data resolves answers `error` — the host never pushes unsolicited, so components retry on error frames. `open_link` opens http(s) in a new tab with `noopener,noreferrer`
+- **Data**: bound **query** widgets execute as the viewer through `POST /dashboards/{id}/execute` (or the public endpoint), inheriting published resolution, variables, connector selection, cache, and rate limits; bound **cell** widgets resolve their stored outputs (never executed). Requests answer `error` when the viewer lacks `view_with_data`, or on a non-live public page
+- **Full custom page**: with `settings.app.layout: "custom"`, the app surface renders the first custom component full-bleed with no card chrome and hides every other widget (they remain available as bindings); the editor badges non-components "Data source"
+- **Authoring preview**: the drawer renders the three editors (CodeMirror 6 via `CodeMirrorField`, lazy grammars, 600 ms debounce + unmount flush) + the binding picker under a live `SandboxedFrame` preview with no bound data — components move to the draft for review before publish
+
+**Component**: `web/src/components/SandboxedFrame.tsx`, `web/src/components/sandboxedFrame.ts` (pure builders/parsers), `web/src/components/CustomWidget.tsx`, `web/src/components/CustomBindingQuery.tsx`; see also `web/src/components/WidgetConfigDrawer.tsx`, `e2e/custom-widget.spec.ts`.
 
 ### ConnectorsPage
 
