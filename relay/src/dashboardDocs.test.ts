@@ -15,6 +15,7 @@ import {
   resolveDocumentRoute,
   revalidationDisposition,
   revalidationKey,
+  shouldRefreshResidentDocument,
   storeResponseDisposition,
 } from './dashboardDocs.ts'
 
@@ -258,4 +259,13 @@ test('applyRevalidationDisposition closes with the revocation reason on close', 
   assert.equal(effect, 'closed')
   assert.deepEqual(reasons, ['authorization revoked'])
   assert.equal(connection.readOnly, false)
+})
+
+test('shouldRefreshResidentDocument only refreshes resident dashboards', () => {
+  // A resident dashboard document can be missing backend writes; an unloaded
+  // one is fetched fresh by onLoadDocument, and notebooks have no fan-in.
+  assert.equal(shouldRefreshResidentDocument('dashboard', true), true)
+  assert.equal(shouldRefreshResidentDocument('dashboard', false), false)
+  assert.equal(shouldRefreshResidentDocument('notebook', true), false)
+  assert.equal(shouldRefreshResidentDocument('notebook', false), false)
 })
