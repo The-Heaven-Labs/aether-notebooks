@@ -1,8 +1,8 @@
-import { useLayoutEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useLayoutEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { DashboardAppTheme, OrgBranding } from '../types'
 import { resolveAppTheme } from '../utils/appTheme'
-import type { AppColorScheme } from '../utils/appTheme'
+import type { AppColorScheme, ResolvedAppTheme } from '../utils/appTheme'
 import {
   AppChartThemeContext,
   clearAppChartTheme,
@@ -16,6 +16,38 @@ interface AppThemeProviderProps {
   /** Org-level branding fallback (`org_branding` on the response). */
   branding?: OrgBranding | null
   children: ReactNode
+}
+
+/** Resolved theme for consumers that cannot read CSS variables (iframes). */
+const AppThemeContext = createContext<ResolvedAppTheme | null>(null)
+
+/** Null outside an AppThemeProvider (editor chrome / global theme applies). */
+export function useAppTheme(): ResolvedAppTheme | null {
+  return useContext(AppThemeContext)
+}
+
+/**
+ * Resolved theme for previews rendered outside an `AppThemeProvider` (the
+ * dashboard editor's panels and the widget drawer): the provider's context
+ * wins; without one, the explicit dashboard theme/branding resolve against
+ * the global scheme — the exact inputs and order the app surface uses, so an
+ * editor preview matches the published look without switching modes.
+ * Content-keyed memos keep the resolved object stable across parent renders
+ * that rebuild `settings`/branding objects.
+ */
+export function useResolvedAppTheme(
+  theme?: DashboardAppTheme | null,
+  branding?: OrgBranding | null,
+): ResolvedAppTheme {
+  const provided = useContext(AppThemeContext)
+  const globalScheme = useGlobalColorScheme()
+  const themeKey = JSON.stringify(theme ?? null)
+  const brandingKey = JSON.stringify(branding ?? null)
+  return useMemo(
+    () => provided ?? resolveAppTheme(theme, branding, globalScheme),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [provided, themeKey, brandingKey, globalScheme],
+  )
 }
 
 function readGlobalScheme(): AppColorScheme {
@@ -85,9 +117,11 @@ export function AppThemeProvider({ theme, branding, children }: AppThemeProvider
 
   return (
     <AppChartThemeContext.Provider value={chartTheme}>
-      <div className="app-theme" data-app-scheme={resolved.scheme} style={resolved.vars}>
-        {children}
-      </div>
+      <AppThemeContext.Provider value={resolved}>
+        <div className="app-theme" data-app-scheme={resolved.scheme} style={resolved.vars}>
+          {children}
+        </div>
+      </AppThemeContext.Provider>
     </AppChartThemeContext.Provider>
   )
 }

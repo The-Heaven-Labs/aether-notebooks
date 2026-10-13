@@ -22,7 +22,8 @@ import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { variablesForChapter } from '../utils/chapterFilters'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
-import { isTextPanel } from '../utils/widgetKind'
+import { htmlConfigFrom } from '../utils/htmlConfig'
+import { isHTMLPanel, isTextPanel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
 import {
   createPerWidgetDebouncer,
@@ -34,6 +35,7 @@ import type { PerWidgetDebouncer, VariableDefinitionSnapshot, WidgetRunBaseline 
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { WidgetFrame } from '../components/WidgetFrame'
 import { TextWidget } from '../components/TextWidget'
+import { HtmlWidget } from '../components/HtmlWidget'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { useDashboardConnector } from '../hooks/useDashboardConnector'
 import { useDashboardDoc } from '../hooks/useDashboardDoc'
@@ -842,6 +844,12 @@ function DashboardContent({ id }: { id: string }) {
                           />
                         ) : isTextPanel(widget) ? (
                           <TextWidget markdown={textConfigFrom(widget.config).markdown} />
+                        ) : isHTMLPanel(widget) ? (
+                          <HtmlWidget
+                            html={htmlConfigFrom(widget.config).html}
+                            css={htmlConfigFrom(widget.config).css}
+                            enabled={dashboard.html_panels_enabled !== false}
+                          />
                         ) : (
                           <WidgetCard
                             widget={widget}

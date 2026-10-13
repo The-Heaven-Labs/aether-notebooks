@@ -18,6 +18,7 @@ import {
   resolveDocumentRoute,
   revalidationDisposition,
   revalidationKey,
+  shouldRefreshResidentDocument,
   storeResponseDisposition,
   type AuthorizeResult,
 } from './dashboardDocs'
@@ -159,6 +160,11 @@ const server = new Server<RelayContext>({
     new Redis({
       host: REDIS_HOST,
       port: REDIS_PORT,
+      // Same hardening as the fan-in subscriber below: the extension's default
+      // client caps command retries, and an exhausted retry budget raises an
+      // unhandled MaxRetriesPerRequestError that kills the whole relay process
+      // on a Redis outage. With no cap, commands queue until Redis returns.
+      options: { maxRetriesPerRequest: null },
     }),
   ],
 
@@ -249,6 +255,9 @@ const server = new Server<RelayContext>({
 
     context.token = token
     documentTokens.set(documentName, token)
+    // A resident dashboard document may be missing backend writes (skipped
+    // fan-in or a failed store); refresh it before this client syncs it.
+    await refreshResidentDashboardDoc(documentName, token)
   },
 
   async connected({ documentName, connection, context }) {
@@ -318,6 +327,45 @@ async function handleDashboardDocUpdate(dashboardId: string, message: Buffer): P
     } catch (err) {
       console.warn(`[relay] failed to disconnect fan-in connection for "${documentName}":`, err)
     }
+  }
+}
+
+/**
+ * Re-syncs a resident dashboard document from the API before a client syncs
+ * it. The in-memory document is normally kept current by the Redis fan-in,
+ * but an update can be missed (a skipped fan-in while no session token was
+ * cached, a subscriber reconnect, a failed store that deliberately keeps the
+ * document in memory). A missed backend write would then be served to every
+ * new client as a stale document — the editor flashes the REST widget list
+ * and then empties out, while REST reads (published view, public page) stay
+ * correct. Applying the API's stored state as a Yjs update is a union merge,
+ * so edits the relay has not stored yet survive.
+ */
+async function refreshResidentDashboardDoc(documentName: string, token: string): Promise<void> {
+  const route = resolveDocumentRoute(documentName, API_URL)
+  const document = server.hocuspocus.documents.get(documentName)
+  if (!shouldRefreshResidentDocument(route.kind, document !== undefined) || !document) return
+  try {
+    const res = await fetch(route.loadUrl, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(API_FETCH_TIMEOUT_MS),
+    })
+    if (!res.ok) {
+      console.warn(`[relay] refresh of resident document "${documentName}" failed with status ${res.status}`)
+      return
+    }
+    const buf = await res.arrayBuffer()
+    if (buf.byteLength === 0) return
+    // Same application as the core's load path (applyUpdate on the resident
+    // document), with an explicit local origin that skips store hooks: the
+    // applied state is already persisted server-side, and a store here would
+    // only churn (and could unload a document nobody else is using). The
+    // update still broadcasts to every connected client.
+    document.transact(() => {
+      Y.applyUpdate(document, new Uint8Array(buf))
+    }, { source: 'local', skipStoreHooks: true })
+  } catch (err) {
+    console.warn(`[relay] failed to refresh resident document "${documentName}":`, err)
   }
 }
 

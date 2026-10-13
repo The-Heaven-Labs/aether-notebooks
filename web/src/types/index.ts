@@ -357,6 +357,8 @@ export interface Dashboard {
   widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[]; metadata?: Record<string, unknown>; updated_at?: string }>
   /** Org-level branding (served on dashboard + public-dashboard GETs); app-theme fallback. */
   org_branding?: OrgBranding
+  /** Resolved org switch for html panels (served on dashboard + public GETs). */
+  html_panels_enabled?: boolean
   /**
    * Set when the response served the latest published snapshot (never on a
    * draft read); identifies the version and its publish time.
@@ -380,7 +382,7 @@ export interface Widget {
   connector_id?: string | null
   query?: string | null
   language?: string
-  type: 'chart' | 'table' | 'text' | 'metric'
+  type: 'chart' | 'table' | 'text' | 'metric' | 'html'
   layout: WidgetLayout
   config: Record<string, unknown>
   created_at: string

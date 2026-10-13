@@ -465,3 +465,45 @@ func isCurrencyCode(s string) bool {
 	}
 	return true
 }
+
+// WidgetHTMLConfig is the `html` block of a widget-config tool call: a
+// script-free panel's markup + stylesheet. The client sanitizes with DOMPurify
+// and renders inside a sandboxed iframe; the server only bounds size.
+type WidgetHTMLConfig struct {
+	HTML string `json:"html"`
+	CSS  string `json:"css"`
+}
+
+const (
+	// maxHTMLPanelBytes caps a panel's markup; maxHTMLPanelCSSBytes its
+	// stylesheet. Both sit far below dashboarddoc's 1 MiB config cap.
+	maxHTMLPanelBytes    = 256 << 10
+	maxHTMLPanelCSSBytes = 64 << 10
+)
+
+// ValidateWidgetHTML bounds a panel's markup and stylesheet. Empty strings
+// are allowed (the drawer shows an empty state; the agent block treats a zero
+// value as a no-op).
+func ValidateWidgetHTML(cfg WidgetHTMLConfig) error {
+	if len(cfg.HTML) > maxHTMLPanelBytes {
+		return fmt.Errorf("html panel markup must be at most 256 KiB")
+	}
+	if len(cfg.CSS) > maxHTMLPanelCSSBytes {
+		return fmt.Errorf("html panel css must be at most 64 KiB")
+	}
+	return nil
+}
+
+// ToStoredWidgetHTML converts a validated `html` block into the stored
+// `config.html` / `config.css` keys. Unset fields are omitted; a zero block
+// produces no keys.
+func ToStoredWidgetHTML(cfg WidgetHTMLConfig) map[string]any {
+	out := map[string]any{}
+	if cfg.HTML != "" {
+		out["html"] = cfg.HTML
+	}
+	if cfg.CSS != "" {
+		out["css"] = cfg.CSS
+	}
+	return out
+}

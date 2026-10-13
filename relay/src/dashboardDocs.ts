@@ -61,6 +61,16 @@ export function isDashboardDocument(documentName: string): boolean {
 }
 
 /**
+ * Whether a connecting client should re-sync a resident dashboard document
+ * from the API before syncing it. Notebooks have no backend-write fan-in, and
+ * an unloaded document is fetched fresh by onLoadDocument anyway, so only a
+ * resident dashboard document needs the explicit refresh.
+ */
+export function shouldRefreshResidentDocument(kind: DocumentKind, documentResident: boolean): boolean {
+  return kind === 'dashboard' && documentResident
+}
+
+/**
  * Resolves the Go internal endpoint for a relay document name:
  * `dashboard:<uuid>` documents go to /internal/dashboard-yjs/<uuid>,
  * everything else (notebook UUIDs) keeps /internal/yjs/<name>.

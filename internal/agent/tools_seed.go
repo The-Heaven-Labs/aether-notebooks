@@ -25,7 +25,7 @@ type BuiltinToolDef struct {
 // builtinSeedRev is the current revision of the builtin catalog: every entry
 // below carries it. Builtin descriptions are platform-managed — a user edit
 // to a builtin's text is overwritten when the catalog revision advances.
-const builtinSeedRev = 1
+const builtinSeedRev = 2
 
 var BuiltinTools = []BuiltinToolDef{
 	{Name: "notebook_create_notebook", Description: "Create a new notebook", HandlerName: "create_notebook", Rev: builtinSeedRev},
@@ -42,9 +42,9 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "list_dashboards", Description: "List dashboards", HandlerName: "list_dashboards", Rev: builtinSeedRev},
 	{Name: "delete_dashboard", Description: "Delete a dashboard", HandlerName: "delete_dashboard", Rev: builtinSeedRev},
 	{Name: "get_dashboard", Description: "Get a dashboard with its settings (app, chapters/tabs, variables) and widgets. Read this before changing a dashboard.", HandlerName: "get_dashboard", Rev: builtinSeedRev},
-	{Name: "create_dashboard_widget", Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); typed chart/metric/table blocks (or raw config) create a fully-configured widget in one call.", HandlerName: "create_dashboard_widget", Rev: builtinSeedRev},
-	{Name: "update_dashboard_widget", Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or raw config keys to shallow-merge. For typed chart/metric/table config, use set_widget_config.", HandlerName: "update_dashboard_widget", Rev: builtinSeedRev},
-	{Name: "set_widget_config", Description: "Set a dashboard widget's typed render config. chart uses create_chart's vocabulary (chart_type, x_column, y_columns, group_by, bar_mode, series_colors, mark_lines, …) and stores the converted chart config; metric sets the metric widget's value_column/aggregation/label/format/comparison/sparkline; table sets per-column number/currency/percent formats (columns: [{name, format}]). Each block replaces its config section; unrelated keys stay.", HandlerName: "set_widget_config", Rev: builtinSeedRev},
+	{Name: "create_dashboard_widget", Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); typed chart/metric/table blocks (or raw config) create a fully-configured widget in one call. An html widget (type 'html') is source-less and takes the html block — a script-free HTML/CSS panel.", HandlerName: "create_dashboard_widget", Rev: builtinSeedRev},
+	{Name: "update_dashboard_widget", Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text/html), tab (App chapter), or raw config keys to shallow-merge. For typed chart/metric/table/html config, use set_widget_config.", HandlerName: "update_dashboard_widget", Rev: builtinSeedRev},
+	{Name: "set_widget_config", Description: "Set a dashboard widget's typed render config. chart uses create_chart's vocabulary (chart_type, x_column, y_columns, group_by, bar_mode, series_colors, mark_lines, …) and stores the converted chart config; metric sets the metric widget's value_column/aggregation/label/format/comparison/sparkline; table sets per-column number/currency/percent formats (columns: [{name, format}]); html sets an html panel's markup/stylesheet (the widget's type must already be html). Each block replaces its config section; unrelated keys stay.", HandlerName: "set_widget_config", Rev: builtinSeedRev},
 	{Name: "delete_dashboard_widget", Description: "Remove a widget from a dashboard.", HandlerName: "delete_dashboard_widget", Rev: builtinSeedRev},
 	{Name: "update_dashboard", Description: "Update a dashboard's title or grid density (grid_cols, default 12). Widget placement lives in set_dashboard_layout.", HandlerName: "update_dashboard", Rev: builtinSeedRev},
 	{Name: "update_dashboard_settings", Description: "Update a dashboard's App settings: title, app (title/subtitle/width/show toggles/filter_scope/theme with hex colors), and tabs (App chapters, e.g. [{id, title}]).", HandlerName: "update_dashboard_settings", Rev: builtinSeedRev},

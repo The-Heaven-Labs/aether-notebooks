@@ -17,8 +17,10 @@ import { metricConfigFrom, type MetricConfig } from '../utils/metric'
 import type { ValueFormat } from '../utils/valueFormat'
 import { tableConfigFrom } from '../utils/tableConfig'
 import { textConfigFrom } from '../utils/textConfig'
+import { htmlConfigFrom } from '../utils/htmlConfig'
 import { appearanceFrom, type WidgetAppearance } from '../utils/widgetAppearance'
-import { isQueryWidget, isTextPanel } from '../utils/widgetKind'
+import { isHTMLPanel, isQueryWidget, isTextPanel } from '../utils/widgetKind'
+import { HtmlWidget } from './HtmlWidget'
 import { fieldHelpFor } from '../app-builder/fieldHelp'
 import { HelpTip } from './HelpTip'
 import type { Dashboard, DashboardVariableType, ResultSet, Widget, WidgetQueryResult } from '../types'
@@ -291,7 +293,7 @@ export function mergeChartConfigInto(
     : { ...config, ...withWidgetOverride(chartConfig) }
 }
 
-export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true, editingEnabled = true, docSynced = false }: {
+export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true, editingEnabled = true, docSynced = false, htmlPanelsEnabled = true }: {
   dashboardId: string
   dashboard: Dashboard
   widget: Widget
@@ -303,6 +305,8 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   editingEnabled?: boolean
   /** True once the dashboard document has synced; enables the live SQL binding. */
   docSynced?: boolean
+  /** False when the org switch is off — no html option, editors, or preview. */
+  htmlPanelsEnabled?: boolean
 }) {
   const isQuery = isQueryWidget(widget)
   const canRun = dashboard.can_view_with_data !== false
@@ -416,6 +420,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
 
   const metric = metricConfigFrom(config)
   const text = textConfigFrom(config)
+  const html = htmlConfigFrom(config)
   const appearance = appearanceFrom(config)
   const tableColumns = tableConfigFrom(config).columns
   // First table output of the last run: source for the metric preview, the
@@ -670,6 +675,11 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
               Text widget — its content is authored as markdown in the Text section below.
               No notebook cell or query is needed.
             </div>
+          ) : isHTMLPanel(widget) ? (
+            <div style={styles.muted} role="note">
+              HTML panel — its content is authored in the Panel HTML and Panel CSS sections below.
+              No notebook cell or query is needed.
+            </div>
           ) : (
             <>
               <div style={styles.muted}>
@@ -696,6 +706,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             <option value="chart">Chart</option>
             <option value="metric">Metric</option>
             <option value="text">Text</option>
+            {htmlPanelsEnabled && <option value="html">HTML panel</option>}
           </select>
 
           {/* Placement is a chapter control: nothing to choose without tabs. */}
@@ -871,6 +882,45 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                 {'{{variable}}'} tokens are interpolated with dashboard variable values for display.
               </div>
             </>
+          )}
+
+          {widgetType === 'html' && (
+            !htmlPanelsEnabled ? (
+              <div style={styles.muted} role="note">
+                HTML panels are disabled for this organization.
+              </div>
+            ) : (
+              <>
+                <FieldLabel section helpKey="html.html">Panel HTML</FieldLabel>
+                <DebouncedTextInput
+                  label="Panel HTML"
+                  value={html.html}
+                  multiline
+                  placeholder={'<div class="stat">42</div>'}
+                  onSave={markup => void saveWidgetConfig({ html: markup })}
+                />
+                <FieldLabel section helpKey="html.css">Panel CSS</FieldLabel>
+                <DebouncedTextInput
+                  label="Panel CSS"
+                  value={html.css}
+                  multiline
+                  placeholder={'.stat { font-size: 28px; }'}
+                  onSave={css => void saveWidgetConfig({ css })}
+                />
+                <div style={styles.muted}>
+                  {'{{variable}}'} values are escaped as text; scripts, links, forms, and third-party
+                  images are stripped at render.
+                </div>
+                <div style={{ ...styles.preview, height: 200, minHeight: 120 }}>
+                  <HtmlWidget
+                    html={html.html}
+                    css={html.css}
+                    theme={dashboard.settings?.app?.theme}
+                    branding={dashboard.org_branding}
+                  />
+                </div>
+              </>
+            )
           )}
 
           {isQuery && widgetType === 'table' && (

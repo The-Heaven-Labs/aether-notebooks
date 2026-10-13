@@ -72,8 +72,8 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_dashboard_widget",
-			Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); typed chart/metric/table blocks (or raw config) create a fully-configured widget in one call.",
-			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string","description":"Notebook for a cell-backed widget"},"cell_id":{"type":"string","description":"Cell for a cell-backed widget"},"connector_id":{"type":"string","description":"Connector for a query-backed widget (requires query)"},"query":{"type":"string","description":"SQL for a query-backed widget (requires connector_id)"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output, 'metric' for a single value, 'text' for markdown"},"config":{"type":"object","description":"Per-widget config, e.g. {\"metric\":{\"value_column\":\"x\",\"aggregation\":\"sum\"}}"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `,"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","type"]}`,
+			Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); typed chart/metric/table blocks (or raw config) create a fully-configured widget in one call. An html widget (type 'html') is source-less and takes the html block — a script-free HTML/CSS panel.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string","description":"Notebook for a cell-backed widget"},"cell_id":{"type":"string","description":"Cell for a cell-backed widget"},"connector_id":{"type":"string","description":"Connector for a query-backed widget (requires query)"},"query":{"type":"string","description":"SQL for a query-backed widget (requires connector_id)"},"type":{"type":"string","enum":["chart","table","metric","text","html"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output, 'metric' for a single value, 'text' for markdown, 'html' for a script-free HTML/CSS panel (source-less, see the html block)"},"config":{"type":"object","description":"Per-widget config, e.g. {\"metric\":{\"value_column\":\"x\",\"aggregation\":\"sum\"}}"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `,"html":` + widgetHTMLBlockSchema + `,"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","type"]}`,
 		},
 		Handler: makeCreateDashboardWidgetHandler(pool),
 		Timeout: 15 * time.Second,
@@ -101,8 +101,8 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_dashboard_widget",
-			Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or raw config keys to shallow-merge. For typed chart/metric/table config, use set_widget_config.",
-			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"tab":{"type":"string","description":"App tab id (lowercase letters, digits, dashes); empty falls back to the first tab"},"type":{"type":"string","enum":["chart","table","metric","text"]},"config":{"type":"object","description":"Config keys to shallow-merge into the widget's existing config"}},"required":["widget_id","dashboard_id"]}`,
+			Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text/html), tab (App chapter), or raw config keys to shallow-merge. For typed chart/metric/table/html config, use set_widget_config.",
+			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"tab":{"type":"string","description":"App tab id (lowercase letters, digits, dashes); empty falls back to the first tab"},"type":{"type":"string","enum":["chart","table","metric","text","html"]},"config":{"type":"object","description":"Config keys to shallow-merge into the widget's existing config"}},"required":["widget_id","dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardWidgetHandler(pool),
 		Timeout: 15 * time.Second,
@@ -115,8 +115,8 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "set_widget_config",
-			Description: "Set a dashboard widget's typed render config. chart uses create_chart's vocabulary (chart_type, x_column, y_columns, group_by, bar_mode, series_colors, mark_lines, …) and stores the converted chart config; metric sets the metric widget's value_column/aggregation/label/format/comparison/sparkline; table sets per-column number/currency/percent formats (columns: [{name, format}]). Each block replaces its config section; unrelated keys stay.",
-			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"widget_id":{"type":"string"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `},"required":["dashboard_id","widget_id"]}`,
+			Description: "Set a dashboard widget's typed render config. chart uses create_chart's vocabulary (chart_type, x_column, y_columns, group_by, bar_mode, series_colors, mark_lines, …) and stores the converted chart config; metric sets the metric widget's value_column/aggregation/label/format/comparison/sparkline; table sets per-column number/currency/percent formats (columns: [{name, format}]); html sets an html panel's markup/stylesheet (the widget's type must already be html). Each block replaces its config section; unrelated keys stay.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"widget_id":{"type":"string"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `,"html":` + widgetHTMLBlockSchema + `},"required":["dashboard_id","widget_id"]}`,
 		},
 		Handler: makeSetWidgetConfigHandler(),
 		Timeout: 15 * time.Second,
@@ -371,11 +371,27 @@ func makeCreateDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 // dashboard document.
 func validDashboardWidgetType(t string) bool {
 	switch models.WidgetType(t) {
-	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric:
+	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML:
 		return true
 	default:
 		return false
 	}
+}
+
+// orgHTMLPanelsEnabled reports whether html panels are enabled for the org.
+// Absent settings mean enabled; a read failure degrades to enabled, mirroring
+// the API helper (tools fail closed on the explicit switch only).
+func orgHTMLPanelsEnabled(ctx context.Context, pool *pgxpool.Pool, orgID string) bool {
+	var settingsJSON []byte
+	if err := pool.QueryRow(ctx, `SELECT settings FROM orgs WHERE id = $1`, orgID).Scan(&settingsJSON); err != nil {
+		slog.Debug("org settings read failed", "org_id", orgID, "error", err)
+		return true
+	}
+	var settings models.OrgSettings
+	if err := json.Unmarshal(settingsJSON, &settings); err != nil {
+		return true
+	}
+	return settings.HTMLPanelsEnabled == nil || *settings.HTMLPanelsEnabled
 }
 
 // validateDashboardWidgetCellRef rejects a notebook/cell pair that does not
@@ -467,6 +483,7 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			Chart       *validate.WidgetChartConfig  `json:"chart"`
 			Metric      *validate.WidgetMetricConfig `json:"metric"`
 			Table       *validate.WidgetTableConfig  `json:"table"`
+			HTML        *validate.WidgetHTMLConfig   `json:"html"`
 			Row         int                          `json:"row"`
 			Col         int                          `json:"col"`
 			Width       int                          `json:"width"`
@@ -488,26 +505,32 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 
 		// Exactly one widget source: a query (connector + SQL) or a notebook
-		// cell. The REST path also allows source-less widgets for backwards
-		// compatibility; the agent tool deliberately does not, so a widget it
-		// creates always has something to render.
+		// cell. Source-less widgets are allowed for html panels (like text
+		// panels on the REST path) — and rejected for every other type, so a
+		// widget the agent creates always has something to render.
 		hasQuery := req.ConnectorID != "" || req.Query != ""
 		hasCell := req.NotebookID != "" || req.CellID != ""
-		if hasQuery && hasCell {
-			return nil, fmt.Errorf("widget cannot reference both a notebook cell and a query connector")
-		}
-		if !hasQuery && !hasCell {
-			return nil, fmt.Errorf("widget requires either connector_id and query, or notebook_id and cell_id")
-		}
-		if hasQuery {
-			if req.ConnectorID == "" {
-				return nil, fmt.Errorf("connector_id is required for query widgets")
+		if req.Type == "html" {
+			if hasQuery || hasCell {
+				return nil, fmt.Errorf("html panels are source-less; drop the cell and connector fields")
 			}
-			if req.Query == "" {
-				return nil, fmt.Errorf("query is required for query widgets")
+		} else {
+			if hasQuery && hasCell {
+				return nil, fmt.Errorf("widget cannot reference both a notebook cell and a query connector")
 			}
-		} else if req.NotebookID == "" || req.CellID == "" {
-			return nil, fmt.Errorf("cell widgets require notebook_id and cell_id")
+			if !hasQuery && !hasCell {
+				return nil, fmt.Errorf("widget requires either connector_id and query, or notebook_id and cell_id")
+			}
+			if hasQuery {
+				if req.ConnectorID == "" {
+					return nil, fmt.Errorf("connector_id is required for query widgets")
+				}
+				if req.Query == "" {
+					return nil, fmt.Errorf("query is required for query widgets")
+				}
+			} else if req.NotebookID == "" || req.CellID == "" {
+				return nil, fmt.Errorf("cell widgets require notebook_id and cell_id")
+			}
 		}
 
 		if ctx.DashboardDocStore == nil {
@@ -515,6 +538,9 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 		if !validDashboardWidgetType(req.Type) {
 			return nil, fmt.Errorf("invalid widget type")
+		}
+		if req.Type == "html" && !orgHTMLPanelsEnabled(ctx.Context, ctx.DB, ctx.OrgID) {
+			return nil, fmt.Errorf("html panels are disabled for this organization")
 		}
 
 		// Typed config blocks are validated before any reference/layout check
@@ -534,6 +560,11 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 				return nil, err
 			}
 		}
+		if req.HTML != nil {
+			if err := validate.ValidateWidgetHTML(*req.HTML); err != nil {
+				return nil, err
+			}
+		}
 
 		if hasCell {
 			// Validate the cell reference's notebook is viewable (prevents
@@ -548,7 +579,8 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			if err := validateDashboardWidgetCellRef(ctx.Context, pool, req.NotebookID, req.CellID); err != nil {
 				return nil, err
 			}
-		} else {
+		}
+		if hasQuery {
 			// A dangling connector reference must fail the request for the
 			// same reason.
 			if err := validateDashboardWidgetConnectorRef(ctx.Context, pool, ctx.OrgID, req.ConnectorID); err != nil {
@@ -580,8 +612,8 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		// Typed blocks convert to the stored shapes and merge over the raw
 		// config (chart keys at the root; metric/table replace their sections)
 		// so one call can create a fully-configured widget.
-		if req.Chart != nil || req.Metric != nil || req.Table != nil {
-			merged := make(map[string]any, len(widgetConfig)+3)
+		if req.Chart != nil || req.Metric != nil || req.Table != nil || req.HTML != nil {
+			merged := make(map[string]any, len(widgetConfig)+4)
 			for k, v := range widgetConfig {
 				merged[k] = v
 			}
@@ -595,6 +627,11 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			}
 			if req.Table != nil {
 				merged["table"] = validate.ToStoredWidgetTable(*req.Table)
+			}
+			if req.HTML != nil {
+				for k, v := range validate.ToStoredWidgetHTML(*req.HTML) {
+					merged[k] = v
+				}
 			}
 			widgetConfig = merged
 		}
@@ -612,7 +649,7 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		if hasQuery {
 			widget.ConnectorID = &req.ConnectorID
 			widget.Query = &req.Query
-		} else {
+		} else if hasCell {
 			widget.NotebookID = &req.NotebookID
 			widget.CellID = &req.CellID
 		}
@@ -665,6 +702,9 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 		if req.WidgetType != "" && !validDashboardWidgetType(req.WidgetType) {
 			return nil, fmt.Errorf("invalid widget type")
+		}
+		if req.WidgetType == "html" && !orgHTMLPanelsEnabled(ctx.Context, ctx.DB, ctx.OrgID) {
+			return nil, fmt.Errorf("html panels are disabled for this organization")
 		}
 		if req.Tab != nil {
 			if err := validate.WidgetTab(*req.Tab); err != nil {
@@ -796,6 +836,8 @@ const widgetMetricBlockSchema = `{"type":"object","description":"Metric widget c
 
 const widgetTableBlockSchema = `{"type":"object","description":"Per-column formats for a table widget.","properties":{"columns":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"format":{"type":"object","properties":{"style":{"type":"string","enum":["number","currency","percent"]},"currency":{"type":"string","description":"3-letter code like USD"},"decimals":{"type":"number"},"compact":{"type":"boolean"}}}},"required":["name"]}}},"required":["columns"]}`
 
+const widgetHTMLBlockSchema = `{"type":"object","description":"HTML panel content: script-free markup + stylesheet, sanitized client-side. Use for bespoke sections (callouts, branded tiles) that widgets cannot express.","properties":{"html":{"type":"string","description":"Panel markup; scripts, links, forms, and third-party images are stripped at render"},"css":{"type":"string","description":"Panel stylesheet (≤64 KiB); can use the app theme's CSS variables like var(--accent)"}}}`
+
 // makeSetWidgetConfigHandler implements set_widget_config: typed chart/metric/
 // table blocks are validated and converted to the stored shapes (see
 // internal/validate/widget_config.go), merged over the widget's projected
@@ -810,6 +852,7 @@ func makeSetWidgetConfigHandler() ToolHandler {
 			Chart       *validate.WidgetChartConfig  `json:"chart"`
 			Metric      *validate.WidgetMetricConfig `json:"metric"`
 			Table       *validate.WidgetTableConfig  `json:"table"`
+			HTML        *validate.WidgetHTMLConfig   `json:"html"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -820,7 +863,7 @@ func makeSetWidgetConfigHandler() ToolHandler {
 		if ctx.DashboardDocStore == nil {
 			return nil, fmt.Errorf("dashboard document store not configured")
 		}
-		if req.Chart == nil && req.Metric == nil && req.Table == nil {
+		if req.Chart == nil && req.Metric == nil && req.Table == nil && req.HTML == nil {
 			return nil, fmt.Errorf("nothing to update")
 		}
 		if req.Chart != nil {
@@ -836,6 +879,14 @@ func makeSetWidgetConfigHandler() ToolHandler {
 		if req.Table != nil {
 			if err := validate.ValidateWidgetTable(*req.Table); err != nil {
 				return nil, err
+			}
+		}
+		if req.HTML != nil {
+			if err := validate.ValidateWidgetHTML(*req.HTML); err != nil {
+				return nil, err
+			}
+			if !orgHTMLPanelsEnabled(ctx.Context, ctx.DB, ctx.OrgID) {
+				return nil, fmt.Errorf("html panels are disabled for this organization")
 			}
 		}
 
@@ -859,13 +910,16 @@ func makeSetWidgetConfigHandler() ToolHandler {
 		if !ok {
 			return nil, fmt.Errorf("widget not found")
 		}
+		if req.HTML != nil && existing.Type != "html" {
+			return nil, fmt.Errorf("set the widget type to html first")
+		}
 
 		// Read-merge: config is a whole-value document field, so the converted
 		// blocks merge over a working copy of the projected config and the
 		// whole map is written back. Chart keys merge at the config root;
 		// metric/table replace their sections (their typed blocks are the
 		// complete spec for that section).
-		config := make(map[string]any, len(existing.Config)+3)
+		config := make(map[string]any, len(existing.Config)+4)
 		for k, v := range existing.Config {
 			config[k] = v
 		}
@@ -880,6 +934,11 @@ func makeSetWidgetConfigHandler() ToolHandler {
 		if req.Table != nil {
 			config["table"] = validate.ToStoredWidgetTable(*req.Table)
 		}
+		if req.HTML != nil {
+			for k, v := range validate.ToStoredWidgetHTML(*req.HTML) {
+				config[k] = v
+			}
+		}
 
 		newState, err := dashboarddoc.SetWidgetConfig(state, widgetID, config)
 		if errors.Is(err, dashboarddoc.ErrWidgetNotFound) {
@@ -892,7 +951,7 @@ func makeSetWidgetConfigHandler() ToolHandler {
 			return nil, fmt.Errorf("set widget config: %w", err)
 		}
 
-		keys := make([]string, 0, 3)
+		keys := make([]string, 0, 4)
 		if req.Chart != nil {
 			keys = append(keys, "chart")
 		}
@@ -901,6 +960,9 @@ func makeSetWidgetConfigHandler() ToolHandler {
 		}
 		if req.Table != nil {
 			keys = append(keys, "table")
+		}
+		if req.HTML != nil {
+			keys = append(keys, "html")
 		}
 		_ = ctx.AuditLogWithMetadata("widget.update", "dashboard", req.DashboardID, map[string]any{
 			"widget_id": widgetID,

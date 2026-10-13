@@ -576,12 +576,26 @@ summary rail on the left, configuration fields on the right, and a full-screen t
 - Cell-linked (table/chart output from a notebook cell; renders the notebook's current outputs — cells are not versioned) or query-backed (`widgets.connector_id/query/language`)
 - **metric** — one reading computed client-side over the query's returned rows (`config.metric`: `value_column`, `aggregation`, `format`, optional `comparison` delta/percent, optional `sparkline`). Values use the reading type role (see DESIGN.md): JetBrains Mono, tabular numerals, `clamp(20px, 9cqw, 32px)` at 700 with -0.5px tracking, above a 10px uppercase tracked mono label; comparison deltas take semantic color + a direction icon on up/down moves
 - **text** — markdown panel with `{{variable}}` interpolation; values insert as plain text and raw HTML never renders (no `rehypeRaw`), so interpolation cannot become a rendering surface
+- **html** — script-free HTML/CSS panel (source-less), rendered by `HtmlWidget` (see below): sanitized markup in a `sandbox=""` frame with a CSP meta and the resolved app-theme tokens as CSS variables. The picker offers "HTML panel" only while the org switch is on; disabling shows `HTML panels are disabled for this organization.` in the app, public page, and editor, and blocks new panels
 - **Table column formats** — `config.table.columns` stores an array of `{ name, format: { style: number | currency | percent, currency, decimals, compact } }` entries; `tableConfigFrom` parses them into the name→format map applied in `OutputRenderer`'s table
 - **Appearance** — every widget accepts `config.appearance`: `background` (`card` | `transparent`), `border` (drawn only on cards), outer `padding` (`none` | `sm` | `md`), `align` (`left` | `center` | `right`). The defaults reproduce the standard widget card exactly
 
 **Component**: `web/src/pages/DashboardPage.tsx`
 
 See also: `DashboardEditorPage.tsx` for the editor; `e2e/dashboard-app.spec.ts` for the App surface spec.
+
+### HtmlWidget (HTML panel)
+
+**Purpose**: Render a dashboard `html` widget — a script-free HTML/CSS panel — on the app, public, and editor surfaces.
+
+**Visual**:
+- The frame fills its widget card (`100% × 100%`, borderless); `sandbox=""` + `referrerPolicy="no-referrer"` + a CSP `<meta>` (`default-src 'none'`; images `data:`/origin; inline styles) means the panel cannot script, navigate, submit forms, or reach the parent
+- **States**: the rendered frame; `HTML panels are disabled for this organization.` (org switch off — the same placeholder renders in the app, public page, and editor); `Empty HTML panel — edit it in the dashboard editor.` (no markup and no css)
+- **Theme**: the resolved `AppThemeProvider` tokens inject as `:root` CSS variables plus body defaults, so `var(--accent)`, `var(--text-primary)`, … work inside the panel and follow `color_scheme`. The editor's grid cards and the drawer preview resolve the same dashboard theme locally (`useResolvedAppTheme`), so edit mode is a faithful preview of the published look; the editor chrome itself stays on the global theme
+- **Scrollbars**: the frame restates the app's scrollbar language (7px, transparent track, subtle thumb) themed off the resolved text color, plus `color-scheme`, so the frame's native scrollbars follow the panel scheme instead of the browser default
+- **Authoring preview**: the widget drawer renders the same component under the Panel HTML / Panel CSS editors (200px), resolved with the dashboard's app theme, so the preview is exactly what viewers get
+
+**Component**: `web/src/components/HtmlWidget.tsx`; see also `web/src/components/WidgetConfigDrawer.tsx`, `e2e/html-panel.spec.ts`.
 
 ### ConnectorsPage
 

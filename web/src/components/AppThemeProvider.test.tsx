@@ -1,9 +1,10 @@
 import { StrictMode } from 'react'
 import { describe, expect, it, afterEach } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { AppThemeProvider } from './AppThemeProvider'
+import { AppThemeProvider, useAppTheme, useResolvedAppTheme } from './AppThemeProvider'
 import { CHART_COLORS, useChartColors } from '../charts/common'
 import { getAppChartTheme } from '../charts/appChartTheme'
+import type { DashboardAppTheme, OrgBranding } from '../types'
 
 afterEach(() => {
   document.documentElement.removeAttribute('data-theme')
@@ -18,6 +19,32 @@ function containerFor(text: string): HTMLElement {
 function PaletteProbe({ testId }: { testId: string }) {
   const colors = useChartColors()
   return <div data-testid={testId} data-palette={colors.palette.join(',')} />
+}
+
+function ThemeProbe({ testId }: { testId: string }) {
+  const theme = useAppTheme()
+  return (
+    <div
+      data-testid={testId}
+      data-scheme={theme?.scheme ?? 'none'}
+      data-accent={theme?.vars['--accent'] ?? ''}
+    />
+  )
+}
+
+function ResolvedProbe({ testId, theme, branding }: {
+  testId: string
+  theme?: DashboardAppTheme | null
+  branding?: OrgBranding | null
+}) {
+  const resolved = useResolvedAppTheme(theme, branding)
+  return (
+    <div
+      data-testid={testId}
+      data-scheme={resolved.scheme}
+      data-accent={resolved.vars['--accent'] ?? ''}
+    />
+  )
 }
 
 function NestedProviders({ showInner }: { showInner: boolean }) {
@@ -163,5 +190,35 @@ describe('AppThemeProvider', () => {
     unmount()
     expect(getAppChartTheme()).toBeNull()
     expect(CHART_COLORS[0]).toBe('#6366f1')
+  })
+
+  it('exposes the resolved theme through useAppTheme, and null outside a provider', () => {
+    const { unmount } = render(
+      <AppThemeProvider theme={{ accent: '#7c6faa', color_scheme: 'dark' }}>
+        <ThemeProbe testId="themed" />
+      </AppThemeProvider>,
+    )
+    expect(screen.getByTestId('themed')).toHaveAttribute('data-scheme', 'dark')
+    expect(screen.getByTestId('themed')).toHaveAttribute('data-accent', '#7c6faa')
+    unmount()
+
+    render(<ThemeProbe testId="bare" />)
+    expect(screen.getByTestId('bare')).toHaveAttribute('data-scheme', 'none')
+    expect(screen.getByTestId('bare')).toHaveAttribute('data-accent', '')
+  })
+
+  it('useResolvedAppTheme falls back to the explicit dashboard theme outside a provider', () => {
+    render(<ResolvedProbe testId="explicit" theme={{ accent: '#7c6faa', color_scheme: 'dark' }} />)
+    expect(screen.getByTestId('explicit')).toHaveAttribute('data-scheme', 'dark')
+    expect(screen.getByTestId('explicit')).toHaveAttribute('data-accent', '#7c6faa')
+  })
+
+  it('useResolvedAppTheme prefers the provider context over the explicit fallback', () => {
+    render(
+      <AppThemeProvider theme={{ accent: '#111111' }}>
+        <ResolvedProbe testId="ctx" theme={{ accent: '#222222' }} />
+      </AppThemeProvider>,
+    )
+    expect(screen.getByTestId('ctx')).toHaveAttribute('data-accent', '#111111')
   })
 })

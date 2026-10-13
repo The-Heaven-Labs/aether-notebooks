@@ -7,11 +7,12 @@ import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPayload'
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
-import { isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
+import { isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
 import { widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
+import { htmlConfigFrom } from '../utils/htmlConfig'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../api/client'
@@ -22,6 +23,7 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { WidgetFrame } from '../components/WidgetFrame'
 import { TextWidget } from '../components/TextWidget'
+import { HtmlWidget } from '../components/HtmlWidget'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
@@ -55,6 +57,7 @@ const WIDGET_TYPE_DESCRIPTORS: Record<AddWidgetType, string> = {
   chart: 'Chart — a plot of the rows (bar, line, pie, …).',
   metric: 'Metric — one number from the query.',
   text: 'Text — markdown with live {{filters}}.',
+  html: 'Script-free HTML/CSS section.',
 }
 
 const WIDGET_SOURCE_DESCRIPTORS: Record<AddWidgetSource, string> = {
@@ -463,7 +466,10 @@ export function DashboardEditorPage() {
 
   const pickerCells = pickerNotebook?.cells ?? []
 
-  const pickerValidTypes = validTypesForSource(pickerSource)
+  // REST-only field (the document does not carry it): the picker and drawer
+  // offer the html panel only while the org switch is on.
+  const htmlPanelsEnabled = dashboard?.html_panels_enabled !== false
+  const pickerValidTypes = validTypesForSource(pickerSource, htmlPanelsEnabled)
   const pickerSourceComplete =
     pickerSource === 'cell'
       ? !!pickerNotebookId && !!pickerCellId
@@ -723,13 +729,13 @@ export function DashboardEditorPage() {
                 onChange={(e) => {
                   const source = e.target.value as AddWidgetSource
                   setPickerSource(source)
-                  const valid = validTypesForSource(source)
+                  const valid = validTypesForSource(source, htmlPanelsEnabled)
                   if (!valid.includes(pickerType)) setPickerType(valid[0])
                 }}
               >
                 <option value="cell">Notebook cell</option>
                 <option value="query">Query</option>
-                <option value="none">None — text panel</option>
+                <option value="none">None — text or HTML panel</option>
               </select>
               <span style={styles.pickerHint}>{WIDGET_SOURCE_DESCRIPTORS[pickerSource]}</span>
 
@@ -796,6 +802,7 @@ export function DashboardEditorPage() {
                 <option value="chart" disabled={!pickerValidTypes.includes('chart')}>Chart</option>
                 <option value="metric" disabled={!pickerValidTypes.includes('metric')}>Metric</option>
                 <option value="text" disabled={!pickerValidTypes.includes('text')}>Text</option>
+                <option value="html" disabled={!pickerValidTypes.includes('html')}>HTML panel</option>
               </select>
               <span style={styles.pickerHint}>{WIDGET_TYPE_DESCRIPTORS[pickerType]}</span>
 
@@ -866,6 +873,14 @@ export function DashboardEditorPage() {
                         <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
                       ) : isTextPanel(widget) ? (
                         <TextWidget markdown={textConfigFrom(widget.config).markdown} />
+                      ) : isHTMLPanel(widget) ? (
+                        <HtmlWidget
+                          html={htmlConfigFrom(widget.config).html}
+                          css={htmlConfigFrom(widget.config).css}
+                          enabled={dashboard.html_panels_enabled !== false}
+                          theme={liveDashboard.settings?.app?.theme}
+                          branding={liveDashboard.org_branding}
+                        />
                       ) : (
                         <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                       )}
@@ -921,6 +936,14 @@ export function DashboardEditorPage() {
                           <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
                         ) : isTextPanel(widget) ? (
                           <TextWidget markdown={textConfigFrom(widget.config).markdown} />
+                        ) : isHTMLPanel(widget) ? (
+                          <HtmlWidget
+                            html={htmlConfigFrom(widget.config).html}
+                            css={htmlConfigFrom(widget.config).css}
+                            enabled={dashboard.html_panels_enabled !== false}
+                            theme={liveDashboard.settings?.app?.theme}
+                            branding={liveDashboard.org_branding}
+                          />
                         ) : (
                           <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                         )}
@@ -964,6 +987,7 @@ export function DashboardEditorPage() {
           closeOnEscape={!showVariables}
           editingEnabled={editingEnabled}
           docSynced={liveDoc.synced}
+          htmlPanelsEnabled={htmlPanelsEnabled}
           onClose={() => setEditingWidget(null)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
           onDefineVariable={(name, suggestedType) => {

@@ -952,3 +952,44 @@ describe('DashboardPage published mode', () => {
       .toHaveAttribute('href', '/dashboards/d1/view?tab=orders')
   })
 })
+
+describe('html panels', () => {
+  function htmlPanel() {
+    return widget({
+      id: 'w-html',
+      notebook_id: null,
+      cell_id: null,
+      type: 'html',
+      config: { html: '<p>hi</p>', css: '' },
+    })
+  }
+
+  test('renders source-less html widgets in a sandboxed frame', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      widgets: [htmlPanel()],
+      widgets_data: {},
+    })))
+    renderDashboard()
+    await screen.findByText('Rest board')
+
+    const frame = await screen.findByTitle('HTML panel')
+    expect(frame.tagName).toBe('IFRAME')
+    expect(frame).toHaveAttribute('sandbox', '')
+    expect(frame.getAttribute('srcdoc')).toContain('<p>hi</p>')
+  })
+
+  test('renders the placeholder when the org switch is off', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      html_panels_enabled: false,
+      widgets: [htmlPanel()],
+      widgets_data: {},
+    })))
+    renderDashboard()
+    await screen.findByText('Rest board')
+
+    expect(await screen.findByText('HTML panels are disabled for this organization.')).toBeInTheDocument()
+    expect(screen.queryByTitle('HTML panel')).not.toBeInTheDocument()
+  })
+})

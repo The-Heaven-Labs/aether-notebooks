@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import { interpolateText } from './interpolateText'
+import { describe, expect, it, test } from 'vitest'
+import { interpolateHtml, interpolateText } from './interpolateText'
 import type { DashboardVariable } from '../types'
 
 const vars: DashboardVariable[] = [
@@ -44,5 +44,22 @@ describe('interpolateText', () => {
   })
   it('substitutes whitespace-padded tokens', () => {
     expect(interpolateText('{{ region }}', { region: 'EMEA' }, vars)).toBe('EMEA')
+  })
+})
+
+describe('interpolateHtml', () => {
+  const variables: DashboardVariable[] = [
+    { name: 'region', label: 'Region', type: 'text' },
+    { name: 'window', label: 'Window', type: 'date_range' },
+  ]
+
+  test('escapes values for both text and attribute contexts', () => {
+    const out = interpolateHtml('<div title="{{region}}">{{region}}</div>', { region: '<b>"EU" & \'west\'</b>' }, variables)
+    expect(out).toBe('<div title="&lt;b&gt;&quot;EU&quot; &amp; &#39;west&#39;&lt;/b&gt;">&lt;b&gt;&quot;EU&quot; &amp; &#39;west&#39;&lt;/b&gt;</div>')
+  })
+
+  test('unknown tokens stay visible; date_range renders start → end', () => {
+    expect(interpolateHtml('{{nope}}', {}, variables)).toBe('{{nope}}')
+    expect(interpolateHtml('{{window}}', { window: ['2026-01-01', '2026-02-01'] }, variables)).toBe('2026-01-01 → 2026-02-01')
   })
 })

@@ -384,3 +384,28 @@ test('keeps Save disabled while a logo upload is in flight', async () => {
   release?.()
   await waitFor(() => expect(screen.getByRole('button', { name: 'Save branding' })).not.toBeDisabled())
 })
+
+test('html panels toggle defaults on and flips through org settings', async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  server.use(captureSettingsPuts(bodies))
+  renderWithProviders(<OrgSettingsPage />, { initialPath: '/settings' })
+
+  const toggle = await screen.findByRole('checkbox', { name: /Allow HTML panels/ })
+  expect(toggle).toBeChecked()
+
+  fireEvent.click(toggle)
+  await waitFor(() => expect(bodies).toContainEqual({ html_panels_enabled: false }))
+  expect(toggle).not.toBeChecked()
+})
+
+test('renders the html panels toggle off when org settings disable it', async () => {
+  server.use(
+    http.get('/api/v1/org/settings', () =>
+      HttpResponse.json({ audit_retention_days: 7, html_panels_enabled: false }),
+    ),
+  )
+  renderWithProviders(<OrgSettingsPage />, { initialPath: '/settings' })
+
+  const toggle = await screen.findByRole('checkbox', { name: /Allow HTML panels/ })
+  expect(toggle).not.toBeChecked()
+})

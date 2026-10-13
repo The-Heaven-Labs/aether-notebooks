@@ -118,7 +118,7 @@ export interface DashboardDocProjection {
   widgets: Widget[]
 }
 
-const WIDGET_TYPES = new Set<Widget['type']>(['chart', 'table', 'metric', 'text'])
+const WIDGET_TYPES = new Set<Widget['type']>(['chart', 'table', 'metric', 'text', 'html'])
 
 /**
  * Converts the shared document into plain values for React.

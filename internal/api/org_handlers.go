@@ -788,6 +788,22 @@ func (s *Server) orgBranding(ctx context.Context, orgID string) *models.OrgBrand
 	return settings.Branding
 }
 
+// orgHTMLPanelsEnabled reports whether html panels are enabled for the org.
+// Absent settings mean enabled; a read failure degrades to enabled so a
+// transient DB error never blanks a surface.
+func (s *Server) orgHTMLPanelsEnabled(ctx context.Context, orgID string) bool {
+	var settingsJSON []byte
+	if err := s.db.Pool.QueryRow(ctx, `SELECT settings FROM orgs WHERE id = $1`, orgID).Scan(&settingsJSON); err != nil {
+		slog.Debug("org settings read failed", "org_id", orgID, "error", err)
+		return true
+	}
+	var settings models.OrgSettings
+	if err := json.Unmarshal(settingsJSON, &settings); err != nil {
+		return true
+	}
+	return settings.HTMLPanelsEnabled == nil || *settings.HTMLPanelsEnabled
+}
+
 // @Summary Get org output limits
 // @Description Get the org's cell output byte caps. The stored values are
 // @Description returned alongside the resolved (platform-clamped) values used at

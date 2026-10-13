@@ -1146,3 +1146,120 @@ describe('WidgetConfigDrawer', () => {
     )
   })
 })
+
+describe('html panels', () => {
+  function htmlWidget(overrides: Partial<Widget> = {}): Widget {
+    return {
+      id: 'w-html',
+      dashboard_id: 'd1',
+      notebook_id: null,
+      cell_id: null,
+      connector_id: null,
+      query: null,
+      language: 'sql',
+      type: 'html',
+      layout: { row: 0, col: 0, width: 6, height: 6 },
+      config: { html: '<div class="stat">42</div>', css: '.stat{font-size:28px}' },
+      created_at: '2026-01-01T00:00:00Z',
+      ...overrides,
+    }
+  }
+
+  test('renders the panel editors and a live preview for a source-less html widget', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={htmlWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    expect(screen.getByLabelText('Panel HTML')).toHaveValue('<div class="stat">42</div>')
+    expect(screen.getByLabelText('Panel CSS')).toHaveValue('.stat{font-size:28px}')
+    const frame = screen.getByTitle('HTML panel')
+    expect(frame.tagName).toBe('IFRAME')
+    expect(frame.getAttribute('srcdoc')).toContain('42')
+  })
+
+  test('saves panel markup and stylesheet into the widget config', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w-html', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={htmlWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    fireEvent.change(screen.getByLabelText('Panel CSS'), { target: { value: '.stat{color:red}' } })
+    await waitFor(() =>
+      expect(savedConfigs(bodies)).toContainEqual({
+        html: '<div class="stat">42</div>',
+        css: '.stat{color:red}',
+      }),
+    )
+  })
+
+  test('renders the disabled note instead of the editors when html panels are off', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={htmlWidget()}
+        htmlPanelsEnabled={false}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.getByText('HTML panels are disabled for this organization.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Panel HTML')).toBeNull()
+    expect(screen.queryByLabelText('Panel CSS')).toBeNull()
+    expect(screen.queryByTitle('HTML panel')).toBeNull()
+  })
+
+  test('offers the html type option only when enabled', () => {
+    const { unmount } = renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={htmlWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    expect(screen.getByRole('option', { name: 'HTML panel' })).toBeInTheDocument()
+    unmount()
+
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={dashboard}
+        widget={htmlWidget()}
+        htmlPanelsEnabled={false}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('option', { name: 'HTML panel' })).toBeNull()
+  })
+})
+
+describe('html panel preview theming', () => {
+  test('previews the panel with the dashboard app theme, like the published surface', () => {
+    const themed: Dashboard = {
+      ...dashboard,
+      settings: { variables: [], app: { theme: { accent: '#7c5cff', color_scheme: 'dark' } } },
+    }
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={themed} widget={htmlWidgetForTheme()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    const doc = screen.getByTitle('HTML panel').getAttribute('srcdoc') ?? ''
+    expect(doc).toContain('--accent:#7c5cff')
+  })
+})
+
+function htmlWidgetForTheme(): Widget {
+  return {
+    id: 'w-html',
+    dashboard_id: 'd1',
+    notebook_id: null,
+    cell_id: null,
+    connector_id: null,
+    query: null,
+    language: 'sql',
+    type: 'html',
+    layout: { row: 0, col: 0, width: 6, height: 6 },
+    config: { html: '<p>hi</p>', css: '' },
+    created_at: '2026-01-01T00:00:00Z',
+  }
+}

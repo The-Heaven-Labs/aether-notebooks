@@ -43,3 +43,30 @@ export function interpolateText(
     return escapeHtml(escapeMarkdown(displayValue(values[name], variable.type)))
   })
 }
+
+// Panel interpolation escapes the five HTML-significant characters: values
+// may land in text or attribute contexts, and the result is sanitized later.
+function escapeHtmlAttr(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+// Display-only interpolation for html panels: declared variables are
+// substituted as escaped plain text before DOMPurify runs. Unknown tokens stay
+// visible so authors can spot typos.
+export function interpolateHtml(
+  template: string,
+  values: Record<string, unknown>,
+  variables: DashboardVariable[],
+): string {
+  const declared = new Map(variables.map((v): [string, DashboardVariable] => [v.name, v]))
+  return template.replace(/\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}/g, (match, name: string) => {
+    const variable = declared.get(name)
+    if (!variable) return match
+    return escapeHtmlAttr(displayValue(values[name], variable.type))
+  })
+}

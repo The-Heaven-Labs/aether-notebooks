@@ -480,23 +480,25 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 
 	type dashboardWithWidgets struct {
 		models.Dashboard
-		Widgets          []models.Widget            `json:"widgets"`
-		WidgetsData      map[string]widgetCellData  `json:"widgets_data,omitempty"`
-		CanViewWithData  bool                       `json:"can_view_with_data"`
-		CanShare         bool                       `json:"can_share"`
-		CanEdit          bool                       `json:"can_edit"`
-		PublishedVersion *dashboardPublishedVersion `json:"published_version,omitempty"`
-		OrgBranding      *models.OrgBranding        `json:"org_branding"`
+		Widgets           []models.Widget            `json:"widgets"`
+		WidgetsData       map[string]widgetCellData  `json:"widgets_data,omitempty"`
+		CanViewWithData   bool                       `json:"can_view_with_data"`
+		CanShare          bool                       `json:"can_share"`
+		CanEdit           bool                       `json:"can_edit"`
+		PublishedVersion  *dashboardPublishedVersion `json:"published_version,omitempty"`
+		OrgBranding       *models.OrgBranding        `json:"org_branding"`
+		HTMLPanelsEnabled bool                       `json:"html_panels_enabled"`
 	}
 
 	resp := dashboardWithWidgets{
-		Dashboard:        dash,
-		Widgets:          widgets,
-		CanViewWithData:  viewWithData,
-		CanShare:         shareOK,
-		CanEdit:          editOK,
-		PublishedVersion: publishedVersion,
-		OrgBranding:      s.orgBranding(ctx, dash.OrgID),
+		Dashboard:         dash,
+		Widgets:           widgets,
+		CanViewWithData:   viewWithData,
+		CanShare:          shareOK,
+		CanEdit:           editOK,
+		PublishedVersion:  publishedVersion,
+		OrgBranding:       s.orgBranding(ctx, dash.OrgID),
+		HTMLPanelsEnabled: s.orgHTMLPanelsEnabled(ctx, dash.OrgID),
 	}
 
 	if viewWithData && len(widgets) > 0 {
@@ -719,10 +721,20 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	// The document format only carries known types and SQL; reject anything
 	// else up front instead of failing inside the document write.
 	switch req.Type {
-	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric:
+	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML:
 	default:
 		writeError(w, http.StatusBadRequest, "invalid widget type")
 		return
+	}
+	if req.Type == models.WidgetHTML {
+		if err := validate.ValidateWidgetHTML(widgetHTMLConfigFrom(req.Config)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if !s.orgHTMLPanelsEnabled(ctx, claims.OrgID) {
+			writeError(w, http.StatusBadRequest, "html panels are disabled for this organization")
+			return
+		}
 	}
 	lang := "sql"
 	if req.Language != nil && *req.Language != "" {
@@ -832,6 +844,20 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, widget)
 }
 
+// widgetHTMLConfigFrom extracts panel fields from a raw config map; non-string
+// values are treated as absent (the document store keeps them, the renderer
+// ignores them).
+func widgetHTMLConfigFrom(config map[string]interface{}) validate.WidgetHTMLConfig {
+	cfg := validate.WidgetHTMLConfig{}
+	if s, ok := config["html"].(string); ok {
+		cfg.HTML = s
+	}
+	if s, ok := config["css"].(string); ok {
+		cfg.CSS = s
+	}
+	return cfg
+}
+
 // @Summary Update a widget
 // @Description Update a widget's layout or configuration
 // @Tags dashboards
@@ -895,9 +921,27 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Type != nil {
 		switch *req.Type {
-		case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric:
+		case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML:
 		default:
 			writeError(w, http.StatusBadRequest, "invalid widget type")
+			return
+		}
+		if *req.Type == models.WidgetHTML && !s.orgHTMLPanelsEnabled(r.Context(), claims.OrgID) {
+			writeError(w, http.StatusBadRequest, "html panels are disabled for this organization")
+			return
+		}
+	}
+	if req.Config != nil {
+		if err := validate.ValidateWidgetHTML(widgetHTMLConfigFrom(req.Config)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Fail closed on panel-config writes while disabled: conversion and
+		// content authoring both 400 so a disabled org cannot grow panels.
+		_, hasHTMLKey := req.Config["html"].(string)
+		_, hasCSSKey := req.Config["css"].(string)
+		if (hasHTMLKey || hasCSSKey) && !s.orgHTMLPanelsEnabled(r.Context(), claims.OrgID) {
+			writeError(w, http.StatusBadRequest, "html panels are disabled for this organization")
 			return
 		}
 	}
@@ -1363,17 +1407,19 @@ func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, da
 
 	type publicDashboardWithWidgets struct {
 		models.Dashboard
-		Widgets          []models.Widget            `json:"widgets"`
-		WidgetsData      map[string]widgetCellData  `json:"widgets_data"`
-		PublishedVersion *dashboardPublishedVersion `json:"published_version,omitempty"`
-		OrgBranding      *models.OrgBranding        `json:"org_branding"`
+		Widgets           []models.Widget            `json:"widgets"`
+		WidgetsData       map[string]widgetCellData  `json:"widgets_data"`
+		PublishedVersion  *dashboardPublishedVersion `json:"published_version,omitempty"`
+		OrgBranding       *models.OrgBranding        `json:"org_branding"`
+		HTMLPanelsEnabled bool                       `json:"html_panels_enabled"`
 	}
 	writeJSON(w, http.StatusOK, publicDashboardWithWidgets{
-		Dashboard:        dash,
-		Widgets:          widgets,
-		WidgetsData:      widgetsData,
-		PublishedVersion: publishedVersion,
-		OrgBranding:      s.orgBranding(ctx, dash.OrgID),
+		Dashboard:         dash,
+		Widgets:           widgets,
+		WidgetsData:       widgetsData,
+		PublishedVersion:  publishedVersion,
+		OrgBranding:       s.orgBranding(ctx, dash.OrgID),
+		HTMLPanelsEnabled: s.orgHTMLPanelsEnabled(ctx, dash.OrgID),
 	})
 }
 
