@@ -61,8 +61,9 @@ type DashboardAppSettings struct {
 	Title            string             `json:"title,omitempty"`
 	Subtitle         string             `json:"subtitle,omitempty"`
 	LogoAttachmentID string             `json:"logo_attachment_id,omitempty"`
-	Width            string             `json:"width,omitempty"`  // "fixed" | "full"; empty = fixed
-	Layout           string             `json:"layout,omitempty"` // "grid" | "custom"; empty = grid (wave 4)
+	Width            string             `json:"width,omitempty"`        // "fixed" | "full"; empty = fixed
+	Layout           string             `json:"layout,omitempty"`       // "grid" | "custom"; empty = grid (wave 4)
+	FilterScope      string             `json:"filter_scope,omitempty"` // "all" | "tab"; empty = "all"
 	ShowHeader       *bool              `json:"show_header,omitempty"`
 	ShowRefresh      *bool              `json:"show_refresh,omitempty"`
 	ShowLastUpdated  *bool              `json:"show_last_updated,omitempty"`
