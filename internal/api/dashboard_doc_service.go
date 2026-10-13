@@ -12,6 +12,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/models"
+	"github.com/the-heaven-labs/aether/internal/validate"
 )
 
 // errDashboardDocNotFound reports that a dashboard document could not be
@@ -354,6 +355,22 @@ func (s *Server) validateDashboardDocStore(ctx context.Context, tx pgx.Tx, claim
 		}
 		if !canView {
 			return dashboarddoc.ErrStoreForbidden
+		}
+	}
+
+	// Custom components may only bind widgets of their own dashboard: the
+	// merged projection is the authority (a delta update can add a binding
+	// whose target lives in an earlier struct). A dangling binding renders as
+	// a permanent error and would be a data-confusion vector, so the store is
+	// refused like a bad cell reference.
+	for id, w := range mergedProj.Widgets {
+		if w.Type != string(models.WidgetCustom) {
+			continue
+		}
+		for _, bindingID := range validate.WidgetCustomBindingIDs(w.Config) {
+			if _, ok := mergedProj.Widgets[bindingID]; !ok {
+				return fmt.Errorf("%w: custom widget %s binds widget %s outside the dashboard", dashboarddoc.ErrStoreForbidden, id, bindingID)
+			}
 		}
 	}
 	return nil
