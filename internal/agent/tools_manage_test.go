@@ -1577,3 +1577,88 @@ func TestDashboardSetWidgetConfig(t *testing.T) {
 	require.ErrorContains(t, err, "widget not found")
 	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
 }
+
+// TestDashboardCreateWidgetWithTypedBlocks pins the create-side typed blocks:
+// one call can create a fully-configured widget — the chart/metric/table
+// blocks convert to the stored shapes, merge with the raw config, and a
+// rejected block fails before anything is written.
+func TestDashboardCreateWidgetWithTypedBlocks(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Typed Create Dashboard")
+
+	connID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		VALUES ($1, $2, 'typed-create-connector', 'postgres', $3)
+	`, connID, orgID, []byte("encrypted"))
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "create_dashboard_widget")
+
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"connector_id": connID,
+		"query":        "SELECT day, revenue FROM sales",
+		"type":         "chart",
+		"config":       map[string]any{"appearance": map[string]any{"padding": "sm"}},
+		"chart": map[string]any{
+			"chart_type": "line",
+			"x_column":   "day",
+			"y_columns":  []string{"revenue"},
+			"smooth":     true,
+		},
+		"metric": map[string]any{"value_column": "revenue", "aggregation": "avg"},
+		"table": map[string]any{
+			"columns": []map[string]any{{"name": "revenue", "format": map[string]any{"style": "number", "decimals": 1}}},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	widgetID := out.(map[string]any)["widget_id"].(string)
+
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	require.Empty(t, proj.Warnings)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, "line", w.Config["chartType"])
+	require.Equal(t, "day", w.Config["xAxis"])
+	require.Equal(t, []any{"revenue"}, w.Config["yAxis"])
+	require.Equal(t, true, w.Config["smooth"])
+	require.Equal(t, map[string]any{"value_column": "revenue", "aggregation": "avg"}, w.Config["metric"])
+	require.Equal(t, map[string]any{"columns": []any{
+		map[string]any{"name": "revenue", "format": map[string]any{"style": "number", "decimals": float64(1)}},
+	}}, w.Config["table"])
+	require.Equal(t, map[string]any{"padding": "sm"}, w.Config["appearance"])
+
+	// Materialized row mirrors the document.
+	var configOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT config::text FROM widgets WHERE id = $1`, widgetID).Scan(&configOut))
+	require.JSONEq(t, `{
+		"chartType":"line","xAxis":"day","yAxis":["revenue"],"smooth":true,
+		"metric":{"value_column":"revenue","aggregation":"avg"},
+		"table":{"columns":[{"name":"revenue","format":{"style":"number","decimals":1}}]},
+		"appearance":{"padding":"sm"}
+	}`, configOut)
+
+	// An invalid block fails before any write (no document is seeded).
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	badArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"connector_id": connID,
+		"query":        "SELECT 1",
+		"type":         "chart",
+		"chart":        map[string]any{"chart_type": "waffle"},
+	})
+	require.NoError(t, err)
+	_, err = handler(badArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not supported")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected block must not rewrite the document")
+}

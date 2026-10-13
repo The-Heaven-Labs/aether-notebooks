@@ -70,7 +70,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 		}{
 			Name:        "create_dashboard_widget",
 			Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); config carries per-widget options (e.g. config.metric for metric widgets).",
-			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string","description":"Notebook for a cell-backed widget"},"cell_id":{"type":"string","description":"Cell for a cell-backed widget"},"connector_id":{"type":"string","description":"Connector for a query-backed widget (requires query)"},"query":{"type":"string","description":"SQL for a query-backed widget (requires connector_id)"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output, 'metric' for a single value, 'text' for markdown"},"config":{"type":"object","description":"Per-widget config, e.g. {\"metric\":{\"value_column\":\"x\",\"aggregation\":\"sum\"}}"},"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","type"]}`,
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string","description":"Notebook for a cell-backed widget"},"cell_id":{"type":"string","description":"Cell for a cell-backed widget"},"connector_id":{"type":"string","description":"Connector for a query-backed widget (requires query)"},"query":{"type":"string","description":"SQL for a query-backed widget (requires connector_id)"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output, 'metric' for a single value, 'text' for markdown"},"config":{"type":"object","description":"Per-widget config, e.g. {\"metric\":{\"value_column\":\"x\",\"aggregation\":\"sum\"}}"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `,"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","type"]}`,
 		},
 		Handler: makeCreateDashboardWidgetHandler(pool),
 		Timeout: 15 * time.Second,
@@ -426,17 +426,20 @@ func validateDashboardLogoAttachment(ctx context.Context, pool *pgxpool.Pool, or
 func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			DashboardID string         `json:"dashboard_id"`
-			NotebookID  string         `json:"notebook_id"`
-			CellID      string         `json:"cell_id"`
-			ConnectorID string         `json:"connector_id"`
-			Query       string         `json:"query"`
-			Type        string         `json:"type"`
-			Config      map[string]any `json:"config"`
-			Row         int            `json:"row"`
-			Col         int            `json:"col"`
-			Width       int            `json:"width"`
-			Height      int            `json:"height"`
+			DashboardID string                       `json:"dashboard_id"`
+			NotebookID  string                       `json:"notebook_id"`
+			CellID      string                       `json:"cell_id"`
+			ConnectorID string                       `json:"connector_id"`
+			Query       string                       `json:"query"`
+			Type        string                       `json:"type"`
+			Config      map[string]any               `json:"config"`
+			Chart       *validate.WidgetChartConfig  `json:"chart"`
+			Metric      *validate.WidgetMetricConfig `json:"metric"`
+			Table       *validate.WidgetTableConfig  `json:"table"`
+			Row         int                          `json:"row"`
+			Col         int                          `json:"col"`
+			Width       int                          `json:"width"`
+			Height      int                          `json:"height"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -483,6 +486,24 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid widget type")
 		}
 
+		// Typed config blocks are validated before any reference/layout check
+		// or document load, so a rejected block writes nothing.
+		if req.Chart != nil {
+			if err := validate.ValidateWidgetChart(*req.Chart); err != nil {
+				return nil, err
+			}
+		}
+		if req.Metric != nil {
+			if err := validate.ValidateWidgetMetric(*req.Metric); err != nil {
+				return nil, err
+			}
+		}
+		if req.Table != nil {
+			if err := validate.ValidateWidgetTable(*req.Table); err != nil {
+				return nil, err
+			}
+		}
+
 		if hasCell {
 			// Validate the cell reference's notebook is viewable (prevents
 			// IDOR escalation) before checking the pair resolves.
@@ -524,6 +545,27 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		widgetConfig := req.Config
 		if widgetConfig == nil {
 			widgetConfig = map[string]any{}
+		}
+		// Typed blocks convert to the stored shapes and merge over the raw
+		// config (chart keys at the root; metric/table replace their sections)
+		// so one call can create a fully-configured widget.
+		if req.Chart != nil || req.Metric != nil || req.Table != nil {
+			merged := make(map[string]any, len(widgetConfig)+3)
+			for k, v := range widgetConfig {
+				merged[k] = v
+			}
+			if req.Chart != nil {
+				for k, v := range validate.ToStoredWidgetChart(*req.Chart) {
+					merged[k] = v
+				}
+			}
+			if req.Metric != nil {
+				merged["metric"] = validate.ToStoredWidgetMetric(*req.Metric)
+			}
+			if req.Table != nil {
+				merged["table"] = validate.ToStoredWidgetTable(*req.Table)
+			}
+			widgetConfig = merged
 		}
 
 		// The widget is written through the dashboard document (the source of
