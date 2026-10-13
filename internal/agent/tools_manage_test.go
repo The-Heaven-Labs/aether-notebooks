@@ -1732,3 +1732,45 @@ func TestDashboardReviewTool(t *testing.T) {
 	report = out.(dashboardreview.Report)
 	require.Equal(t, "https://app.example.test/public/dashboards/"+token, report.PublicURL)
 }
+
+// TestDashboardGuide pins the guide tool: the embedded markdown is returned
+// verbatim (no arguments, no per-request prompt cost), covers every section,
+// and documents the typed config vocabulary the tools accept.
+func TestDashboardGuide(t *testing.T) {
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, nil)
+	handler := dashboardTool(t, reg, "dashboard_guide")
+
+	out, err := handler(json.RawMessage(`{}`), &agent.ToolContext{})
+	require.NoError(t, err)
+	text, ok := out.(string)
+	require.True(t, ok, "dashboard_guide must return the markdown string, got %T", out)
+	require.NotEmpty(t, text)
+
+	for _, section := range []string{
+		"## Composition",
+		"## Widget types",
+		"### metric",
+		"### text",
+		"### table",
+		"### chart",
+		"## Chapters",
+		"## Filter scoping",
+		"## Theming",
+		"## Publishing",
+		"## Troubleshooting",
+	} {
+		require.Contains(t, text, section)
+	}
+
+	// The typed vocabulary the agent tools accept must appear (the field-help
+	// cross-check in the web suite guards the same surface).
+	for _, key := range []string{
+		"chart_type", "x_column", "y_columns", "group_by", "bar_mode",
+		"series_colors", "mark_lines", "value_column", "aggregation", "label",
+		"comparison", "sparkline", "format", "columns", "filter_scope",
+		"tabs", "publish_dashboard", "set_widget_config", "review_dashboard",
+	} {
+		require.Contains(t, text, key, "the guide must document %q", key)
+	}
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/agent/guide"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/dashboardreview"
 	"github.com/the-heaven-labs/aether/internal/models"
@@ -216,6 +217,20 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeReviewDashboardHandler(pool),
+		Timeout: 15 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "dashboard_guide",
+			Description: "Read the App Builder guide: widget configs (metric/text/table/chart), chapters and filter scoping, theming tokens and guardrails, publish/version semantics, troubleshooting, and composition guidance. No arguments.",
+			Parameters:  `{"type":"object","properties":{}}`,
+		},
+		Handler: makeDashboardGuideHandler(),
 		Timeout: 15 * time.Second,
 	})
 
@@ -892,6 +907,15 @@ func makeSetWidgetConfigHandler() ToolHandler {
 			"keys":      keys,
 		})
 		return map[string]any{"widget_id": widgetID, "status": "updated", "keys": keys}, nil
+	}
+}
+
+// makeDashboardGuideHandler implements dashboard_guide: the embedded App
+// Builder guide served verbatim, so the agent pays no prompt cost until it
+// asks for the reference.
+func makeDashboardGuideHandler() ToolHandler {
+	return func(_ json.RawMessage, _ *ToolContext) (any, error) {
+		return guide.Markdown, nil
 	}
 }
 

@@ -40,6 +40,7 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "set_dashboard_layout", Description: "Arrange a dashboard's App surface: set tabs, place widgets into tabs, and merge widget appearance (background/padding/align/border).", HandlerName: "set_dashboard_layout"},
 	{Name: "publish_dashboard", Description: "Publish the dashboard's current draft as a new version. Viewers see the latest published version until the next publish.", HandlerName: "publish_dashboard"},
 	{Name: "review_dashboard", Description: "Review a dashboard's App composition (layout, content, surface): prioritized findings naming the widget/chapter and the fix tool, plus app view/draft-preview links (and the public link when shared).", HandlerName: "review_dashboard"},
+	{Name: "dashboard_guide", Description: "Read the App Builder guide: widget configs (metric/text/table/chart), chapters and filter scoping, theming tokens and guardrails, publish/version semantics, troubleshooting, and composition guidance.", HandlerName: "dashboard_guide"},
 	{Name: "share_dashboard", Description: "Generate a public shareable link for a dashboard. Returns the public token and the full URL.", HandlerName: "share_dashboard"},
 	{Name: "create_schedule", Description: "Schedule a notebook", HandlerName: "create_schedule"},
 	{Name: "delete_schedule", Description: "Delete a schedule", HandlerName: "delete_schedule"},
