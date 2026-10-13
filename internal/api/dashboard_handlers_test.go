@@ -925,3 +925,57 @@ func TestDashboardCustomWidget(t *testing.T) {
 	require.Equal(t, 400, rec.Code)
 	require.Contains(t, rec.Body.String(), "128 KiB")
 }
+
+func TestOrgCustomCodeSwitch(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("dash-custom-switch-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Custom Switch Org")
+
+	rec := doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards", map[string]any{"title": "Switch"})
+	require.Equal(t, 201, rec.Code)
+	var dashResp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&dashResp))
+	dashID := dashResp["id"].(string)
+
+	// Default: absent means DISABLED — unlike html panels.
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/dashboards/"+dashID, nil)
+	require.Contains(t, rec.Body.String(), `"custom_code_enabled":false`)
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "custom", "layout": map[string]int{"row": 0, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
+
+	// Enabling round-trips and flips the GET + public GET.
+	require.Equal(t, 200, doDashboardJSON(t, srv, token, "PUT", "/api/v1/org/settings",
+		map[string]any{"custom_code_enabled": true}).Code)
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/dashboards/"+dashID, nil)
+	require.Contains(t, rec.Body.String(), `"custom_code_enabled":true`)
+	share := doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/share", nil)
+	var shareResp map[string]any
+	require.NoError(t, json.NewDecoder(share.Body).Decode(&shareResp))
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/public/"+shareResp["token"].(string), nil)
+	require.Contains(t, rec.Body.String(), `"custom_code_enabled":true`)
+
+	// Creating works now; writes to custom config keys are rejected again
+	// once disabled (fail closed) while the widget keeps its config.
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "custom", "layout": map[string]int{"row": 0, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, 201, rec.Code)
+	var customWidget map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&customWidget))
+	customWidgetID := customWidget["id"].(string)
+	require.Equal(t, 200, doDashboardJSON(t, srv, token, "PUT", "/api/v1/org/settings",
+		map[string]any{"custom_code_enabled": false}).Code)
+
+	widgetPath := "/api/v1/dashboards/" + dashID + "/widgets/" + customWidgetID
+	// Conversion and authoring both fail closed while disabled.
+	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"type": "custom"})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
+	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"config": map[string]any{"js": "x"}})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
+}

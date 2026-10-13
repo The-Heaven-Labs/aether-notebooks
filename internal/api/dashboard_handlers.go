@@ -488,6 +488,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		PublishedVersion  *dashboardPublishedVersion `json:"published_version,omitempty"`
 		OrgBranding       *models.OrgBranding        `json:"org_branding"`
 		HTMLPanelsEnabled bool                       `json:"html_panels_enabled"`
+		CustomCodeEnabled bool                       `json:"custom_code_enabled"`
 	}
 
 	resp := dashboardWithWidgets{
@@ -499,6 +500,7 @@ func (s *Server) handleGetDashboard(w http.ResponseWriter, r *http.Request) {
 		PublishedVersion:  publishedVersion,
 		OrgBranding:       s.orgBranding(ctx, dash.OrgID),
 		HTMLPanelsEnabled: s.orgHTMLPanelsEnabled(ctx, dash.OrgID),
+		CustomCodeEnabled: s.orgCustomCodeEnabled(ctx, dash.OrgID),
 	}
 
 	if viewWithData && len(widgets) > 0 {
@@ -741,6 +743,10 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if !s.orgCustomCodeEnabled(ctx, claims.OrgID) {
+			writeError(w, http.StatusBadRequest, "custom code is disabled for this organization")
+			return
+		}
 		if err := s.validateCustomBindingRefs(ctx, claims.OrgID, dashID, req.Config); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -976,6 +982,10 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "html panels are disabled for this organization")
 			return
 		}
+		if *req.Type == models.WidgetCustom && !s.orgCustomCodeEnabled(r.Context(), claims.OrgID) {
+			writeError(w, http.StatusBadRequest, "custom code is disabled for this organization")
+			return
+		}
 	}
 	if req.Config != nil {
 		if err := validate.ValidateWidgetHTML(widgetHTMLConfigFrom(req.Config)); err != nil {
@@ -995,6 +1005,17 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		_, hasCSSKey := req.Config["css"].(string)
 		if (hasHTMLKey || hasCSSKey) && !s.orgHTMLPanelsEnabled(r.Context(), claims.OrgID) {
 			writeError(w, http.StatusBadRequest, "html panels are disabled for this organization")
+			return
+		}
+		// Custom-component authoring fails closed the same way. `js`/`bindings`
+		// are unambiguous custom keys; `html`/`css` are shared with html
+		// panels, so those are gated on the merged widget type below — a
+		// disabled org can neither convert to nor author a custom widget
+		// while html panels keep working.
+		_, hasCustomJSKey := req.Config["js"].(string)
+		_, hasCustomBindingsKey := req.Config["bindings"].([]interface{})
+		if (hasCustomJSKey || hasCustomBindingsKey) && !s.orgCustomCodeEnabled(r.Context(), claims.OrgID) {
+			writeError(w, http.StatusBadRequest, "custom code is disabled for this organization")
 			return
 		}
 	}
@@ -1085,8 +1106,13 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 
 	// Custom components carry a bundle and bindings: validate the merged view
 	// (a partial patch can introduce, keep, or convert to custom) and check
-	// that every binding names a widget of this dashboard.
+	// that every binding names a widget of this dashboard. The org gate runs
+	// first so a disabled org can never author html/css on a custom widget.
 	if merged.Type == string(models.WidgetCustom) {
+		if !s.orgCustomCodeEnabled(r.Context(), claims.OrgID) {
+			writeError(w, http.StatusBadRequest, "custom code is disabled for this organization")
+			return
+		}
 		if err := validate.ValidateWidgetCustom(validate.WidgetCustomConfigFrom(merged.Config)); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -1483,6 +1509,7 @@ func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, da
 		PublishedVersion  *dashboardPublishedVersion `json:"published_version,omitempty"`
 		OrgBranding       *models.OrgBranding        `json:"org_branding"`
 		HTMLPanelsEnabled bool                       `json:"html_panels_enabled"`
+		CustomCodeEnabled bool                       `json:"custom_code_enabled"`
 	}
 	writeJSON(w, http.StatusOK, publicDashboardWithWidgets{
 		Dashboard:         dash,
@@ -1491,6 +1518,7 @@ func (s *Server) servePublicDashboard(w http.ResponseWriter, r *http.Request, da
 		PublishedVersion:  publishedVersion,
 		OrgBranding:       s.orgBranding(ctx, dash.OrgID),
 		HTMLPanelsEnabled: s.orgHTMLPanelsEnabled(ctx, dash.OrgID),
+		CustomCodeEnabled: s.orgCustomCodeEnabled(ctx, dash.OrgID),
 	})
 }
 
