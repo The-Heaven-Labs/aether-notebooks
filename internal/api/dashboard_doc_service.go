@@ -12,6 +12,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/models"
+	"github.com/the-heaven-labs/aether/internal/validate"
 )
 
 // errDashboardDocNotFound reports that a dashboard document could not be
@@ -245,11 +246,29 @@ func (s *Server) loadOrSeedDashboardDoc(ctx context.Context, orgID, dashID strin
 		`SELECT state FROM dashboard_yjs_documents WHERE dashboard_id = $1`,
 		dashID).Scan(&state)
 	if err == nil {
-		// Already seeded or stored: return the winner as-is. The deferred
-		// rollback releases the row lock.
-		return state, nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+		// An existing state is served only when it projects usable content.
+		// A zero-length or corrupt state — or a projection that is entirely
+		// empty while the dashboard still has rows (the corruption the
+		// materializer's guards refuse to write) — is rebuilt from the derived
+		// rows below. Serving it as-is would blank every draft surface
+		// (editor, draft preview) indefinitely while REST reads stayed
+		// correct, and no store ever overwrites it (the guards fail closed),
+		// so this read-side heal is the only recovery.
+		var currentTitle string
+		var currentSettings []byte
+		var currentWidgets int
+		if err := tx.QueryRow(ctx, `
+			SELECT d.title, d.settings, (SELECT COUNT(*) FROM widgets w WHERE w.dashboard_id = d.id)
+			FROM dashboards d WHERE d.id = $1`, dashID).
+			Scan(&currentTitle, &currentSettings, &currentWidgets); err != nil {
+			return nil, fmt.Errorf("load dashboard document %s: read row content: %w", dashID, err)
+		}
+		if !dashboarddoc.NeedsReseed(state, currentTitle, currentSettings, currentWidgets) {
+			// Already seeded or stored and healthy: return the winner as-is.
+			// The deferred rollback releases the row lock.
+			return state, nil
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return nil, fmt.Errorf("load dashboard document %s: read state: %w", dashID, err)
 	}
 
@@ -263,18 +282,23 @@ func (s *Server) loadOrSeedDashboardDoc(ctx context.Context, orgID, dashID strin
 		return nil, fmt.Errorf("load dashboard document %s: seed: %w", dashID, err)
 	}
 
+	// The upsert overwrites an existing row on purpose: reaching the seed
+	// means the stored state was missing or unusable (NeedsReseed above).
+	// Every writer of this table first locks the same dashboards row FOR
+	// UPDATE (this path and dashboarddoc.MergeAndStoreValidated), so the
+	// overwrite cannot race a concurrent healthy store.
 	if _, err := tx.Exec(ctx,
 		`INSERT INTO dashboard_yjs_documents (dashboard_id, state)
 		 VALUES ($1, $2)
-		 ON CONFLICT (dashboard_id) DO NOTHING`,
+		 ON CONFLICT (dashboard_id) DO UPDATE
+		 SET state = EXCLUDED.state, updated_at = NOW()`,
 		dashID, seeded); err != nil {
 		return nil, fmt.Errorf("load dashboard document %s: store seed: %w", dashID, err)
 	}
 
-	// Re-read so concurrent seeds converge on the first committed state. The
-	// ON CONFLICT above makes a lost race a no-op, and the fallback to the
-	// freshly built bytes keeps the caller answering even if the winner's
-	// insert is still uncommitted.
+	// Re-read so concurrent seeds converge on the committed state; the
+	// fallback to the freshly built bytes keeps the caller answering even if
+	// the winner's upsert is still uncommitted.
 	winner := seeded
 	if err := tx.QueryRow(ctx,
 		`SELECT state FROM dashboard_yjs_documents WHERE dashboard_id = $1`,
@@ -354,6 +378,22 @@ func (s *Server) validateDashboardDocStore(ctx context.Context, tx pgx.Tx, claim
 		}
 		if !canView {
 			return dashboarddoc.ErrStoreForbidden
+		}
+	}
+
+	// Custom components may only bind widgets of their own dashboard: the
+	// merged projection is the authority (a delta update can add a binding
+	// whose target lives in an earlier struct). A dangling binding renders as
+	// a permanent error and would be a data-confusion vector, so the store is
+	// refused like a bad cell reference.
+	for id, w := range mergedProj.Widgets {
+		if w.Type != string(models.WidgetCustom) {
+			continue
+		}
+		for _, bindingID := range validate.WidgetCustomBindingIDs(w.Config) {
+			if _, ok := mergedProj.Widgets[bindingID]; !ok {
+				return fmt.Errorf("%w: custom widget %s binds widget %s outside the dashboard", dashboarddoc.ErrStoreForbidden, id, bindingID)
+			}
 		}
 	}
 	return nil

@@ -1,6 +1,7 @@
 import { textConfigFrom } from './textConfig'
 import { htmlConfigFrom } from './htmlConfig'
-import { isHTMLPanel, isQueryWidget, isTextPanel } from './widgetKind'
+import { customConfigFrom } from './customConfig'
+import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel } from './widgetKind'
 import type { DashboardVariable, Widget } from '../types'
 
 /** The public payload's inlined cell data, keyed by cell id. */
@@ -13,7 +14,7 @@ export interface PublicWidgetCellData {
  * opted into live queries; cell widgets need stored outputs to render at all;
  * source-less text panels render unless their source markdown is empty (the
  * editor's "empty text panel" hint is wrong on a public surface); html panels
- * render statically unless both the markup and stylesheet are blank.
+ * and custom components render statically unless their whole bundle is blank.
  */
 export function visibleWidgets(
   widgets: Widget[],
@@ -26,6 +27,14 @@ export function visibleWidgets(
     if (isHTMLPanel(w)) {
       const panel = htmlConfigFrom(w.config)
       return panel.html.trim().length > 0 || panel.css.trim().length > 0
+    }
+    if (isCustomWidget(w)) {
+      const component = customConfigFrom(w.config)
+      return (
+        component.html.trim().length > 0 ||
+        component.css.trim().length > 0 ||
+        component.js.trim().length > 0
+      )
     }
     return !!(w.cell_id && widgetsData[w.cell_id]?.outputs?.length)
   })

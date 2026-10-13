@@ -16,12 +16,14 @@ import { variablesForChapter } from '../utils/chapterFilters'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { TextWidget } from '../components/TextWidget'
 import { HtmlWidget } from '../components/HtmlWidget'
+import { CustomWidget } from '../components/CustomWidget'
 import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { textConfigFrom } from '../utils/textConfig'
 import { htmlConfigFrom } from '../utils/htmlConfig'
+import { customConfigFrom } from '../utils/customConfig'
 import { visibleWidgets, variableDefaults } from '../utils/publicDashboard'
-import { isHTMLPanel, isQueryWidget, isTextPanel } from '../utils/widgetKind'
+import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel } from '../utils/widgetKind'
 import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
@@ -255,6 +257,26 @@ export function PublicDashboardPage() {
                                 enabled={dashboard.html_panels_enabled !== false}
                                 values={publicLive ? undefined : defaults}
                                 variables={variables}
+                              />
+                            </div>
+                          )
+                        }
+
+                        if (isCustomWidget(widget)) {
+                          return (
+                            <div key={widget.id} style={wrapperStyle}>
+                              {/* The org switch gates rendering; data answers
+                                  only on live pages (rate limits unchanged).
+                                  Read-only pages resolve values from the
+                                  configured defaults, like the text branch. */}
+                              <CustomWidget
+                                {...customConfigFrom(widget.config)}
+                                enabled={dashboard.custom_code_enabled === true}
+                                widgets={widgets}
+                                values={publicLive ? undefined : defaults}
+                                endpointBase={endpointBase}
+                                widgetsData={widgetsData}
+                                dataEnabled={publicLive}
                               />
                             </div>
                           )

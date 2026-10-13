@@ -10,6 +10,7 @@ import {
   DASHBOARD_REVALIDATE_INTERVAL_MS,
   applyRevalidationDisposition,
   extractToken,
+  failedStateLoadDisposition,
   loadResponseDisposition,
   mapAuthorizeResponse,
   parseInvalidateChannel,
@@ -172,6 +173,12 @@ const server = new Server<RelayContext>({
     const route = resolveDocumentRoute(documentName, API_URL)
     const token = extractToken(context) ?? documentTokens.get(documentName) ?? null
     if (!token) {
+      if (failedStateLoadDisposition(route.kind) === 'fail') {
+        // A dashboard load always runs for an authenticated connection (the
+        // fan-in passes a token too): no token is a real failure, and serving
+        // an empty document would blank the editor's draft view.
+        throw new Error(`load ${route.kind} document "${route.id}" without a session token`)
+      }
       console.warn(`[relay] no session token to load document "${documentName}"`)
       return null
     }
@@ -185,14 +192,21 @@ const server = new Server<RelayContext>({
       return null
     }
     if (disposition === 'fail') {
-      // Dashboard GETs always seed server-side, so a non-2xx is a real
-      // failure. Throwing aborts the load and the provider retries; serving
-      // an empty document here would show a blank dashboard and could be
-      // edited into a state nobody ever intended.
+      // Dashboard GETs always seed and heal server-side, so a non-2xx is a
+      // real failure. Throwing aborts the load and the provider retries;
+      // serving an empty document here would show a blank dashboard and could
+      // be edited into a state nobody ever intended.
       throw new Error(`load ${route.kind} document "${route.id}" failed with status ${res.status}`)
     }
     const buf = await res.arrayBuffer()
-    if (buf.byteLength === 0) return null
+    if (buf.byteLength === 0) {
+      if (failedStateLoadDisposition(route.kind) === 'fail') {
+        // Same reasoning as the non-2xx case: the GET returns no bytes only
+        // when something is wrong, never as "no state stored yet".
+        throw new Error(`load ${route.kind} document "${route.id}" returned an empty body`)
+      }
+      return null
+    }
     return new Uint8Array(buf)
   },
 
@@ -355,7 +369,12 @@ async function refreshResidentDashboardDoc(documentName: string, token: string):
       return
     }
     const buf = await res.arrayBuffer()
-    if (buf.byteLength === 0) return
+    if (buf.byteLength === 0) {
+      if (route.kind === 'dashboard') {
+        console.warn(`[relay] refresh of resident dashboard document "${documentName}" returned an empty body`)
+      }
+      return
+    }
     // Same application as the core's load path (applyUpdate on the resident
     // document), with an explicit local origin that skips store hooks: the
     // applied state is already persisted server-side, and a store here would

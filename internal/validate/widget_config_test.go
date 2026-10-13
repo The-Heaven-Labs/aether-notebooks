@@ -328,3 +328,64 @@ func TestValidateWidgetHTML(t *testing.T) {
 	require.Equal(t, "<p>hi</p>", stored["html"])
 	require.Equal(t, "p{}", stored["css"])
 }
+
+func TestValidateWidgetCustom(t *testing.T) {
+	// Valid content passes; both strings empty is allowed (a no-op block).
+	require.NoError(t, ValidateWidgetCustom(WidgetCustomConfig{
+		HTML: `<div id="root"></div>`,
+		CSS:  `#root { color: var(--accent); }`,
+		JS:   `document.getElementById('root').textContent = 'hi'`,
+		Bindings: []WidgetCustomBinding{
+			{Key: "sales", WidgetID: "3f1c2a6e-0d2f-4a8a-9c5b-7e6d1b2c3a4f"},
+		},
+	}))
+	require.NoError(t, ValidateWidgetCustom(WidgetCustomConfig{}))
+
+	// Size caps name the field.
+	err := ValidateWidgetCustom(WidgetCustomConfig{HTML: strings.Repeat("x", maxCustomHTMLBytes+1)})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "256 KiB")
+	err = ValidateWidgetCustom(WidgetCustomConfig{CSS: strings.Repeat("x", maxCustomCSSBytes+1)})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "64 KiB")
+	err = ValidateWidgetCustom(WidgetCustomConfig{JS: strings.Repeat("x", maxCustomJSBytes+1)})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "128 KiB")
+
+	// Bindings: key charset, duplicates, UUID, count.
+	err = ValidateWidgetCustom(WidgetCustomConfig{Bindings: []WidgetCustomBinding{{Key: "Bad Key", WidgetID: "3f1c2a6e-0d2f-4a8a-9c5b-7e6d1b2c3a4f"}}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "binding key")
+	err = ValidateWidgetCustom(WidgetCustomConfig{Bindings: []WidgetCustomBinding{
+		{Key: "a", WidgetID: "3f1c2a6e-0d2f-4a8a-9c5b-7e6d1b2c3a4f"},
+		{Key: "a", WidgetID: "2b3c4d5e-6f70-4a8a-9c5b-7e6d1b2c3a4f"},
+	}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "duplicate")
+	err = ValidateWidgetCustom(WidgetCustomConfig{Bindings: []WidgetCustomBinding{{Key: "a", WidgetID: "nope"}}})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "widget id")
+	err = ValidateWidgetCustom(WidgetCustomConfig{Bindings: make([]WidgetCustomBinding, 21)})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "20")
+
+	// The converter omits empty keys and stores bindings verbatim.
+	require.Equal(t, map[string]any{}, ToStoredWidgetCustom(WidgetCustomConfig{}))
+	stored := ToStoredWidgetCustom(WidgetCustomConfig{
+		HTML: "<p>hi</p>", CSS: "p{}", JS: "1",
+		Bindings: []WidgetCustomBinding{{Key: "sales", WidgetID: "3f1c2a6e-0d2f-4a8a-9c5b-7e6d1b2c3a4f"}},
+	})
+	require.Equal(t, "<p>hi</p>", stored["html"])
+	require.Equal(t, []map[string]any{{"key": "sales", "widget_id": "3f1c2a6e-0d2f-4a8a-9c5b-7e6d1b2c3a4f"}}, stored["bindings"])
+}
+
+func TestWidgetCustomBindingIDs(t *testing.T) {
+	ids := WidgetCustomBindingIDs(map[string]any{
+		"bindings": []any{
+			map[string]any{"key": "a", "widget_id": "3f1c2a6e-0d2f-4a8a-9c5b-7e6d1b2c3a4f"},
+			map[string]any{"key": "b", "widget_id": "not-a-uuid"},
+			"junk",
+		},
+	})
+	require.Equal(t, []string{"3f1c2a6e-0d2f-4a8a-9c5b-7e6d1b2c3a4f"}, ids)
+}

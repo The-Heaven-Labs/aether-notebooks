@@ -6,6 +6,7 @@ import {
   DASHBOARD_REVALIDATE_INTERVAL_MS,
   applyRevalidationDisposition,
   extractToken,
+  failedStateLoadDisposition,
   isDashboardDocument,
   loadResponseDisposition,
   mapAuthorizeResponse,
@@ -128,6 +129,15 @@ test('load non-2xx keeps the notebook empty-document behavior', () => {
   assert.equal(loadResponseDisposition('notebook', 401), 'empty')
   assert.equal(loadResponseDisposition('notebook', 404), 'empty')
   assert.equal(loadResponseDisposition('notebook', 500), 'empty')
+})
+
+test('a load that fetched no state fails dashboards instead of serving an empty doc', () => {
+  // A 2xx with an empty body (or no token to fetch with) is never "no state
+  // stored yet" for a dashboard: the GET seeds and heals server-side, so the
+  // hook must throw and let the provider retry — a served empty document
+  // would blank the editor while REST reads stayed correct.
+  assert.equal(failedStateLoadDisposition('dashboard'), 'fail')
+  assert.equal(failedStateLoadDisposition('notebook'), 'empty')
 })
 
 test('parseInvalidateChannel extracts the dashboard id', () => {

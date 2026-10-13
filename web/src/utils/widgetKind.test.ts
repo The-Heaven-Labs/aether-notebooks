@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from './widgetKind'
+import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from './widgetKind'
 import type { Widget } from '../types'
 
 const base: Widget = {
@@ -30,6 +30,9 @@ describe('widgetKindLabel', () => {
   })
   it('labels source-less html panels', () => {
     expect(widgetKindLabel(widget({ type: 'html' }))).toBe('Panel')
+  })
+  it('labels source-less custom components', () => {
+    expect(widgetKindLabel(widget({ type: 'custom' }))).toBe('Component')
   })
 })
 
@@ -67,5 +70,18 @@ describe('isHTMLPanel', () => {
   it('rejects other source-less types', () => {
     expect(isHTMLPanel(widget({ type: 'text' }))).toBe(false)
     expect(isHTMLPanel(widget())).toBe(false)
+  })
+})
+
+describe('isCustomWidget', () => {
+  it('accepts a source-less custom component', () => {
+    expect(isCustomWidget(widget({ type: 'custom' }))).toBe(true)
+  })
+  it('rejects a query-backed custom widget', () => {
+    expect(isCustomWidget(widget({ type: 'custom', connector_id: 'c1', query: 'SELECT 1' }))).toBe(false)
+  })
+  it('rejects other source-less types', () => {
+    expect(isCustomWidget(widget({ type: 'html' }))).toBe(false)
+    expect(isCustomWidget(widget())).toBe(false)
   })
 })

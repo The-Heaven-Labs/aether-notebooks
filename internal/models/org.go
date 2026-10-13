@@ -20,6 +20,9 @@ type OrgSettings struct {
 	// means enabled; an explicit false hides every panel behind a placeholder
 	// and rejects creation/conversion.
 	HTMLPanelsEnabled *bool `json:"html_panels_enabled,omitempty"`
+	// CustomCodeEnabled gates the `custom` widget type org-wide. nil (absent)
+	// means DISABLED (unlike HTMLPanelsEnabled): arbitrary code is opt-in.
+	CustomCodeEnabled *bool `json:"custom_code_enabled,omitempty"`
 }
 
 // OrgBranding is the org-level theming that app surfaces fall back to when the

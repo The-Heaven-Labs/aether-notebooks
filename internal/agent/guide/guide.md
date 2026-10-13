@@ -79,6 +79,38 @@ in a sandboxed frame. Source-less like a text panel. Set it with
 - Org admins can disable panels org-wide (`html_panels_enabled`); creating one
   while disabled fails — fall back to `text`.
 
+### custom
+
+A sandboxed component: your markup, stylesheet, and inline script plus data
+bindings to widgets of the same dashboard. Escape-hatch tier 2, behind the
+org's `custom_code_enabled` switch (absent = off — when it is off, fall back
+to `html`). Author with `create_custom_widget`, or `set_widget_config`'s
+`custom` block after `update_dashboard_widget` sets `type: "custom"`:
+
+```json
+{
+  "html": "<div id=\"root\"></div>",
+  "css": "#root { color: var(--accent); }",
+  "js": "aether.requestData('sales')",
+  "bindings": [{ "key": "sales", "widget_id": "<widget id>" }]
+}
+```
+
+- The component runs in an opaque-origin sandbox with no network: inline
+  assets only — no storage, no cookies, no fetch. The bridge is the only way
+  in or out.
+- Bridge API inside the script: `aether.ready()`, `aether.requestData(key)`,
+  `aether.openLink(href)`. Incoming answers arrive as `aether:data` /
+  `aether:error` events on `window`.
+- Bindings name widgets of the same dashboard by id. A bound query widget
+  executes as the viewer (published snapshots and public gating apply); a
+  bound cell widget reads its stored outputs — the bridge never executes
+  cells.
+- The full custom page (`settings.app.layout: "custom"`) renders the first
+  custom component full-bleed; every other widget is a hidden data source.
+- `review_dashboard` flags a custom page with no component, multiple
+  components on a custom page, and components with no bindings.
+
 ### table
 
 A query's rows, with optional per-column formats:

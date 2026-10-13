@@ -341,3 +341,52 @@ func TestReviewOrdering(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewCustomComponents(t *testing.T) {
+	t.Run("custom layout with no custom widget is a warning", func(t *testing.T) {
+		proj := projection("Board", map[string]any{"app": map[string]any{"layout": "custom"}},
+			widget("w1", "table", dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 6}, nil),
+		)
+		f := requireFinding(t, Review(proj, Options{}), "no custom component")
+		require.Equal(t, SeverityWarning, f.Severity)
+		require.Equal(t, "layout", f.Category)
+		require.Equal(t, "create_custom_widget", f.FixTool)
+	})
+
+	t.Run("multiple custom widgets name the first", func(t *testing.T) {
+		proj := projection("Board", map[string]any{"app": map[string]any{"layout": "custom"}},
+			widget("w2", "custom", dashboarddoc.Layout{Row: 6, Col: 0, Width: 6, Height: 6}, map[string]any{"html": "<p>b</p>"}),
+			widget("w1", "custom", dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 6}, map[string]any{"html": "<p>a</p>", "title": "Big board"}),
+		)
+		f := requireFinding(t, Review(proj, Options{}), "multiple custom components")
+		require.Equal(t, SeverityInfo, f.Severity)
+		require.Equal(t, "w1", f.WidgetID)
+		require.Contains(t, f.Message, `"Big board"`)
+		require.NotEmpty(t, f.FixTool)
+	})
+
+	t.Run("custom widget with no bindings is an info finding", func(t *testing.T) {
+		proj := projection("Board", map[string]any{"app": map[string]any{"layout": "custom"}},
+			widget("w1", "custom", dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 6}, map[string]any{"html": "<p>x</p>", "js": "1"}),
+		)
+		f := requireFinding(t, Review(proj, Options{}), "no data bindings")
+		require.Equal(t, SeverityInfo, f.Severity)
+		require.Equal(t, "content", f.Category)
+		require.Equal(t, "w1", f.WidgetID)
+		require.Equal(t, "set_widget_config", f.FixTool)
+	})
+
+	t.Run("a bound custom widget on a custom page has no custom findings", func(t *testing.T) {
+		proj := projection("Board", map[string]any{"app": map[string]any{"layout": "custom"}},
+			widget("w1", "custom", dashboarddoc.Layout{Row: 0, Col: 0, Width: 6, Height: 6}, map[string]any{
+				"html":     "<p>x</p>",
+				"bindings": []any{map[string]any{"key": "x", "widget_id": "w2"}},
+			}),
+			widget("w2", "table", dashboarddoc.Layout{Row: 6, Col: 0, Width: 6, Height: 6}, nil),
+		)
+		findings := Review(proj, Options{})
+		requireNoFinding(t, findings, "no custom component")
+		requireNoFinding(t, findings, "multiple custom components")
+		requireNoFinding(t, findings, "no data bindings")
+	})
+}

@@ -20,6 +20,7 @@ import (
 
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/models"
+	"github.com/the-heaven-labs/aether/internal/validate"
 )
 
 // Severity orders the report: errors first, then warnings, then info.
@@ -109,6 +110,7 @@ func Review(proj *dashboarddoc.Projection, opts Options) []Finding {
 	var findings []Finding
 	findings = append(findings, layoutFindings(proj, tabs, gridCols)...)
 	findings = append(findings, contentFindings(proj, tabs)...)
+	findings = append(findings, customFindings(proj)...)
 	findings = append(findings, surfaceFindings(proj, opts)...)
 
 	sortFindings(findings)
@@ -167,6 +169,8 @@ func humanRef(proj *dashboarddoc.Projection, id string) string {
 			return "the " + w.Type
 		case "text":
 			return "the text panel"
+		case "custom":
+			return "the component"
 		}
 	}
 	return "the widget"
@@ -376,6 +380,53 @@ func contentFindings(proj *dashboarddoc.Projection, tabs []models.DashboardTab) 
 
 // surfaceFindings checks the app block, theme guardrails, filter scoping, the
 // publish state, and the projection's own warnings.
+// customFindings checks the wave-4 custom-component rules: the full custom
+// page needs exactly one component, and a component with no bindings has no
+// way to receive data. These are composition findings — they never refuse a
+// publish (unlike projection warnings).
+func customFindings(proj *dashboarddoc.Projection) []Finding {
+	var findings []Finding
+
+	customIDs := make([]string, 0, len(proj.Widgets))
+	for id, w := range proj.Widgets {
+		if w.Type != string(models.WidgetCustom) {
+			continue
+		}
+		customIDs = append(customIDs, id)
+	}
+	sort.Strings(customIDs)
+
+	// `layout: "custom"` renders the first custom widget full-bleed and hides
+	// every other widget; no component falls back to the grid.
+	if app := configBlock(proj.Settings, "app"); strValue(app, "layout") == "custom" {
+		switch {
+		case len(customIDs) == 0:
+			findings = append(findings, Finding{
+				Severity: SeverityWarning, Category: "layout",
+				Message: "the custom page has no custom component — the app falls back to the grid",
+				FixTool: "create_custom_widget",
+			})
+		case len(customIDs) > 1:
+			findings = append(findings, Finding{
+				Severity: SeverityInfo, Category: "layout", WidgetID: customIDs[0],
+				Message: fmt.Sprintf("multiple custom components — only %s renders on the custom page", humanRef(proj, customIDs[0])),
+				FixTool: "update_dashboard_widget",
+			})
+		}
+	}
+
+	for _, id := range customIDs {
+		if len(validate.WidgetCustomConfigFrom(proj.Widgets[id].Config).Bindings) == 0 {
+			findings = append(findings, Finding{
+				Severity: SeverityInfo, Category: "content", WidgetID: id,
+				Message: fmt.Sprintf("%s has no data bindings", humanRef(proj, id)),
+				FixTool: "set_widget_config",
+			})
+		}
+	}
+	return findings
+}
+
 func surfaceFindings(proj *dashboarddoc.Projection, opts Options) []Finding {
 	var findings []Finding
 	app := configBlock(proj.Settings, "app")

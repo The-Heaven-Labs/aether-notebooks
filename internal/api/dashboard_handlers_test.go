@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/api"
 )
@@ -768,9 +770,9 @@ func TestDashboardHTMLWidget(t *testing.T) {
 	require.Equal(t, 400, rec.Code)
 	require.Contains(t, rec.Body.String(), "64 KiB")
 
-	// Unknown types still rejected.
+	// Genuinely unknown types are still rejected.
 	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
-		"type": "custom", "layout": map[string]int{"row": 10, "col": 0, "width": 4, "height": 4},
+		"type": "sankey_widget", "layout": map[string]int{"row": 10, "col": 0, "width": 4, "height": 4},
 	})
 	require.Equal(t, 400, rec.Code)
 }
@@ -856,4 +858,124 @@ func TestOrgHTMLPanelsSwitch(t *testing.T) {
 	require.Equal(t, 204, rec.Code)
 	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"config": map[string]any{"html": "<p>x</p>"}})
 	require.Equal(t, 204, rec.Code)
+}
+
+func TestDashboardCustomWidget(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("dash-custom-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Dash Custom Org")
+	// Enable custom code for the org (default is disabled).
+	require.Equal(t, 200, doDashboardJSON(t, srv, token, "PUT", "/api/v1/org/settings",
+		map[string]any{"custom_code_enabled": true}).Code)
+
+	rec := doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards", map[string]any{"title": "Custom Widgets"})
+	require.Equal(t, 201, rec.Code)
+	var dashResp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&dashResp))
+	dashID := dashResp["id"].(string)
+
+	// The custom widget binds another widget of the same dashboard: seed a
+	// query widget first (a raw connector row is enough — the binding ref
+	// check only needs existence on the dashboard).
+	connID := uuid.NewString()
+	_, err := srv.DB().Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		SELECT $1, org_id, 'binding target', 'postgres', '\x00' FROM dashboards WHERE id = $2`,
+		connID, dashID)
+	require.NoError(t, err)
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "table", "connector_id": connID, "query": "SELECT 1", "language": "sql",
+		"layout": map[string]int{"row": 0, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, 201, rec.Code)
+	var target map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&target))
+	targetID := target["id"].(string)
+
+	// Custom widget round-trips with its bundle + bindings.
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "custom", "layout": map[string]int{"row": 4, "col": 0, "width": 6, "height": 6},
+		"config": map[string]any{
+			"html": `<div id="root"></div>`, "css": `#root{color:red}`, "js": `document.getElementById('root').textContent='hi'`,
+			"bindings": []map[string]any{{"key": "sales", "widget_id": targetID}},
+		},
+	})
+	require.Equal(t, 201, rec.Code)
+	var custom map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&custom))
+	require.Equal(t, "custom", custom["type"])
+
+	// A binding to a widget of another dashboard (or none) → 400.
+	other := doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards", map[string]any{"title": "Elsewhere"})
+	var otherResp map[string]any
+	require.NoError(t, json.NewDecoder(other.Body).Decode(&otherResp))
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "custom", "layout": map[string]int{"row": 12, "col": 0, "width": 4, "height": 4},
+		"config": map[string]any{"bindings": []map[string]any{{"key": "x", "widget_id": uuid.NewString()}}},
+	})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "binding")
+
+	// Oversize js → 400 naming the cap; unknown types still rejected.
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "custom", "layout": map[string]int{"row": 16, "col": 0, "width": 4, "height": 4},
+		"config": map[string]any{"js": strings.Repeat("x", 128<<10+1)},
+	})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "128 KiB")
+}
+
+func TestOrgCustomCodeSwitch(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("dash-custom-switch-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Custom Switch Org")
+
+	rec := doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards", map[string]any{"title": "Switch"})
+	require.Equal(t, 201, rec.Code)
+	var dashResp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&dashResp))
+	dashID := dashResp["id"].(string)
+
+	// Default: absent means DISABLED — unlike html panels.
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/dashboards/"+dashID, nil)
+	require.Contains(t, rec.Body.String(), `"custom_code_enabled":false`)
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "custom", "layout": map[string]int{"row": 0, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
+
+	// Enabling round-trips and flips the GET + public GET.
+	require.Equal(t, 200, doDashboardJSON(t, srv, token, "PUT", "/api/v1/org/settings",
+		map[string]any{"custom_code_enabled": true}).Code)
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/dashboards/"+dashID, nil)
+	require.Contains(t, rec.Body.String(), `"custom_code_enabled":true`)
+	share := doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/share", nil)
+	var shareResp map[string]any
+	require.NoError(t, json.NewDecoder(share.Body).Decode(&shareResp))
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/public/"+shareResp["token"].(string), nil)
+	require.Contains(t, rec.Body.String(), `"custom_code_enabled":true`)
+
+	// Creating works now; writes to custom config keys are rejected again
+	// once disabled (fail closed) while the widget keeps its config.
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "custom", "layout": map[string]int{"row": 0, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, 201, rec.Code)
+	var customWidget map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&customWidget))
+	customWidgetID := customWidget["id"].(string)
+	require.Equal(t, 200, doDashboardJSON(t, srv, token, "PUT", "/api/v1/org/settings",
+		map[string]any{"custom_code_enabled": false}).Code)
+
+	widgetPath := "/api/v1/dashboards/" + dashID + "/widgets/" + customWidgetID
+	// Conversion and authoring both fail closed while disabled.
+	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"type": "custom"})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
+	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"config": map[string]any{"js": "x"}})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
 }

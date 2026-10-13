@@ -137,6 +137,7 @@ const (
 	WidgetText   WidgetType = "text"
 	WidgetMetric WidgetType = "metric"
 	WidgetHTML   WidgetType = "html"
+	WidgetCustom WidgetType = "custom"
 )
 
 type WidgetLayout struct {

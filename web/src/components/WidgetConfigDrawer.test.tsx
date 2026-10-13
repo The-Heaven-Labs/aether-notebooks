@@ -1263,3 +1263,112 @@ function htmlWidgetForTheme(): Widget {
     created_at: '2026-01-01T00:00:00Z',
   }
 }
+
+describe('custom components', () => {
+  function targetWidget(): Widget {
+    return {
+      id: 'w-target',
+      dashboard_id: 'd1',
+      notebook_id: null,
+      cell_id: null,
+      connector_id: 'c1',
+      query: 'SELECT 1',
+      language: 'sql',
+      type: 'table',
+      layout: { row: 0, col: 0, width: 6, height: 6 },
+      config: {},
+      created_at: '2026-01-01T00:00:00Z',
+    }
+  }
+
+  function customWidget(overrides: Partial<Widget> = {}): Widget {
+    return {
+      id: 'w-custom',
+      dashboard_id: 'd1',
+      notebook_id: null,
+      cell_id: null,
+      connector_id: null,
+      query: null,
+      language: 'sql',
+      type: 'custom',
+      layout: { row: 0, col: 0, width: 6, height: 6 },
+      config: {
+        html: '<div id="root"></div>',
+        css: '#root{color:red}',
+        js: "document.title='x'",
+        bindings: [{ key: 'sales', widget_id: 'w-target' }],
+      },
+      created_at: '2026-01-01T00:00:00Z',
+      ...overrides,
+    }
+  }
+
+  test('renders the component editors, binding picker, and sandboxed preview', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={{ ...dashboard, widgets: [targetWidget(), customWidget()] }}
+        widget={customWidget()}
+        customCodeEnabled
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.getByLabelText('Component HTML')).toBeInTheDocument()
+    expect(screen.getByLabelText('Component CSS')).toBeInTheDocument()
+    expect(screen.getByLabelText('Component JS')).toBeInTheDocument()
+    expect(screen.getByLabelText('Binding key')).toHaveValue('sales')
+    // The picker lists the dashboard's other widgets, never the component itself.
+    const picker = screen.getByLabelText('Binding widget')
+    expect(picker).toHaveValue('w-target')
+    expect(screen.queryByRole('option', { name: 'w-custom' })).toBeNull()
+    const frame = screen.getByTitle('Custom component')
+    expect(frame.tagName).toBe('IFRAME')
+    expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(frame.getAttribute('srcdoc')).toContain('<div id="root"></div>')
+  })
+
+  test('renders the disabled note instead of the editors when custom code is off', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={{ ...dashboard, widgets: [targetWidget()] }}
+        widget={customWidget()}
+        customCodeEnabled={false}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.getByText('Custom code is disabled for this organization.')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Component HTML')).toBeNull()
+    expect(screen.queryByLabelText('Component JS')).toBeNull()
+    expect(screen.queryByTitle('Custom component')).toBeNull()
+  })
+
+  test('offers the custom type option only when enabled', () => {
+    const { unmount } = renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={{ ...dashboard, widgets: [targetWidget()] }}
+        widget={customWidget()}
+        customCodeEnabled
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.getByRole('option', { name: 'Custom component' })).toBeInTheDocument()
+    unmount()
+
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={{ ...dashboard, widgets: [targetWidget()] }}
+        widget={customWidget()}
+        customCodeEnabled={false}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.queryByRole('option', { name: 'Custom component' })).toBeNull()
+  })
+})

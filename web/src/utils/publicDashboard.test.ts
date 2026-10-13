@@ -55,6 +55,18 @@ describe('visibleWidgets', () => {
     const cssOnly = htmlPanel('h2', '', '.stat { color: red; }')
     expect(visibleWidgets([cssOnly], {}, false)).toEqual([cssOnly])
   })
+  it('excludes custom components with an empty bundle', () => {
+    const empty = widget({ id: 'c1', type: 'custom', config: { html: '  ', css: '' } })
+    expect(visibleWidgets([empty], {}, false)).toEqual([])
+    expect(visibleWidgets([empty], {}, true)).toEqual([])
+  })
+  it('includes custom components with any authored part, static or live', () => {
+    const component = widget({ id: 'c1', type: 'custom', config: { html: '<div id="root"></div>' } })
+    expect(visibleWidgets([component], {}, false)).toEqual([component])
+    expect(visibleWidgets([component], {}, true)).toEqual([component])
+    const jsOnly = widget({ id: 'c2', type: 'custom', config: { js: '1' } })
+    expect(visibleWidgets([jsOnly], {}, false)).toEqual([jsOnly])
+  })
   it('filters a mixed list without reordering', () => {
     const empty = textPanel('t2', '  ')
     const panel = textPanel('t1', '## What changed')

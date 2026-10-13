@@ -993,3 +993,63 @@ describe('html panels', () => {
     expect(screen.queryByTitle('HTML panel')).not.toBeInTheDocument()
   })
 })
+
+describe('custom components', () => {
+  function customWidget(overrides: Partial<Widget> = {}) {
+    return widget({
+      id: 'w-custom',
+      notebook_id: null,
+      cell_id: null,
+      connector_id: null,
+      query: null,
+      type: 'custom',
+      config: { html: '<p>x</p>', css: '', js: '1', bindings: [] },
+      ...overrides,
+    })
+  }
+
+  test('renders a custom widget in an allow-scripts sandboxed frame when enabled', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      custom_code_enabled: true,
+      widgets: [customWidget()],
+      widgets_data: {},
+    })))
+    renderDashboard()
+    await screen.findByText('Rest board')
+
+    const frame = await screen.findByTitle('Custom component')
+    expect(frame.tagName).toBe('IFRAME')
+    expect(frame).toHaveAttribute('sandbox', 'allow-scripts')
+    expect(frame.getAttribute('srcdoc')).toContain('<p>x</p>')
+  })
+
+  test('renders the placeholder when the org switch is off', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      custom_code_enabled: false,
+      widgets: [customWidget()],
+      widgets_data: {},
+    })))
+    renderDashboard()
+    await screen.findByText('Rest board')
+
+    expect(await screen.findByText('Custom code is disabled for this organization.')).toBeInTheDocument()
+    expect(screen.queryByTitle('Custom component')).not.toBeInTheDocument()
+  })
+
+  test('layout custom renders only the first custom component, hiding data sources', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      custom_code_enabled: true,
+      settings: { ...REST_DASHBOARD.settings, app: { layout: 'custom' } },
+      widgets: [customWidget(), widget()],
+    })))
+    renderDashboard()
+    await screen.findByText('Rest board')
+
+    expect(await screen.findByTitle('Custom component')).toBeInTheDocument()
+    // The cell widget is a data source on the custom page, not a rendered card.
+    expect(screen.queryByTestId('output-renderer')).not.toBeInTheDocument()
+  })
+})

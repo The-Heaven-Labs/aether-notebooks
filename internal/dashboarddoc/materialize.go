@@ -354,6 +354,33 @@ func projectionIsEmpty(proj *Projection) bool {
 		len(proj.Warnings) == 0
 }
 
+// NeedsReseed reports whether a stored dashboard state is unusable and must be
+// rebuilt from the derived rows: zero-length bytes, an undecodable update, or
+// an entirely empty projection over a dashboard that still has content (the
+// exact corruption Materialize's guards refuse to write, so rows and document
+// would otherwise stay diverged forever). A stored state whose projection
+// carries any content — or a genuinely empty dashboard whose rows are empty
+// too — is usable as-is.
+//
+// A warning-tainted projection is deliberately NOT healed: skipped-but-valid
+// shapes (an unknown widget type from a newer client, a dangling reference)
+// still carry user content, and the publish/versions flow surfaces them
+// instead of wiping the draft. Only states with nothing renderable at all are
+// rebuilt.
+func NeedsReseed(state []byte, currentTitle string, currentSettings []byte, currentWidgets int) bool {
+	if len(state) == 0 {
+		return true
+	}
+	proj, err := Project(state)
+	if err != nil {
+		return true
+	}
+	if !projectionIsEmpty(proj) {
+		return false
+	}
+	return currentWidgets > 0 || currentTitle != "" || settingsHaveContent(currentSettings)
+}
+
 // settingsHaveContent reports whether a stored dashboards.settings JSONB value
 // holds anything beyond an empty variables array, so guard 2 can treat
 // {"variables": []} — the shape Materialize itself writes for a variables-less

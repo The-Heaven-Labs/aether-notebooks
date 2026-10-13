@@ -149,6 +149,7 @@ var widgetTypes = map[string]bool{
 	"metric": true,
 	"text":   true,
 	"html":   true,
+	"custom": true,
 }
 
 // queryLanguages is the set of widget query languages allowed in the document.

@@ -233,6 +233,8 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
   const [title, setTitle] = useState(app?.title ?? '')
   const [subtitle, setSubtitle] = useState(app?.subtitle ?? '')
   const [width, setWidth] = useState<'fixed' | 'full'>(app?.width ?? 'fixed')
+  // Grid is the default: an absent/other value reads as grid and saves omit it.
+  const [layout, setLayout] = useState<'grid' | 'custom'>(app?.layout === 'custom' ? 'custom' : 'grid')
   const [showHeader, setShowHeader] = useState(app?.show_header !== false)
   const [showRefresh, setShowRefresh] = useState(app?.show_refresh !== false)
   const [showLastUpdated, setShowLastUpdated] = useState(app?.show_last_updated !== false)
@@ -378,6 +380,9 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
       next.show_header = showHeader
       next.show_refresh = showRefresh
       next.show_last_updated = showLastUpdated
+      // "Grid" is the default: omit the key so absent stays the meaning.
+      if (layout === 'custom') next.layout = 'custom'
+      else delete next.layout
       // "All filters everywhere" is the default: omit the key so absent stays
       // the meaning and a previously stored "tab" is dropped.
       if (filterScope === 'tab') next.filter_scope = 'tab'
@@ -487,6 +492,19 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             >
               <option value="fixed">Fixed</option>
               <option value="full">Full width</option>
+            </select>
+          </div>
+          <div style={styles.field}>
+            <LabelWithHelp htmlFor="app-layout" helpKey="app.layout">Layout</LabelWithHelp>
+            <select
+              id="app-layout"
+              aria-label="Layout"
+              style={styles.input}
+              value={layout}
+              onChange={(e) => { setSaved(false); setLayout(e.target.value as 'grid' | 'custom') }}
+            >
+              <option value="grid">Grid</option>
+              <option value="custom">Custom page — one full-bleed component; other widgets become data sources</option>
             </select>
           </div>
           <div style={styles.checkboxRow}>

@@ -1944,3 +1944,100 @@ func TestWidgetHTMLTooling(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "disabled")
 }
+
+func TestWidgetCustomTooling(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Custom Tooling")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	create := dashboardTool(t, reg, "create_custom_widget")
+
+	// Disabled by default: the tool refuses before any write.
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID, "js": "document.title='x'"})
+	require.NoError(t, err)
+	_, err = create(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disabled")
+
+	// Enable and seed a binding target via the query widget tool.
+	_, err = db.Pool.Exec(context.Background(),
+		`UPDATE orgs SET settings = COALESCE(settings,'{}'::jsonb) || '{"custom_code_enabled":true}'::jsonb WHERE id=$1`, orgID)
+	require.NoError(t, err)
+	connID := uuid.NewString()
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		VALUES ($1, $2, 'test-connector', 'postgres', $3)`, connID, orgID, []byte("encrypted"))
+	require.NoError(t, err)
+	qargs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID, "connector_id": connID, "query": "SELECT 1 AS x",
+		"type": "table", "row": 0, "col": 0, "width": 4, "height": 4,
+	})
+	require.NoError(t, err)
+	out, err := dashboardTool(t, reg, "create_dashboard_widget")(qargs, ctx)
+	require.NoError(t, err)
+	targetID := out.(map[string]any)["widget_id"].(string)
+
+	// The tool writes the bundle + binding into the document.
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"html":         `<div id="root"></div>`,
+		"css":          `#root{color:var(--accent)}`,
+		"js":           `document.getElementById('root').textContent='ok'`,
+		"bindings":     []map[string]any{{"key": "sales", "widget_id": targetID}},
+		"row":          4, "col": 0, "width": 6, "height": 6,
+	})
+	require.NoError(t, err)
+	out, err = create(args, ctx)
+	require.NoError(t, err)
+	widgetID := out.(map[string]any)["widget_id"].(string)
+
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, "custom", w.Type)
+	require.Equal(t, `<div id="root"></div>`, w.Config["html"])
+	bindings, ok := w.Config["bindings"].([]any)
+	require.True(t, ok)
+	require.Len(t, bindings, 1)
+
+	// A binding outside the dashboard is refused.
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"bindings":     []map[string]any{{"key": "x", "widget_id": uuid.NewString()}},
+	})
+	require.NoError(t, err)
+	_, err = create(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "binding")
+
+	// Oversize js is refused before any write.
+	args, err = json.Marshal(map[string]any{"dashboard_id": dashID, "js": strings.Repeat("x", 128<<10+1)})
+	require.NoError(t, err)
+	_, err = create(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "128 KiB")
+
+	// update_dashboard_widget converts to custom when enabled.
+	args, err = json.Marshal(map[string]any{"dashboard_id": dashID, "widget_id": targetID, "type": "custom"})
+	require.NoError(t, err)
+	_, err = dashboardTool(t, reg, "update_dashboard_widget")(args, ctx)
+	require.NoError(t, err)
+	proj = storedDashboardDoc(t, db.Pool, dashID)
+	require.Equal(t, "custom", proj.Widgets[targetID].Type)
+
+	// Disabling again fails set_widget_config's custom block closed.
+	_, err = db.Pool.Exec(context.Background(),
+		`UPDATE orgs SET settings = settings || '{"custom_code_enabled":false}'::jsonb WHERE id=$1`, orgID)
+	require.NoError(t, err)
+	args, err = json.Marshal(map[string]any{
+		"dashboard_id": dashID, "widget_id": widgetID,
+		"custom": map[string]any{"js": "document.title='y'"},
+	})
+	require.NoError(t, err)
+	_, err = dashboardTool(t, reg, "set_widget_config")(args, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "disabled")
+}

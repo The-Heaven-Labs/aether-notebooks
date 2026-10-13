@@ -833,3 +833,35 @@ func TestWidgetUpdateTypePreservesQueryAndConnector(t *testing.T) {
 	require.NotNil(t, queryOut)
 	require.Equal(t, "SELECT 42 -- doc only", *queryOut)
 }
+
+// TestDashboardDocStoreRejectsDanglingCustomBinding pins the merged-projection
+// binding check: a browser document edit cannot introduce a custom widget
+// whose binding names a widget outside the document.
+func TestDashboardDocStoreRejectsDanglingCustomBinding(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	token := registerAndGetToken(t, srv,
+		fmt.Sprintf("dash-doc-binding-%d@example.com", time.Now().UnixNano()), "Dash Doc Binding Org")
+	dashID := createDashWithSettings(t, srv, token, nil)
+
+	// Seed the document (lazily created on first write) with one widget.
+	rec := postWidgetRaw(t, srv, token, dashID, map[string]any{
+		"type":   "text",
+		"layout": map[string]int{"row": 0, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	state := dashboardDocState(t, srv, dashID)
+	// Inject a custom widget binding to a random UUID via the document store
+	// (the same path a crafted relay store takes).
+	injected, err := dashboarddoc.UpsertWidget(state, dashboarddoc.WidgetDoc{
+		ID: uuid.NewString(), Type: "custom",
+		Layout: dashboarddoc.Layout{Row: 0, Col: 0, Width: 4, Height: 4},
+		Config: map[string]any{"bindings": []any{
+			map[string]any{"key": "x", "widget_id": uuid.NewString()},
+		}},
+	})
+	require.NoError(t, err)
+	rec = internalDashboardDocRequest(t, srv, token, "PUT", dashID, injected)
+	require.Equal(t, http.StatusForbidden, rec.Code, rec.Body.String())
+}
