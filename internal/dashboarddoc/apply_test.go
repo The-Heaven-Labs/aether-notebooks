@@ -465,8 +465,35 @@ func TestApply_SetWidgetType(t *testing.T) {
 		require.Equal(t, "SELECT 2", widgetQuery(t, proj.Widgets[testUUID(2)]))
 	})
 
+	t.Run("sets html and preserves other fields", func(t *testing.T) {
+		base := applyTestBase(t)
+		edited, err := SetQuery(base, testUUID(1), "SELECT 42 -- typed")
+		require.NoError(t, err)
+
+		state, err := SetWidgetType(edited, testUUID(1), "html")
+		require.NoError(t, err)
+
+		proj := mustProject(t, state)
+		w := proj.Widgets[testUUID(1)]
+		require.Equal(t, "html", w.Type)
+		require.NotNil(t, w.ConnectorID)
+		require.Equal(t, "conn-1", *w.ConnectorID)
+		require.Equal(t, "SELECT 42 -- typed", widgetQuery(t, w))
+		require.Equal(t, Layout{Row: 0, Col: 0, Width: 6, Height: 4}, w.Layout)
+		require.Equal(t, map[string]any{"kind": "bar"}, w.Config)
+		require.Equal(t, "SELECT 2", widgetQuery(t, proj.Widgets[testUUID(2)]))
+	})
+
 	t.Run("unknown type is rejected", func(t *testing.T) {
 		state, err := SetWidgetType(applyTestBase(t), testUUID(1), "pie")
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "unknown type")
+		require.Nil(t, state)
+	})
+
+	t.Run("unlisted custom type is rejected", func(t *testing.T) {
+		// Wave 4's `custom` widget stays unlisted until its own plan lands.
+		state, err := SetWidgetType(applyTestBase(t), testUUID(1), "custom")
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "unknown type")
 		require.Nil(t, state)
