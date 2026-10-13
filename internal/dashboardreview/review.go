@@ -52,6 +52,42 @@ type Options struct {
 	DraftHash     string
 }
 
+// Report is the review result shared by the agent tool and the REST endpoint:
+// the findings plus the app links. PublicURL is empty (and omitted from JSON)
+// when the dashboard is not shared; ViewURL/PreviewURL fall back to
+// app-relative paths when the caller has no base URL.
+type Report struct {
+	DashboardID string    `json:"dashboard_id"`
+	Findings    []Finding `json:"findings"`
+	Count       int       `json:"count"`
+	ViewURL     string    `json:"view_url"`
+	PreviewURL  string    `json:"preview_url"`
+	PublicURL   string    `json:"public_url,omitempty"`
+}
+
+// BuildReport assembles a report from a projection: the cohesion findings plus
+// the viewer, draft-preview, and (when shared) public links. The caller owns
+// loading the projection, the published hash, and the public token; this keeps
+// the agent tool and the REST endpoint byte-identical.
+func BuildReport(dashboardID string, proj *dashboarddoc.Projection, opts Options, baseURL, publicToken string) Report {
+	findings := Review(proj, opts)
+	if findings == nil {
+		findings = []Finding{}
+	}
+	base := strings.TrimRight(baseURL, "/")
+	report := Report{
+		DashboardID: dashboardID,
+		Findings:    findings,
+		Count:       len(findings),
+		ViewURL:     base + "/dashboards/" + dashboardID + "/view",
+		PreviewURL:  base + "/dashboards/" + dashboardID + "/view?preview=draft",
+	}
+	if publicToken != "" {
+		report.PublicURL = base + "/public/dashboards/" + publicToken
+	}
+	return report
+}
+
 var tokenPattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_-]+)\s*\}\}`)
 var headingPattern = regexp.MustCompile(`(?m)^#{1,6}\s`)
 

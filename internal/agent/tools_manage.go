@@ -1468,33 +1468,19 @@ func makeReviewDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 		snapshot := dashboarddoc.SnapshotFromProjection(proj)
 		draftHash := dashboarddoc.ContentHash(snapshot.Title, snapshot.Settings, snapshot.Widgets)
 
-		findings := dashboardreview.Review(proj, dashboardreview.Options{
-			PublishedHash: publishedHash,
-			DraftHash:     draftHash,
-		})
-		if findings == nil {
-			findings = []dashboardreview.Finding{}
-		}
-
-		// Links are absolute when the engine knows its base URL; a bare
-		// context falls back to app-relative paths.
-		base := strings.TrimRight(ctx.BaseURL, "/")
-		result := map[string]any{
-			"dashboard_id": req.DashboardID,
-			"findings":     findings,
-			"count":        len(findings),
-			"view_url":     base + "/dashboards/" + req.DashboardID + "/view",
-			"preview_url":  base + "/dashboards/" + req.DashboardID + "/view?preview=draft",
-		}
 		var token string
 		if err := pool.QueryRow(ctx.Context,
 			`SELECT token FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
-			req.DashboardID).Scan(&token); err == nil && token != "" {
-			result["public_url"] = base + "/public/dashboards/" + token
-		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			req.DashboardID).Scan(&token); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 			return nil, fmt.Errorf("read dashboard share token: %w", err)
 		}
-		return result, nil
+
+		// The report assembly is shared with the REST endpoint, so the tool
+		// and the editor health panel can never disagree.
+		return dashboardreview.BuildReport(req.DashboardID, proj, dashboardreview.Options{
+			PublishedHash: publishedHash,
+			DraftHash:     draftHash,
+		}, ctx.BaseURL, token), nil
 	}
 }
 

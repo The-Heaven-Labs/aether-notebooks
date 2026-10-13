@@ -275,6 +275,49 @@ definitions:
       user_id:
         type: string
     type: object
+  dashboardreview.Finding:
+    properties:
+      category:
+        description: layout | content | surface
+        type: string
+      chapter_id:
+        type: string
+      fix_tool:
+        type: string
+      message:
+        type: string
+      severity:
+        $ref: '#/definitions/dashboardreview.Severity'
+      widget_id:
+        type: string
+    type: object
+  dashboardreview.Report:
+    properties:
+      count:
+        type: integer
+      dashboard_id:
+        type: string
+      findings:
+        items:
+          $ref: '#/definitions/dashboardreview.Finding'
+        type: array
+      preview_url:
+        type: string
+      public_url:
+        type: string
+      view_url:
+        type: string
+    type: object
+  dashboardreview.Severity:
+    enum:
+    - error
+    - warning
+    - info
+    type: string
+    x-enum-varnames:
+    - SeverityError
+    - SeverityWarning
+    - SeverityInfo
   models.Agent:
     properties:
       all_builtin_tools:
@@ -491,6 +534,9 @@ definitions:
     type: object
   models.DashboardAppSettings:
     properties:
+      filter_scope:
+        description: '"all" | "tab"; empty = "all"'
+        type: string
       layout:
         description: '"grid" | "custom"; empty = grid (wave 4)'
         type: string
@@ -3109,6 +3155,40 @@ paths:
       security:
       - BearerAuth: []
       summary: Publish a dashboard version
+      tags:
+      - dashboards
+  /dashboards/{id}/review:
+    get:
+      description: Returns cohesion findings (layout, content, surface) with the fixing
+        tool call per finding, plus the app view, draft-preview, and public links
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/dashboardreview.Report'
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Review a dashboard's App composition
       tags:
       - dashboards
   /dashboards/{id}/share:

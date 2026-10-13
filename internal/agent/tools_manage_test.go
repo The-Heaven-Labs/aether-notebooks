@@ -1696,11 +1696,10 @@ func TestDashboardReviewTool(t *testing.T) {
 	require.NoError(t, err)
 	out, err := handler(args, ctx)
 	require.NoError(t, err)
-	result := out.(map[string]any)
+	report, ok := out.(dashboardreview.Report)
+	require.True(t, ok, "review_dashboard must return a Report, got %T", out)
 
-	findings, ok := result["findings"].([]dashboardreview.Finding)
-	require.True(t, ok, "findings must be a Finding slice, got %T", result["findings"])
-
+	findings := report.Findings
 	var chapterFinding, metricFinding *dashboardreview.Finding
 	for i := range findings {
 		if findings[i].ChapterID == "orders" && strings.Contains(findings[i].Message, "no widgets") {
@@ -1716,9 +1715,9 @@ func TestDashboardReviewTool(t *testing.T) {
 	require.Equal(t, "set_widget_config", metricFinding.FixTool)
 	require.Equal(t, "overview", metricFinding.ChapterID)
 
-	require.Equal(t, "https://app.example.test/dashboards/"+dashID+"/view", result["view_url"])
-	require.Equal(t, "https://app.example.test/dashboards/"+dashID+"/view?preview=draft", result["preview_url"])
-	require.NotContains(t, result, "public_url", "an unshared dashboard has no public link")
+	require.Equal(t, "https://app.example.test/dashboards/"+dashID+"/view", report.ViewURL)
+	require.Equal(t, "https://app.example.test/dashboards/"+dashID+"/view?preview=draft", report.PreviewURL)
+	require.Empty(t, report.PublicURL, "an unshared dashboard has no public link")
 
 	// Sharing turns the public link on (the tool must never mint a token).
 	token := "review-token-1"
@@ -1730,6 +1729,6 @@ func TestDashboardReviewTool(t *testing.T) {
 
 	out, err = handler(args, ctx)
 	require.NoError(t, err)
-	result = out.(map[string]any)
-	require.Equal(t, "https://app.example.test/public/dashboards/"+token, result["public_url"])
+	report = out.(dashboardreview.Report)
+	require.Equal(t, "https://app.example.test/public/dashboards/"+token, report.PublicURL)
 }
