@@ -201,12 +201,13 @@ test.describe('Builder guidance', () => {
     await page.keyboard.press('Enter')
     await expect(page.getByRole('tooltip')).toContainText('must clear 3:1 contrast')
 
-    // Snapshot the App settings panel with the guidance visible (desktop).
-    // The profile avatar's color derives from the fresh-per-run test email.
-    await expect(page).toHaveScreenshot('app-builder-app-settings.png', {
+    // Snapshot the App settings panel with the guidance visible. Scoped to the
+    // dialog: the editor's grid stacks the two chapters' widgets in an
+    // insertion-order-dependent way, which is not what this snapshot is about.
+    const appSettingsPanel = page.getByRole('dialog', { name: 'App settings' })
+    await expect(appSettingsPanel).toHaveScreenshot('app-builder-app-settings.png', {
       animations: 'disabled',
       maxDiffPixelRatio: 0,
-      mask: [page.getByRole('button', { name: 'Profile menu' })],
     })
   })
 })

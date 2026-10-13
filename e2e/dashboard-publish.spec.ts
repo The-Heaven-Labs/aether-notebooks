@@ -419,7 +419,7 @@ test.describe('Dashboard publish, tabs, theming, and draft preview', () => {
     await appSettings.getByLabel('Accent', { exact: true }).fill('#4338ca')
     await appSettings.getByLabel('Background', { exact: true }).fill('#eef2ff')
     await appSettings.getByLabel('Surface', { exact: true }).fill('#faf5ff')
-    await appSettings.getByLabel('Color scheme').selectOption('light')
+    await appSettings.getByLabel('Color scheme', { exact: true }).selectOption('light')
     await appSettings.getByRole('button', { name: 'Save app settings' }).click()
     await expect(appSettings.getByText('App settings saved')).toBeVisible()
     await appSettings.getByRole('button', { name: 'Close app settings' }).click()
