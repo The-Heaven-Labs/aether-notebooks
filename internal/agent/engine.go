@@ -1221,6 +1221,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				NotebookID:    session.NotebookID,
 				SessionID:     sessionID,
 				DB:            e.pool,
+				BaseURL:       e.linkBase(),
 				TurnCount:     turn,
 				Events:        &events,
 				MasterKey:     masterKey,
@@ -1629,6 +1630,15 @@ func (e *Engine) SetFrontendURL(u string) {
 
 func (e *Engine) SetPublicURL(u string) {
 	e.publicURL = u
+}
+
+// linkBase is the base URL user-facing links use: the public URL when set,
+// else the frontend URL (empty when neither is configured).
+func (e *Engine) linkBase() string {
+	if e.publicURL != "" {
+		return e.publicURL
+	}
+	return e.frontendURL
 }
 
 func (e *Engine) SetStore(store storage.Storage) {

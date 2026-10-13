@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
+	"github.com/the-heaven-labs/aether/internal/dashboardreview"
 	"github.com/the-heaven-labs/aether/internal/database"
 )
 
@@ -1661,4 +1662,74 @@ func TestDashboardCreateWidgetWithTypedBlocks(t *testing.T) {
 	require.Contains(t, err.Error(), "not supported")
 	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
 		"a rejected block must not rewrite the document")
+}
+
+// TestDashboardReviewTool pins review_dashboard: findings name the widget or
+// chapter plus the fixing tool, and the result carries the app URLs (public
+// only once the dashboard is shared).
+func TestDashboardReviewTool(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Review Dashboard")
+
+	_, err := db.Pool.Exec(context.Background(), `
+		UPDATE dashboards SET settings = '{"tabs":[{"id":"overview","title":"Overview"},{"id":"orders","title":"Orders"}]}'
+		WHERE id = $1`, dashID)
+	require.NoError(t, err)
+
+	widgetID := uuid.NewString()
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT 1 AS revenue', 'sql', 'metric',
+		        '{"row":0,"col":0,"width":4,"height":4,"tab":"overview"}',
+		        '{"metric":{"value_column":"revenue"}}')
+	`, widgetID, dashID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	ctx.BaseURL = "https://app.example.test"
+	handler := dashboardTool(t, reg, "review_dashboard")
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	result := out.(map[string]any)
+
+	findings, ok := result["findings"].([]dashboardreview.Finding)
+	require.True(t, ok, "findings must be a Finding slice, got %T", result["findings"])
+
+	var chapterFinding, metricFinding *dashboardreview.Finding
+	for i := range findings {
+		if findings[i].ChapterID == "orders" && strings.Contains(findings[i].Message, "no widgets") {
+			chapterFinding = &findings[i]
+		}
+		if findings[i].WidgetID == widgetID {
+			metricFinding = &findings[i]
+		}
+	}
+	require.NotNil(t, chapterFinding, "empty chapter must be reported: %+v", findings)
+	require.Equal(t, "set_dashboard_layout", chapterFinding.FixTool)
+	require.NotNil(t, metricFinding, "the untitled metric must be reported: %+v", findings)
+	require.Equal(t, "set_widget_config", metricFinding.FixTool)
+	require.Equal(t, "overview", metricFinding.ChapterID)
+
+	require.Equal(t, "https://app.example.test/dashboards/"+dashID+"/view", result["view_url"])
+	require.Equal(t, "https://app.example.test/dashboards/"+dashID+"/view?preview=draft", result["preview_url"])
+	require.NotContains(t, result, "public_url", "an unshared dashboard has no public link")
+
+	// Sharing turns the public link on (the tool must never mint a token).
+	token := "review-token-1"
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO public_tokens (org_id, resource_type, resource_id, token, created_by)
+		VALUES ($1, 'dashboard', $2, $3, $4)
+	`, orgID, dashID, token, userID)
+	require.NoError(t, err)
+
+	out, err = handler(args, ctx)
+	require.NoError(t, err)
+	result = out.(map[string]any)
+	require.Equal(t, "https://app.example.test/public/dashboards/"+token, result["public_url"])
 }

@@ -39,13 +39,17 @@ type DashboardDocStore interface {
 }
 
 type ToolContext struct {
-	Context          context.Context
-	UserID           string
-	OrgID            string
-	OrgRole          string
-	NotebookID       string
-	SessionID        string
-	DB               *pgxpool.Pool
+	Context    context.Context
+	UserID     string
+	OrgID      string
+	OrgRole    string
+	NotebookID string
+	SessionID  string
+	DB         *pgxpool.Pool
+	// BaseURL is the public/frontend base for user-facing links (e.g.
+	// review_dashboard's view/preview links). Empty for bare contexts; tools
+	// fall back to relative paths.
+	BaseURL          string
 	TurnCount        int
 	CumulativeTokens int
 	Events           *[]EngineEvent

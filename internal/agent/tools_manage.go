@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
+	"github.com/the-heaven-labs/aether/internal/dashboardreview"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/validate"
 )
@@ -201,6 +203,20 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 		},
 		Handler: makePublishDashboardHandler(pool),
 		Timeout: 30 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "review_dashboard",
+			Description: "Review a dashboard's App composition (layout, content, surface): returns prioritized findings naming the widget/chapter and the tool call that fixes each, plus the app view/draft-preview links and the public link when the dashboard is shared.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
+		},
+		Handler: makeReviewDashboardHandler(pool),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -1408,6 +1424,77 @@ func makeShareDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 
 		_ = ctx.AuditLog("dashboard.share", "dashboard", req.DashboardID)
 		return map[string]any{"token": token, "url": "/public/" + token}, nil
+	}
+}
+
+// makeReviewDashboardHandler implements review_dashboard: the dashboard
+// document is projected, the cohesion heuristics run over it, and the result
+// carries the findings plus the app URLs (view, draft preview, and the public
+// link when the dashboard is already shared — the tool never mints a token).
+func makeReviewDashboardHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string `json:"dashboard_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+		if ctx.DashboardDocStore == nil {
+			return nil, fmt.Errorf("dashboard document store not configured")
+		}
+
+		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("load dashboard document: %w", err)
+		}
+		proj, err := dashboarddoc.Project(state)
+		if err != nil {
+			return nil, fmt.Errorf("read dashboard document: %w", err)
+		}
+
+		// Published hash (latest version) vs the canonical draft hash — the
+		// same comparison the versions status endpoint uses, so "unpublished
+		// changes" agrees everywhere.
+		var publishedHash string
+		err = pool.QueryRow(ctx.Context,
+			`SELECT content_hash FROM dashboard_versions WHERE dashboard_id = $1 ORDER BY version DESC LIMIT 1`,
+			req.DashboardID).Scan(&publishedHash)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("read dashboard versions: %w", err)
+		}
+		snapshot := dashboarddoc.SnapshotFromProjection(proj)
+		draftHash := dashboarddoc.ContentHash(snapshot.Title, snapshot.Settings, snapshot.Widgets)
+
+		findings := dashboardreview.Review(proj, dashboardreview.Options{
+			PublishedHash: publishedHash,
+			DraftHash:     draftHash,
+		})
+		if findings == nil {
+			findings = []dashboardreview.Finding{}
+		}
+
+		// Links are absolute when the engine knows its base URL; a bare
+		// context falls back to app-relative paths.
+		base := strings.TrimRight(ctx.BaseURL, "/")
+		result := map[string]any{
+			"dashboard_id": req.DashboardID,
+			"findings":     findings,
+			"count":        len(findings),
+			"view_url":     base + "/dashboards/" + req.DashboardID + "/view",
+			"preview_url":  base + "/dashboards/" + req.DashboardID + "/view?preview=draft",
+		}
+		var token string
+		if err := pool.QueryRow(ctx.Context,
+			`SELECT token FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
+			req.DashboardID).Scan(&token); err == nil && token != "" {
+			result["public_url"] = base + "/public/dashboards/" + token
+		} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("read dashboard share token: %w", err)
+		}
+		return result, nil
 	}
 }
 
