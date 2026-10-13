@@ -30,7 +30,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_dashboard",
-			Description: "Create a new dashboard. Returns the dashboard ID.",
+			Description: "Create a new dashboard — an App surface with chapters, filters, and widgets. Returns the dashboard ID.",
 			Parameters:  `{"type":"object","properties":{"title":{"type":"string"},"folder_id":{"type":"string","description":"Optional parent folder"}},"required":["title"]}`,
 		},
 		Handler: makeCreateDashboardHandler(pool),
@@ -72,7 +72,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_dashboard_widget",
-			Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); config carries per-widget options (e.g. config.metric for metric widgets).",
+			Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); typed chart/metric/table blocks (or raw config) create a fully-configured widget in one call.",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string","description":"Notebook for a cell-backed widget"},"cell_id":{"type":"string","description":"Cell for a cell-backed widget"},"connector_id":{"type":"string","description":"Connector for a query-backed widget (requires query)"},"query":{"type":"string","description":"SQL for a query-backed widget (requires connector_id)"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output, 'metric' for a single value, 'text' for markdown"},"config":{"type":"object","description":"Per-widget config, e.g. {\"metric\":{\"value_column\":\"x\",\"aggregation\":\"sum\"}}"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `,"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","type"]}`,
 		},
 		Handler: makeCreateDashboardWidgetHandler(pool),
@@ -101,7 +101,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_dashboard_widget",
-			Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or config keys to shallow-merge into the widget's config.",
+			Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or raw config keys to shallow-merge. For typed chart/metric/table config, use set_widget_config.",
 			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"tab":{"type":"string","description":"App tab id (lowercase letters, digits, dashes); empty falls back to the first tab"},"type":{"type":"string","enum":["chart","table","metric","text"]},"config":{"type":"object","description":"Config keys to shallow-merge into the widget's existing config"}},"required":["widget_id","dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardWidgetHandler(pool),
@@ -129,7 +129,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "get_dashboard",
-			Description: "Get a dashboard with its widgets. Use this to see the current state of a dashboard before making changes.",
+			Description: "Get a dashboard with its settings (app, chapters/tabs, variables) and widgets. Read this before changing a dashboard.",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeGetDashboardHandler(pool),
@@ -157,7 +157,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_dashboard",
-			Description: "Update a dashboard's title or grid settings (e.g., grid_cols: 12 for 12-column grid).",
+			Description: "Update a dashboard's title or grid density (grid_cols, default 12). Widget placement lives in set_dashboard_layout.",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string"},"grid_cols":{"type":"number","description":"Number of columns in the grid layout (default 12)"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardHandler(),
@@ -171,7 +171,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_dashboard_settings",
-			Description: "Update a dashboard's App settings: title, app (e.g. app.title, app.subtitle, app.theme with hex colors), and tabs (App chapters, e.g. [{id, title}]).",
+			Description: "Update a dashboard's App settings: title, app (title/subtitle/width/show toggles/filter_scope/theme with hex colors), and tabs (App chapters, e.g. [{id, title}]).",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string","description":"Dashboard title"},"app":{"type":"object","description":"App surface settings; filter_scope is \"all\" (default) or \"tab\" (each chapter shows only the filters its widgets use); theme fields are hex colors, e.g. {\"title\":\"Sales\",\"filter_scope\":\"tab\",\"theme\":{\"accent\":\"#7c5cff\",\"color_scheme\":\"dark\"}}"},"tabs":{"type":"array","description":"App chapters; ids are lowercase letters/digits/dashes","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardSettingsHandler(pool),
@@ -185,7 +185,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "set_dashboard_layout",
-			Description: "Arrange a dashboard's App surface: set tabs, place widgets into tabs (placements), and merge widget appearance (e.g. {background: transparent|card, padding: none|sm|md, align: left|center|right, border}).",
+			Description: "Arrange a dashboard's App surface: set tabs, place widgets into tabs (placements), and merge widget appearance (background/padding/align/border).",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"tabs":{"type":"array","description":"Replaces the App tab list","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"placements":{"type":"array","description":"Move widgets into tabs","items":{"type":"object","properties":{"widget_id":{"type":"string"},"tab":{"type":"string","description":"Tab id; empty falls back to the first tab"}},"required":["widget_id","tab"]}},"appearance":{"type":"array","description":"Merge appearance into each widget's config","items":{"type":"object","properties":{"widget_id":{"type":"string"},"appearance":{"type":"object"}},"required":["widget_id","appearance"]}}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeSetDashboardLayoutHandler(),
@@ -199,7 +199,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "publish_dashboard",
-			Description: "Publish the dashboard's current draft as a new version. Viewers see the latest published version until the next publish.",
+			Description: "Publish the dashboard's current draft as a new immutable version. Viewers see the latest published version until the next publish; review_dashboard lists anything blocking a publish.",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makePublishDashboardHandler(pool),

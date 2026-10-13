@@ -125,6 +125,45 @@ func TestSeedBuiltinTools_CoversManageRegistry(t *testing.T) {
 	}
 }
 
+// App-era dashboard tools: the seed row's text (what the Tools UI shows) and
+// the registry def's text (what the model sees) must not drift.
+var appEraDashboardTools = []string{
+	"create_dashboard",
+	"get_dashboard",
+	"create_dashboard_widget",
+	"update_dashboard_widget",
+	"set_widget_config",
+	"update_dashboard",
+	"update_dashboard_settings",
+	"set_dashboard_layout",
+	"publish_dashboard",
+	"review_dashboard",
+	"dashboard_guide",
+}
+
+func TestSeedBuiltinTools_AppEraDescriptionsMatchRegistry(t *testing.T) {
+	reg := NewToolRegistry()
+	RegisterManageTools(reg, nil)
+	seeded := map[string]BuiltinToolDef{}
+	for _, bt := range BuiltinTools {
+		seeded[bt.HandlerName] = bt
+	}
+	for _, name := range appEraDashboardTools {
+		def, ok := reg.Get(name)
+		if !ok {
+			t.Fatalf("registry is missing %s", name)
+		}
+		bt, ok := seeded[name]
+		if !ok {
+			t.Fatalf("BuiltinTools is missing %s", name)
+		}
+		if bt.Description != def.Function.Description {
+			t.Errorf("%s: seed and registry descriptions drifted:\n seed: %q\n  reg: %q",
+				name, bt.Description, def.Function.Description)
+		}
+	}
+}
+
 // TestSeedBuiltinTools_RefreshesStaleDescriptions pins the seed revision
 // mechanism: a builtin row seeded before the app-era descriptions (stale text,
 // seed_rev 0) is refreshed to the catalog's current description and schema,
