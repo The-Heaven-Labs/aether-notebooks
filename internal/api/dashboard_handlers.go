@@ -719,10 +719,16 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	// The document format only carries known types and SQL; reject anything
 	// else up front instead of failing inside the document write.
 	switch req.Type {
-	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric:
+	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML:
 	default:
 		writeError(w, http.StatusBadRequest, "invalid widget type")
 		return
+	}
+	if req.Type == models.WidgetHTML {
+		if err := validate.ValidateWidgetHTML(widgetHTMLConfigFrom(req.Config)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	lang := "sql"
 	if req.Language != nil && *req.Language != "" {
@@ -832,6 +838,20 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, widget)
 }
 
+// widgetHTMLConfigFrom extracts panel fields from a raw config map; non-string
+// values are treated as absent (the document store keeps them, the renderer
+// ignores them).
+func widgetHTMLConfigFrom(config map[string]interface{}) validate.WidgetHTMLConfig {
+	cfg := validate.WidgetHTMLConfig{}
+	if s, ok := config["html"].(string); ok {
+		cfg.HTML = s
+	}
+	if s, ok := config["css"].(string); ok {
+		cfg.CSS = s
+	}
+	return cfg
+}
+
 // @Summary Update a widget
 // @Description Update a widget's layout or configuration
 // @Tags dashboards
@@ -895,9 +915,15 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Type != nil {
 		switch *req.Type {
-		case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric:
+		case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML:
 		default:
 			writeError(w, http.StatusBadRequest, "invalid widget type")
+			return
+		}
+	}
+	if req.Config != nil {
+		if err := validate.ValidateWidgetHTML(widgetHTMLConfigFrom(req.Config)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}

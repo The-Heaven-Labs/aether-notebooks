@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/api"
 )
 
@@ -665,4 +667,110 @@ func TestDashboardTabsAndTheme(t *testing.T) {
 	if updateRec.Code != http.StatusBadRequest {
 		t.Fatalf("widget update with bad tab id: expected 400, got %d: %s", updateRec.Code, updateRec.Body.String())
 	}
+}
+
+// doDashboardJSON issues an authenticated, admin-mode JSON request against a
+// dashboard test server. Shared by the html widget and org-switch tests.
+func doDashboardJSON(t *testing.T, srv *api.Server, token, method, path string, body any) *httptest.ResponseRecorder {
+	t.Helper()
+	var rd io.Reader
+	if body != nil {
+		b, _ := json.Marshal(body)
+		rd = bytes.NewReader(b)
+	}
+	r := httptest.NewRequest(method, path, rd)
+	r.Header.Set("Content-Type", "application/json")
+	r.Header.Set("Authorization", "Bearer "+token)
+	r.Header.Set("X-AETHER-Admin-Mode", "true")
+	w := httptest.NewRecorder()
+	srv.ServeHTTP(w, r)
+	return w
+}
+
+func TestDashboardHTMLWidget(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("dash-html-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Dash HTML Org")
+
+	rec := doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards", map[string]any{"title": "HTML Widgets"})
+	require.Equal(t, 201, rec.Code)
+	var dashResp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&dashResp))
+	dashID := dashResp["id"].(string)
+
+	// Source-less html widget round-trips with its config.
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type":   "html",
+		"layout": map[string]int{"row": 0, "col": 0, "width": 6, "height": 6},
+		"config": map[string]any{"html": `<div class="stat">42</div>`, "css": `.stat{font-size:28px}`},
+	})
+	require.Equal(t, 201, rec.Code)
+
+	// GET returns type html + config preserved.
+	type fetchedWidget struct {
+		ID     string         `json:"id"`
+		Type   string         `json:"type"`
+		Config map[string]any `json:"config"`
+	}
+	getWidgets := func() []fetchedWidget {
+		getRec := doDashboardJSON(t, srv, token, "GET", "/api/v1/dashboards/"+dashID, nil)
+		require.Equal(t, 200, getRec.Code)
+		var resp struct {
+			Widgets []fetchedWidget `json:"widgets"`
+		}
+		require.NoError(t, json.NewDecoder(getRec.Body).Decode(&resp))
+		return resp.Widgets
+	}
+	widgets := getWidgets()
+	require.Len(t, widgets, 1)
+	require.Equal(t, "html", widgets[0].Type)
+	require.Equal(t, `<div class="stat">42</div>`, widgets[0].Config["html"])
+	require.Equal(t, `.stat{font-size:28px}`, widgets[0].Config["css"])
+
+	// PUT type conversion to html on a text widget succeeds (204, like every
+	// widget update) and the projected type flips.
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type":   "text",
+		"layout": map[string]int{"row": 6, "col": 0, "width": 4, "height": 4},
+		"config": map[string]any{"text": map[string]any{"markdown": "hello"}},
+	})
+	require.Equal(t, 201, rec.Code)
+	var textWidget map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&textWidget))
+	textWidgetID := textWidget["id"].(string)
+	rec = doDashboardJSON(t, srv, token, "PUT", "/api/v1/dashboards/"+dashID+"/widgets/"+textWidgetID, map[string]any{"type": "html"})
+	require.Equal(t, 204, rec.Code)
+	var converted *fetchedWidget
+	convertedWidgets := getWidgets()
+	for i := range convertedWidgets {
+		if convertedWidgets[i].ID == textWidgetID {
+			converted = &convertedWidgets[i]
+		}
+	}
+	require.NotNil(t, converted, "converted widget must still exist")
+	require.Equal(t, "html", converted.Type)
+
+	// Oversize markup → 400 naming the cap.
+	big := strings.Repeat("x", 256<<10+1)
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "html", "layout": map[string]int{"row": 10, "col": 0, "width": 4, "height": 4},
+		"config": map[string]any{"html": big},
+	})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "256 KiB")
+
+	// Oversize css → 400 too (the update path validates the same caps).
+	rec = doDashboardJSON(t, srv, token, "PUT", "/api/v1/dashboards/"+dashID+"/widgets/"+textWidgetID, map[string]any{
+		"config": map[string]any{"css": strings.Repeat("x", 64<<10+1)},
+	})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "64 KiB")
+
+	// Unknown types still rejected.
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "custom", "layout": map[string]int{"row": 10, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, 400, rec.Code)
 }
