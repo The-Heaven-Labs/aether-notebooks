@@ -1,8 +1,8 @@
-import { useLayoutEffect, useMemo, useState } from 'react'
+import { createContext, useContext, useLayoutEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { DashboardAppTheme, OrgBranding } from '../types'
 import { resolveAppTheme } from '../utils/appTheme'
-import type { AppColorScheme } from '../utils/appTheme'
+import type { AppColorScheme, ResolvedAppTheme } from '../utils/appTheme'
 import {
   AppChartThemeContext,
   clearAppChartTheme,
@@ -16,6 +16,14 @@ interface AppThemeProviderProps {
   /** Org-level branding fallback (`org_branding` on the response). */
   branding?: OrgBranding | null
   children: ReactNode
+}
+
+/** Resolved theme for consumers that cannot read CSS variables (iframes). */
+const AppThemeContext = createContext<ResolvedAppTheme | null>(null)
+
+/** Null outside an AppThemeProvider (editor chrome / global theme applies). */
+export function useAppTheme(): ResolvedAppTheme | null {
+  return useContext(AppThemeContext)
 }
 
 function readGlobalScheme(): AppColorScheme {
@@ -85,9 +93,11 @@ export function AppThemeProvider({ theme, branding, children }: AppThemeProvider
 
   return (
     <AppChartThemeContext.Provider value={chartTheme}>
-      <div className="app-theme" data-app-scheme={resolved.scheme} style={resolved.vars}>
-        {children}
-      </div>
+      <AppThemeContext.Provider value={resolved}>
+        <div className="app-theme" data-app-scheme={resolved.scheme} style={resolved.vars}>
+          {children}
+        </div>
+      </AppThemeContext.Provider>
     </AppChartThemeContext.Provider>
   )
 }

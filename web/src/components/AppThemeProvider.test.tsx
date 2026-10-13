@@ -1,7 +1,7 @@
 import { StrictMode } from 'react'
 import { describe, expect, it, afterEach } from 'vitest'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import { AppThemeProvider } from './AppThemeProvider'
+import { AppThemeProvider, useAppTheme } from './AppThemeProvider'
 import { CHART_COLORS, useChartColors } from '../charts/common'
 import { getAppChartTheme } from '../charts/appChartTheme'
 
@@ -18,6 +18,17 @@ function containerFor(text: string): HTMLElement {
 function PaletteProbe({ testId }: { testId: string }) {
   const colors = useChartColors()
   return <div data-testid={testId} data-palette={colors.palette.join(',')} />
+}
+
+function ThemeProbe({ testId }: { testId: string }) {
+  const theme = useAppTheme()
+  return (
+    <div
+      data-testid={testId}
+      data-scheme={theme?.scheme ?? 'none'}
+      data-accent={theme?.vars['--accent'] ?? ''}
+    />
+  )
 }
 
 function NestedProviders({ showInner }: { showInner: boolean }) {
@@ -163,5 +174,20 @@ describe('AppThemeProvider', () => {
     unmount()
     expect(getAppChartTheme()).toBeNull()
     expect(CHART_COLORS[0]).toBe('#6366f1')
+  })
+
+  it('exposes the resolved theme through useAppTheme, and null outside a provider', () => {
+    const { unmount } = render(
+      <AppThemeProvider theme={{ accent: '#7c6faa', color_scheme: 'dark' }}>
+        <ThemeProbe testId="themed" />
+      </AppThemeProvider>,
+    )
+    expect(screen.getByTestId('themed')).toHaveAttribute('data-scheme', 'dark')
+    expect(screen.getByTestId('themed')).toHaveAttribute('data-accent', '#7c6faa')
+    unmount()
+
+    render(<ThemeProbe testId="bare" />)
+    expect(screen.getByTestId('bare')).toHaveAttribute('data-scheme', 'none')
+    expect(screen.getByTestId('bare')).toHaveAttribute('data-accent', '')
   })
 })
