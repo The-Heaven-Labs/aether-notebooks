@@ -77,6 +77,13 @@ A query's rows, with optional per-column formats:
 Columns without a format render as stored. The review notes tables with no
 column formats.
 
+### appearance
+
+Every widget accepts an `appearance` block (set with `set_dashboard_layout`):
+`background` (`card` frames the widget, `transparent` lets the board show
+through), `border` (draws the hairline on cards), `padding` (`none`, `sm`,
+`md`), and `align` (`left`, `center`, `right` for text-like content).
+
 ### chart
 
 All 14 chart types use `create_chart`'s vocabulary: `bar`, `line`, `area`,
@@ -166,6 +173,9 @@ fallback layer):
     "title": "Q3 Revenue",
     "subtitle": "Sales ops · updated hourly",
     "width": "full",
+    "show_header": true,
+    "show_refresh": true,
+    "show_last_updated": true,
     "theme": {
       "accent": "#7c5cff",
       "background": "#0b0b12",
