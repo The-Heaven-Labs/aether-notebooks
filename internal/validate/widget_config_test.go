@@ -1,6 +1,7 @@
 package validate
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -301,4 +302,29 @@ func TestWidgetConfigEmptyBlocksAreNoOps(t *testing.T) {
 	require.Empty(t, ToStoredWidgetChart(WidgetChartConfig{}))
 	require.Empty(t, ToStoredWidgetMetric(WidgetMetricConfig{}))
 	require.Empty(t, ToStoredWidgetTable(WidgetTableConfig{}))
+}
+
+func TestValidateWidgetHTML(t *testing.T) {
+	// Valid content passes.
+	require.NoError(t, ValidateWidgetHTML(WidgetHTMLConfig{
+		HTML: `<div class="stat">42</div>`,
+		CSS:  `.stat { font-size: 28px; }`,
+	}))
+	// Both empty is allowed (a no-op block).
+	require.NoError(t, ValidateWidgetHTML(WidgetHTMLConfig{}))
+
+	// Oversize html / css are rejected with actionable messages.
+	err := ValidateWidgetHTML(WidgetHTMLConfig{HTML: strings.Repeat("x", maxHTMLPanelBytes+1)})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "256 KiB")
+
+	err = ValidateWidgetHTML(WidgetHTMLConfig{CSS: strings.Repeat("x", maxHTMLPanelCSSBytes+1)})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "64 KiB")
+
+	// The converter omits empty keys and keeps set ones verbatim.
+	require.Equal(t, map[string]any{}, ToStoredWidgetHTML(WidgetHTMLConfig{}))
+	stored := ToStoredWidgetHTML(WidgetHTMLConfig{HTML: "<p>hi</p>", CSS: "p{}"})
+	require.Equal(t, "<p>hi</p>", stored["html"])
+	require.Equal(t, "p{}", stored["css"])
 }
