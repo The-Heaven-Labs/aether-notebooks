@@ -3,9 +3,9 @@ import type { CSSProperties } from 'react'
 import DOMPurify from 'dompurify'
 import { interpolateHtml } from '../utils/interpolateText'
 import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
-import { useAppTheme } from './AppThemeProvider'
+import { useResolvedAppTheme } from './AppThemeProvider'
 import type { AppColorScheme } from '../utils/appTheme'
-import type { DashboardVariable } from '../types'
+import type { DashboardAppTheme, DashboardVariable, OrgBranding } from '../types'
 
 // The strict allowlist. Deliberately absent: a, form, input, button, script,
 // style, iframe, object, embed, link, meta, base, svg (svg can carry scripts).
@@ -78,11 +78,20 @@ interface HtmlWidgetProps {
   variables?: DashboardVariable[]
   /** False when the org switch is off — renders a placeholder instead. */
   enabled?: boolean
+  /**
+   * Preview fallbacks used when no `AppThemeProvider` wraps the widget (the
+   * editor grid and the drawer): the dashboard's `settings.app.theme` /
+   * `org_branding`, resolved exactly like the app surface so the preview
+   * matches what viewers get without switching modes. Inside a provider the
+   * context wins and these are ignored.
+   */
+  theme?: DashboardAppTheme | null
+  branding?: OrgBranding | null
 }
 
-export function HtmlWidget({ html, css, values, variables, enabled = true }: HtmlWidgetProps) {
+export function HtmlWidget({ html, css, values, variables, enabled = true, theme, branding }: HtmlWidgetProps) {
   const context = useDashboardVariables()
-  const theme = useAppTheme()
+  const resolved = useResolvedAppTheme(theme, branding)
   const interpolated = useMemo(
     () => interpolateHtml(html, values ?? context.values, variables ?? context.variables),
     [html, values, variables, context.values, context.variables],
@@ -92,11 +101,11 @@ export function HtmlWidget({ html, css, values, variables, enabled = true }: Htm
     return buildPanelSrcDoc({
       html: sanitizePanelHtml(interpolated, window.location.origin),
       css,
-      tokens: theme?.vars ?? {},
-      scheme: theme?.scheme ?? 'light',
+      tokens: resolved.vars,
+      scheme: resolved.scheme,
       origin: window.location.origin,
     })
-  }, [enabled, interpolated, css, theme])
+  }, [enabled, interpolated, css, resolved])
 
   if (!enabled) return <div style={styles.empty}>HTML panels are disabled for this organization.</div>
   if (!srcDoc) return <div style={styles.empty}>Empty HTML panel — edit it in the dashboard editor.</div>

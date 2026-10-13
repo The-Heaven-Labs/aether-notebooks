@@ -912,7 +912,12 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                   images are stripped at render.
                 </div>
                 <div style={{ ...styles.preview, height: 200, minHeight: 120 }}>
-                  <HtmlWidget html={html.html} css={html.css} />
+                  <HtmlWidget
+                    html={html.html}
+                    css={html.css}
+                    theme={dashboard.settings?.app?.theme}
+                    branding={dashboard.org_branding}
+                  />
                 </div>
               </>
             )

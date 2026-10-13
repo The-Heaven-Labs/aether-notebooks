@@ -1233,3 +1233,33 @@ describe('html panels', () => {
     expect(screen.queryByRole('option', { name: 'HTML panel' })).toBeNull()
   })
 })
+
+describe('html panel preview theming', () => {
+  test('previews the panel with the dashboard app theme, like the published surface', () => {
+    const themed: Dashboard = {
+      ...dashboard,
+      settings: { variables: [], app: { theme: { accent: '#7c5cff', color_scheme: 'dark' } } },
+    }
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={themed} widget={htmlWidgetForTheme()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    const doc = screen.getByTitle('HTML panel').getAttribute('srcdoc') ?? ''
+    expect(doc).toContain('--accent:#7c5cff')
+  })
+})
+
+function htmlWidgetForTheme(): Widget {
+  return {
+    id: 'w-html',
+    dashboard_id: 'd1',
+    notebook_id: null,
+    cell_id: null,
+    connector_id: null,
+    query: null,
+    language: 'sql',
+    type: 'html',
+    layout: { row: 0, col: 0, width: 6, height: 6 },
+    config: { html: '<p>hi</p>', css: '' },
+    created_at: '2026-01-01T00:00:00Z',
+  }
+}

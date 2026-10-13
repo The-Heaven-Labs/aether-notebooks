@@ -72,3 +72,14 @@ describe('HtmlWidget', () => {
     expect(screen.queryByTitle('HTML panel')).toBeNull()
   })
 })
+
+describe('HtmlWidget theme fallback (editor preview)', () => {
+  test('resolves the explicit dashboard theme when no AppThemeProvider wraps it', () => {
+    render(
+      <HtmlWidget html="<p>x</p>" css="" theme={{ accent: '#7c5cff', color_scheme: 'dark' }} />,
+    )
+    const doc = screen.getByTitle('HTML panel').getAttribute('srcdoc') ?? ''
+    expect(doc).toContain('--accent:#7c5cff')
+    expect(doc).toContain('#141414')
+  })
+})

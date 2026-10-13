@@ -591,8 +591,8 @@ See also: `DashboardEditorPage.tsx` for the editor; `e2e/dashboard-app.spec.ts` 
 **Visual**:
 - The frame fills its widget card (`100% × 100%`, borderless); `sandbox=""` + `referrerPolicy="no-referrer"` + a CSP `<meta>` (`default-src 'none'`; images `data:`/origin; inline styles) means the panel cannot script, navigate, submit forms, or reach the parent
 - **States**: the rendered frame; `HTML panels are disabled for this organization.` (org switch off — the same placeholder renders in the app, public page, and editor); `Empty HTML panel — edit it in the dashboard editor.` (no markup and no css)
-- **Theme**: the resolved `AppThemeProvider` tokens inject as `:root` CSS variables plus body defaults, so `var(--accent)`, `var(--text-primary)`, … work inside the panel and follow `color_scheme`
-- **Authoring preview**: the widget drawer renders the same component under the Panel HTML / Panel CSS editors (200px), so the preview is exactly what viewers get
+- **Theme**: the resolved `AppThemeProvider` tokens inject as `:root` CSS variables plus body defaults, so `var(--accent)`, `var(--text-primary)`, … work inside the panel and follow `color_scheme`. The editor's grid cards and the drawer preview resolve the same dashboard theme locally (`useResolvedAppTheme`), so edit mode is a faithful preview of the published look; the editor chrome itself stays on the global theme
+- **Authoring preview**: the widget drawer renders the same component under the Panel HTML / Panel CSS editors (200px), resolved with the dashboard's app theme, so the preview is exactly what viewers get
 
 **Component**: `web/src/components/HtmlWidget.tsx`; see also `web/src/components/WidgetConfigDrawer.tsx`, `e2e/html-panel.spec.ts`.
 

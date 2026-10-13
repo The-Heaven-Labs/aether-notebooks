@@ -878,6 +878,8 @@ export function DashboardEditorPage() {
                           html={htmlConfigFrom(widget.config).html}
                           css={htmlConfigFrom(widget.config).css}
                           enabled={dashboard.html_panels_enabled !== false}
+                          theme={liveDashboard.settings?.app?.theme}
+                          branding={liveDashboard.org_branding}
                         />
                       ) : (
                         <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
@@ -939,6 +941,8 @@ export function DashboardEditorPage() {
                             html={htmlConfigFrom(widget.config).html}
                             css={htmlConfigFrom(widget.config).css}
                             enabled={dashboard.html_panels_enabled !== false}
+                            theme={liveDashboard.settings?.app?.theme}
+                            branding={liveDashboard.org_branding}
                           />
                         ) : (
                           <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />

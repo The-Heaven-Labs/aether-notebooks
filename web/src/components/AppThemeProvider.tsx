@@ -26,6 +26,30 @@ export function useAppTheme(): ResolvedAppTheme | null {
   return useContext(AppThemeContext)
 }
 
+/**
+ * Resolved theme for previews rendered outside an `AppThemeProvider` (the
+ * dashboard editor's panels and the widget drawer): the provider's context
+ * wins; without one, the explicit dashboard theme/branding resolve against
+ * the global scheme — the exact inputs and order the app surface uses, so an
+ * editor preview matches the published look without switching modes.
+ * Content-keyed memos keep the resolved object stable across parent renders
+ * that rebuild `settings`/branding objects.
+ */
+export function useResolvedAppTheme(
+  theme?: DashboardAppTheme | null,
+  branding?: OrgBranding | null,
+): ResolvedAppTheme {
+  const provided = useContext(AppThemeContext)
+  const globalScheme = useGlobalColorScheme()
+  const themeKey = JSON.stringify(theme ?? null)
+  const brandingKey = JSON.stringify(branding ?? null)
+  return useMemo(
+    () => provided ?? resolveAppTheme(theme, branding, globalScheme),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [provided, themeKey, brandingKey, globalScheme],
+  )
+}
+
 function readGlobalScheme(): AppColorScheme {
   return document.documentElement.getAttribute('data-theme') === 'dark' ? 'dark' : 'light'
 }
