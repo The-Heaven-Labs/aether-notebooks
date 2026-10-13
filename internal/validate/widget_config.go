@@ -2,7 +2,10 @@ package validate
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
+
+	"github.com/google/uuid"
 )
 
 // Typed widget-config authoring for the agent tools (`set_widget_config`,
@@ -504,6 +507,142 @@ func ToStoredWidgetHTML(cfg WidgetHTMLConfig) map[string]any {
 	}
 	if cfg.CSS != "" {
 		out["css"] = cfg.CSS
+	}
+	return out
+}
+
+// WidgetCustomConfig is the `custom` block of a widget-config tool call and
+// the REST config shape: a sandboxed component's markup, stylesheet, script,
+// and its data bindings. Rendering is client-side in an allow-scripts
+// opaque-origin frame; the server bounds size and binding shape.
+type WidgetCustomConfig struct {
+	HTML     string                `json:"html"`
+	CSS      string                `json:"css"`
+	JS       string                `json:"js"`
+	Bindings []WidgetCustomBinding `json:"bindings"`
+}
+
+// WidgetCustomBinding wires one bridge key to a widget of the same dashboard.
+type WidgetCustomBinding struct {
+	Key      string `json:"key"`
+	WidgetID string `json:"widget_id"`
+}
+
+const (
+	// maxCustomHTMLBytes / maxCustomCSSBytes / maxCustomJSBytes cap the
+	// component bundle; maxCustomBundleBytes caps the sum so one widget can
+	// never approach dashboarddoc's 1 MiB config cap.
+	maxCustomHTMLBytes   = 256 << 10
+	maxCustomCSSBytes    = 64 << 10
+	maxCustomJSBytes     = 128 << 10
+	maxCustomBundleBytes = 256 << 10
+	maxCustomBindings    = 20
+	maxCustomBindingKey  = 64
+)
+
+// customBindingKeyPattern mirrors the tab-id charset: lowercase ids agents
+// and the picker can generate deterministically.
+var customBindingKeyPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]*$`)
+
+// ValidateWidgetCustom bounds a component's bundle and its bindings. Empty
+// strings are allowed (the drawer shows an empty state; the agent block treats
+// a zero value as a no-op). Binding widget existence is checked by the
+// caller, which has the database.
+func ValidateWidgetCustom(cfg WidgetCustomConfig) error {
+	if len(cfg.HTML) > maxCustomHTMLBytes {
+		return fmt.Errorf("custom html must be at most 256 KiB")
+	}
+	if len(cfg.CSS) > maxCustomCSSBytes {
+		return fmt.Errorf("custom css must be at most 64 KiB")
+	}
+	if len(cfg.JS) > maxCustomJSBytes {
+		return fmt.Errorf("custom js must be at most 128 KiB")
+	}
+	if total := len(cfg.HTML) + len(cfg.CSS) + len(cfg.JS); total > maxCustomBundleBytes {
+		return fmt.Errorf("custom bundle must be at most 256 KiB")
+	}
+	if len(cfg.Bindings) > maxCustomBindings {
+		return fmt.Errorf("custom components support at most 20 bindings")
+	}
+	seen := make(map[string]bool, len(cfg.Bindings))
+	for _, b := range cfg.Bindings {
+		if len(b.Key) == 0 || len(b.Key) > maxCustomBindingKey || !customBindingKeyPattern.MatchString(b.Key) {
+			return fmt.Errorf("binding key %q must be lowercase letters, digits, dashes or underscores (max 64)", b.Key)
+		}
+		if seen[b.Key] {
+			return fmt.Errorf("duplicate binding key %q", b.Key)
+		}
+		seen[b.Key] = true
+		if u, err := uuid.Parse(b.WidgetID); err != nil || u.String() != b.WidgetID {
+			return fmt.Errorf("binding %q widget id %q is not a valid id", b.Key, b.WidgetID)
+		}
+	}
+	return nil
+}
+
+// ToStoredWidgetCustom converts a validated `custom` block into the stored
+// `config` keys. Unset fields are omitted; a zero block produces no keys.
+func ToStoredWidgetCustom(cfg WidgetCustomConfig) map[string]any {
+	out := map[string]any{}
+	if cfg.HTML != "" {
+		out["html"] = cfg.HTML
+	}
+	if cfg.CSS != "" {
+		out["css"] = cfg.CSS
+	}
+	if cfg.JS != "" {
+		out["js"] = cfg.JS
+	}
+	if len(cfg.Bindings) > 0 {
+		bindings := make([]map[string]any, 0, len(cfg.Bindings))
+		for _, b := range cfg.Bindings {
+			bindings = append(bindings, map[string]any{"key": b.Key, "widget_id": b.WidgetID})
+		}
+		out["bindings"] = bindings
+	}
+	return out
+}
+
+// WidgetCustomConfigFrom extracts the custom fields from a raw stored config.
+// Non-string values are treated as absent; malformed bindings entries are
+// dropped (the renderer shows them as missing keys, never crashes).
+func WidgetCustomConfigFrom(config map[string]any) WidgetCustomConfig {
+	cfg := WidgetCustomConfig{}
+	if s, ok := config["html"].(string); ok {
+		cfg.HTML = s
+	}
+	if s, ok := config["css"].(string); ok {
+		cfg.CSS = s
+	}
+	if s, ok := config["js"].(string); ok {
+		cfg.JS = s
+	}
+	if raw, ok := config["bindings"].([]any); ok {
+		for _, entry := range raw {
+			m, ok := entry.(map[string]any)
+			if !ok {
+				continue
+			}
+			key, _ := m["key"].(string)
+			widgetID, _ := m["widget_id"].(string)
+			if key == "" || widgetID == "" {
+				continue
+			}
+			cfg.Bindings = append(cfg.Bindings, WidgetCustomBinding{Key: key, WidgetID: widgetID})
+		}
+	}
+	return cfg
+}
+
+// WidgetCustomBindingIDs returns the valid binding widget ids of a raw stored
+// config — the input to the existence checks on the write paths.
+func WidgetCustomBindingIDs(config map[string]any) []string {
+	cfg := WidgetCustomConfigFrom(config)
+	out := make([]string, 0, len(cfg.Bindings))
+	for _, b := range cfg.Bindings {
+		if u, err := uuid.Parse(b.WidgetID); err == nil && u.String() == b.WidgetID {
+			out = append(out, b.WidgetID)
+		}
 	}
 	return out
 }
