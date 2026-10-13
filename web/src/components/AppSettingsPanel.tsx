@@ -213,6 +213,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
   const [showHeader, setShowHeader] = useState(app?.show_header !== false)
   const [showRefresh, setShowRefresh] = useState(app?.show_refresh !== false)
   const [showLastUpdated, setShowLastUpdated] = useState(app?.show_last_updated !== false)
+  const [filterScope, setFilterScope] = useState<'all' | 'tab'>(app?.filter_scope === 'tab' ? 'tab' : 'all')
   const [colors, setColors] = useState<Record<ColorField, string>>({
     accent: app?.theme?.accent ?? '',
     background: app?.theme?.background ?? '',
@@ -350,6 +351,10 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
       next.show_header = showHeader
       next.show_refresh = showRefresh
       next.show_last_updated = showLastUpdated
+      // "All filters everywhere" is the default: omit the key so absent stays
+      // the meaning and a previously stored "tab" is dropped.
+      if (filterScope === 'tab') next.filter_scope = 'tab'
+      else delete next.filter_scope
       if (logoMode === 'upload' && logoId) next.logo_attachment_id = logoId
       else delete next.logo_attachment_id
       if (built.theme) next.theme = built.theme
@@ -538,6 +543,28 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
               section, or drag a widget onto a tab chip in the editor.
             </span>
           )}
+
+          <div style={styles.section} role="heading" aria-level={3}>Filters</div>
+          <div role="radiogroup" aria-label="Filter scope" style={styles.radioRow}>
+            {([['all', 'All filters everywhere'], ['tab', "Only this chapter's filters"]] as const).map(([value, label]) => (
+              <label key={value} style={styles.radioOption}>
+                <input
+                  type="radio"
+                  name="app-filter-scope"
+                  value={value}
+                  checked={filterScope === value}
+                  aria-label={label}
+                  onChange={() => { setSaved(false); setFilterScope(value) }}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <span style={styles.muted}>
+            Chapter scoping derives itself from usage: each chapter shows the filters
+            its widgets use, plus the filters those depend on. Filters set in other
+            chapters keep their values and stay applied there.
+          </span>
 
           <div style={styles.section} role="heading" aria-level={3}>Theme</div>
           {COLOR_FIELDS.map((field) => (

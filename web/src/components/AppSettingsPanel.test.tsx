@@ -728,3 +728,42 @@ describe('AppSettingsPanel', () => {
     expect(screen.getByRole('button', { name: 'Add tab' })).toHaveFocus()
   })
 })
+
+describe('AppSettingsPanel filter scope', () => {
+  test('defaults to "All filters everywhere" with the inference explained', () => {
+    renderPanel(dashboardWith({ app: {} }))
+    expect(screen.getByRole('heading', { name: 'Filters', level: 3 })).toBeInTheDocument()
+    expect(screen.getByLabelText('All filters everywhere')).toBeChecked()
+    expect(screen.getByLabelText("Only this chapter's filters")).not.toBeChecked()
+    // The hint explains how chapter scoping derives the visible filters.
+    expect(screen.getByText(/filters its widgets use/)).toBeInTheDocument()
+  })
+
+  test('reflects a stored filter_scope of tab', () => {
+    renderPanel(dashboardWith({ app: { filter_scope: 'tab' } }))
+    expect(screen.getByLabelText("Only this chapter's filters")).toBeChecked()
+    expect(screen.getByLabelText('All filters everywhere')).not.toBeChecked()
+  })
+
+  test('choosing chapter scoping saves filter_scope: "tab"', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: {} }))
+
+    fireEvent.click(screen.getByLabelText("Only this chapter's filters"))
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(savedApp(bodies).filter_scope).toBe('tab')
+  })
+
+  test('choosing "All filters everywhere" omits the key from the payload', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: { filter_scope: 'tab' } }))
+
+    fireEvent.click(screen.getByLabelText('All filters everywhere'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect('filter_scope' in savedApp(bodies)).toBe(false)
+  })
+})

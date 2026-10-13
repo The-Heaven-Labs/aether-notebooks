@@ -155,7 +155,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 		}{
 			Name:        "update_dashboard_settings",
 			Description: "Update a dashboard's App settings: title, app (e.g. app.title, app.subtitle, app.theme with hex colors), and tabs (App chapters, e.g. [{id, title}]).",
-			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string","description":"Dashboard title"},"app":{"type":"object","description":"App surface settings; theme fields are hex colors, e.g. {\"title\":\"Sales\",\"theme\":{\"accent\":\"#7c5cff\",\"color_scheme\":\"dark\"}}"},"tabs":{"type":"array","description":"App chapters; ids are lowercase letters/digits/dashes","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}}},"required":["dashboard_id"]}`,
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string","description":"Dashboard title"},"app":{"type":"object","description":"App surface settings; filter_scope is \"all\" (default) or \"tab\" (each chapter shows only the filters its widgets use); theme fields are hex colors, e.g. {\"title\":\"Sales\",\"filter_scope\":\"tab\",\"theme\":{\"accent\":\"#7c5cff\",\"color_scheme\":\"dark\"}}"},"tabs":{"type":"array","description":"App chapters; ids are lowercase letters/digits/dashes","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardSettingsHandler(pool),
 		Timeout: 15 * time.Second,
