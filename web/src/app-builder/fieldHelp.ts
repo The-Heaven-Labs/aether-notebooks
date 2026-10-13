@@ -83,6 +83,18 @@ export const fieldHelp: Record<string, FieldHelp> = {
     example: '## Events\n\nWindow: {{window}}',
   },
 
+  // ── html ────────────────────────────────────────────────────────────────
+  'html.html': {
+    label: 'Panel HTML',
+    hint: 'Script-free markup; scripts, links, forms, and third-party images are stripped.',
+    example: '<div class="stat">42</div>',
+  },
+  'html.css': {
+    label: 'Panel CSS',
+    hint: 'Stylesheet for the panel; the app theme’s CSS variables are available.',
+    example: '.stat { font-size: 28px; color: var(--accent); }',
+  },
+
   // ── table ───────────────────────────────────────────────────────────────
   'table.columns': {
     label: 'Table columns',

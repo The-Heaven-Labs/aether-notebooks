@@ -4,8 +4,12 @@ import { buildAddWidgetPayload, validTypesForSource } from './addWidgetPayload'
 const layout = { row: 0, col: 0, width: 6, height: 8 }
 
 describe('validTypesForSource', () => {
-  it('offers only text for the source-less panel', () => {
-    expect(validTypesForSource('none')).toEqual(['text'])
+  it('offers text and the html panel for the source-less option', () => {
+    expect(validTypesForSource('none')).toEqual(['text', 'html'])
+    expect(validTypesForSource('none', true)).toEqual(['text', 'html'])
+  })
+  it('drops the html panel when the org switch is off', () => {
+    expect(validTypesForSource('none', false)).toEqual(['text'])
   })
   it('offers table and chart for cell widgets', () => {
     expect(validTypesForSource('cell')).toEqual(['table', 'chart'])
@@ -35,6 +39,13 @@ describe('buildAddWidgetPayload', () => {
       type: 'text',
       layout,
       config: { text: { markdown: '# Hi' } },
+    })
+  })
+  it('builds a source-less html panel with no source keys', () => {
+    expect(buildAddWidgetPayload({ source: 'none', type: 'html', layout })).toEqual({
+      type: 'html',
+      layout,
+      config: {},
     })
   })
   it('builds a query metric widget', () => {

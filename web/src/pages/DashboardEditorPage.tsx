@@ -57,6 +57,7 @@ const WIDGET_TYPE_DESCRIPTORS: Record<AddWidgetType, string> = {
   chart: 'Chart — a plot of the rows (bar, line, pie, …).',
   metric: 'Metric — one number from the query.',
   text: 'Text — markdown with live {{filters}}.',
+  html: 'Script-free HTML/CSS section.',
 }
 
 const WIDGET_SOURCE_DESCRIPTORS: Record<AddWidgetSource, string> = {
@@ -465,7 +466,10 @@ export function DashboardEditorPage() {
 
   const pickerCells = pickerNotebook?.cells ?? []
 
-  const pickerValidTypes = validTypesForSource(pickerSource)
+  // REST-only field (the document does not carry it): the picker and drawer
+  // offer the html panel only while the org switch is on.
+  const htmlPanelsEnabled = dashboard?.html_panels_enabled !== false
+  const pickerValidTypes = validTypesForSource(pickerSource, htmlPanelsEnabled)
   const pickerSourceComplete =
     pickerSource === 'cell'
       ? !!pickerNotebookId && !!pickerCellId
@@ -725,13 +729,13 @@ export function DashboardEditorPage() {
                 onChange={(e) => {
                   const source = e.target.value as AddWidgetSource
                   setPickerSource(source)
-                  const valid = validTypesForSource(source)
+                  const valid = validTypesForSource(source, htmlPanelsEnabled)
                   if (!valid.includes(pickerType)) setPickerType(valid[0])
                 }}
               >
                 <option value="cell">Notebook cell</option>
                 <option value="query">Query</option>
-                <option value="none">None — text panel</option>
+                <option value="none">None — text or HTML panel</option>
               </select>
               <span style={styles.pickerHint}>{WIDGET_SOURCE_DESCRIPTORS[pickerSource]}</span>
 
@@ -798,6 +802,7 @@ export function DashboardEditorPage() {
                 <option value="chart" disabled={!pickerValidTypes.includes('chart')}>Chart</option>
                 <option value="metric" disabled={!pickerValidTypes.includes('metric')}>Metric</option>
                 <option value="text" disabled={!pickerValidTypes.includes('text')}>Text</option>
+                <option value="html" disabled={!pickerValidTypes.includes('html')}>HTML panel</option>
               </select>
               <span style={styles.pickerHint}>{WIDGET_TYPE_DESCRIPTORS[pickerType]}</span>
 
@@ -978,6 +983,7 @@ export function DashboardEditorPage() {
           closeOnEscape={!showVariables}
           editingEnabled={editingEnabled}
           docSynced={liveDoc.synced}
+          htmlPanelsEnabled={htmlPanelsEnabled}
           onClose={() => setEditingWidget(null)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
           onDefineVariable={(name, suggestedType) => {
