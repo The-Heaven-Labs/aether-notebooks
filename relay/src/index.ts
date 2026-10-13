@@ -160,6 +160,11 @@ const server = new Server<RelayContext>({
     new Redis({
       host: REDIS_HOST,
       port: REDIS_PORT,
+      // Same hardening as the fan-in subscriber below: the extension's default
+      // client caps command retries, and an exhausted retry budget raises an
+      // unhandled MaxRetriesPerRequestError that kills the whole relay process
+      // on a Redis outage. With no cap, commands queue until Redis returns.
+      options: { maxRetriesPerRequest: null },
     }),
   ],
 
