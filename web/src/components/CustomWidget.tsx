@@ -1,11 +1,11 @@
 import { useCallback, useMemo, useRef, useState } from 'react'
 import type { CSSProperties } from 'react'
 import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
-import { customConfigFrom } from '../utils/customConfig'
 import type { CustomBinding } from '../utils/customConfig'
 import { SandboxedFrame } from './SandboxedFrame'
 import { CustomBindingQuery } from './CustomBindingQuery'
 import type { BindingResult } from './CustomBindingQuery'
+import type { HostMessage } from './sandboxedFrame'
 import type { DashboardAppTheme, OrgBranding, Widget } from '../types'
 
 interface CustomWidgetProps {
@@ -55,7 +55,7 @@ export function CustomWidget({ html, css, js, bindings, enabled = true, widgets,
     return map
   }, [widgets])
 
-  const handleMessage = useCallback((message: { type: string; key?: string }, reply: (m: unknown) => void) => {
+  const handleMessage = useCallback((message: { type: string; key?: string }, reply: (m: HostMessage) => void) => {
     if (message.type === 'ready') {
       reply({
         type: 'init',
