@@ -15,11 +15,13 @@ import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { variablesForChapter } from '../utils/chapterFilters'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { TextWidget } from '../components/TextWidget'
+import { HtmlWidget } from '../components/HtmlWidget'
 import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { textConfigFrom } from '../utils/textConfig'
+import { htmlConfigFrom } from '../utils/htmlConfig'
 import { visibleWidgets, variableDefaults } from '../utils/publicDashboard'
-import { isQueryWidget, isTextPanel } from '../utils/widgetKind'
+import { isHTMLPanel, isQueryWidget, isTextPanel } from '../utils/widgetKind'
 import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
@@ -236,6 +238,21 @@ export function PublicDashboardPage() {
                                   configured defaults so `{{tokens}}` never render raw. */}
                               <TextWidget
                                 markdown={textConfigFrom(widget.config).markdown}
+                                values={publicLive ? undefined : defaults}
+                                variables={variables}
+                              />
+                            </div>
+                          )
+                        }
+
+                        if (isHTMLPanel(widget)) {
+                          return (
+                            <div key={widget.id} style={wrapperStyle}>
+                              {/* Same value sourcing as the text branch above. */}
+                              <HtmlWidget
+                                html={htmlConfigFrom(widget.config).html}
+                                css={htmlConfigFrom(widget.config).css}
+                                enabled={dashboard.html_panels_enabled !== false}
                                 values={publicLive ? undefined : defaults}
                                 variables={variables}
                               />

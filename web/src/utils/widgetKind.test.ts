@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isQueryWidget, isTextPanel, widgetKindLabel } from './widgetKind'
+import { isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from './widgetKind'
 import type { Widget } from '../types'
 
 const base: Widget = {
@@ -28,6 +28,9 @@ describe('widgetKindLabel', () => {
   it('labels cell-linked text cells as cell widgets', () => {
     expect(widgetKindLabel(widget({ type: 'text', notebook_id: 'n1', cell_id: 'k1' }))).toBe('Cell')
   })
+  it('labels source-less html panels', () => {
+    expect(widgetKindLabel(widget({ type: 'html' }))).toBe('Panel')
+  })
 })
 
 describe('isQueryWidget', () => {
@@ -51,5 +54,18 @@ describe('isTextPanel', () => {
   })
   it('rejects a table cell widget', () => {
     expect(isTextPanel(widget({ notebook_id: 'n1', cell_id: 'k1' }))).toBe(false)
+  })
+})
+
+describe('isHTMLPanel', () => {
+  it('accepts a source-less html panel', () => {
+    expect(isHTMLPanel(widget({ type: 'html' }))).toBe(true)
+  })
+  it('rejects a query-backed html widget', () => {
+    expect(isHTMLPanel(widget({ type: 'html', connector_id: 'c1', query: 'SELECT 1' }))).toBe(false)
+  })
+  it('rejects other source-less types', () => {
+    expect(isHTMLPanel(widget({ type: 'text' }))).toBe(false)
+    expect(isHTMLPanel(widget())).toBe(false)
   })
 })

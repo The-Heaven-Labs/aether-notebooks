@@ -10,12 +10,18 @@ export function isTextPanel(widget: Widget): boolean {
   return widget.type === 'text' && !widget.notebook_id && !widget.connector_id
 }
 
+/** True for a source-less html panel: no notebook cell and no query behind it. */
+export function isHTMLPanel(widget: Widget): boolean {
+  return widget.type === 'html' && !widget.notebook_id && !widget.connector_id
+}
+
 /**
- * Label for the editor's widget-kind badge. Source-less text panels are
- * neither query nor cell widgets.
+ * Label for the editor's widget-kind badge. Source-less text and html panels
+ * are neither query nor cell widgets.
  */
-export function widgetKindLabel(widget: Widget): 'Query' | 'Text' | 'Cell' {
+export function widgetKindLabel(widget: Widget): 'Query' | 'Text' | 'Panel' | 'Cell' {
   if (isQueryWidget(widget)) return 'Query'
   if (isTextPanel(widget)) return 'Text'
+  if (isHTMLPanel(widget)) return 'Panel'
   return 'Cell'
 }

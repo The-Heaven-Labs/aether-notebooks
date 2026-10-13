@@ -7,11 +7,12 @@ import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { rescaleWidgetLayouts } from '../utils/dashboardGrid'
 import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPayload'
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
-import { isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
+import { isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
 import { widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
+import { htmlConfigFrom } from '../utils/htmlConfig'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api, ApiError } from '../api/client'
@@ -22,6 +23,7 @@ import { OutputRenderer } from '../components/OutputRenderer'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { WidgetFrame } from '../components/WidgetFrame'
 import { TextWidget } from '../components/TextWidget'
+import { HtmlWidget } from '../components/HtmlWidget'
 import { ErrorBanner } from '../components/ErrorBanner'
 import { GridLayout } from 'react-grid-layout'
 import type { LayoutItem, Layout } from 'react-grid-layout'
@@ -866,6 +868,12 @@ export function DashboardEditorPage() {
                         <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
                       ) : isTextPanel(widget) ? (
                         <TextWidget markdown={textConfigFrom(widget.config).markdown} />
+                      ) : isHTMLPanel(widget) ? (
+                        <HtmlWidget
+                          html={htmlConfigFrom(widget.config).html}
+                          css={htmlConfigFrom(widget.config).css}
+                          enabled={dashboard.html_panels_enabled !== false}
+                        />
                       ) : (
                         <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                       )}
@@ -921,6 +929,12 @@ export function DashboardEditorPage() {
                           <QueryDataWidget dashboardId={id!} widget={widget} canViewWithData={dashboard.can_view_with_data !== false} />
                         ) : isTextPanel(widget) ? (
                           <TextWidget markdown={textConfigFrom(widget.config).markdown} />
+                        ) : isHTMLPanel(widget) ? (
+                          <HtmlWidget
+                            html={htmlConfigFrom(widget.config).html}
+                            css={htmlConfigFrom(widget.config).css}
+                            enabled={dashboard.html_panels_enabled !== false}
+                          />
                         ) : (
                           <WidgetContent widget={widget} editingEnabled={editingEnabled} onConfigSave={saveWidgetConfig} onConfigReset={resetWidgetConfig} />
                         )}
