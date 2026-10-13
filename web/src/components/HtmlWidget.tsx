@@ -61,10 +61,22 @@ export function buildPanelSrcDoc({ html, css, tokens, scheme, origin }: {
   const tokenCss = Object.entries(tokens).map(([k, v]) => `${k}:${v}`).join(';')
   const canvas = scheme === 'dark' ? '#141414' : '#ffffff'
   const text = scheme === 'dark' ? '#e8e8e8' : '#111111'
+  // The frame is its own document, so it inherits none of the app's global
+  // scrollbar styling: re-state it here, themed off the panel's text color
+  // (guaranteed readable on the canvas by the app-theme guardrails) with a
+  // plain gray as the pre-color-mix fallback. `color-scheme` also switches
+  // native chrome (scrollbar base, resize corner) with the panel scheme.
+  const scrollbars = [
+    "*{scrollbar-width:thin;scrollbar-color:#8888 transparent;scrollbar-color:color-mix(in srgb,var(--text-primary,#888) 25%,transparent) transparent}",
+    "*::-webkit-scrollbar{width:7px;height:7px}",
+    "*::-webkit-scrollbar-track{background:transparent}",
+    "*::-webkit-scrollbar-thumb{background:#8888;background:color-mix(in srgb,var(--text-primary,#888) 25%,transparent);border-radius:4px}",
+    "*::-webkit-scrollbar-thumb:hover{background:#888a;background:color-mix(in srgb,var(--text-primary,#888) 45%,transparent)}",
+  ].join('')
   return [
     '<!doctype html><html><head><meta charset="utf-8">',
     `<meta http-equiv="Content-Security-Policy" content="${csp}">`,
-    `<style>:root{${tokenCss}}body{margin:0;background:var(--bg-card,${canvas});color:var(--text-primary,${text});font-family:var(--app-font-family,'DM Sans',system-ui,sans-serif)}</style>`,
+    `<style>:root{color-scheme:${scheme};${tokenCss}}body{margin:0;background:var(--bg-card,${canvas});color:var(--text-primary,${text});font-family:var(--app-font-family,'DM Sans',system-ui,sans-serif)}${scrollbars}</style>`,
     `<style>${safeCss(css)}</style>`,
     `</head><body>${html}</body></html>`,
   ].join('')

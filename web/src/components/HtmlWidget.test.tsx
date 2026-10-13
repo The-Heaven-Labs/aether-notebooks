@@ -83,3 +83,16 @@ describe('HtmlWidget theme fallback (editor preview)', () => {
     expect(doc).toContain('#141414')
   })
 })
+
+describe('panel scrollbars', () => {
+  test('styles thin scrollbars and native color-scheme with the panel scheme', () => {
+    const dark = buildPanelSrcDoc({ html: '<p>x</p>', css: '', tokens: {}, scheme: 'dark', origin: ORIGIN })
+    expect(dark).toContain('color-scheme:dark')
+    expect(dark).toContain('scrollbar-width:thin')
+    expect(dark).toContain('::-webkit-scrollbar-thumb')
+    expect(dark).toContain('color-mix(in srgb,var(--text-primary')
+
+    const light = buildPanelSrcDoc({ html: '<p>x</p>', css: '', tokens: {}, scheme: 'light', origin: ORIGIN })
+    expect(light).toContain('color-scheme:light')
+  })
+})
