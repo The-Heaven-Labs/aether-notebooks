@@ -20,7 +20,7 @@ require (
 	github.com/redis/go-redis/v9 v9.21.0
 	github.com/reearth/ygo v1.51.5
 	github.com/robfig/cron/v3 v3.0.1
-	github.com/shopspring/decimal v1.4.0
+	github.com/shopspring/decimal v1.5.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
 	github.com/swaggo/swag v1.16.6
