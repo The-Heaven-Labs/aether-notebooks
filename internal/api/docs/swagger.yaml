@@ -52,6 +52,11 @@ definitions:
             type: string
         type: object
     type: object
+  api.collabAuthorizeRequest:
+    properties:
+      document_name:
+        type: string
+    type: object
   api.createSessionRequest:
     properties:
       auto_answer_questions:
@@ -70,6 +75,34 @@ definitions:
         type: array
       title:
         type: string
+    type: object
+  api.dashboardVersionSummary:
+    properties:
+      content_hash:
+        type: string
+      created_at:
+        type: string
+      created_by_email:
+        type: string
+      version:
+        type: integer
+    type: object
+  api.dashboardVersionsResponse:
+    properties:
+      draft_hash:
+        type: string
+      has_unpublished_changes:
+        type: boolean
+      latest:
+        $ref: '#/definitions/api.dashboardVersionSummary'
+      versions:
+        items:
+          $ref: '#/definitions/api.dashboardVersionSummary'
+        type: array
+      warnings:
+        items:
+          type: string
+        type: array
     type: object
   api.loginRequest:
     properties:
@@ -471,10 +504,39 @@ definitions:
         type: boolean
       subtitle:
         type: string
+      theme:
+        $ref: '#/definitions/models.DashboardAppTheme'
       title:
         type: string
       width:
         description: '"fixed" | "full"; empty = fixed'
+        type: string
+    type: object
+  models.DashboardAppTheme:
+    properties:
+      accent:
+        type: string
+      background:
+        type: string
+      border:
+        type: string
+      chart_palette:
+        description: <=12 hex colors
+        items:
+          type: string
+        type: array
+      color_scheme:
+        description: auto | light | dark
+        type: string
+      font_family:
+        description: dm-sans | jetbrains-mono | system
+        type: string
+      radius:
+        description: 0..24
+        type: integer
+      surface:
+        type: string
+      text:
         type: string
     type: object
   models.DashboardSettings:
@@ -489,10 +551,23 @@ definitions:
         type: boolean
       query_cache_seconds:
         type: integer
+      tabs:
+        items:
+          $ref: '#/definitions/models.DashboardTab'
+        type: array
       variables:
         items:
           $ref: '#/definitions/models.DashboardVariable'
         type: array
+    type: object
+  models.DashboardTab:
+    properties:
+      id:
+        description: ^[a-z0-9][a-z0-9-]*$, unique, <=64 chars
+        type: string
+      title:
+        description: <=60 runes
+        type: string
     type: object
   models.DashboardVariable:
     properties:
@@ -795,6 +870,8 @@ definitions:
         type: integer
       row:
         type: integer
+      tab:
+        type: string
       width:
         type: integer
     type: object
@@ -1874,13 +1951,44 @@ paths:
       summary: Get public resource
       tags:
       - public
+  /api/v1/public/{token}/attachments/{id}:
+    get:
+      description: Stream an org attachment (app logo) through a public share token
+      parameters:
+      - description: Public sharing token
+        in: path
+        name: token
+        required: true
+        type: string
+      - description: Attachment ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: file
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get public attachment
+      tags:
+      - public
   /api/v1/public/{token}/execute:
     post:
       consumes:
       - application/json
-      description: Runs one query widget of a publicly shared dashboard when settings.public_live
-        is enabled. Queries run as the dashboard creator and are rate-limited per
-        token and client IP.
+      description: Runs one query widget of a publicly shared dashboard when the served
+        content's settings.public_live is enabled (once published, the snapshot's
+        setting governs; an unpublished draft toggle has no effect). Queries run as
+        the dashboard creator and are rate-limited per token and client IP.
       parameters:
       - description: Public sharing token
         in: path
@@ -1923,7 +2031,8 @@ paths:
       consumes:
       - application/json
       description: Executes the query-backed options for a variable of a publicly
-        shared dashboard when settings.public_live is enabled.
+        shared dashboard when the served content's settings.public_live is enabled
+        (once published, the snapshot's setting and variable set govern).
       parameters:
       - description: Public sharing token
         in: path
@@ -2781,12 +2890,19 @@ paths:
       tags:
       - dashboards
     get:
-      description: Get a dashboard with its widgets
+      description: Get a dashboard with its widgets. Viewers without dashboard edit
+        permission always receive the latest published snapshot; editors receive the
+        draft unless published=1 is set.
       parameters:
       - description: Dashboard ID
         in: path
         name: id
         required: true
+        type: string
+      - description: 1 serves the latest published snapshot for everyone (falls back
+          to the draft when the dashboard has never been published)
+        in: query
+        name: published
         type: string
       produces:
       - application/json
@@ -2846,20 +2962,63 @@ paths:
       summary: Update a dashboard
       tags:
       - dashboards
-  /dashboards/{id}/execute:
+  /dashboards/{id}/attachments:
     post:
       consumes:
-      - application/json
-      description: Runs one query widget as the requesting user, interpolating dashboard
-        variables server-side. Results are cached in Redis for the dashboard's query_cache_seconds
-        (default 30, 0 disables).
+      - multipart/form-data
+      description: Upload a file attachment for a dashboard (app logo)
       parameters:
       - description: Dashboard ID
         in: path
         name: id
         required: true
         type: string
-      - description: widget_id, connector_id, variables, bypass_cache
+      - description: File to upload
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload dashboard attachment
+      tags:
+      - attachments
+  /dashboards/{id}/execute:
+    post:
+      consumes:
+      - application/json
+      description: Runs one query widget as the requesting user, interpolating dashboard
+        variables server-side. Results are cached in Redis for the dashboard's query_cache_seconds
+        (default 30, 0 disables). With published=true the widget and variables resolve
+        from the latest published snapshot (404 when the dashboard has never been
+        published; never falls back to the draft).
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: widget_id, connector_id, variables, bypass_cache, published
         in: body
         name: request
         required: true
@@ -2916,6 +3075,40 @@ paths:
       security:
       - BearerAuth: []
       summary: Get dashboard permissions
+      tags:
+      - dashboards
+  /dashboards/{id}/publish:
+    post:
+      description: Snapshot the dashboard's current document (title, settings, widgets)
+        as a new published version
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "422":
+          description: Unprocessable Entity
+          schema:
+            additionalProperties: true
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Publish a dashboard version
       tags:
       - dashboards
   /dashboards/{id}/share:
@@ -3001,7 +3194,9 @@ paths:
       consumes:
       - application/json
       description: Executes the query-backed options for a dashboard variable and
-        returns label/value pairs
+        returns label/value pairs. With published=true the variable resolves from
+        the latest published snapshot (404 when the dashboard has never been published;
+        never falls back to the draft).
       parameters:
       - description: Dashboard ID
         in: path
@@ -3013,7 +3208,7 @@ paths:
         name: name
         required: true
         type: string
-      - description: variables, connector_id (viewer's dashboard selector)
+      - description: variables, connector_id (viewer's dashboard selector), published
         in: body
         name: request
         required: true
@@ -3041,6 +3236,69 @@ paths:
       security:
       - BearerAuth: []
       summary: Run a dashboard variable's options query
+      tags:
+      - dashboards
+  /dashboards/{id}/versions:
+    get:
+      description: List published versions (newest first) and whether the draft has
+        unpublished changes
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/api.dashboardVersionsResponse'
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List dashboard versions
+      tags:
+      - dashboards
+  /dashboards/{id}/versions/{version}/restore:
+    post:
+      description: Copy a published snapshot back into the dashboard draft (does not
+        publish)
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Version number
+        in: path
+        name: version
+        required: true
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: integer
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Restore a dashboard version
       tags:
       - dashboards
   /dashboards/{id}/widgets:
@@ -3734,6 +3992,135 @@ paths:
               type: string
             type: object
       summary: Validate authentication
+      tags:
+      - internal
+  /internal/collab/authorize:
+    post:
+      consumes:
+      - application/json
+      description: Decides whether the caller may edit the dashboard backing a collaborative
+        document; viewers get can_edit=false (internal relay endpoint)
+      parameters:
+      - description: Document name
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/api.collabAuthorizeRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Authorize a collaborative document
+      tags:
+      - internal
+  /internal/dashboard-yjs/{dashboard_id}:
+    get:
+      description: Returns the Yjs document state for a dashboard, lazily seeding
+        it from the dashboards/widgets rows on first access (internal relay endpoint)
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: dashboard_id
+        required: true
+        type: string
+      produces:
+      - application/octet-stream
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get dashboard Yjs document
+      tags:
+      - internal
+    put:
+      consumes:
+      - application/octet-stream
+      description: Merges and stores the Yjs document state for a dashboard, validating
+        the store actor's dashboard edit / notebook view rights (internal relay endpoint)
+      parameters:
+      - description: Dashboard ID
+        in: path
+        name: dashboard_id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+          schema:
+            type: string
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Update dashboard Yjs document
       tags:
       - internal
   /internal/yjs/{notebook_id}:
@@ -5292,6 +5679,36 @@ paths:
       summary: Import a notebook
       tags:
       - notebooks
+  /org/attachments:
+    post:
+      consumes:
+      - multipart/form-data
+      description: Upload an org-scoped file attachment (app logo)
+      parameters:
+      - description: File to upload
+        in: formData
+        name: file
+        required: true
+        type: file
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            additionalProperties: true
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Upload org attachment
+      tags:
+      - attachments
   /org/data-export:
     get:
       description: Get whether CSV/JSON data export is enabled for the organization

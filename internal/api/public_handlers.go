@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -40,6 +42,54 @@ func (s *Server) handlePublicResource(w http.ResponseWriter, r *http.Request) {
 	default:
 		writeError(w, http.StatusNotFound, "unknown resource type")
 	}
+}
+
+// @Summary Get public attachment
+// @Description Stream an org attachment (app logo) through a public share token
+// @Tags public
+// @Produce application/octet-stream
+// @Param token path string true "Public sharing token"
+// @Param id path string true "Attachment ID"
+// @Success 200 {file} binary
+// @Failure 404 {object} map[string]string
+// @Router /api/v1/public/{token}/attachments/{id} [get]
+func (s *Server) handlePublicAttachment(w http.ResponseWriter, r *http.Request) {
+	token := r.PathValue("token")
+	attID := r.PathValue("id")
+	ctx := r.Context()
+
+	if !isValidUUID(attID) {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+
+	// The token's org must own the attachment and public sharing must still be
+	// enabled for that org. Notebook attachments are excluded: the authed route
+	// enforces notebook view on them, and a public token must never become a
+	// bypass around that ACL. Only org/dashboard-scoped files (logos) are
+	// reachable here, and only when they are images: the route serves inline
+	// from the API origin, so a non-image row (e.g. one stored before the
+	// upload guard existed) must never be streamed.
+	var mimeType, filename string
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT a.mime_type, a.filename
+		 FROM attachments a
+		 JOIN public_tokens pt ON pt.org_id = a.org_id
+		 JOIN orgs o ON o.id = pt.org_id
+		 WHERE a.id = $1 AND pt.token = $2 AND o.public_sharing_enabled = true
+		   AND a.notebook_id IS NULL AND a.mime_type LIKE 'image/%'`,
+		attID, token,
+	).Scan(&mimeType, &filename)
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "attachment not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	s.serveAttachment(w, attID, mimeType, filename)
 }
 
 func (s *Server) servePublicNotebook(w http.ResponseWriter, r *http.Request, nbID, orgID string) {

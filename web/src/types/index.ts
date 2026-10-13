@@ -269,6 +269,30 @@ export interface WidgetQueryResult {
   cache_expires_at?: string
 }
 
+export interface DashboardAppTheme {
+  accent?: string
+  background?: string
+  surface?: string
+  text?: string
+  border?: string
+  radius?: number
+  font_family?: 'dm-sans' | 'jetbrains-mono' | 'system'
+  chart_palette?: string[]
+  color_scheme?: 'auto' | 'light' | 'dark'
+}
+
+/**
+ * Org-level branding (`orgs.settings.branding`), served as `org_branding` on
+ * dashboard and public-dashboard responses. Every field is optional; absent
+ * values keep the built-in app defaults.
+ */
+export interface OrgBranding {
+  app_name?: string
+  logo_attachment_id?: string
+  accent_color?: string
+  default_chart_palette?: string[]
+}
+
 export interface DashboardAppSettings {
   title?: string
   subtitle?: string
@@ -278,6 +302,33 @@ export interface DashboardAppSettings {
   show_header?: boolean
   show_refresh?: boolean
   show_last_updated?: boolean
+  theme?: DashboardAppTheme
+}
+
+export interface DashboardTab {
+  id: string
+  title: string
+}
+
+/** One published dashboard snapshot in the version history (summary only). */
+export interface DashboardVersionSummary {
+  version: number
+  created_by_email: string
+  created_at: string
+  content_hash: string
+}
+
+/**
+ * `GET /api/v1/dashboards/{id}/versions` body. `warnings` carries the draft's
+ * widget projection warnings: a non-empty list means publish would refuse the
+ * draft (and forces `has_unpublished_changes` server-side).
+ */
+export interface DashboardVersionsResponse {
+  versions: DashboardVersionSummary[]
+  latest: DashboardVersionSummary | null
+  has_unpublished_changes: boolean
+  draft_hash: string
+  warnings?: string[]
 }
 
 export interface Dashboard {
@@ -291,6 +342,7 @@ export interface Dashboard {
     public_live?: boolean
     variables?: DashboardVariable[]
     app?: DashboardAppSettings
+    tabs?: DashboardTab[]
   }
   public_token?: string
   folder_id?: string
@@ -302,6 +354,21 @@ export interface Dashboard {
   can_edit?: boolean
   can_share?: boolean
   widgets_data?: Record<string, { cell_id: string; source: string; type: string; language: string; outputs: Output[]; metadata?: Record<string, unknown>; updated_at?: string }>
+  /** Org-level branding (served on dashboard + public-dashboard GETs); app-theme fallback. */
+  org_branding?: OrgBranding
+  /**
+   * Set when the response served the latest published snapshot (never on a
+   * draft read); identifies the version and its publish time.
+   */
+  published_version?: { version: number; created_at: string } | null
+}
+
+export interface WidgetLayout {
+  row: number
+  col: number
+  width: number
+  height: number
+  tab?: string
 }
 
 export interface Widget {
@@ -313,7 +380,7 @@ export interface Widget {
   query?: string | null
   language?: string
   type: 'chart' | 'table' | 'text' | 'metric'
-  layout: { row: number; col: number; width: number; height: number }
+  layout: WidgetLayout
   config: Record<string, unknown>
   created_at: string
 }

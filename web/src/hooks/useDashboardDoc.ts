@@ -27,11 +27,17 @@ export const DASHBOARD_TITLE_DEBOUNCE_MS = 400
 export interface UseDashboardDocOptions {
   /**
    * Whether the caller may edit. Mutators are no-ops unless this is true
-   * (default false), so read-only viewers can call the hook safely.
-   * Connecting to the shared document is independent of this flag; pass an
-   * empty `dashboardId` to skip it.
+   * (default false), so read-only viewers can call the hook safely. This is
+   * write intent only — acquisition is controlled by `connect`.
    */
   enabled?: boolean
+  /**
+   * Whether to acquire the shared document (default true). Pass false to skip
+   * the acquire effect entirely — no provider, no subscription — and return
+   * the empty snapshot. Published app views use this so a viewer never
+   * connects to the draft document.
+   */
+  connect?: boolean
 }
 
 export interface DashboardDocSnapshot {
@@ -87,10 +93,16 @@ export function useDashboardDoc(
   const editingRef = useRef(editing)
   useEffect(() => { editingRef.current = editing }, [editing])
 
+  const connect = options.connect ?? true
+
   const [runtime, setRuntime] = useState<AcquiredRuntime | null>(null)
   // The state entry carries its dashboard id so a stale entry from the
-  // previous dashboard never projects while the next one loads.
-  const active = runtime && runtime.dashboardId === dashboardId ? runtime : null
+  // previous dashboard never projects while the next one loads. The `connect`
+  // gate also drops a released entry when the flag flips false: state is only
+  // written on acquire, so without it the hook would keep projecting a
+  // document it no longer subscribes to (latched synced/connected, destroyed
+  // awareness).
+  const active = runtime && connect && runtime.dashboardId === dashboardId ? runtime : null
   const runtimeRef = useRef<AcquiredRuntime | null>(null)
   useEffect(() => { runtimeRef.current = active }, [active])
 
@@ -100,7 +112,7 @@ export function useDashboardDoc(
 
   // ── Acquire / release the shared document ──────────────────────────────────
   useEffect(() => {
-    if (!dashboardId) return
+    if (!dashboardId || !connect) return
     let cancelled = false
     let acquired: AcquiredRuntime | null = null
 
@@ -127,7 +139,7 @@ export function useDashboardDoc(
       }
       acquired.mod.releaseDashboardCollab(dashboardId)
     }
-  }, [dashboardId])
+  }, [dashboardId, connect])
 
   const entry = active?.entry ?? null
   const mod = active?.mod ?? null

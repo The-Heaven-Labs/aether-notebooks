@@ -205,3 +205,92 @@ describe('QueryDataWidget cache semantics', () => {
     expect(bodies[2].bypass_cache).toBe(true)
   })
 })
+
+describe('QueryDataWidget published mode', () => {
+  function captureExecuteBodies(): Array<Record<string, unknown>> {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({
+          outputs: [{ type: 'table', data: { columns: [{ name: 'x', type: 'String' }], rows: [[1]] } }],
+          metrics: {},
+          cached: false,
+        })
+      }),
+    )
+    return bodies
+  }
+
+  function renderPublished(published: boolean) {
+    return renderWithProviders(
+      <DashboardVariablesProvider dashboardId="d1" variables={[]} storageId="qdw-test">
+        <QueryDataWidget dashboardId="d1" widget={widget} canViewWithData published={published} />
+      </DashboardVariablesProvider>,
+      { initialPath: '/d1' },
+    )
+  }
+
+  test('published: true rides the execute body', async () => {
+    const bodies = captureExecuteBodies()
+    renderPublished(true)
+    expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0].published).toBe(true)
+  })
+
+  test('the draft body omits the published key entirely', async () => {
+    const bodies = captureExecuteBodies()
+    renderPublished(false)
+    expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).not.toHaveProperty('published')
+  })
+
+  test('toggling published refetches under its own cache entry', async () => {
+    const bodies = captureExecuteBodies()
+    const view = renderPublished(false)
+    expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+    expect(bodies).toHaveLength(1)
+    expect(bodies[0]).not.toHaveProperty('published')
+
+    view.rerender(
+      <DashboardVariablesProvider dashboardId="d1" variables={[]} storageId="qdw-test">
+        <QueryDataWidget dashboardId="d1" widget={widget} canViewWithData published />
+      </DashboardVariablesProvider>,
+    )
+    await waitFor(() => expect(bodies).toHaveLength(2))
+    expect(bodies[1].published).toBe(true)
+  })
+
+  test('a mode switch shows Loading instead of the other mode’s rows', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/execute', async ({ request }) => {
+        const body = (await request.json()) as Record<string, unknown>
+        bodies.push(body)
+        // The published fetch lags so the placeholder decision is observable.
+        if (body.published) await new Promise((resolve) => setTimeout(resolve, 300))
+        return HttpResponse.json({
+          outputs: [{ type: 'table', data: { columns: [{ name: 'x', type: 'String' }], rows: [[1]] } }],
+          metrics: {},
+          cached: false,
+        })
+      }),
+    )
+    const view = renderPublished(false)
+    expect(await screen.findByText('1 row · 1 column')).toBeInTheDocument()
+
+    view.rerender(
+      <DashboardVariablesProvider dashboardId="d1" variables={[]} storageId="qdw-test">
+        <QueryDataWidget dashboardId="d1" widget={widget} canViewWithData published />
+      </DashboardVariablesProvider>,
+    )
+
+    // The previous frame belongs to the other definition; it must not linger.
+    expect(await screen.findByText('Loading…')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Loading…')).not.toBeInTheDocument())
+    expect(bodies).toHaveLength(2)
+    expect(bodies[1].published).toBe(true)
+  })
+})

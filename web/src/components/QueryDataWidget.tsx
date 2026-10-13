@@ -185,7 +185,7 @@ function NoDataState({ onRun }: { onRun: () => void }) {
   )
 }
 
-export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, viewerConnectorId, endpointBase, onFetchingChange, onFetched, registerRefresher, registerRerunner }: {
+export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEnabled = true, viewerConnectorId, endpointBase, published = false, onFetchingChange, onFetched, registerRefresher, registerRerunner }: {
   dashboardId: string
   widget: Widget
   canViewWithData: boolean
@@ -195,6 +195,12 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
   viewerConnectorId?: string | null
   /** Overrides the execute endpoint base, e.g. `/api/v1/public/{token}`. */
   endpointBase?: string
+  /**
+   * Runs against the latest published snapshot instead of the draft (the
+   * viewer's published app surface). Public pages leave this false — the
+   * server resolves their snapshot itself.
+   */
+  published?: boolean
   /** Reports this widget's fetching state so the dashboard header can show progress. */
   onFetchingChange?: (fetching: boolean) => void
   /** Fires after each successful fetch, so the app masthead's freshness line tracks real data. */
@@ -212,6 +218,7 @@ export function QueryDataWidget({ dashboardId, widget, canViewWithData, queryEna
     enabled: canViewWithData && queryEnabled,
     viewerConnectorId,
     endpointBase,
+    published,
   })
   // Stable identity so OutputRenderer's memo is not defeated by a fresh map on
   // every render. Must stay above the early returns below (rules of hooks).

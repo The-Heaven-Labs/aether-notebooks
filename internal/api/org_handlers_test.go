@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -146,4 +147,131 @@ func TestOrgJoinWithInviteToken(t *testing.T) {
 	json.NewDecoder(joinW.Body).Decode(&joinResp)
 	assert.NotEmpty(t, joinResp["token"])
 	assert.Equal(t, adminOrgID, joinResp["org"].(map[string]interface{})["id"])
+}
+
+// orgBrandingBody mirrors the branding block of GET /org/settings.
+type orgBrandingBody struct {
+	AppName             string   `json:"app_name"`
+	LogoAttachmentID    string   `json:"logo_attachment_id"`
+	AccentColor         string   `json:"accent_color"`
+	DefaultChartPalette []string `json:"default_chart_palette"`
+}
+
+// putOrgSettings PUTs a settings object to /org/settings and returns the recorder.
+func putOrgSettings(t *testing.T, s http.Handler, token string, settings map[string]any) *httptest.ResponseRecorder {
+	t.Helper()
+	body, _ := json.Marshal(settings)
+	req := httptest.NewRequest("PUT", "/api/v1/org/settings", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	return rec
+}
+
+// getOrgBranding fetches /org/settings and returns the branding block (nil when
+// unset) plus the status code.
+func getOrgBranding(t *testing.T, s http.Handler, token string) (*orgBrandingBody, int) {
+	t.Helper()
+	req := httptest.NewRequest("GET", "/api/v1/org/settings", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		return nil, rec.Code
+	}
+	var resp struct {
+		Branding *orgBrandingBody `json:"branding"`
+	}
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&resp))
+	return resp.Branding, rec.Code
+}
+
+func TestOrgBranding(t *testing.T) {
+	// Registration and login are rate-limited per IP in Redis, shared across
+	// test runs; raise the limits like other tests do.
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	t.Setenv("AETHER_RATE_LIMIT_LOGIN", "500")
+	srv := setupTestServerWithAttachDir(t)
+	orgID, token := createTestOrgAndAdmin(t, srv)
+
+	// Branding logos reference an org attachment uploaded through the org route.
+	logoID := uploadOrgAttachment(t, srv, token)
+	// A notebook attachment is not a valid logo reference: the public logo
+	// route can never serve one, so pointing branding at it would render a
+	// broken image (and must not be accepted as an ACL end-run).
+	nbID := createTestNotebook(t, srv, token)
+	nbAttID := uploadTestAttachment(t, srv, token, nbID)
+
+	// Valid branding round-trips through PUT → GET.
+	rec := putOrgSettings(t, srv, token, map[string]any{
+		"branding": map[string]any{
+			"app_name":              "Acme Analytics",
+			"logo_attachment_id":    logoID,
+			"accent_color":          "#7c5cff",
+			"default_chart_palette": []string{"#7c5cff", "#22c55e"},
+		},
+	})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	branding, code := getOrgBranding(t, srv, token)
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, branding)
+	assert.Equal(t, "Acme Analytics", branding.AppName)
+	assert.Equal(t, logoID, branding.LogoAttachmentID)
+	assert.Equal(t, "#7c5cff", branding.AccentColor)
+	assert.Equal(t, []string{"#7c5cff", "#22c55e"}, branding.DefaultChartPalette)
+
+	// A partial PUT that omits branding leaves it in place: the stored settings
+	// merge only touches provided top-level keys, so the typed round-trip is
+	// what keeps branding alive.
+	rec = putOrgSettings(t, srv, token, map[string]any{"audit_retention_days": 30})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	if branding, _ := getOrgBranding(t, srv, token); branding == nil || branding.AccentColor != "#7c5cff" {
+		t.Fatalf("partial PUT wiped branding: %+v", branding)
+	}
+
+	// Invalid branding values are rejected and leave the stored settings alone.
+	palette := make([]string, 13)
+	for i := range palette {
+		palette[i] = "#000000"
+	}
+	invalid := []map[string]any{
+		{"branding": map[string]any{"accent_color": "red"}},
+		{"branding": map[string]any{"default_chart_palette": palette}},
+		{"branding": map[string]any{"default_chart_palette": []string{"#7c5cff", "nope"}}},
+		{"branding": map[string]any{"app_name": strings.Repeat("x", 61)}},
+		{"branding": map[string]any{"logo_attachment_id": "00000000-0000-0000-0000-000000000000"}},
+		{"branding": map[string]any{"logo_attachment_id": "not-a-uuid"}},
+		{"branding": map[string]any{"logo_attachment_id": nbAttID}},
+	}
+	for i, settings := range invalid {
+		if rec := putOrgSettings(t, srv, token, settings); rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid branding case %d: expected 400, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+	if branding, _ := getOrgBranding(t, srv, token); branding == nil || branding.AppName != "Acme Analytics" {
+		t.Fatalf("rejected update changed stored branding: %+v", branding)
+	}
+
+	// Non-admin members can neither write nor read org settings.
+	memberToken := inviteNonAdminMember(t, srv, token, orgID)
+	if rec := putOrgSettings(t, srv, memberToken, map[string]any{"branding": map[string]any{"app_name": "Nope"}}); rec.Code != http.StatusForbidden {
+		t.Fatalf("non-admin PUT: expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, code := getOrgBranding(t, srv, memberToken); code != http.StatusForbidden {
+		t.Fatalf("non-admin GET: expected 403, got %d", code)
+	}
+
+	// `"branding": {}` is the documented clear path: a JSON null is dropped by
+	// the typed struct's omitempty re-marshal and would leave the old value.
+	rec = putOrgSettings(t, srv, token, map[string]any{"branding": map[string]any{}})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	cleared, code := getOrgBranding(t, srv, token)
+	require.Equal(t, http.StatusOK, code)
+	require.NotNil(t, cleared)
+	assert.Empty(t, cleared.AppName)
+	assert.Empty(t, cleared.AccentColor)
+	assert.Empty(t, cleared.LogoAttachmentID)
+	assert.Empty(t, cleared.DefaultChartPalette)
 }

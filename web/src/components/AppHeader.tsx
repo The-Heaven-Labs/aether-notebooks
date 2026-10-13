@@ -22,6 +22,8 @@ interface AppHeaderProps {
   onRefresh: () => void
   /** When set, a back link to this route renders before the title block. */
   backTo?: string
+  /** App logo image URL; renders before the title block when set. */
+  logoUrl?: string
   /** Right-side actions (Edit, Share, connector selector, …). */
   children?: ReactNode
 }
@@ -42,6 +44,7 @@ export function AppHeader({
   refreshing,
   onRefresh,
   backTo,
+  logoUrl,
   children,
 }: AppHeaderProps) {
   return (
@@ -60,6 +63,10 @@ export function AppHeader({
           >
             <ArrowLeft size={16} />
           </Link>
+        )}
+        {logoUrl && (
+          // Decorative: the adjacent h1 announces the app name.
+          <img src={logoUrl} alt="" style={styles.logo} />
         )}
         {title && (
           <div style={styles.titleBlock}>
@@ -110,6 +117,14 @@ const styles: Record<string, CSSProperties> = {
     maxWidth: APP_CONTENT_MAX_WIDTH,
     margin: '0 auto',
   },
+  // The app's own mark, sized to sit quietly beside the title block.
+  logo: {
+    height: 24,
+    maxWidth: 160,
+    objectFit: 'contain',
+    flexShrink: 0,
+    display: 'block',
+  },
   // 36×36: the app surface's ≥36px tap-target rule (The Story).
   backLink: {
     display: 'inline-flex',
@@ -127,7 +142,10 @@ const styles: Record<string, CSSProperties> = {
     flexDirection: 'column',
     gap: 2,
     flex: 1,
-    minWidth: 0,
+    // A floor so a wide action row (e.g. draft preview's LIVE + DRAFT PREVIEW +
+    // View published) wraps the masthead instead of crushing the title to an
+    // ellipsis. Kept small enough that ordinary rows stay single-line.
+    minWidth: 220,
   },
   title: {
     margin: 0,

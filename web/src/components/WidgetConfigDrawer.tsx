@@ -293,6 +293,12 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const [connectorId, setConnectorId] = useState<string | null>(widget.connector_id ?? null)
   const [query, setQuery] = useState(widget.query ?? '')
   const [widgetType, setWidgetType] = useState<Widget['type']>(widget.type)
+  // Placement: "" is the first tab (layout.tab absent). The select's value is
+  // derived per render so a tab deleted while the drawer is open falls back to
+  // the default instead of showing a stale id.
+  const tabs = dashboard.settings?.tabs ?? []
+  const [tab, setTab] = useState(widget.layout?.tab ?? '')
+  const selectedTab = tab && tabs.some((t) => t.id === tab) ? tab : ''
   const [saveError, setSaveError] = useState<string | null>(null)
   // The latest saved config. The `widget` prop is a snapshot, so merging every
   // field edit into this (instead of `widget.config`) keeps sequential saves
@@ -497,6 +503,27 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
     saveTableColumn(name, next)
   }
 
+  // Placement lives in the widget's layout: doc-bound drawers write the tab
+  // straight to the shared document (the relay persists it); the unbound
+  // fallback sends the full layout so the grid fields survive the PUT.
+  const saveTab = (next: string) => {
+    if (!editingEnabled) return
+    setTab(next)
+    if (sqlCollab) {
+      void import('./dashboardCollabRuntime').then(({ setWidgetTab }) => {
+        setWidgetTab(sqlCollab.collab, widget.id, next)
+        setSaveError(null)
+      }).catch((e: unknown) => setSaveError(e instanceof Error ? e.message : 'Failed to save widget tab'))
+      return
+    }
+    api.put(`/api/v1/dashboards/${dashboardId}/widgets/${widget.id}`, {
+      layout: { ...widget.layout, tab: next },
+    }).then(() => {
+      setSaveError(null)
+      onSaved()
+    }).catch((e: unknown) => setSaveError(e instanceof Error ? e.message : 'Failed to save widget tab'))
+  }
+
   const runQuery = useCallback(async (bypassCache: boolean) => {
     setRunning(true)
     setRunError(null)
@@ -653,6 +680,26 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             <option value="metric">Metric</option>
             <option value="text">Text</option>
           </select>
+
+          {/* Placement is a chapter control: nothing to choose without tabs. */}
+          {tabs.length > 0 && (
+            <>
+              <label style={styles.sectionLabel} htmlFor="widget-tab">Placement</label>
+              <select
+                id="widget-tab"
+                aria-label="Placement"
+                style={styles.select}
+                value={selectedTab}
+                disabled={!editingEnabled}
+                onChange={(e) => saveTab(e.target.value)}
+              >
+                <option value="">First tab (default)</option>
+                {tabs.map((t) => (
+                  <option key={t.id} value={t.id}>{t.title}</option>
+                ))}
+              </select>
+            </>
+          )}
 
           {widgetType === 'metric' && (
             <>

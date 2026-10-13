@@ -12,9 +12,21 @@ type Org struct {
 }
 
 type OrgSettings struct {
-	DefaultQueryTimeout int `json:"default_query_timeout_seconds,omitempty"`
-	DefaultMaxRows      int `json:"default_max_rows,omitempty"`
-	AuditRetentionDays  int `json:"audit_retention_days,omitempty"`
+	DefaultQueryTimeout int          `json:"default_query_timeout_seconds,omitempty"`
+	DefaultMaxRows      int          `json:"default_max_rows,omitempty"`
+	AuditRetentionDays  int          `json:"audit_retention_days,omitempty"`
+	Branding            *OrgBranding `json:"branding,omitempty"`
+}
+
+// OrgBranding is the org-level theming that app surfaces fall back to when the
+// dashboard has no (or a partial) app theme. Every field is optional; absent
+// values keep the built-in defaults. LogoAttachmentID references an
+// org-scoped attachment (POST /org/attachments).
+type OrgBranding struct {
+	AppName             string   `json:"app_name,omitempty"`
+	LogoAttachmentID    string   `json:"logo_attachment_id,omitempty"`
+	AccentColor         string   `json:"accent_color,omitempty"`
+	DefaultChartPalette []string `json:"default_chart_palette,omitempty"`
 }
 
 type OrgMember struct {

@@ -16,7 +16,7 @@ import type { Dashboard, DashboardVariable, Widget } from '../types'
  *   meta     Y.Map { title: string, settings: Y.Map, variables: Y.Array<Y.Map> }
  *   widgets  Y.Map<widgetId, Y.Map { type, connector_id, language, notebook_id,
  *            cell_id (strings, "" = unset), config: JSON string,
- *            layout: Y.Map { row, col, width, height }, query: Y.Text }>
+ *            layout: Y.Map { row, col, width, height, tab? }, query: Y.Text }>
  *
  * Relay document name: `dashboard:{id}`.
  */
@@ -181,12 +181,16 @@ export function projectDashboardDoc(doc: Y.Doc, dashboardId: string): DashboardD
 
 function projectLayout(value: unknown): Widget['layout'] {
   const lm = value instanceof Y.Map ? value : null
-  return {
+  const layout: Widget['layout'] = {
     row: layoutNumber(lm?.get('row')),
     col: layoutNumber(lm?.get('col')),
     width: layoutNumber(lm?.get('width')),
     height: layoutNumber(lm?.get('height')),
   }
+  const tab = lm?.get('tab')
+  // Go's readLayout treats a tab over 64 chars as unset; mirror it.
+  if (typeof tab === 'string' && tab !== '' && tab.length <= 64) layout.tab = tab
+  return layout
 }
 
 function layoutNumber(value: unknown): number {
@@ -227,8 +231,10 @@ function setIfChanged(map: Y.Map<unknown>, key: string, value: unknown): void {
 }
 
 /**
- * Moves/resizes a widget. Each layout field is its own key so moving widget A
- * and resizing widget B merge instead of overwriting each other.
+ * Moves/resizes a widget and replaces its tab placement. Each layout field is
+ * its own key so moving widget A and resizing widget B merge instead of
+ * overwriting each other; an empty/absent tab removes the key (first-tab
+ * fallback), matching UpdateLayout on the Go side.
  */
 export function updateWidgetLayout(collab: DashboardCollab, widgetId: string, layout: Widget['layout']): void {
   const wm = getWidgetMap(collab.doc, widgetId)
@@ -241,6 +247,32 @@ export function updateWidgetLayout(collab: DashboardCollab, widgetId: string, la
     setIfChanged(layoutMap, 'col', layout.col)
     setIfChanged(layoutMap, 'width', layout.width)
     setIfChanged(layoutMap, 'height', layout.height)
+    const tab = layout.tab ?? ''
+    if (tab !== '') {
+      setIfChanged(layoutMap, 'tab', tab)
+    } else if (layoutMap.has('tab')) {
+      layoutMap.delete('tab')
+    }
+  })
+}
+
+/**
+ * Moves a widget to a tab, preserving its grid fields. Reads the current
+ * layout from the document (a caller's `widget` prop may be a stale snapshot)
+ * and writes everything in one transaction; an empty tab removes the key so
+ * the widget falls back to the first tab.
+ */
+export function setWidgetTab(collab: DashboardCollab, widgetId: string, tab: string): void {
+  const wm = getWidgetMap(collab.doc, widgetId)
+  if (!wm) return
+  const current = wm.get('layout')
+  const lm = current instanceof Y.Map ? (current as Y.Map<unknown>) : null
+  updateWidgetLayout(collab, widgetId, {
+    row: layoutNumber(lm?.get('row')),
+    col: layoutNumber(lm?.get('col')),
+    width: layoutNumber(lm?.get('width')),
+    height: layoutNumber(lm?.get('height')),
+    tab,
   })
 }
 

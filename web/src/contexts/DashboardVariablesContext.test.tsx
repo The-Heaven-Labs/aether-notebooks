@@ -140,6 +140,35 @@ describe('DashboardVariablesContext', () => {
     expect(bodies[1].connector_id).toBe('conn-2')
   })
 
+  test('options request carries published only in published mode, reloading on a mode switch', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.post('/api/v1/dashboards/d1/variables/city/options', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return HttpResponse.json({ options: [{ label: 'Paris', value: 'paris' }] })
+      }),
+    )
+    let published = false
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <MemoryRouter initialEntries={['/dash/d1']}>
+        <DashboardVariablesProvider dashboardId="d1" variables={[countryVar, cityVar]} published={published}>
+          {children}
+        </DashboardVariablesProvider>
+      </MemoryRouter>
+    )
+    const { rerender } = renderHook(() => useDashboardVariables(), { wrapper })
+
+    await waitFor(() => expect(bodies.length).toBe(1), { timeout: 3000 })
+    expect(bodies[0]).not.toHaveProperty('published')
+
+    // The published snapshot and the draft can define different option
+    // queries, so a mode switch reloads under the new mode.
+    published = true
+    rerender()
+    await waitFor(() => expect(bodies.length).toBe(2), { timeout: 3000 })
+    expect(bodies[1].published).toBe(true)
+  })
+
   test('exposes loading and error state for failed option queries', async () => {
     server.use(
       http.post('/api/v1/dashboards/d1/variables/city/options', async () => {
@@ -252,6 +281,41 @@ describe('DashboardVariablesContext', () => {
     expect(state.values!.region).toBe('EMEA')
     expect(state.values!.sel).toEqual(['A', 'B'])
     expect(state.params!.toString()).toBe('')
+  })
+
+  test('variable changes preserve unrelated URL params', () => {
+    const vars: DashboardVariable[] = [
+      { name: 'region', type: 'text', default: 'EMEA' },
+      { name: 'sel', type: 'multi_select', default: ['A', 'B'] },
+    ]
+    const state: { setValue?: (name: string, value: unknown) => void; resetAll?: () => void; params?: URLSearchParams } = {}
+    function Probe() {
+      const { setValue, resetAll } = useDashboardVariables()
+      const [sp] = useSearchParams()
+      state.setValue = setValue
+      state.resetAll = resetAll
+      state.params = sp
+      return null
+    }
+    render(
+      <MemoryRouter initialEntries={['/dash/d1?tab=orders&keep=1']}>
+        <DashboardVariablesProvider dashboardId="d1" variables={vars}>
+          <Probe />
+        </DashboardVariablesProvider>
+      </MemoryRouter>,
+    )
+
+    // The App surface keeps the active chapter in `?tab=`; a filter change
+    // must rebuild only the variable keys, not the whole query string.
+    act(() => state.setValue!('region', 'AMER'))
+    expect(state.params!.get('region')).toBe('AMER')
+    expect(state.params!.get('tab')).toBe('orders')
+    expect(state.params!.get('keep')).toBe('1')
+
+    act(() => state.resetAll!())
+    expect(state.params!.has('region')).toBe(false)
+    expect(state.params!.get('tab')).toBe('orders')
+    expect(state.params!.get('keep')).toBe('1')
   })
 })
 

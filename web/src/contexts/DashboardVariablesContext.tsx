@@ -109,7 +109,7 @@ function serializeValue(v: DashboardVariable, value: unknown): string[] {
   }
 }
 
-export function DashboardVariablesProvider({ dashboardId, variables, children, endpointBase, storageId, viewerConnectorId }: {
+export function DashboardVariablesProvider({ dashboardId, variables, children, endpointBase, storageId, viewerConnectorId, published = false }: {
   dashboardId: string
   variables: DashboardVariable[]
   children: React.ReactNode
@@ -119,6 +119,12 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
   storageId?: string
   /** Viewer's dashboard connector selection, forwarded to query-backed option loads. */
   viewerConnectorId?: string | null
+  /**
+   * Resolve query-backed options from the latest published snapshot instead
+   * of the draft (the viewer's published app surface). Public pages leave
+   * this false — the server resolves their snapshot itself.
+   */
+  published?: boolean
 }) {
   const storageNamespace = storageId ?? dashboardId
   const optionsBase = endpointBase ?? `/api/v1/dashboards/${dashboardId}`
@@ -138,14 +144,20 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
 
   const persist = useCallback((next: Record<string, unknown>) => {
     try { localStorage.setItem(storageKey(storageNamespace), JSON.stringify(next)) } catch { /* ignore quota */ }
-    const params = new URLSearchParams()
-    for (const v of variables) {
-      const serialized = serializeValue(v, next[v.name])
-      // Defaults are omitted from the URL; anything else (including an
-      // explicit "(none)") is encoded so shared links reproduce this view.
-      if (!isVariableDefault(v, next[v.name])) serialized.forEach(s => params.append(v.name, s))
-    }
-    setSearchParams(params, { replace: true })
+    // Rebuild only the variable keys onto the params already in the URL:
+    // unrelated params (e.g. the App surface's `?tab=`) must survive a filter
+    // change instead of being dropped.
+    setSearchParams(prev => {
+      const params = new URLSearchParams(prev)
+      for (const v of variables) {
+        params.delete(v.name)
+        const serialized = serializeValue(v, next[v.name])
+        // Defaults are omitted from the URL; anything else (including an
+        // explicit "(none)") is encoded so shared links reproduce this view.
+        if (!isVariableDefault(v, next[v.name])) serialized.forEach(s => params.append(v.name, s))
+      }
+      return params
+    }, { replace: true })
   }, [storageNamespace, variables, setSearchParams])
 
   const setValue = useCallback((name: string, value: unknown) => {
@@ -216,18 +228,25 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     try {
       const resp = await api.post<{ options: DashboardVariableOption[] }>(
         `${optionsBase}/variables/${name}/options`,
-        { variables: valuesRef.current, connector_id: viewerConnectorId ?? undefined },
+        {
+          variables: valuesRef.current,
+          connector_id: viewerConnectorId ?? undefined,
+          // Only a published read claims the mode; the draft omits the key so
+          // the server resolves the live definitions.
+          ...(published ? { published: true } : {}),
+        },
       )
       setOptionState(prev => ({ ...prev, [name]: { options: resp.options, loading: false, error: null, reload: () => { void loadOptions(name) } } }))
     } catch (e) {
       const message = e instanceof Error ? e.message : 'Failed to load options'
       setOptionState(prev => ({ ...prev, [name]: { options: [], loading: false, error: message, reload: () => { void loadOptions(name) } } }))
     }
-  }, [optionsBase, viewerConnectorId])
+  }, [optionsBase, viewerConnectorId, published])
 
   // Reload query-backed options on mount and whenever a dependency changes,
   // including the viewer's connector selection (options must agree with the
-  // service that widget execution will use).
+  // service that widget execution will use) and the published/draft mode (the
+  // snapshot and the draft can define different option queries).
   const depSignature = JSON.stringify(variables.map(v => ({
     name: v.name,
     deps: (v.depends_on ?? []).map(d => [d, values[d]]),
@@ -240,7 +259,7 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     }, 300)
     return () => clearTimeout(timer)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [depSignature, viewerConnectorId])
+  }, [depSignature, viewerConnectorId, published])
 
   // Seed static options so controls render immediately.
   const optionStateWithStatic = useMemo(() => {

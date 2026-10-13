@@ -1,20 +1,24 @@
 import { useEffect, useRef, useState, useCallback, useLayoutEffect, useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
-import { Loader2, Pencil, Settings, Globe, RefreshCw } from 'lucide-react'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
+import { Loader2, Pencil, Settings, Globe, RefreshCw, Eye } from 'lucide-react'
 import { ShareModal } from '../components/ShareModal'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, getToken } from '../api/client'
+import { getApiUrl } from '../config'
 import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { AppShell } from '../components/AppShell'
 import { AppHeader, APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
+import { AppThemeProvider } from '../components/AppThemeProvider'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
 import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
+import { AppTabs, appTabButtonId, appTabPanelId, EmptyChapter } from '../components/AppTabs'
+import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { isTextPanel } from '../utils/widgetKind'
@@ -236,6 +240,12 @@ function WidgetCard({ widget, qc, widgetsData, dashboardId, onEdit, onFetchingCh
 function DashboardContent({ id }: { id: string }) {
   const qc = useQueryClient()
   const { user } = useAuth()
+  // The active chapter rides the URL (`?tab=`) so shared links and reloads
+  // land on the same tab.
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Editors opt into the draft with `?preview=draft`; the default view is the
+  // published app.
+  const previewRequested = searchParams.get('preview') === 'draft'
   const userEmail = localStorage.getItem('aether_user_email') ?? ''
   const { selected, suggestion, select, resolving } = useDashboardConnector(id, user?.user_id ?? '')
   // The live default (viewer's sole warehouse preference) is preselected;
@@ -275,18 +285,43 @@ function DashboardContent({ id }: { id: string }) {
     }
   })
 
+  // The published snapshot and the draft are distinct server reads, so they
+  // get distinct cache entries: switching modes must never serve the other
+  // mode's rows while the fetch is in flight.
   const { data: dashboard, isLoading, error } = useQuery({
-    queryKey: ['dashboard', id],
-    queryFn: () => api.get<DashboardWithWidgets>(`/api/v1/dashboards/${id}`),
+    queryKey: ['dashboard', id, previewRequested ? 'draft' : 'published'],
+    queryFn: () => api.get<DashboardWithWidgets>(
+      // `?published=1` asks for the latest snapshot; the plain fetch serves
+      // editors the draft (viewers always get the snapshot server-side).
+      previewRequested ? `/api/v1/dashboards/${id}` : `/api/v1/dashboards/${id}?published=1`,
+    ),
     enabled: !!id,
   })
 
-  // Live dashboard document: connects as soon as the page mounts and becomes
-  // the source of truth for title/settings/widgets once synced. The viewer is
-  // read-only (mutators stay disabled); when the relay is unreachable the
-  // document never syncs and the REST snapshot keeps painting the page.
-  const liveDoc = useDashboardDoc(id)
-  const liveTitle = liveDoc.synced && liveDoc.title ? liveDoc.title : (dashboard?.title ?? '')
+  // A response that served the published snapshot identifies it; the surface
+  // then renders entirely from REST and never subscribes to the draft doc.
+  const published = dashboard?.published_version != null
+  const canEdit = dashboard?.can_edit === true
+  // Editors asking for `?preview=draft` get the draft; a viewer without edit
+  // is served the snapshot anyway, so the flag is a no-op for them.
+  const draftPreview = canEdit && previewRequested && !published
+
+  // Live dashboard document: the source of truth for title/settings/widgets
+  // once synced. Only the response identifies a published snapshot, so the
+  // document is not acquired until it arrives — a pre-response connect would
+  // subscribe to the draft doc (and a viewer is denied by the relay once a
+  // version exists, noisily). Published views never connect; draft previews
+  // keep the #245 behavior, read-only for non-editors. When the relay is
+  // unreachable the document never syncs and the REST snapshot keeps painting
+  // the page.
+  const liveDoc = useDashboardDoc(id, {
+    enabled: canEdit && !published,
+    connect: !!dashboard && !published,
+  })
+  // The document only wins when this surface is not serving a published
+  // snapshot — a published view must never merge draft state.
+  const liveSynced = liveDoc.synced && !published
+  const liveTitle = liveSynced && liveDoc.title ? liveDoc.title : (dashboard?.title ?? '')
 
   // Per-widget fetch state, reported by the widgets themselves, so the header
   // can show one honest refreshing signal instead of a button that goes
@@ -403,27 +438,53 @@ function DashboardContent({ id }: { id: string }) {
   // document fields, so doc widgets inherit `created_at` from their REST rows.
   const widgets = useMemo<AnyWidget[]>(() => {
     const rest = dashboard?.widgets ?? []
-    if (!liveDoc.synced) return rest as AnyWidget[]
+    if (!liveSynced) return rest as AnyWidget[]
     const restById = new Map(rest.map(w => [w.id, w]))
     return liveDoc.widgets.map(w => {
       const restWidget = restById.get(w.id)
       return (restWidget?.created_at ? { ...w, created_at: restWidget.created_at } : w) as AnyWidget
     })
-  }, [liveDoc.synced, liveDoc.widgets, dashboard?.widgets])
+  }, [liveSynced, liveDoc.widgets, dashboard?.widgets])
 
   // Live-merged settings: the document is authoritative for title, settings,
   // and variables once synced. `can_*` flags and cell outputs (`widgets_data`)
   // are not document fields and stay on the REST row.
   const settings = useMemo(
-    () => (liveDoc.synced
+    () => (liveSynced
       ? { ...(dashboard?.settings ?? {}), ...liveDoc.settings, variables: liveDoc.variables }
       : dashboard?.settings),
-    [liveDoc.synced, liveDoc.settings, liveDoc.variables, dashboard?.settings],
+    [liveSynced, liveDoc.settings, liveDoc.variables, dashboard?.settings],
   )
+
+  // Chapters: `settings.tabs` arrives with the dashboard response (draft or
+  // published snapshot). No tabs means a single implicit chapter holding every
+  // widget, so the render path below stays uniform.
+  const tabs = settings?.tabs ?? NO_TABS
+  const requestedTab = searchParams.get('tab')
+  const activeTab = activeTabId(tabs, requestedTab)
+  // One grid per chapter: every widget resolves to exactly one chapter (an
+  // empty or unknown tab falls back to the first), and a chapter's items feed
+  // only its own grid — no shared coordinate space, and each chapter compacts
+  // independently. All chapters stay mounted so refreshers stay registered.
+  const chapters = useMemo(() => {
+    if (tabs.length === 0) return [{ tabId: null as string | null, widgets }]
+    return tabs.map((tab) => ({
+      tabId: tab.id as string | null,
+      widgets: widgets.filter((w) => widgetTabId(w, tabs) === tab.id),
+    }))
+  }, [tabs, widgets])
+  // Replacing (not pushing) keeps tab switches out of the back stack, like
+  // the filter strip's own URL writes.
+  const handleTabChange = useCallback((tabId: string) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev)
+      next.set('tab', tabId)
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
 
   // Grid density and the refresh cadence are persisted dashboard settings, so
   // they are edit actions — viewers don't get to restyle the shared board.
-  const canEdit = dashboard?.can_edit === true
   const autoRefreshSecs = settings?.auto_refresh_seconds ?? 0
   const PRESET_REFRESH = [0, 30, 60, 300, 600]
   const customRefreshText = refreshCustom && refreshSeconds > 0 ? ` — ${refreshSeconds}s` : ''
@@ -458,7 +519,7 @@ function DashboardContent({ id }: { id: string }) {
   // so this diffs per-widget run signatures against baselines seeded on the
   // first sync (the REST → doc takeover itself must not re-run anything).
   useEffect(() => {
-    if (!liveDoc.synced) {
+    if (!liveSynced) {
       // REST still paints the page; drop baselines so the handover seeds
       // fresh ones instead of diffing against stale state.
       widgetRunBaselinesRef.current = null
@@ -490,7 +551,7 @@ function DashboardContent({ id }: { id: string }) {
     for (const widgetId of widgetsReferencingTokens(widgets, variableDiff.tokens)) {
       runDebouncer.schedule(widgetId)
     }
-  }, [liveDoc.synced, liveDoc.widgets, liveDoc.variables, widgets, dashboard?.can_view_with_data, id, qc, runDebouncer])
+  }, [liveSynced, liveDoc.widgets, liveDoc.variables, widgets, dashboard?.can_view_with_data, id, qc, runDebouncer])
 
   if (isLoading) {
     return (
@@ -523,8 +584,33 @@ function DashboardContent({ id }: { id: string }) {
     ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
     : undefined
 
+  // The dashboard logo wins over the org fallback. The authed attachment route
+  // needs credentials an <img> cannot send as a header, so the session JWT
+  // rides the query string (the auth middleware accepts ?token= for these).
+  // The runtime API base is prefixed so split-origin deployments resolve it.
+  const logoAttachmentId = app?.logo_attachment_id || dashboard.org_branding?.logo_attachment_id
+  const sessionToken = getToken()
+  const logoUrl = logoAttachmentId
+    ? `${getApiUrl()}/api/v1/attachments/${logoAttachmentId}${sessionToken ? `?token=${encodeURIComponent(sessionToken)}` : ''}`
+    : undefined
+
+  // Mode-toggle links preserve the rest of the query string (`?tab=`,
+  // variable pins) so switching modes never resets the reader's place.
+  const previewSearch = (() => {
+    const params = new URLSearchParams(searchParams)
+    params.set('preview', 'draft')
+    return `?${params.toString()}`
+  })()
+  const publishedSearch = (() => {
+    const params = new URLSearchParams(searchParams)
+    params.delete('preview')
+    const rest = params.toString()
+    return rest ? `?${rest}` : ''
+  })()
+
   return (
-    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId}>
+    <AppThemeProvider theme={app?.theme} branding={dashboard.org_branding}>
+    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId} published={published}>
     <AppShell noPadding bare>
       {!showMasthead && <h1 className="sr-only">{appTitle}</h1>}
       <AppHeader
@@ -537,22 +623,47 @@ function DashboardContent({ id }: { id: string }) {
         refreshing={refreshingCount > 0 || isRunningAll}
         onRefresh={() => executeAllWidgets(widgets)}
         backTo="/dashboards"
+        logoUrl={logoUrl}
       >
         {/* Presence + live state: avatars come from the document's awareness
-            and the indicator lights while the relay is connected. When the
-            relay is unavailable nothing renders here and the page keeps
-            serving the REST snapshot. */}
+            and the indicator lights while the relay is connected. A published
+            view never connects, so nothing renders here. When the relay is
+            unavailable nothing renders here and the page keeps serving the
+            REST snapshot. */}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
           <CollaboratorAvatars
-            awareness={liveDoc.awareness}
+            awareness={published ? null : liveDoc.awareness}
             currentUserEmail={userEmail}
           />
-          {liveDoc.connected && (
+          {!published && liveDoc.connected && (
             <span style={styles.liveIndicator} title="Live updates from collaborators">
               <span style={styles.liveDot} /> Live
             </span>
           )}
         </span>
+          {/* Published/draft mode: the badge marks a draft preview and the
+              link is the way back to (or into) the published app. Editors
+              only — viewers never get the draft. */}
+          {draftPreview && <span style={styles.draftChip}>Draft preview</span>}
+          {canEdit && (published || draftPreview) && (
+            draftPreview ? (
+              <Link
+                to={{ search: publishedSearch }}
+                className="app-action"
+                title="Back to the published app"
+              >
+                <Eye size={12} /> View published
+              </Link>
+            ) : (
+              <Link
+                to={{ search: previewSearch }}
+                className="app-action"
+                title="Preview unpublished draft changes"
+              >
+                <Eye size={12} /> Preview draft
+              </Link>
+            )
+          )}
           {/* Per-viewer connector selection: query widgets in the same
               warehouse run on the selected service; others keep their own.
               allowClear is off while a live default exists — clearing would
@@ -588,8 +699,11 @@ function DashboardContent({ id }: { id: string }) {
           )}
 
           {/* Auto-refresh persists dashboard settings, so it is an editing
-              control and rides the masthead only for editors. */}
-          {canEdit && <div style={{ position: 'relative', display: 'inline-flex' }}>
+              control that only belongs on the draft surface: in published mode
+              `settings` is the snapshot, and a wholesale write would merge
+              snapshot tabs/theme/variables back into the draft. The interval
+              itself still runs from the snapshot's cadence. */}
+          {canEdit && !published && <div style={{ position: 'relative', display: 'inline-flex' }}>
             <select
               style={styles.actionSelect}
               value={refreshCustom ? 'custom' : String(refreshSeconds)}
@@ -619,7 +733,7 @@ function DashboardContent({ id }: { id: string }) {
               <polyline points="1,1 5,5 9,1" />
             </svg>
           </div>}
-          {canEdit && refreshCustom && (
+          {canEdit && !published && refreshCustom && (
             <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
               <input
                 type="text"
@@ -645,6 +759,16 @@ function DashboardContent({ id }: { id: string }) {
           )}
       </AppHeader>
 
+      {/* Chapter tablist (The Story): the dashboard's tabs under the masthead;
+          hidden entirely when no tabs are defined. */}
+      {tabs.length > 0 && (
+        <div className="app-tabs">
+          <div style={contentWidth}>
+            <AppTabs tabs={tabs} activeId={activeTab} onChange={handleTabChange} />
+          </div>
+        </div>
+      )}
+
       {/* Quiet filter strip: the variable bar loses its panel chrome inside
           (see .app-filter-strip) and is constrained to the masthead width. */}
       {variables.length > 0 && (
@@ -665,42 +789,60 @@ function DashboardContent({ id }: { id: string }) {
           />
         ) : widgets.length === 0 ? null : (
           <div ref={gridRef}>
-            <GridLayout
-              layout={widgets.map(toGridItem)}
-              width={containerWidth}
-              gridConfig={{ cols: settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
-              dragConfig={{ enabled: false }}
-              resizeConfig={{ enabled: false }}
-              style={{ minHeight: 240 }}
-            >
-              {widgets.map((widget) => (
-                <WidgetFrame key={widget.id} appearance={appearanceFrom(widget.config)}>
-                  {isQueryWidget(widget) ? (
-                    <QueryDataWidget
-                      dashboardId={dashboard.id}
-                      widget={widget}
-                      canViewWithData={dashboard.can_view_with_data !== false}
-                      queryEnabled={selected != null || !resolving}
-                      viewerConnectorId={viewerConnectorId}
-                      onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
-                      onFetched={() => setLastFetchedAt(new Date())}
-                      registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
-                      registerRerunner={(fn) => registerWidgetRerun(widget.id, fn)}
-                    />
-                  ) : isTextPanel(widget) ? (
-                    <TextWidget markdown={textConfigFrom(widget.config).markdown} />
-                  ) : (
-                    <WidgetCard
-                      widget={widget}
-                      qc={qc}
-                      widgetsData={dashboard.widgets_data}
-                      dashboardId={id}
-                      onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
-                    />
-                  )}
-                </WidgetFrame>
-              ))}
-            </GridLayout>
+            {chapters.map(({ tabId, widgets: chapterWidgets }) => (
+              <div
+                key={tabId ?? '__all__'}
+                id={tabId ? appTabPanelId(tabId) : undefined}
+                role={tabId ? 'tabpanel' : undefined}
+                aria-labelledby={tabId ? appTabButtonId(tabId) : undefined}
+                // Inactive chapters stay mounted (their refreshers stay
+                // registered and their data loads in one pass) but are hidden
+                // from view.
+                style={tabId !== null && tabId !== activeTab ? { display: 'none' } : undefined}
+              >
+                {chapterWidgets.length === 0 ? (
+                  <EmptyChapter />
+                ) : (
+                  <GridLayout
+                    layout={chapterWidgets.map(toGridItem)}
+                    width={containerWidth}
+                    gridConfig={{ cols: settings?.grid_cols ?? 12, rowHeight: 30, margin: [4, 4] }}
+                    dragConfig={{ enabled: false }}
+                    resizeConfig={{ enabled: false }}
+                    style={{ minHeight: 240 }}
+                  >
+                    {chapterWidgets.map((widget) => (
+                      <WidgetFrame key={widget.id} appearance={appearanceFrom(widget.config)}>
+                        {isQueryWidget(widget) ? (
+                          <QueryDataWidget
+                            dashboardId={dashboard.id}
+                            widget={widget}
+                            canViewWithData={dashboard.can_view_with_data !== false}
+                            queryEnabled={selected != null || !resolving}
+                            viewerConnectorId={viewerConnectorId}
+                            published={published}
+                            onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
+                            onFetched={() => setLastFetchedAt(new Date())}
+                            registerRefresher={(fn) => registerWidgetRefresh(widget.id, fn)}
+                            registerRerunner={(fn) => registerWidgetRerun(widget.id, fn)}
+                          />
+                        ) : isTextPanel(widget) ? (
+                          <TextWidget markdown={textConfigFrom(widget.config).markdown} />
+                        ) : (
+                          <WidgetCard
+                            widget={widget}
+                            qc={qc}
+                            widgetsData={dashboard.widgets_data}
+                            dashboardId={id}
+                            onFetchingChange={(fetching) => reportFetching(widget.id, fetching)}
+                          />
+                        )}
+                      </WidgetFrame>
+                    ))}
+                  </GridLayout>
+                )}
+              </div>
+            ))}
           </div>
         )}
         </div>
@@ -715,6 +857,7 @@ function DashboardContent({ id }: { id: string }) {
       )}
     </AppShell>
     </DashboardVariablesProvider>
+    </AppThemeProvider>
   )
 }
 
@@ -772,6 +915,21 @@ const styles: Record<string, React.CSSProperties> = {
     letterSpacing: '0.04em',
     textTransform: 'uppercase',
     color: 'var(--text-muted)',
+    whiteSpace: 'nowrap',
+  },
+  // Muted mode marker: the surface is showing the unpublished draft.
+  draftChip: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    fontSize: 10,
+    fontWeight: 600,
+    letterSpacing: '0.04em',
+    textTransform: 'uppercase',
+    color: 'var(--text-muted)',
+    background: 'var(--bg-input)',
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    padding: '2px 8px',
     whiteSpace: 'nowrap',
   },
   liveDot: {

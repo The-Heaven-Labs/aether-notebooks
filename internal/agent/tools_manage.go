@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -68,8 +69,8 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_dashboard_widget",
-			Description: "Add a widget (chart/table from a notebook cell) to a dashboard. Requires the dashboard ID, notebook ID, cell ID, and layout position. The widget embeds the cell's output.",
-			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string"},"cell_id":{"type":"string"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output"},"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","notebook_id","cell_id","type"]}`,
+			Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); config carries per-widget options (e.g. config.metric for metric widgets).",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string","description":"Notebook for a cell-backed widget"},"cell_id":{"type":"string","description":"Cell for a cell-backed widget"},"connector_id":{"type":"string","description":"Connector for a query-backed widget (requires query)"},"query":{"type":"string","description":"SQL for a query-backed widget (requires connector_id)"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output, 'metric' for a single value, 'text' for markdown"},"config":{"type":"object","description":"Per-widget config, e.g. {\"metric\":{\"value_column\":\"x\",\"aggregation\":\"sum\"}}"},"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","type"]}`,
 		},
 		Handler: makeCreateDashboardWidgetHandler(pool),
 		Timeout: 15 * time.Second,
@@ -97,8 +98,8 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_dashboard_widget",
-			Description: "Update a dashboard widget's properties: position (row, col), size (width, height), or type (chart/table/text).",
-			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"type":{"type":"string","enum":["chart","table","text"]}},"required":["widget_id","dashboard_id"]}`,
+			Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or config keys to shallow-merge into the widget's config.",
+			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"tab":{"type":"string","description":"App tab id (lowercase letters, digits, dashes); empty falls back to the first tab"},"type":{"type":"string","enum":["chart","table","metric","text"]},"config":{"type":"object","description":"Config keys to shallow-merge into the widget's existing config"}},"required":["widget_id","dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardWidgetHandler(pool),
 		Timeout: 15 * time.Second,
@@ -144,6 +145,48 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 		},
 		Handler: makeUpdateDashboardHandler(),
 		Timeout: 15 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "update_dashboard_settings",
+			Description: "Update a dashboard's App settings: title, app (e.g. app.title, app.subtitle, app.theme with hex colors), and tabs (App chapters, e.g. [{id, title}]).",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string","description":"Dashboard title"},"app":{"type":"object","description":"App surface settings; theme fields are hex colors, e.g. {\"title\":\"Sales\",\"theme\":{\"accent\":\"#7c5cff\",\"color_scheme\":\"dark\"}}"},"tabs":{"type":"array","description":"App chapters; ids are lowercase letters/digits/dashes","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}}},"required":["dashboard_id"]}`,
+		},
+		Handler: makeUpdateDashboardSettingsHandler(pool),
+		Timeout: 15 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "set_dashboard_layout",
+			Description: "Arrange a dashboard's App surface: set tabs, place widgets into tabs (placements), and merge widget appearance (e.g. {background: transparent|card, padding: none|sm|md, align: left|center|right, border}).",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"tabs":{"type":"array","description":"Replaces the App tab list","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"placements":{"type":"array","description":"Move widgets into tabs","items":{"type":"object","properties":{"widget_id":{"type":"string"},"tab":{"type":"string","description":"Tab id; empty falls back to the first tab"}},"required":["widget_id","tab"]}},"appearance":{"type":"array","description":"Merge appearance into each widget's config","items":{"type":"object","properties":{"widget_id":{"type":"string"},"appearance":{"type":"object"}},"required":["widget_id","appearance"]}}},"required":["dashboard_id"]}`,
+		},
+		Handler: makeSetDashboardLayoutHandler(),
+		Timeout: 15 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "publish_dashboard",
+			Description: "Publish the dashboard's current draft as a new version. Viewers see the latest published version until the next publish.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
+		},
+		Handler: makePublishDashboardHandler(pool),
+		Timeout: 30 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -315,17 +358,71 @@ func validateDashboardWidgetCellRef(ctx context.Context, pool *pgxpool.Pool, not
 	return nil
 }
 
+// validateDashboardWidgetConnectorRef rejects a query widget whose connector
+// reference is missing, soft-deleted, or outside the org. The document store
+// does not check connector existence, and the materializer skips widgets with
+// dangling references (deleting their derived rows), so without this check a
+// success response would silently drop the widget. Mirrors the REST
+// validateWidgetConnectorRef.
+func validateDashboardWidgetConnectorRef(ctx context.Context, pool *pgxpool.Pool, orgID, connectorID string) error {
+	if _, err := uuid.Parse(connectorID); err != nil {
+		return fmt.Errorf("connector not found")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM connectors WHERE id = $1 AND org_id = $2 AND deleted_at IS NULL)`,
+		connectorID, orgID).Scan(&exists); err != nil {
+		return fmt.Errorf("check connector reference: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("connector not found")
+	}
+	return nil
+}
+
+// validateDashboardLogoAttachment verifies attachmentID names an org-scoped,
+// non-notebook attachment in orgID, mirroring the REST validateLogoAttachment:
+// rejecting unknown ids at write time keeps app surfaces from rendering broken
+// images, and notebook attachments are rejected too because a logo is served
+// through the public attachment route, which has no notebook view ACL. An
+// empty id is valid (no logo) and a malformed id can never match, so it is
+// reported as not found.
+func validateDashboardLogoAttachment(ctx context.Context, pool *pgxpool.Pool, orgID, attachmentID string) error {
+	if attachmentID == "" {
+		return nil
+	}
+	// Mirror the API's isValidUUID: only the canonical lowercase spelling is
+	// accepted, so an id that the public attachment route would reject can
+	// never be stored as a logo.
+	if u, err := uuid.Parse(attachmentID); err != nil || u.String() != attachmentID {
+		return fmt.Errorf("logo attachment not found")
+	}
+	var exists bool
+	if err := pool.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM attachments WHERE id = $1 AND org_id = $2 AND notebook_id IS NULL)`,
+		attachmentID, orgID).Scan(&exists); err != nil {
+		return fmt.Errorf("logo attachment lookup: %w", err)
+	}
+	if !exists {
+		return fmt.Errorf("logo attachment not found")
+	}
+	return nil
+}
+
 func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			DashboardID string `json:"dashboard_id"`
-			NotebookID  string `json:"notebook_id"`
-			CellID      string `json:"cell_id"`
-			Type        string `json:"type"`
-			Row         int    `json:"row"`
-			Col         int    `json:"col"`
-			Width       int    `json:"width"`
-			Height      int    `json:"height"`
+			DashboardID string         `json:"dashboard_id"`
+			NotebookID  string         `json:"notebook_id"`
+			CellID      string         `json:"cell_id"`
+			ConnectorID string         `json:"connector_id"`
+			Query       string         `json:"query"`
+			Type        string         `json:"type"`
+			Config      map[string]any `json:"config"`
+			Row         int            `json:"row"`
+			Col         int            `json:"col"`
+			Width       int            `json:"width"`
+			Height      int            `json:"height"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -342,9 +439,27 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, err
 		}
 
-		// Check notebook permissions
-		if err := ctx.CheckPermission("notebook", req.NotebookID, "view"); err != nil {
-			return nil, err
+		// Exactly one widget source: a query (connector + SQL) or a notebook
+		// cell. The REST path also allows source-less widgets for backwards
+		// compatibility; the agent tool deliberately does not, so a widget it
+		// creates always has something to render.
+		hasQuery := req.ConnectorID != "" || req.Query != ""
+		hasCell := req.NotebookID != "" || req.CellID != ""
+		if hasQuery && hasCell {
+			return nil, fmt.Errorf("widget cannot reference both a notebook cell and a query connector")
+		}
+		if !hasQuery && !hasCell {
+			return nil, fmt.Errorf("widget requires either connector_id and query, or notebook_id and cell_id")
+		}
+		if hasQuery {
+			if req.ConnectorID == "" {
+				return nil, fmt.Errorf("connector_id is required for query widgets")
+			}
+			if req.Query == "" {
+				return nil, fmt.Errorf("query is required for query widgets")
+			}
+		} else if req.NotebookID == "" || req.CellID == "" {
+			return nil, fmt.Errorf("cell widgets require notebook_id and cell_id")
 		}
 
 		if ctx.DashboardDocStore == nil {
@@ -354,12 +469,25 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid widget type")
 		}
 
-		// A dangling cell reference must fail the request: the document store
-		// accepts the pair, but the materializer skips the widget (deleting its
-		// derived row), so a success response would commit a phantom widget
-		// that never materializes.
-		if err := validateDashboardWidgetCellRef(ctx.Context, pool, req.NotebookID, req.CellID); err != nil {
-			return nil, err
+		if hasCell {
+			// Validate the cell reference's notebook is viewable (prevents
+			// IDOR escalation) before checking the pair resolves.
+			if err := ctx.CheckPermission("notebook", req.NotebookID, "view"); err != nil {
+				return nil, err
+			}
+			// A dangling cell reference must fail the request: the document
+			// store accepts the pair, but the materializer skips the widget
+			// (deleting its derived row), so a success response would commit a
+			// phantom widget that never materializes.
+			if err := validateDashboardWidgetCellRef(ctx.Context, pool, req.NotebookID, req.CellID); err != nil {
+				return nil, err
+			}
+		} else {
+			// A dangling connector reference must fail the request for the
+			// same reason.
+			if err := validateDashboardWidgetConnectorRef(ctx.Context, pool, ctx.OrgID, req.ConnectorID); err != nil {
+				return nil, err
+			}
 		}
 
 		// Validate layout bounds and overlap against the materialized rows
@@ -376,25 +504,37 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		// Chart widgets render the notebook cell's metadata.chart; widgets.config
 		// holds only explicit per-widget overrides flagged with
 		// config_edited_from_dashboard. Never snapshot the cell config here — a
-		// creation-time copy would shadow later notebook edits.
-		widgetConfig := map[string]any{}
+		// creation-time copy would shadow later notebook edits. Query widgets
+		// take the caller's config as-is (e.g. config.metric for metric
+		// widgets).
+		widgetConfig := req.Config
+		if widgetConfig == nil {
+			widgetConfig = map[string]any{}
+		}
 
 		// The widget is written through the dashboard document (the source of
 		// truth); Postgres is a derived read cache materialized by the store.
 		id := uuid.NewString()
+		widget := dashboarddoc.WidgetDoc{
+			ID:       id,
+			Type:     req.Type,
+			Layout:   dashboarddoc.Layout{Row: req.Row, Col: req.Col, Width: req.Width, Height: req.Height},
+			Language: "sql",
+			Config:   widgetConfig,
+		}
+		if hasQuery {
+			widget.ConnectorID = &req.ConnectorID
+			widget.Query = &req.Query
+		} else {
+			widget.NotebookID = &req.NotebookID
+			widget.CellID = &req.CellID
+		}
+
 		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
 		if err != nil {
 			return nil, fmt.Errorf("load dashboard document: %w", err)
 		}
-		newState, err := dashboarddoc.UpsertWidget(state, dashboarddoc.WidgetDoc{
-			ID:         id,
-			Type:       req.Type,
-			Layout:     dashboarddoc.Layout{Row: req.Row, Col: req.Col, Width: req.Width, Height: req.Height},
-			Language:   "sql",
-			NotebookID: &req.NotebookID,
-			CellID:     &req.CellID,
-			Config:     widgetConfig,
-		})
+		newState, err := dashboarddoc.UpsertWidget(state, widget)
 		if err != nil {
 			return nil, fmt.Errorf("create widget: %w", err)
 		}
@@ -410,13 +550,15 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			WidgetID    string `json:"widget_id"`
-			DashboardID string `json:"dashboard_id"`
-			Row         *int   `json:"row"`
-			Col         *int   `json:"col"`
-			Width       *int   `json:"width"`
-			Height      *int   `json:"height"`
-			WidgetType  string `json:"type"`
+			WidgetID    string         `json:"widget_id"`
+			DashboardID string         `json:"dashboard_id"`
+			Row         *int           `json:"row"`
+			Col         *int           `json:"col"`
+			Width       *int           `json:"width"`
+			Height      *int           `json:"height"`
+			Tab         *string        `json:"tab"`
+			WidgetType  string         `json:"type"`
+			Config      map[string]any `json:"config"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -430,11 +572,17 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 
 		// A request with nothing updatable must not rewrite (or re-publish)
 		// the widget: report it like update_dashboard's no-op guard instead.
-		if req.Row == nil && req.Col == nil && req.Width == nil && req.Height == nil && req.WidgetType == "" {
+		if req.Row == nil && req.Col == nil && req.Width == nil && req.Height == nil &&
+			req.Tab == nil && req.WidgetType == "" && req.Config == nil {
 			return nil, fmt.Errorf("nothing to update")
 		}
 		if req.WidgetType != "" && !validDashboardWidgetType(req.WidgetType) {
 			return nil, fmt.Errorf("invalid widget type")
+		}
+		if req.Tab != nil {
+			if err := validate.WidgetTab(*req.Tab); err != nil {
+				return nil, err
+			}
 		}
 
 		// Document widget keys are canonical lowercase UUIDs; canonicalize the
@@ -467,7 +615,7 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 
 		// Merged layout for validation only: the ops below write the same
 		// values into the document.
-		hasLayout := req.Row != nil || req.Col != nil || req.Width != nil || req.Height != nil
+		hasLayout := req.Row != nil || req.Col != nil || req.Width != nil || req.Height != nil || req.Tab != nil
 		layout := existing.Layout
 		if req.Row != nil {
 			layout.Row = *req.Row
@@ -481,6 +629,23 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		if req.Height != nil {
 			layout.Height = *req.Height
 		}
+		if req.Tab != nil {
+			layout.Tab = *req.Tab
+		}
+
+		// The request's config is a shallow patch over the projected config:
+		// provided keys replace their counterparts and absent keys stay, so a
+		// metric-only update keeps appearance/chart overrides (and vice versa).
+		mergedConfig := existing.Config
+		if req.Config != nil {
+			mergedConfig = make(map[string]any, len(existing.Config)+len(req.Config))
+			for k, v := range existing.Config {
+				mergedConfig[k] = v
+			}
+			for k, v := range req.Config {
+				mergedConfig[k] = v
+			}
+		}
 
 		// A merged notebook/cell pair (the request has no ref fields, so it
 		// comes from the existing widget) must still resolve to a real cell:
@@ -493,13 +658,15 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 
 		// Validate layout bounds and overlap against the materialized rows
-		// (kept current by every document store).
+		// (kept current by every document store). The merged tab rides along
+		// so the overlap check is chapter-aware.
 		if hasLayout {
 			if err := validate.WidgetLayout(ctx.Context, pool, req.DashboardID, models.WidgetLayout{
 				Row:    layout.Row,
 				Col:    layout.Col,
 				Width:  layout.Width,
 				Height: layout.Height,
+				Tab:    layout.Tab,
 			}, widgetID); err != nil {
 				return nil, fmt.Errorf("invalid layout: %w", err)
 			}
@@ -514,6 +681,12 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 		if req.WidgetType != "" {
 			newState, err = dashboarddoc.SetWidgetType(newState, widgetID, req.WidgetType)
+			if err != nil {
+				return nil, fmt.Errorf("update widget: %w", err)
+			}
+		}
+		if req.Config != nil {
+			newState, err = dashboarddoc.SetWidgetConfig(newState, widgetID, mergedConfig)
 			if err != nil {
 				return nil, fmt.Errorf("update widget: %w", err)
 			}
@@ -551,9 +724,13 @@ func makeGetDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 		var settings map[string]any
 		json.Unmarshal(settingsJSON, &settings)
 
-		// Fetch widgets
+		// Fetch widgets. Query-backed widgets have NULL notebook_id/cell_id
+		// (and cell widgets NULL connector_id/query), so the references are
+		// scanned as nullable pointers: a non-nullable scan fails on the first
+		// query widget and aborts the whole iteration, hiding every widget.
 		rows, err := pool.Query(ctx.Context,
-			`SELECT id, notebook_id, cell_id, type, layout FROM widgets WHERE dashboard_id = $1 ORDER BY created_at ASC`,
+			`SELECT id, notebook_id, cell_id, connector_id, query, language, type, layout, config
+			 FROM widgets WHERE dashboard_id = $1 ORDER BY created_at ASC`,
 			req.DashboardID)
 		if err != nil {
 			return nil, fmt.Errorf("load widgets: %w", err)
@@ -562,23 +739,52 @@ func makeGetDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 
 		var widgets []map[string]any
 		for rows.Next() {
-			var id, nbID, cellID, wType string
-			var layoutJSON []byte
-			if err := rows.Scan(&id, &nbID, &cellID, &wType, &layoutJSON); err != nil {
-				continue
+			var id, language, wType string
+			var nbID, cellID, connectorID, query *string
+			var layoutJSON, configJSON []byte
+			if err := rows.Scan(&id, &nbID, &cellID, &connectorID, &query, &language, &wType, &layoutJSON, &configJSON); err != nil {
+				return nil, fmt.Errorf("scan widget: %w", err)
 			}
 			var layout map[string]any
 			json.Unmarshal(layoutJSON, &layout)
+			config := map[string]any{}
+			if len(configJSON) > 0 {
+				json.Unmarshal(configJSON, &config)
+			}
 			widgets = append(widgets, map[string]any{
-				"id": id, "notebook_id": nbID, "cell_id": cellID,
-				"type": wType, "layout": layout,
+				"id": id, "type": wType, "layout": layout, "language": language,
+				"notebook_id": nbID, "cell_id": cellID,
+				"connector_id": connectorID, "query": query,
+				"config": config,
 			})
+		}
+		if err := rows.Err(); err != nil {
+			return nil, fmt.Errorf("load widgets iter: %w", err)
 		}
 		if widgets == nil {
 			widgets = []map[string]any{}
 		}
 
-		return map[string]any{"dashboard_id": req.DashboardID, "title": title, "settings": settings, "widgets": widgets}, nil
+		// Org branding rides along so the agent can read the org's theme
+		// tokens; a read failure degrades to null rather than failing the
+		// whole read (mirrors the API's orgBranding helper).
+		var orgBranding map[string]any
+		var brandingJSON []byte
+		if err := pool.QueryRow(ctx.Context,
+			`SELECT COALESCE(settings->'branding', 'null'::jsonb) FROM orgs WHERE id = $1`, ctx.OrgID,
+		).Scan(&brandingJSON); err != nil {
+			slog.Debug("org branding read failed", "org_id", ctx.OrgID, "error", err)
+		} else if err := json.Unmarshal(brandingJSON, &orgBranding); err != nil {
+			slog.Debug("org branding decode failed", "org_id", ctx.OrgID, "error", err)
+		}
+
+		return map[string]any{
+			"dashboard_id": req.DashboardID,
+			"title":        title,
+			"settings":     settings,
+			"widgets":      widgets,
+			"org_branding": orgBranding,
+		}, nil
 	}
 }
 
@@ -679,6 +885,313 @@ func makeUpdateDashboardHandler() ToolHandler {
 
 		_ = ctx.AuditLog("dashboard.update", "dashboard", req.DashboardID)
 		return map[string]any{"dashboard_id": req.DashboardID, "status": "updated"}, nil
+	}
+}
+
+// makeUpdateDashboardSettingsHandler implements update_dashboard_settings:
+// title/app/tabs are validated with the same validators the REST paths use,
+// shallow-merged over the document's projected settings (absent keys stay),
+// and written through the dashboard document in one store.
+func makeUpdateDashboardSettingsHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string          `json:"dashboard_id"`
+			Title       *string         `json:"title"`
+			App         map[string]any  `json:"app"`
+			Tabs        json.RawMessage `json:"tabs"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+		if ctx.DashboardDocStore == nil {
+			return nil, fmt.Errorf("dashboard document store not configured")
+		}
+		if req.Title == nil && req.App == nil && req.Tabs == nil {
+			return nil, fmt.Errorf("nothing to update")
+		}
+
+		// The app block is validated as a raw map (unknown keys are stored,
+		// matching the REST shallow-merge path); tabs are decoded into the
+		// model so the same bounds and charset checks run.
+		if req.App != nil {
+			if err := validate.DashboardSettingsValue(map[string]any{"app": req.App}); err != nil {
+				return nil, err
+			}
+			// The logo reference points at an org attachment; the existence
+			// check needs the database, so it runs after the pure validators
+			// (mirroring the REST update path) and before the document load,
+			// so a rejected reference never seeds the document.
+			if id, _ := req.App["logo_attachment_id"].(string); id != "" {
+				if err := validateDashboardLogoAttachment(ctx.Context, pool, ctx.OrgID, id); err != nil {
+					return nil, err
+				}
+			}
+		}
+		var tabs []models.DashboardTab
+		if req.Tabs != nil {
+			if err := json.Unmarshal(req.Tabs, &tabs); err != nil {
+				return nil, fmt.Errorf("invalid tabs")
+			}
+			if tabs == nil {
+				tabs = []models.DashboardTab{}
+			}
+			if err := validate.DashboardTabs(tabs); err != nil {
+				return nil, err
+			}
+		}
+
+		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("load dashboard document: %w", err)
+		}
+		proj, err := dashboarddoc.Project(state)
+		if err != nil {
+			return nil, fmt.Errorf("read dashboard document: %w", err)
+		}
+
+		// UpdateMeta replaces the whole settings container: merge over the
+		// projected settings first, so an app-only update keeps tabs and
+		// everything else (variables live in their own document field).
+		var mergedSettings map[string]any
+		if req.App != nil || req.Tabs != nil {
+			mergedSettings = make(map[string]any, len(proj.Settings)+2)
+			for k, v := range proj.Settings {
+				mergedSettings[k] = v
+			}
+			if req.App != nil {
+				mergedSettings["app"] = req.App
+			}
+			if req.Tabs != nil {
+				mergedSettings["tabs"] = tabs
+			}
+		}
+
+		newState, err := dashboarddoc.UpdateMeta(state, req.Title, mergedSettings, nil)
+		if err != nil {
+			return nil, fmt.Errorf("update dashboard settings: %w", err)
+		}
+		if err := ctx.DashboardDocStore.Store(ctx.Context, req.DashboardID, newState); err != nil {
+			return nil, fmt.Errorf("update dashboard settings: %w", err)
+		}
+
+		keys := make([]string, 0, 3)
+		if req.Title != nil {
+			keys = append(keys, "title")
+		}
+		if req.App != nil {
+			keys = append(keys, "app")
+		}
+		if req.Tabs != nil {
+			keys = append(keys, "tabs")
+		}
+		_ = ctx.AuditLogWithMetadata("dashboard.update", "dashboard", req.DashboardID, map[string]any{"keys": keys})
+		return map[string]any{"dashboard_id": req.DashboardID, "status": "updated", "keys": keys}, nil
+	}
+}
+
+// makeSetDashboardLayoutHandler implements set_dashboard_layout: tabs replace
+// the App tab list (validated like the REST settings path), placements move
+// widgets into tabs, and appearance patches merge into each widget's
+// config.appearance. Every edit is applied to the document in memory and
+// stored once, so a rejected tab or widget id leaves the document untouched.
+func makeSetDashboardLayoutHandler() ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string          `json:"dashboard_id"`
+			Tabs        json.RawMessage `json:"tabs"`
+			Placements  []struct {
+				WidgetID string `json:"widget_id"`
+				Tab      string `json:"tab"`
+			} `json:"placements"`
+			Appearance []struct {
+				WidgetID   string         `json:"widget_id"`
+				Appearance map[string]any `json:"appearance"`
+			} `json:"appearance"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+		if ctx.DashboardDocStore == nil {
+			return nil, fmt.Errorf("dashboard document store not configured")
+		}
+		if req.Tabs == nil && len(req.Placements) == 0 && len(req.Appearance) == 0 {
+			return nil, fmt.Errorf("nothing to update")
+		}
+
+		// Validate and canonicalize everything that does not need the
+		// document first, so a rejected request never lazily seeds it.
+		var tabs []models.DashboardTab
+		if req.Tabs != nil {
+			if err := json.Unmarshal(req.Tabs, &tabs); err != nil {
+				return nil, fmt.Errorf("invalid tabs")
+			}
+			if tabs == nil {
+				tabs = []models.DashboardTab{}
+			}
+			if err := validate.DashboardTabs(tabs); err != nil {
+				return nil, err
+			}
+		}
+		for i := range req.Placements {
+			if err := validate.WidgetTab(req.Placements[i].Tab); err != nil {
+				return nil, err
+			}
+			u, err := uuid.Parse(req.Placements[i].WidgetID)
+			if err != nil {
+				return nil, fmt.Errorf("widget not found")
+			}
+			req.Placements[i].WidgetID = u.String()
+		}
+		for i := range req.Appearance {
+			u, err := uuid.Parse(req.Appearance[i].WidgetID)
+			if err != nil {
+				return nil, fmt.Errorf("widget not found")
+			}
+			req.Appearance[i].WidgetID = u.String()
+		}
+
+		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("load dashboard document: %w", err)
+		}
+		proj, err := dashboarddoc.Project(state)
+		if err != nil {
+			return nil, fmt.Errorf("read dashboard document: %w", err)
+		}
+
+		newState := state
+		if req.Tabs != nil {
+			mergedSettings := make(map[string]any, len(proj.Settings)+1)
+			for k, v := range proj.Settings {
+				mergedSettings[k] = v
+			}
+			mergedSettings["tabs"] = tabs
+			newState, err = dashboarddoc.UpdateMeta(newState, nil, mergedSettings, nil)
+			if err != nil {
+				return nil, fmt.Errorf("set tabs: %w", err)
+			}
+		}
+		for _, p := range req.Placements {
+			existing, ok := proj.Widgets[p.WidgetID]
+			if !ok {
+				return nil, fmt.Errorf("widget not found")
+			}
+			layout := existing.Layout
+			layout.Tab = p.Tab
+			newState, err = dashboarddoc.UpdateLayout(newState, p.WidgetID, layout)
+			if errors.Is(err, dashboarddoc.ErrWidgetNotFound) {
+				return nil, fmt.Errorf("widget not found")
+			}
+			if err != nil {
+				return nil, fmt.Errorf("set layout: %w", err)
+			}
+		}
+		// Appearance entries apply sequentially over a working copy of each
+		// widget's config (seeded from the projection on first touch), so two
+		// entries for the same widget compose instead of the second
+		// overwriting the first.
+		workingConfigs := make(map[string]map[string]any, len(req.Appearance))
+		for _, a := range req.Appearance {
+			existing, ok := proj.Widgets[a.WidgetID]
+			if !ok {
+				return nil, fmt.Errorf("widget not found")
+			}
+			// Config is a whole-value document field, so the appearance patch
+			// is merged over the widget's working config and the whole map is
+			// written back.
+			config, ok := workingConfigs[a.WidgetID]
+			if !ok {
+				config = make(map[string]any, len(existing.Config)+1)
+				for k, v := range existing.Config {
+					config[k] = v
+				}
+				workingConfigs[a.WidgetID] = config
+			}
+			appearance := map[string]any{}
+			if current, ok := config["appearance"].(map[string]any); ok {
+				for k, v := range current {
+					appearance[k] = v
+				}
+			}
+			for k, v := range a.Appearance {
+				appearance[k] = v
+			}
+			config["appearance"] = appearance
+			newState, err = dashboarddoc.SetWidgetConfig(newState, a.WidgetID, config)
+			if errors.Is(err, dashboarddoc.ErrWidgetNotFound) {
+				return nil, fmt.Errorf("widget not found")
+			}
+			if err != nil {
+				return nil, fmt.Errorf("set appearance: %w", err)
+			}
+		}
+
+		if err := ctx.DashboardDocStore.Store(ctx.Context, req.DashboardID, newState); err != nil {
+			return nil, fmt.Errorf("set dashboard layout: %w", err)
+		}
+
+		keys := make([]string, 0, 3)
+		if req.Tabs != nil {
+			keys = append(keys, "tabs")
+		}
+		if len(req.Placements) > 0 {
+			keys = append(keys, "placements")
+		}
+		if len(req.Appearance) > 0 {
+			keys = append(keys, "appearance")
+		}
+		_ = ctx.AuditLogWithMetadata("dashboard.update", "dashboard", req.DashboardID, map[string]any{"keys": keys})
+		return map[string]any{"dashboard_id": req.DashboardID, "status": "updated", "keys": keys}, nil
+	}
+}
+
+// makePublishDashboardHandler implements publish_dashboard. The snapshot,
+// content hash, and version numbering are shared with the REST publish path
+// through dashboarddoc.PublishVersion, so the two can never diverge.
+func makePublishDashboardHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string `json:"dashboard_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+		if ctx.DashboardDocStore == nil {
+			return nil, fmt.Errorf("dashboard document store not configured")
+		}
+
+		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("load dashboard document: %w", err)
+		}
+		version, contentHash, createdAt, err := dashboarddoc.PublishVersion(ctx.Context, pool, ctx.OrgID, req.DashboardID, ctx.UserID, state)
+		if err != nil {
+			var warnings *dashboarddoc.SnapshotWarningsError
+			if errors.As(err, &warnings) {
+				return nil, fmt.Errorf("dashboard cannot be published: %s", strings.Join(warnings.Warnings, "; "))
+			}
+			return nil, fmt.Errorf("publish dashboard: %w", err)
+		}
+
+		_ = ctx.AuditLogWithMetadata("dashboard.publish", "dashboard", req.DashboardID, map[string]any{
+			"version":      version,
+			"content_hash": contentHash,
+		})
+		return map[string]any{
+			"dashboard_id": req.DashboardID,
+			"version":      version,
+			"content_hash": contentHash,
+			"created_at":   createdAt,
+		}, nil
 	}
 }
 

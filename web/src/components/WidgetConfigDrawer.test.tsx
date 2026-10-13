@@ -63,6 +63,17 @@ const dashboard: Dashboard = {
   updated_at: '2026-01-01T00:00:00Z',
 }
 
+const tabbedDashboard: Dashboard = {
+  ...dashboard,
+  settings: {
+    variables: [],
+    tabs: [
+      { id: 'overview', title: 'Overview' },
+      { id: 'details', title: 'Details' },
+    ],
+  },
+}
+
 function queryWidget(overrides: Partial<Widget> = {}): Widget {
   return {
     id: 'w1',
@@ -973,6 +984,152 @@ describe('WidgetConfigDrawer', () => {
           columns: [{ name: 'x', format: { style: 'currency', currency: 'EUR', decimals: 2 } }],
         }),
       { timeout: 3000 },
+    )
+  })
+
+  test('omits the Placement section when the dashboard has no tabs', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget()} onClose={() => {}} onSaved={() => {}} />,
+    )
+    expect(screen.queryByLabelText('Tab')).not.toBeInTheDocument()
+    expect(screen.queryByText('Placement')).not.toBeInTheDocument()
+  })
+
+  test('renders the Placement select with the tabs and the current placement', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={tabbedDashboard}
+        widget={queryWidget({ layout: { row: 0, col: 0, width: 6, height: 6, tab: 'details' } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect(screen.getByText('Placement')).toBeInTheDocument()
+    const select = screen.getByLabelText('Placement') as HTMLSelectElement
+    expect(select.value).toBe('details')
+    expect(screen.getByRole('option', { name: 'First tab (default)' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Overview' })).toBeInTheDocument()
+    expect(screen.getByRole('option', { name: 'Details' })).toBeInTheDocument()
+  })
+
+  test('an unset placement reads as the first-tab default', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={tabbedDashboard}
+        widget={queryWidget()}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect((screen.getByLabelText('Placement') as HTMLSelectElement).value).toBe('')
+  })
+
+  test('a placement naming a deleted tab reads as the first-tab default', () => {
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={tabbedDashboard}
+        widget={queryWidget({ layout: { row: 0, col: 0, width: 6, height: 6, tab: 'gone' } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    expect((screen.getByLabelText('Placement') as HTMLSelectElement).value).toBe('')
+  })
+
+  test('saving the tab placement writes the shared document when bound', async () => {
+    const entry = getDashboardCollab('d1')
+    entry.synced = true
+    seedWidgetDoc(entry.doc, 'w1', 'SELECT 99 AS shared')
+    const wm = entry.doc.getMap('widgets').get('w1') as Y.Map<unknown>
+    const lm = wm.get('layout') as Y.Map<unknown>
+    lm.set('tab', 'overview')
+
+    const putBodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        putBodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={tabbedDashboard}
+        widget={queryWidget({ layout: { row: 0, col: 0, width: 6, height: 6, tab: 'overview' } })}
+        docSynced
+        editingEnabled
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+
+    // The doc binding is looked up through a dynamic import; wait for the
+    // shared text to win over the (stale) widget prop before changing the tab,
+    // so the save goes through the document path rather than the REST fallback.
+    await waitFor(
+      () => expect(document.querySelector('.cm-editor')!.textContent).toContain('SELECT 99 AS shared'),
+      { timeout: 5000 },
+    )
+    fireEvent.change(screen.getByLabelText('Placement'), { target: { value: 'details' } })
+
+    await waitFor(() => expect(lm.get('tab')).toBe('details'), { timeout: 5000 })
+    // The grid fields survive the tab-only write.
+    expect(lm.get('col')).toBe(0)
+    expect(lm.get('width')).toBe(6)
+    expect(lm.get('height')).toBe(6)
+    // Doc-bound writes are persisted by the relay, never by a REST PUT.
+    expect(putBodies).toEqual([])
+  })
+
+  test('saving the tab placement falls back to the widget PUT without a document', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    const onSaved = vi.fn()
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={tabbedDashboard}
+        widget={queryWidget({ layout: { row: 1, col: 2, width: 6, height: 6, tab: 'overview' } })}
+        onClose={() => {}}
+        onSaved={onSaved}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Placement'), { target: { value: 'details' } })
+    await waitFor(() =>
+      expect(bodies).toContainEqual({ layout: { row: 1, col: 2, width: 6, height: 6, tab: 'details' } }),
+    )
+    expect(onSaved).toHaveBeenCalled()
+  })
+
+  test('clearing the placement writes an empty tab', async () => {
+    const bodies: Array<Record<string, unknown>> = []
+    server.use(
+      http.put('/api/v1/dashboards/d1/widgets/w1', async ({ request }) => {
+        bodies.push((await request.json()) as Record<string, unknown>)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithQuery(
+      <WidgetConfigDrawer
+        dashboardId="d1"
+        dashboard={tabbedDashboard}
+        widget={queryWidget({ layout: { row: 0, col: 0, width: 6, height: 6, tab: 'overview' } })}
+        onClose={() => {}}
+        onSaved={() => {}}
+      />,
+    )
+    fireEvent.change(screen.getByLabelText('Placement'), { target: { value: '' } })
+    await waitFor(() =>
+      expect(bodies).toContainEqual({ layout: { row: 0, col: 0, width: 6, height: 6, tab: '' } }),
     )
   })
 })

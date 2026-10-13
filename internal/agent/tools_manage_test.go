@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -710,6 +711,14 @@ func TestAgentDashboardToolsFailClosedWithoutDocStore(t *testing.T) {
 			"widget_id": uuid.NewString(), "dashboard_id": dashID,
 		}},
 		{"update_dashboard", map[string]any{"dashboard_id": dashID, "title": "New"}},
+		{"update_dashboard_settings", map[string]any{
+			"dashboard_id": dashID, "app": map[string]any{"title": "App"},
+		}},
+		{"set_dashboard_layout", map[string]any{
+			"dashboard_id": dashID,
+			"placements":   []map[string]any{{"widget_id": uuid.NewString(), "tab": "overview"}},
+		}},
+		{"publish_dashboard", map[string]any{"dashboard_id": dashID}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.tool, func(t *testing.T) {
@@ -791,4 +800,628 @@ func TestAgentDeleteDashboardWithoutDocStore(t *testing.T) {
 	require.NoError(t, db.Pool.QueryRow(context.Background(),
 		`SELECT COUNT(*) FROM dashboards WHERE id = $1`, dashID).Scan(&count))
 	require.Zero(t, count)
+}
+
+// TestDashboardUpdateSettingsMaterializes pins the settings tool: app.title +
+// tabs must land in the dashboard document (the source of truth) and
+// materialize into the dashboards row, and an invalid theme must be rejected
+// before the document is touched.
+func TestDashboardUpdateSettingsMaterializes(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Settings Dashboard")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "update_dashboard_settings")
+
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app": map[string]any{
+			"title": "Sales App",
+			"theme": map[string]any{"accent": "#7c5cff"},
+		},
+		"tabs": []map[string]any{
+			{"id": "overview", "title": "Overview"},
+			{"id": "deep-dive", "title": "Deep dive"},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "updated", out.(map[string]any)["status"])
+
+	// Stored document: app and tabs are in the source of truth.
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	app, ok := proj.Settings["app"].(map[string]any)
+	require.True(t, ok, "app settings must be stored in the document")
+	require.Equal(t, "Sales App", app["title"])
+	theme, ok := app["theme"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "#7c5cff", theme["accent"])
+	tabs, ok := proj.Settings["tabs"].([]any)
+	require.True(t, ok, "tabs must be stored in the document")
+	require.Len(t, tabs, 2)
+	require.Equal(t, "overview", tabs[0].(map[string]any)["id"])
+	require.Equal(t, "deep-dive", tabs[1].(map[string]any)["id"])
+
+	// Materialized row: the same settings JSON.
+	var settingsOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT settings::text FROM dashboards WHERE id = $1`, dashID).Scan(&settingsOut))
+	require.JSONEq(t, `{
+		"app":{"title":"Sales App","theme":{"accent":"#7c5cff"}},
+		"tabs":[{"id":"overview","title":"Overview"},{"id":"deep-dive","title":"Deep dive"}],
+		"variables":[]
+	}`, settingsOut)
+
+	// An invalid theme must be rejected without rewriting the document.
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	badArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"theme": map[string]any{"accent": "red"}},
+	})
+	require.NoError(t, err)
+	_, err = handler(badArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "hex color")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected theme must not rewrite the document")
+}
+
+// TestDashboardSetLayoutPlacesWidgets pins the layout tool: tabs land in the
+// document settings, a placement moves the widget's layout.tab, and an
+// appearance patch merges into the widget's config — all through one store.
+// An invalid tab id must fail without rewriting the document.
+func TestDashboardSetLayoutPlacesWidgets(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Layout Dashboard")
+
+	widgetID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT 1 AS x', 'sql', 'table',
+		        '{"row":0,"col":0,"width":6,"height":6}', '{"showLegend":true}')
+	`, widgetID, dashID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "set_dashboard_layout")
+
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"tabs": []map[string]any{
+			{"id": "overview", "title": "Overview"},
+			{"id": "deep-dive", "title": "Deep dive"},
+		},
+		"placements": []map[string]any{{"widget_id": widgetID, "tab": "deep-dive"}},
+		"appearance": []map[string]any{
+			{"widget_id": widgetID, "appearance": map[string]any{"background": "transparent"}},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "updated", out.(map[string]any)["status"])
+
+	// Stored document: tabs, tab placement, and merged appearance.
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	tabs, ok := proj.Settings["tabs"].([]any)
+	require.True(t, ok)
+	require.Len(t, tabs, 2)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, "deep-dive", w.Layout.Tab)
+	require.Equal(t, true, w.Config["showLegend"], "unrelated config keys must survive")
+	appearance, ok := w.Config["appearance"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "transparent", appearance["background"])
+
+	// Materialized row mirrors the document.
+	var layoutOut, configOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT layout::text, config::text FROM widgets WHERE id = $1`, widgetID).
+		Scan(&layoutOut, &configOut))
+	require.JSONEq(t, `{"row":0,"col":0,"width":6,"height":6,"tab":"deep-dive"}`, layoutOut)
+	require.JSONEq(t, `{"showLegend":true,"appearance":{"background":"transparent"}}`, configOut)
+
+	// A bad tab id is rejected before the document is rewritten.
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	badArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"placements":   []map[string]any{{"widget_id": widgetID, "tab": "No Spaces!"}},
+	})
+	require.NoError(t, err)
+	_, err = handler(badArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid tab id")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected placement must not rewrite the document")
+}
+
+// TestDashboardPublishCreatesVersions pins the publish tool: each call
+// snapshots the dashboard document into the next dashboard_versions row, so
+// two calls produce versions 1 and 2 with the same content hash when nothing
+// changed in between.
+func TestDashboardPublishCreatesVersions(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Publish Dashboard")
+
+	connID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		VALUES ($1, $2, 'publish-connector', 'postgres', $3)
+	`, connID, orgID, []byte("encrypted"))
+	require.NoError(t, err)
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, connector_id, query, language, type, layout, config)
+		VALUES ($1, $2, $3, 'SELECT 1 AS x', 'sql', 'table',
+		        '{"row":0,"col":0,"width":6,"height":6}', '{}')
+	`, uuid.NewString(), dashID, connID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "publish_dashboard")
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+
+	first, err := handler(args, ctx)
+	require.NoError(t, err)
+	firstOut := first.(map[string]any)
+	require.Equal(t, 1, firstOut["version"])
+	hash, ok := firstOut["content_hash"].(string)
+	require.True(t, ok)
+	require.Len(t, hash, 64)
+
+	second, err := handler(args, ctx)
+	require.NoError(t, err)
+	secondOut := second.(map[string]any)
+	require.Equal(t, 2, secondOut["version"])
+	require.Equal(t, hash, secondOut["content_hash"],
+		"an unchanged dashboard must publish the same content hash")
+
+	rows, err := db.Pool.Query(context.Background(),
+		`SELECT version, content_hash FROM dashboard_versions WHERE dashboard_id = $1 ORDER BY version`, dashID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var versions []int
+	for rows.Next() {
+		var v int
+		var h string
+		require.NoError(t, rows.Scan(&v, &h))
+		require.Len(t, h, 64)
+		versions = append(versions, v)
+	}
+	require.NoError(t, rows.Err())
+	require.Equal(t, []int{1, 2}, versions)
+
+	// A missing dashboard is an error, not a version row.
+	missingArgs, err := json.Marshal(map[string]any{"dashboard_id": uuid.NewString()})
+	require.NoError(t, err)
+	_, err = handler(missingArgs, ctx)
+	require.Error(t, err)
+}
+
+// TestDashboardCreateQueryWidget pins the query-backed create path: a widget
+// with connector_id + query needs no notebook/cell and stores config.metric,
+// while a request with neither source is rejected.
+func TestDashboardCreateQueryWidget(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Query Widget Dashboard")
+
+	connID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		VALUES ($1, $2, 'query-connector', 'postgres', $3)
+	`, connID, orgID, []byte("encrypted"))
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "create_dashboard_widget")
+
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"connector_id": connID,
+		"query":        "SELECT 1 AS value",
+		"type":         "metric",
+		"config": map[string]any{
+			"metric": map[string]any{"value_column": "value", "aggregation": "sum"},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	widgetID := out.(map[string]any)["widget_id"].(string)
+
+	// Materialized row: query source, no notebook/cell, metric config.
+	var connectorOut, queryOut, typeOut, configOut string
+	var notebookOut, cellOut *string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT connector_id, query, type, notebook_id, cell_id, config::text
+		 FROM widgets WHERE id = $1`, widgetID).
+		Scan(&connectorOut, &queryOut, &typeOut, &notebookOut, &cellOut, &configOut))
+	require.Equal(t, connID, connectorOut)
+	require.Equal(t, "SELECT 1 AS value", queryOut)
+	require.Equal(t, "metric", typeOut)
+	require.Nil(t, notebookOut)
+	require.Nil(t, cellOut)
+	require.JSONEq(t, `{"metric":{"value_column":"value","aggregation":"sum"}}`, configOut)
+
+	// Stored document: same query source and config.
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	require.Empty(t, proj.Warnings)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.NotNil(t, w.ConnectorID)
+	require.Equal(t, connID, *w.ConnectorID)
+	require.NotNil(t, w.Query)
+	require.Equal(t, "SELECT 1 AS value", *w.Query)
+	require.Nil(t, w.NotebookID)
+	require.Nil(t, w.CellID)
+	metric, ok := w.Config["metric"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "value", metric["value_column"])
+
+	// Without a connector/query source the tool still requires notebook/cell.
+	noSource, err := json.Marshal(map[string]any{"dashboard_id": dashID, "type": "table"})
+	require.NoError(t, err)
+	_, err = handler(noSource, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "requires")
+
+	// A dangling connector reference must fail before any write.
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	badConn, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"connector_id": uuid.NewString(),
+		"query":        "SELECT 1",
+		"type":         "table",
+	})
+	require.NoError(t, err)
+	_, err = handler(badConn, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "connector not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected connector reference must not rewrite the document")
+}
+
+// TestDashboardUpdateWidgetMergesConfigAndTab pins the update extensions:
+// config is shallow-merged into the widget's existing config (unrelated keys
+// survive), tab sets layout.tab, and an invalid tab id is rejected.
+func TestDashboardUpdateWidgetMergesConfigAndTab(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Widget Update Dashboard")
+
+	widgetID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT 1 AS x', 'sql', 'table',
+		        '{"row":0,"col":0,"width":6,"height":6}', '{"showLegend":true}')
+	`, widgetID, dashID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "update_dashboard_widget")
+
+	args, err := json.Marshal(map[string]any{
+		"widget_id":    widgetID,
+		"dashboard_id": dashID,
+		"tab":          "overview",
+		"config": map[string]any{
+			"metric": map[string]any{"value_column": "x", "aggregation": "sum"},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, widgetID, out.(map[string]any)["widget_id"])
+
+	// Stored document: config merged, layout.tab set, query untouched.
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, "overview", w.Layout.Tab)
+	require.Equal(t, true, w.Config["showLegend"], "unrelated config keys must survive the merge")
+	metric, ok := w.Config["metric"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "x", metric["value_column"])
+	require.NotNil(t, w.Query)
+	require.Equal(t, "SELECT 1 AS x", *w.Query)
+
+	// Materialized row mirrors the document.
+	var layoutOut, configOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT layout::text, config::text FROM widgets WHERE id = $1`, widgetID).
+		Scan(&layoutOut, &configOut))
+	require.JSONEq(t, `{"row":0,"col":0,"width":6,"height":6,"tab":"overview"}`, layoutOut)
+	require.JSONEq(t, `{"showLegend":true,"metric":{"value_column":"x","aggregation":"sum"}}`, configOut)
+
+	// A bad tab id is rejected before the document is rewritten.
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	badArgs, err := json.Marshal(map[string]any{
+		"widget_id":    widgetID,
+		"dashboard_id": dashID,
+		"tab":          "Not A Tab",
+	})
+	require.NoError(t, err)
+	_, err = handler(badArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid tab id")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected tab must not rewrite the document")
+}
+
+// TestDashboardGetDashboardShowsQueryWidgets pins the inspect path for
+// query-backed widgets: get_dashboard must return their connector, query,
+// language, and config (their notebook_id/cell_id are NULL, and a failed scan
+// used to drop the row entirely), while cell widgets keep their references.
+func TestDashboardGetDashboardShowsQueryWidgets(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	cellID := createTestCell(t, db.Pool, nbID, "SELECT 1", 0)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Inspect Dashboard")
+
+	connID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		VALUES ($1, $2, 'inspect-connector', 'postgres', $3)
+	`, connID, orgID, []byte("encrypted"))
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	create := dashboardTool(t, reg, "create_dashboard_widget")
+
+	queryArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"connector_id": connID,
+		"query":        "SELECT 1 AS value",
+		"type":         "metric",
+		"config":       map[string]any{"metric": map[string]any{"value_column": "value"}},
+	})
+	require.NoError(t, err)
+	queryOut, err := create(queryArgs, ctx)
+	require.NoError(t, err)
+	queryWidgetID := queryOut.(map[string]any)["widget_id"].(string)
+
+	cellArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"notebook_id":  nbID,
+		"cell_id":      cellID,
+		"type":         "table",
+		"row":          4,
+	})
+	require.NoError(t, err)
+	cellOut, err := create(cellArgs, ctx)
+	require.NoError(t, err)
+	cellWidgetID := cellOut.(map[string]any)["widget_id"].(string)
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+	out, err := dashboardTool(t, reg, "get_dashboard")(args, ctx)
+	require.NoError(t, err)
+	widgets, ok := out.(map[string]any)["widgets"].([]map[string]any)
+	require.True(t, ok)
+	require.Len(t, widgets, 2, "both widgets must be visible")
+
+	byID := map[string]map[string]any{}
+	for _, w := range widgets {
+		byID[w["id"].(string)] = w
+	}
+
+	// Query widget: connector/query/config are exposed, cell refs are null.
+	qw, ok := byID[queryWidgetID]
+	require.True(t, ok, "the query widget must not be dropped")
+	require.Equal(t, "metric", qw["type"])
+	require.Equal(t, "sql", qw["language"])
+	require.Nil(t, qw["notebook_id"])
+	require.Nil(t, qw["cell_id"])
+	require.NotNil(t, qw["connector_id"])
+	require.Equal(t, connID, *qw["connector_id"].(*string))
+	require.NotNil(t, qw["query"])
+	require.Equal(t, "SELECT 1 AS value", *qw["query"].(*string))
+	config, ok := qw["config"].(map[string]any)
+	require.True(t, ok)
+	metric, ok := config["metric"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "value", metric["value_column"])
+
+	// Cell widget: notebook/cell refs are exposed, connector/query are null.
+	cw, ok := byID[cellWidgetID]
+	require.True(t, ok)
+	require.NotNil(t, cw["notebook_id"])
+	require.Equal(t, nbID, *cw["notebook_id"].(*string))
+	require.NotNil(t, cw["cell_id"])
+	require.Equal(t, cellID, *cw["cell_id"].(*string))
+	require.Nil(t, cw["connector_id"])
+	require.Nil(t, cw["query"])
+}
+
+// TestDashboardUpdateSettingsValidatesLogoAttachment pins REST parity for the
+// app logo reference: an unknown or notebook-scoped attachment id must be
+// rejected (and must not rewrite the document), while an org-scoped
+// attachment id is accepted.
+func TestDashboardUpdateSettingsValidatesLogoAttachment(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Logo Dashboard")
+
+	logoID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO attachments (id, org_id, notebook_id, filename, mime_type, size_bytes, storage_path, created_by)
+		VALUES ($1, $2, NULL, 'logo.png', 'image/png', 10, '/tmp/logo.png', $3)
+	`, logoID, orgID, userID)
+	require.NoError(t, err)
+	notebookAttachmentID := uuid.NewString()
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO attachments (id, org_id, notebook_id, filename, mime_type, size_bytes, storage_path, created_by)
+		VALUES ($1, $2, $3, 'cell.png', 'image/png', 10, '/tmp/cell.png', $4)
+	`, notebookAttachmentID, orgID, nbID, userID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "update_dashboard_settings")
+
+	// An org-scoped attachment is accepted and materializes.
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": logoID},
+	})
+	require.NoError(t, err)
+	_, err = handler(args, ctx)
+	require.NoError(t, err)
+	var settingsOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT settings::text FROM dashboards WHERE id = $1`, dashID).Scan(&settingsOut))
+	require.JSONEq(t, `{"app":{"logo_attachment_id":"`+logoID+`"},"variables":[]}`, settingsOut)
+
+	// An unknown id is rejected without rewriting the document.
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	missingArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": uuid.NewString()},
+	})
+	require.NoError(t, err)
+	_, err = handler(missingArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "logo attachment not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected logo must not rewrite the document")
+
+	// A notebook-scoped attachment is rejected too: logos are served through
+	// the public attachment route, which has no notebook view ACL.
+	notebookArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": notebookAttachmentID},
+	})
+	require.NoError(t, err)
+	_, err = handler(notebookArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "logo attachment not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
+
+	// A malformed id can never match an attachment and is reported as missing.
+	malformedArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": "not-a-uuid"},
+	})
+	require.NoError(t, err)
+	_, err = handler(malformedArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "logo attachment not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
+
+	// A non-canonical spelling of a real attachment id is rejected too: the
+	// public attachment route only accepts the canonical lowercase form, so
+	// storing another spelling would render a broken logo.
+	upperArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"app":          map[string]any{"logo_attachment_id": strings.ToUpper(logoID)},
+	})
+	require.NoError(t, err)
+	_, err = handler(upperArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "logo attachment not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
+}
+
+// TestDashboardSetLayoutComposesAppearanceEntries pins sequential application:
+// two appearance entries for the same widget must compose (the second keeps
+// the first's fields) instead of overwriting them.
+func TestDashboardSetLayoutComposesAppearanceEntries(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Compose Dashboard")
+
+	widgetID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT 1 AS x', 'sql', 'table',
+		        '{"row":0,"col":0,"width":6,"height":6}', '{"showLegend":true}')
+	`, widgetID, dashID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "set_dashboard_layout")
+
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"appearance": []map[string]any{
+			{"widget_id": widgetID, "appearance": map[string]any{"background": "transparent"}},
+			{"widget_id": widgetID, "appearance": map[string]any{"padding": "md"}},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "updated", out.(map[string]any)["status"])
+
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, true, w.Config["showLegend"], "unrelated config keys must survive")
+	appearance, ok := w.Config["appearance"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "transparent", appearance["background"], "the first entry's fields must survive")
+	require.Equal(t, "md", appearance["padding"])
+
+	var configOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT config::text FROM widgets WHERE id = $1`, widgetID).Scan(&configOut))
+	require.JSONEq(t, `{"showLegend":true,"appearance":{"background":"transparent","padding":"md"}}`, configOut)
+}
+
+// TestDashboardGetDashboardExposesOrgBranding pins the branding read on the
+// agent's dashboard inspect: org_branding carries the org's theme tokens, and
+// stays null when the org has none.
+func TestDashboardGetDashboardExposesOrgBranding(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Branding Dashboard")
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "get_dashboard")
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Nil(t, out.(map[string]any)["org_branding"], "unset branding must be null")
+
+	_, err = db.Pool.Exec(context.Background(),
+		`UPDATE orgs SET settings = COALESCE(settings, '{}'::jsonb) ||
+		 '{"branding":{"app_name":"Acme Analytics","accent_color":"#7c5cff","default_chart_palette":["#7c5cff","#22c55e"]}}'::jsonb
+		 WHERE id = $1`, orgID)
+	require.NoError(t, err)
+
+	out, err = handler(args, ctx)
+	require.NoError(t, err)
+	branding, ok := out.(map[string]any)["org_branding"].(map[string]any)
+	require.True(t, ok, "expected org_branding map, got %v", out.(map[string]any)["org_branding"])
+	require.Equal(t, "Acme Analytics", branding["app_name"])
+	require.Equal(t, "#7c5cff", branding["accent_color"])
+	require.Equal(t, []any{"#7c5cff", "#22c55e"}, branding["default_chart_palette"])
 }

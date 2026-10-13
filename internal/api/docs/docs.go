@@ -1659,6 +1659,51 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/v1/public/{token}/attachments/{id}": {
+            "get": {
+                "description": "Stream an org attachment (app logo) through a public share token",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "public"
+                ],
+                "summary": "Get public attachment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Public sharing token",
+                        "name": "token",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Attachment ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "file"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/api/v1/public/{token}/execute": {
             "post": {
                 "security": [
@@ -1666,7 +1711,7 @@ const docTemplate = `{
                         "none": []
                     }
                 ],
-                "description": "Runs one query widget of a publicly shared dashboard when settings.public_live is enabled. Queries run as the dashboard creator and are rate-limited per token and client IP.",
+                "description": "Runs one query widget of a publicly shared dashboard when the served content's settings.public_live is enabled (once published, the snapshot's setting governs; an unpublished draft toggle has no effect). Queries run as the dashboard creator and are rate-limited per token and client IP.",
                 "consumes": [
                     "application/json"
                 ],
@@ -1731,7 +1776,7 @@ const docTemplate = `{
                         "none": []
                     }
                 ],
-                "description": "Executes the query-backed options for a variable of a publicly shared dashboard when settings.public_live is enabled.",
+                "description": "Executes the query-backed options for a variable of a publicly shared dashboard when the served content's settings.public_live is enabled (once published, the snapshot's setting and variable set govern).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3020,7 +3065,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Get a dashboard with its widgets",
+                "description": "Get a dashboard with its widgets. Viewers without dashboard edit permission always receive the latest published snapshot; editors receive the draft unless published=1 is set.",
                 "produces": [
                     "application/json"
                 ],
@@ -3035,6 +3080,12 @@ const docTemplate = `{
                         "name": "id",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "1 serves the latest published snapshot for everyone (falls back to the draft when the dashboard has never been published)",
+                        "name": "published",
+                        "in": "query"
                     }
                 ],
                 "responses": {
@@ -3153,6 +3204,69 @@ const docTemplate = `{
                 }
             }
         },
+        "/dashboards/{id}/attachments": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upload a file attachment for a dashboard (app logo)",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "attachments"
+                ],
+                "summary": "Upload dashboard attachment",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "file",
+                        "description": "File to upload",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/dashboards/{id}/execute": {
             "post": {
                 "security": [
@@ -3160,7 +3274,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Runs one query widget as the requesting user, interpolating dashboard variables server-side. Results are cached in Redis for the dashboard's query_cache_seconds (default 30, 0 disables).",
+                "description": "Runs one query widget as the requesting user, interpolating dashboard variables server-side. Results are cached in Redis for the dashboard's query_cache_seconds (default 30, 0 disables). With published=true the widget and variables resolve from the latest published snapshot (404 when the dashboard has never been published; never falls back to the draft).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3180,7 +3294,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "widget_id, connector_id, variables, bypass_cache",
+                        "description": "widget_id, connector_id, variables, bypass_cache, published",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -3257,6 +3371,57 @@ const docTemplate = `{
                             "additionalProperties": {
                                 "type": "string"
                             }
+                        }
+                    }
+                }
+            }
+        },
+        "/dashboards/{id}/publish": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Snapshot the dashboard's current document (title, settings, widgets) as a new published version",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboards"
+                ],
+                "summary": "Publish a dashboard version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
                         }
                     }
                 }
@@ -3391,7 +3556,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Executes the query-backed options for a dashboard variable and returns label/value pairs",
+                "description": "Executes the query-backed options for a dashboard variable and returns label/value pairs. With published=true the variable resolves from the latest published snapshot (404 when the dashboard has never been published; never falls back to the draft).",
                 "consumes": [
                     "application/json"
                 ],
@@ -3418,7 +3583,7 @@ const docTemplate = `{
                         "required": true
                     },
                     {
-                        "description": "variables, connector_id (viewer's dashboard selector)",
+                        "description": "variables, connector_id (viewer's dashboard selector), published",
                         "name": "request",
                         "in": "body",
                         "required": true,
@@ -3449,6 +3614,102 @@ const docTemplate = `{
                         "schema": {
                             "type": "object",
                             "additionalProperties": true
+                        }
+                    }
+                }
+            }
+        },
+        "/dashboards/{id}/versions": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "List published versions (newest first) and whether the draft has unpublished changes",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboards"
+                ],
+                "summary": "List dashboard versions",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/api.dashboardVersionsResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/dashboards/{id}/versions/{version}/restore": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Copy a published snapshot back into the dashboard draft (does not publish)",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboards"
+                ],
+                "summary": "Restore a dashboard version",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "integer",
+                        "description": "Version number",
+                        "name": "version",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "integer"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
                         }
                     }
                 }
@@ -4519,6 +4780,196 @@ const docTemplate = `{
                     },
                     "401": {
                         "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/collab/authorize": {
+            "post": {
+                "description": "Decides whether the caller may edit the dashboard backing a collaborative document; viewers get can_edit=false (internal relay endpoint)",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "internal"
+                ],
+                "summary": "Authorize a collaborative document",
+                "parameters": [
+                    {
+                        "description": "Document name",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/api.collabAuthorizeRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/internal/dashboard-yjs/{dashboard_id}": {
+            "get": {
+                "description": "Returns the Yjs document state for a dashboard, lazily seeding it from the dashboards/widgets rows on first access (internal relay endpoint)",
+                "produces": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "internal"
+                ],
+                "summary": "Get dashboard Yjs document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "dashboard_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            },
+            "put": {
+                "description": "Merges and stores the Yjs document state for a dashboard, validating the store actor's dashboard edit / notebook view rights (internal relay endpoint)",
+                "consumes": [
+                    "application/octet-stream"
+                ],
+                "tags": [
+                    "internal"
+                ],
+                "summary": "Update dashboard Yjs document",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "dashboard_id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content",
+                        "schema": {
+                            "type": "string"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -6947,6 +7398,53 @@ const docTemplate = `{
                     },
                     "400": {
                         "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/org/attachments": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Upload an org-scoped file attachment (app logo)",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "attachments"
+                ],
+                "summary": "Upload org attachment",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "File to upload",
+                        "name": "file",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -9951,6 +10449,14 @@ const docTemplate = `{
                 }
             }
         },
+        "api.collabAuthorizeRequest": {
+            "type": "object",
+            "properties": {
+                "document_name": {
+                    "type": "string"
+                }
+            }
+        },
         "api.createSessionRequest": {
             "type": "object",
             "properties": {
@@ -9977,6 +10483,49 @@ const docTemplate = `{
                 },
                 "title": {
                     "type": "string"
+                }
+            }
+        },
+        "api.dashboardVersionSummary": {
+            "type": "object",
+            "properties": {
+                "content_hash": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "created_by_email": {
+                    "type": "string"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "api.dashboardVersionsResponse": {
+            "type": "object",
+            "properties": {
+                "draft_hash": {
+                    "type": "string"
+                },
+                "has_unpublished_changes": {
+                    "type": "boolean"
+                },
+                "latest": {
+                    "$ref": "#/definitions/api.dashboardVersionSummary"
+                },
+                "versions": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/api.dashboardVersionSummary"
+                    }
+                },
+                "warnings": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
                 }
             }
         },
@@ -10547,11 +11096,53 @@ const docTemplate = `{
                 "subtitle": {
                     "type": "string"
                 },
+                "theme": {
+                    "$ref": "#/definitions/models.DashboardAppTheme"
+                },
                 "title": {
                     "type": "string"
                 },
                 "width": {
                     "description": "\"fixed\" | \"full\"; empty = fixed",
+                    "type": "string"
+                }
+            }
+        },
+        "models.DashboardAppTheme": {
+            "type": "object",
+            "properties": {
+                "accent": {
+                    "type": "string"
+                },
+                "background": {
+                    "type": "string"
+                },
+                "border": {
+                    "type": "string"
+                },
+                "chart_palette": {
+                    "description": "\u003c=12 hex colors",
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "color_scheme": {
+                    "description": "auto | light | dark",
+                    "type": "string"
+                },
+                "font_family": {
+                    "description": "dm-sans | jetbrains-mono | system",
+                    "type": "string"
+                },
+                "radius": {
+                    "description": "0..24",
+                    "type": "integer"
+                },
+                "surface": {
+                    "type": "string"
+                },
+                "text": {
                     "type": "string"
                 }
             }
@@ -10574,11 +11165,30 @@ const docTemplate = `{
                 "query_cache_seconds": {
                     "type": "integer"
                 },
+                "tabs": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/models.DashboardTab"
+                    }
+                },
                 "variables": {
                     "type": "array",
                     "items": {
                         "$ref": "#/definitions/models.DashboardVariable"
                     }
+                }
+            }
+        },
+        "models.DashboardTab": {
+            "type": "object",
+            "properties": {
+                "id": {
+                    "description": "^[a-z0-9][a-z0-9-]*$, unique, \u003c=64 chars",
+                    "type": "string"
+                },
+                "title": {
+                    "description": "\u003c=60 runes",
+                    "type": "string"
                 }
             }
         },
@@ -11034,6 +11644,9 @@ const docTemplate = `{
                 },
                 "row": {
                     "type": "integer"
+                },
+                "tab": {
+                    "type": "string"
                 },
                 "width": {
                     "type": "integer"

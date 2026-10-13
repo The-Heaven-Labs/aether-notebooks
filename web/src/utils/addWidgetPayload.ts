@@ -5,7 +5,7 @@ export type AddWidgetType = 'table' | 'chart' | 'metric' | 'text'
 export interface AddWidgetInput {
   source: AddWidgetSource
   type: AddWidgetType
-  layout: { row: number; col: number; width: number; height: number }
+  layout: { row: number; col: number; width: number; height: number; tab?: string }
   notebookId?: string
   cellId?: string
   connectorId?: string | null

@@ -9,11 +9,12 @@ import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPa
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
 import { isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
+import { widgetTabId, NO_TABS } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { EmptyState } from '../components/EmptyState'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
-import { api } from '../api/client'
+import { api, ApiError } from '../api/client'
 import type { Dashboard, DashboardVariableType, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
@@ -31,6 +32,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
 import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
 import { AppSettingsPanel } from '../components/AppSettingsPanel'
+import { DashboardVersionsPanel, useDashboardVersions } from '../components/DashboardVersionsPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
 import { useDashboardDoc } from '../hooks/useDashboardDoc'
@@ -46,10 +48,18 @@ interface DashboardWithWidgets extends Dashboard {
 }
 
 
-function nextWidgetLayout(widgets: Widget[]): { row: number; col: number; width: number; height: number } {
-  if (!widgets.length) return { row: 0, col: 0, width: 6, height: 8 }
-  const maxBottom = widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
-  return { row: maxBottom, col: 0, width: 6, height: 8 }
+/**
+ * The next free layout for a widget added through the picker. When a chapter
+ * filter is active the widget lands in that chapter (`layout.tab`); with
+ * "All" selected no tab is set and the widget falls back to the first chapter
+ * like before.
+ */
+function nextWidgetLayout(widgets: Widget[], tab: string | null): { row: number; col: number; width: number; height: number; tab?: string } {
+  const maxBottom = widgets.length
+    ? widgets.reduce((max, w) => Math.max(max, w.layout.row + w.layout.height), 0)
+    : 0
+  const layout = { row: maxBottom, col: 0, width: 6, height: 8 }
+  return tab ? { ...layout, tab } : layout
 }
 
 /** Human name for a widget's controls; falls back to a generic label. */
@@ -57,6 +67,63 @@ function widgetDisplayName(widget: Widget): string {
   const cfg = widget.config as Record<string, unknown> | undefined
   const t = typeof cfg?.title === 'string' ? cfg.title : typeof cfg?.label === 'string' ? cfg.label : ''
   return t || 'widget'
+}
+
+/**
+ * A refused publish (422) carries the per-widget projection warnings that
+ * blocked it; fold them into the single message the error banner shows.
+ */
+function publishErrorMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    const warnings = (err.body as { warnings?: unknown } | null)?.warnings
+    if (Array.isArray(warnings) && warnings.length > 0) {
+      return `${err.message}: ${warnings.join('; ')}`
+    }
+  }
+  return err instanceof Error ? err.message : 'Publish failed'
+}
+
+/**
+ * Horizontal padding of the editor body (`styles.body`). The body itself is
+ * the width probe — unlike the grid it is always rendered — so its
+ * clientWidth includes this padding; subtracting it reports the same
+ * content-box width the old grid wrapper did and keeps the mobile breakpoint
+ * where it was.
+ */
+const BODY_PADDING_X = 12
+
+/** The body's content-box width: clientWidth minus its horizontal padding. */
+function bodyContentWidth(el: HTMLElement): number {
+  return el.clientWidth - BODY_PADDING_X * 2
+}
+
+/** Drop coordinates of a drag/resize stop event (mouse or touch). */
+function eventPoint(event: Event): { x: number; y: number } | null {
+  if ('clientX' in event && 'clientY' in event) {
+    const { clientX, clientY } = event as MouseEvent
+    if (Number.isFinite(clientX) && Number.isFinite(clientY)) return { x: clientX, y: clientY }
+  }
+  const touch = (event as TouchEvent).changedTouches?.[0]
+  return touch ? { x: touch.clientX, y: touch.clientY } : null
+}
+
+/**
+ * The `data-tab-id` chip under a drop point: a tab id, "" for the All chip
+ * (clears the placement), or null when the drop landed anywhere else. The
+ * full hit-test stack is scanned because the dragged card floats above the
+ * strip at drop time and would otherwise shadow the chip.
+ */
+function tabIdAtPoint(event: Event): string | null {
+  const point = eventPoint(event)
+  if (!point) return null
+  const stack: Array<Element | null> = typeof document.elementsFromPoint === 'function'
+    ? document.elementsFromPoint(point.x, point.y)
+    : [document.elementFromPoint(point.x, point.y)]
+  for (const el of stack) {
+    const chip = el?.closest('[data-tab-id]')
+    if (chip) return chip.getAttribute('data-tab-id') ?? ''
+  }
+  return null
 }
 
 function WidgetContent({ widget, editingEnabled, onConfigSave, onConfigReset }: { widget: Widget; editingEnabled: boolean; onConfigSave: (widgetId: string, config: ChartConfig) => void; onConfigReset: (widgetId: string) => void }) {
@@ -144,36 +211,44 @@ const markSaved = useCallback(() => {
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showVariables, setShowVariables] = useState(false)
   const [showAppSettings, setShowAppSettings] = useState(false)
+  // Editor-local chapter filter (NOT URL state) and the App settings panel's
+  // opening section (the strip's + reveals Tabs).
+  const [editorTab, setEditorTab] = useState<string | null>(null)
+  const [appSettingsSection, setAppSettingsSection] = useState<'tabs' | undefined>(undefined)
   const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
   const [variablePrefillType, setVariablePrefillType] = useState<DashboardVariableType | null>(null)
 
   const [containerWidth, setContainerWidth] = useState(0)
   const [deleteWidgetTarget, setDeleteWidgetTarget] = useState<string | null>(null)
   const isMobileLayout = containerWidth < 600
-  const gridContainerRef = useRef<HTMLDivElement | null>(null)
+  const layoutContainerRef = useRef<HTMLDivElement | null>(null)
 
-  // Observe the grid as soon as it mounts (a mount-time effect would run
-  // while the loading skeleton is up and never attach), so window resizes
-  // reflow the layout without a reload.
-  const gridObserverRef = useRef<ResizeObserver | null>(null)
-  const gridRef = useCallback((el: HTMLDivElement | null) => {
-    gridContainerRef.current = el
-    gridObserverRef.current?.disconnect()
-    gridObserverRef.current = null
+  // Observe the always-rendered body wrapper, not the grid: an empty
+  // dashboard has no grid to mount, and measuring only the grid left the
+  // width at 0 — so a brand-new dashboard on desktop read as "mobile" and
+  // hid the desktop-only controls (App settings, publish). A mount-time
+  // effect would run while the loading skeleton is up and never attach, so
+  // the ref callback sets the width as soon as the element exists and the
+  // ResizeObserver keeps it fresh on window resizes.
+  const layoutObserverRef = useRef<ResizeObserver | null>(null)
+  const layoutRef = useCallback((el: HTMLDivElement | null) => {
+    layoutContainerRef.current = el
+    layoutObserverRef.current?.disconnect()
+    layoutObserverRef.current = null
     if (el) {
-      setContainerWidth(el.clientWidth)
-      const obs = new ResizeObserver(([entry]) => {
-        setContainerWidth(entry.contentRect.width)
+      setContainerWidth(bodyContentWidth(el))
+      const obs = new ResizeObserver(() => {
+        setContainerWidth(bodyContentWidth(el))
       })
       obs.observe(el)
-      gridObserverRef.current = obs
+      layoutObserverRef.current = obs
     }
   }, [])
 
   useLayoutEffect(() => {
-    const el = gridContainerRef.current
+    const el = layoutContainerRef.current
     if (!el) return
-    const w = el.clientWidth
+    const w = bodyContentWidth(el)
     if (w !== containerWidth) {
       setContainerWidth(w)
     }
@@ -185,6 +260,24 @@ const markSaved = useCallback(() => {
     enabled: !!id,
     staleTime: 0,
     refetchOnMount: true,
+  })
+
+  // Published-version status for the header chip. The endpoint requires
+  // dashboard `edit`, so the query stays off until the dashboard response
+  // confirms access — enabling it while the dashboard is still loading would
+  // fire a 403 (plus a retry) for viewers. It refreshes on publish/restore
+  // invalidation and polls while the editor stays open.
+  const versionsQuery = useDashboardVersions(id, !!dashboard && dashboard.can_edit !== false)
+  const [showVersions, setShowVersions] = useState(false)
+  const publishDashboard = useMutation({
+    mutationFn: () => api.post(`/api/v1/dashboards/${id}/publish`),
+    onSuccess: () => {
+      // A failed publish's banner must not outlive a later success.
+      setMutationError(null)
+      qc.invalidateQueries({ queryKey: ['dashboard-versions', id] })
+      qc.invalidateQueries({ queryKey: ['dashboard', id] })
+    },
+    onError: (err: unknown) => setMutationError(publishErrorMessage(err)),
   })
 
   // Live dashboard document: connects as soon as the page mounts and becomes
@@ -209,8 +302,8 @@ const markSaved = useCallback(() => {
 
   useEffect(() => {
     if (!dashboard) return
-    const el = gridContainerRef.current
-    if (el) setContainerWidth(el.clientWidth)
+    const el = layoutContainerRef.current
+    if (el) setContainerWidth(bodyContentWidth(el))
   }, [dashboard])
 
   // Once the document has synced it is the source of truth for the widget
@@ -218,6 +311,24 @@ const markSaved = useCallback(() => {
   const widgets = useMemo(
     () => (liveDoc.synced ? liveDoc.widgets : (dashboard?.widgets ?? [])),
     [liveDoc.synced, liveDoc.widgets, dashboard?.widgets],
+  )
+
+  // Chapters: doc-sourced once synced. An empty list hides the strip's chips
+  // and the grid filter (only the editor's add shortcut remains).
+  const tabs = liveDoc.synced
+    ? (liveDoc.settings.tabs ?? NO_TABS)
+    : (dashboard?.settings?.tabs ?? NO_TABS)
+  // A selected chapter that disappears (deleted by anyone) is forgotten so a
+  // later tab reusing its id cannot silently re-apply the stale filter.
+  if (editorTab !== null && !tabs.some((t) => t.id === editorTab)) setEditorTab(null)
+  // The current render still sees the pre-clear value; fall back to All so the
+  // grid never silently strands every widget off-screen.
+  const activeEditorTab = editorTab && tabs.some((t) => t.id === editorTab) ? editorTab : null
+  const shownWidgets = useMemo(
+    () => (tabs.length === 0 || activeEditorTab === null
+      ? widgets
+      : widgets.filter((w: Widget) => widgetTabId(w, tabs) === activeEditorTab)),
+    [widgets, tabs, activeEditorTab],
   )
 
   const { data: notebooks = [] } = useQuery({
@@ -237,7 +348,7 @@ const markSaved = useCallback(() => {
       const payload = buildAddWidgetPayload({
         source: pickerSource,
         type: pickerType,
-        layout: nextWidgetLayout(widgets),
+        layout: nextWidgetLayout(widgets, activeEditorTab),
         notebookId: pickerNotebookId,
         cellId: pickerCellId,
         connectorId: pickerConnectorId,
@@ -281,7 +392,11 @@ const markSaved = useCallback(() => {
   // Drag/resize stops write the layout straight to the shared document (the
   // source of truth); the relay persists it and every replica sees the move
   // live. No REST call and no cache invalidation — the doc is live.
-  const applyLayoutStop = useCallback((layout: Layout) => {
+  //
+  // `tabDrop` carries a chip drop: the dragged widget's new chapter is folded
+  // into the same write as its position, so a chip drop is a single document
+  // write per widget instead of a position write plus a tab write.
+  const applyLayoutStop = useCallback((layout: Layout, tabDrop?: { widgetId: string; tab: string }) => {
     if (!editingEnabled) return
     // The compactor may have moved other widgets too: write every changed
     // widget's layout so overlapping changes merge instead of being lost.
@@ -289,9 +404,11 @@ const markSaved = useCallback(() => {
       const widget = widgets.find((w: Widget) => w.id === item.i)
       if (!widget) return
       const prev = widget.layout
+      const tab = tabDrop && tabDrop.widgetId === item.i ? tabDrop.tab : prev.tab
       if (prev.col === item.x && prev.row === item.y &&
-          prev.width === item.w && prev.height === item.h) return
-      updateDocLayout(item.i, { row: item.y, col: item.x, width: item.w, height: item.h })
+          prev.width === item.w && prev.height === item.h &&
+          (prev.tab ?? '') === (tab ?? '')) return
+      updateDocLayout(item.i, { ...prev, row: item.y, col: item.x, width: item.w, height: item.h, tab })
     })
   }, [editingEnabled, widgets, updateDocLayout])
 
@@ -300,11 +417,27 @@ const markSaved = useCallback(() => {
     applyLayoutStop(layout)
   }, [applyLayoutStop])
 
-  const onDragStop = useCallback((layout: Layout, _oldItem: LayoutItem | null, newItem: LayoutItem | null) => {
+  const onDragStop = useCallback((
+    layout: Layout,
+    _oldItem: LayoutItem | null,
+    newItem: LayoutItem | null,
+    _placeholder: LayoutItem | null,
+    e?: Event,
+  ) => {
     if (!newItem || !layout) return
+    // Dropping a card on a tab chip re-places it; the All chip (data-tab-id="")
+    // clears the tab so the widget falls back to the first chapter.
+    let tabDrop: { widgetId: string; tab: string } | undefined
+    if (editingEnabled && tabs.length > 0 && e) {
+      const tabId = tabIdAtPoint(e)
+      if (tabId !== null) {
+        const widget = widgets.find((w: Widget) => w.id === newItem.i)
+        if (widget && (widget.layout?.tab ?? '') !== tabId) tabDrop = { widgetId: newItem.i, tab: tabId }
+      }
+    }
     // The library's compactor handles overlap prevention.
-    applyLayoutStop(layout)
-  }, [applyLayoutStop])
+    applyLayoutStop(layout, tabDrop)
+  }, [applyLayoutStop, editingEnabled, tabs, widgets])
 
   if (isLoading) {
     return (
@@ -353,6 +486,19 @@ const markSaved = useCallback(() => {
   const displayTitle = liveDashboard.title
   const variables = liveDashboard.settings?.variables ?? []
   const gridCols = liveDashboard.settings?.grid_cols ?? 12
+
+  // Status chip: the amber dot flags a published app that is behind the draft
+  // (or a draft that publish would refuse). A never-published dashboard reads
+  // "Not published" instead — a dot there would add nothing.
+  const latestVersion = versionsQuery.data?.latest ?? null
+  const versionWarnings = versionsQuery.data?.warnings ?? []
+  const versionNeedsPublish = !!latestVersion && !!versionsQuery.data?.has_unpublished_changes
+  const versionHasDot = versionNeedsPublish || versionWarnings.length > 0
+  const versionChipTitle = versionWarnings.length > 0
+    ? `Draft cannot be published: ${versionWarnings.join('; ')}`
+    : versionNeedsPublish
+      ? 'Unpublished changes'
+      : 'Version history'
 
   return (
     <DashboardVariablesProvider dashboardId={id!} variables={variables}>
@@ -446,7 +592,7 @@ const markSaved = useCallback(() => {
             <button
               type="button"
               className="nav-btn"
-              onClick={() => setShowAppSettings(true)}
+              onClick={() => { setAppSettingsSection(undefined); setShowAppSettings(true) }}
               disabled={!editingEnabled}
               title={editingEnabled ? 'App settings' : 'Editing is paused'}
             >
@@ -460,6 +606,33 @@ const markSaved = useCallback(() => {
             }}>
               {saveStatus === 'saving' ? 'Saving…' : 'Saved'}
             </span>
+          )}
+          {/* Publish controls are editor-only (the versions API requires
+              dashboard `edit`) and hidden on mobile like the App button. */}
+          {!isMobileLayout && canEdit && (
+            <>
+              <button
+                type="button"
+                className="nav-btn"
+                data-testid="publish-status"
+                aria-label={`${latestVersion ? `v${latestVersion.version}` : 'Not published'} — ${versionChipTitle}`}
+                onClick={() => setShowVersions(true)}
+                disabled={!editingEnabled}
+                title={editingEnabled ? versionChipTitle : `${versionChipTitle} — editing is paused`}
+              >
+                {versionHasDot && <span data-testid="publish-status-dot" style={styles.publishDot} aria-hidden="true" />}
+                {latestVersion ? `v${latestVersion.version}` : 'Not published'}
+              </button>
+              <button
+                type="button"
+                className="nav-btn"
+                onClick={() => publishDashboard.mutate()}
+                disabled={!editingEnabled || publishDashboard.isPending}
+                title={editingEnabled ? 'Publish the current draft' : 'Editing is paused'}
+              >
+                {publishDashboard.isPending ? 'Publishing…' : 'Publish'}
+              </button>
+            </>
           )}
           <Link to={`/dashboards/${id}/view`} className="nav-btn" title="View dashboard">
             <Eye size={12} /> View
@@ -494,6 +667,57 @@ const markSaved = useCallback(() => {
 
       {mutationError && (
         <ErrorBanner message={mutationError} onDismiss={() => setMutationError(null)} />
+      )}
+
+      {/* Chapter strip (editor-local filter, not URL state): All + one chip per
+          tab + the add shortcut that opens the App settings panel's Tabs
+          section. Without tabs the strip collapses to the lone add shortcut so
+          authors can create the first chapter on every layout (the header's
+          App button is desktop-only); read-only visitors see no strip. */}
+      {(tabs.length > 0 || editingEnabled) && (
+        <div
+          style={{ ...styles.tabStrip, ...(isMobileLayout ? styles.tabStripMobile : {}) }}
+          role="group"
+          aria-label="Dashboard chapters"
+        >
+          {tabs.length > 0 && (
+            <button
+              type="button"
+              data-tab-id=""
+              aria-pressed={activeEditorTab === null}
+              style={activeEditorTab === null ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
+              onClick={() => setEditorTab(null)}
+            >
+              All
+            </button>
+          )}
+          {tabs.map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              data-tab-id={tab.id}
+              aria-pressed={activeEditorTab === tab.id}
+              style={activeEditorTab === tab.id ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
+              onClick={() => setEditorTab(tab.id)}
+            >
+              {tab.title}
+            </button>
+          ))}
+          <button
+            type="button"
+            style={styles.tabAddBtn}
+            aria-label="Add tab"
+            title="Add a tab"
+            disabled={!editingEnabled}
+            onClick={() => {
+              if (!editingEnabled) return
+              setAppSettingsSection('tabs')
+              setShowAppSettings(true)
+            }}
+          >
+            ＋
+          </button>
+        </div>
       )}
 
       {/* Widget picker panel */}
@@ -623,7 +847,7 @@ const markSaved = useCallback(() => {
       )}
 
       {/* Main body */}
-      <div style={styles.body}>
+      <div ref={layoutRef} style={styles.body}>
         {variables.length > 0 && <DashboardVariableBar />}
         {widgets.length === 0 ? (
           <EmptyState
@@ -632,14 +856,16 @@ const markSaved = useCallback(() => {
             action={editingEnabled ? { label: '+ Add Widget', onClick: () => setShowPicker(true) } : undefined}
           />
         ) : (
-          // One persistent measured wrapper: the mobile/desktop branch is
-          // chosen only after the width is known, otherwise the first render
-          // (width 0) mounts the mobile branch and the flip to desktop
-          // remounts every widget — doubling its query fetches.
-          <div ref={gridRef} style={{ minHeight: 240 }}>
-            {containerWidth === 0 ? null : isMobileLayout ? (
+          // The mobile/desktop branch is chosen only after the body width is
+          // known (see layoutRef), otherwise the first render would mount the
+          // mobile branch and the flip to desktop would remount every widget —
+          // doubling its query fetches.
+          <div style={{ minHeight: 240 }}>
+            {shownWidgets.length === 0 ? (
+              <p style={styles.emptyChapterNote}>No widgets in this chapter yet.</p>
+            ) : containerWidth === 0 ? null : isMobileLayout ? (
               <div style={styles.mobileGrid}>
-                {widgets.map((widget: Widget) => (
+                {shownWidgets.map((widget: Widget) => (
                   <div key={widget.id} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
                       <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
@@ -679,7 +905,7 @@ const markSaved = useCallback(() => {
               </div>
             ) : (
               <GridLayout
-                layout={widgets.map(toGridItem)}
+                layout={shownWidgets.map(toGridItem)}
                 width={containerWidth}
                 gridConfig={{ cols: gridCols, rowHeight: 30, margin: [4, 4] }}
                 // Whole-card drag: any non-interactive part of the widget moves
@@ -692,7 +918,7 @@ const markSaved = useCallback(() => {
                 onDragStop={onDragStop}
                 style={{ minHeight: 240 }}
               >
-                {widgets.map((widget: Widget) => (
+                {shownWidgets.map((widget: Widget) => (
                   <div key={widget.id} style={{ position: 'relative' }}>
                     <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
                     <div className="dash-widget-card" style={styles.widgetCard}>
@@ -792,9 +1018,14 @@ const markSaved = useCallback(() => {
         <AppSettingsPanel
           dashboardId={id!}
           dashboard={liveDashboard}
+          widgets={widgets}
+          initialSection={appSettingsSection}
           onClose={() => setShowAppSettings(false)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
         />
+      )}
+      {showVersions && (
+        <DashboardVersionsPanel dashboardId={id!} onClose={() => setShowVersions(false)} />
       )}
     </AppShell>
     </DashboardVariablesProvider>
@@ -890,6 +1121,14 @@ const styles: Record<string, React.CSSProperties> = {
   disabledControl: {
     opacity: 0.5,
     cursor: 'not-allowed',
+  },
+  // Amber "published app is behind the draft" dot on the status chip.
+  publishDot: {
+    width: 7,
+    height: 7,
+    borderRadius: '50%',
+    background: 'var(--warning)',
+    flexShrink: 0,
   },
   pickerOverlay: {
     position: 'fixed',
@@ -996,6 +1235,68 @@ const styles: Record<string, React.CSSProperties> = {
     flexWrap: 'wrap',
     gap: 8,
   },
+  // The editor chapter strip: quiet chips under the sub-header. Chips carry
+  // `data-tab-id` (All carries "") so a card dropped on one is re-placed.
+  tabStrip: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '6px 12px',
+    background: 'var(--nav-bg)',
+    borderBottom: '1px solid var(--nav-border)',
+    flexShrink: 0,
+    overflowX: 'auto',
+    position: 'sticky',
+    top: 44,
+    zIndex: 98,
+  },
+  tabChip: {
+    padding: '3px 12px',
+    background: 'rgba(255,255,255,0.06)',
+    color: 'var(--nav-text-muted)',
+    border: '1px solid transparent',
+    borderRadius: 999,
+    fontSize: 12,
+    fontWeight: 500,
+    cursor: 'pointer',
+    whiteSpace: 'nowrap',
+    flexShrink: 0,
+  },
+  tabChipActive: {
+    background: 'var(--accent)',
+    borderColor: 'var(--accent)',
+    color: 'var(--button-primary-text, #fff)',
+    fontWeight: 600,
+  },
+  tabAddBtn: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 22,
+    height: 22,
+    padding: 0,
+    background: 'rgba(255,255,255,0.06)',
+    color: 'var(--nav-text-muted)',
+    border: '1px dashed var(--nav-border)',
+    borderRadius: 999,
+    fontSize: 13,
+    lineHeight: 1,
+    cursor: 'pointer',
+    flexShrink: 0,
+  },
+  // The mobile sub-header wraps to its own height, so the strip stays in flow
+  // instead of sticky-positioning under a fixed header height.
+  tabStripMobile: {
+    position: 'relative',
+    top: 'auto',
+  },
+  emptyChapterNote: {
+    margin: 0,
+    padding: '24px 0',
+    fontSize: 13,
+    fontStyle: 'italic',
+    color: 'var(--text-muted)',
+  },
   addWidgetBtnMobile: {
     padding: '5px 12px',
   },
@@ -1018,7 +1319,7 @@ const styles: Record<string, React.CSSProperties> = {
   body: {
     flex: 1,
     margin: 0,
-    padding: '8px 12px',
+    padding: `8px ${BODY_PADDING_X}px`,
     width: '100%',
   },
   // Transparent shell around the editor's head bar (kind badge + actions)
