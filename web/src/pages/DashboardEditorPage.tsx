@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, X, Plus, Eye, Pencil, Shield, LayoutTemplate } from 'lucide-react'
+import { ArrowLeft, X, Plus, Eye, Pencil, Shield, LayoutTemplate, ListChecks } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
@@ -32,9 +32,11 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
 import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
 import { AppSettingsPanel } from '../components/AppSettingsPanel'
+import { AppHealthPanel } from '../components/AppHealthPanel'
 import { DashboardVersionsPanel, useDashboardVersions } from '../components/DashboardVersionsPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
+import { VariableSelect } from '../components/VariableSelect'
 import { useDashboardDoc } from '../hooks/useDashboardDoc'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -45,6 +47,20 @@ interface NotebookWithCells extends Notebook {
 
 interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
+}
+
+/** One-line picker descriptors (quiet instrument, micro-example). */
+const WIDGET_TYPE_DESCRIPTORS: Record<AddWidgetType, string> = {
+  table: 'Table — the query’s rows, with optional column formats.',
+  chart: 'Chart — a plot of the rows (bar, line, pie, …).',
+  metric: 'Metric — one number from the query.',
+  text: 'Text — markdown with live {{filters}}.',
+}
+
+const WIDGET_SOURCE_DESCRIPTORS: Record<AddWidgetSource, string> = {
+  cell: 'Reuses a notebook cell’s stored output.',
+  query: 'Runs SQL on a connector, as the viewer.',
+  none: 'No query — authored markdown.',
 }
 
 
@@ -179,24 +195,6 @@ export function DashboardEditorPage() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [mutationError, setMutationError] = useState<string | null>(null)
-const [saveStatus, setSaveStatus] = useState<'saving' | 'saved' | null>(null)
-const pendingSaves = useRef(0)
-const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-const markSaving = useCallback(() => {
-  pendingSaves.current++
-  setSaveStatus('saving')
-  if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current)
-}, [])
-
-const markSaved = useCallback(() => {
-  pendingSaves.current--
-  if (pendingSaves.current <= 0) {
-    pendingSaves.current = 0
-    setSaveStatus('saved')
-    saveStatusTimer.current = setTimeout(() => setSaveStatus(null), 2000)
-  }
-}, [])
 
   const [showPicker, setShowPicker] = useState(false)
   const [showPermissions, setShowPermissions] = useState(false)
@@ -269,6 +267,7 @@ const markSaved = useCallback(() => {
   // invalidation and polls while the editor stays open.
   const versionsQuery = useDashboardVersions(id, !!dashboard && dashboard.can_edit !== false)
   const [showVersions, setShowVersions] = useState(false)
+  const [showHealth, setShowHealth] = useState(false)
   const publishDashboard = useMutation({
     mutationFn: () => api.post(`/api/v1/dashboards/${id}/publish`),
     onSuccess: () => {
@@ -543,42 +542,6 @@ const markSaved = useCallback(() => {
         </div>
         <div style={styles.headerRight}>
           <CollaboratorAvatars awareness={liveDoc.awareness} currentUserEmail={userEmail} />
-          {!isMobileLayout && (
-            <div className="nav-seg" role="group" aria-label="Grid columns">
-              <span style={{ fontSize: 10, color: 'var(--nav-text-muted)', fontWeight: 700, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '0 4px' }}>Cols</span>
-              {[6, 8, 12, 16, 24].map(c => (
-                <button
-                  key={c}
-                  type="button"
-                  title={`${c} grid columns — ${c <= 8 ? 'compact' : c <= 12 ? 'standard' : 'wide'} layout`}
-                  aria-label={`${c} columns`}
-                  aria-pressed={gridCols === c}
-                  disabled={!editingEnabled}
-                  onClick={async () => {
-                    if (!editingEnabled) return
-                    markSaving()
-                    const oldCols = gridCols
-                    // Settings live in the document; the server merges this
-                    // partial update into it and materializes the row.
-                    await api.put(`/api/v1/dashboards/${id}`, {
-                      settings: { grid_cols: c },
-                    })
-                    if (oldCols !== c) {
-                      // Reflow layouts with the new column count so widgets
-                      // stay inside the grid instead of overflowing the canvas.
-                      // Layouts are document fields, so write them to the doc.
-                      const updates = rescaleWidgetLayouts(widgets, oldCols, c)
-                      updates.forEach(u => updateDocLayout(u.id, u.layout))
-                    }
-                    qc.invalidateQueries({ queryKey: ['dashboard', id] })
-                    markSaved()
-                  }}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          )}
           <button
             type="button"
             className="nav-btn"
@@ -589,23 +552,28 @@ const markSaved = useCallback(() => {
             Variables
           </button>
           {!isMobileLayout && (
-            <button
-              type="button"
-              className="nav-btn"
-              onClick={() => { setAppSettingsSection(undefined); setShowAppSettings(true) }}
-              disabled={!editingEnabled}
-              title={editingEnabled ? 'App settings' : 'Editing is paused'}
-            >
-              <LayoutTemplate size={12} /> App
-            </button>
-          )}
-          {saveStatus && (
-            <span style={{
-              fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--nav-text-muted)' : 'var(--nav-text)',
-              textTransform: 'uppercase', letterSpacing: '0.04em',
-            }}>
-              {saveStatus === 'saving' ? 'Saving…' : 'Saved'}
-            </span>
+            <>
+              <button
+                type="button"
+                className="nav-btn"
+                onClick={() => { setAppSettingsSection(undefined); setShowAppSettings(true) }}
+                disabled={!editingEnabled}
+                title={editingEnabled ? 'App settings' : 'Editing is paused'}
+              >
+                <LayoutTemplate size={12} /> App
+              </button>
+              {/* App health: the review_dashboard heuristics as a quiet
+                  editor checklist with jump-to-widget. */}
+              <button
+                type="button"
+                className="nav-btn"
+                onClick={() => setShowHealth(true)}
+                disabled={!editingEnabled}
+                title={editingEnabled ? 'Review the app composition' : 'Editing is paused'}
+              >
+                <ListChecks size={12} /> Review
+              </button>
+            </>
           )}
           {/* Publish controls are editor-only (the versions API requires
               dashboard `edit`) and hidden on mobile like the App button. */}
@@ -728,6 +696,7 @@ const markSaved = useCallback(() => {
               <span style={styles.pickerTitle}>Add Widget</span>
               <button
                 type="button"
+                aria-label="Close add widget"
                 style={{ ...styles.pickerClose, display: 'flex', alignItems: 'center' }}
                 onClick={() => {
                   setShowPicker(false)
@@ -762,38 +731,38 @@ const markSaved = useCallback(() => {
                 <option value="query">Query</option>
                 <option value="none">None — text panel</option>
               </select>
+              <span style={styles.pickerHint}>{WIDGET_SOURCE_DESCRIPTORS[pickerSource]}</span>
 
               {pickerSource === 'cell' ? (
                 <>
                   <label style={styles.pickerLabel}>Notebook</label>
-                  <select
-                    style={styles.pickerSelect}
+                  {/* Searchable picker: the notebook list can be long, so it
+                      filters as you type instead of dumping every option. */}
+                  <VariableSelect
+                    id="picker-notebook"
+                    options={notebooks.map((nb) => ({ label: nb.title, value: nb.id }))}
                     value={pickerNotebookId}
-                    onChange={(e) => {
-                      setPickerNotebookId(e.target.value)
+                    onChange={(v) => {
+                      setPickerNotebookId(typeof v === 'string' ? v : '')
                       setPickerCellId('')
                     }}
-                  >
-                    <option value="">Select notebook…</option>
-                    {notebooks.map((nb) => (
-                      <option key={nb.id} value={nb.id}>{nb.title}</option>
-                    ))}
-                  </select>
+                    emptyLabel="Select notebook…"
+                    ariaLabel="Notebook"
+                  />
 
                   <label style={styles.pickerLabel}>Cell</label>
-                  <select
-                    style={{ ...styles.pickerSelect, ...(!pickerNotebookId ? styles.pickerSelectDisabled : {}) }}
+                  <VariableSelect
+                    id="picker-cell"
+                    options={pickerCells.map((cell, i) => ({
+                      label: `Cell ${i + 1} (${cell.type})${cell.source ? ` — ${cell.source.slice(0, 40)}` : ''}`,
+                      value: cell.id,
+                    }))}
                     value={pickerCellId}
-                    onChange={(e) => setPickerCellId(e.target.value)}
+                    onChange={(v) => setPickerCellId(typeof v === 'string' ? v : '')}
                     disabled={!pickerNotebookId}
-                  >
-                    <option value="">Select cell…</option>
-                    {pickerCells.map((cell, i) => (
-                      <option key={cell.id} value={cell.id}>
-                        Cell {i + 1} ({cell.type}){cell.source ? ` — ${cell.source.slice(0, 40)}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    emptyLabel="Select cell…"
+                    ariaLabel="Cell"
+                  />
                 </>
               ) : pickerSource === 'query' ? (
                 <>
@@ -828,6 +797,7 @@ const markSaved = useCallback(() => {
                 <option value="metric" disabled={!pickerValidTypes.includes('metric')}>Metric</option>
                 <option value="text" disabled={!pickerValidTypes.includes('text')}>Text</option>
               </select>
+              <span style={styles.pickerHint}>{WIDGET_TYPE_DESCRIPTORS[pickerType]}</span>
 
               {pickerError && (
                 <p style={styles.pickerError}>{pickerError}</p>
@@ -852,7 +822,7 @@ const markSaved = useCallback(() => {
         {widgets.length === 0 ? (
           <EmptyState
             title="No widgets yet"
-            text="Add queries as tables, charts, or metrics — or write a text panel — to this dashboard."
+            text="Add readings (metrics, charts) and evidence (tables, text panels), then chapter them under App settings."
             action={editingEnabled ? { label: '+ Add Widget', onClick: () => setShowPicker(true) } : undefined}
           />
         ) : (
@@ -866,7 +836,7 @@ const markSaved = useCallback(() => {
             ) : containerWidth === 0 ? null : isMobileLayout ? (
               <div style={styles.mobileGrid}>
                 {shownWidgets.map((widget: Widget) => (
-                  <div key={widget.id} style={styles.mobileWidgetCard}>
+                  <div key={widget.id} id={`dash-widget-${widget.id}`} tabIndex={-1} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
                       <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
                       <div className="dash-widget-head-actions">
@@ -919,7 +889,7 @@ const markSaved = useCallback(() => {
                 style={{ minHeight: 240 }}
               >
                 {shownWidgets.map((widget: Widget) => (
-                  <div key={widget.id} style={{ position: 'relative' }}>
+                  <div key={widget.id} id={`dash-widget-${widget.id}`} tabIndex={-1} style={{ position: 'relative' }}>
                     <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
                     <div className="dash-widget-card" style={styles.widgetCard}>
                       <div className="dash-widget-head">
@@ -1022,10 +992,25 @@ const markSaved = useCallback(() => {
           initialSection={appSettingsSection}
           onClose={() => setShowAppSettings(false)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
+          onGridColsSaved={(from, to) => {
+            // Reflow layouts with the new column count so widgets stay inside
+            // the grid instead of overflowing the canvas. Layouts are document
+            // fields, so each rescale writes through the live doc.
+            const updates = rescaleWidgetLayouts(widgets, from, to)
+            updates.forEach(u => updateDocLayout(u.id, u.layout))
+            qc.invalidateQueries({ queryKey: ['dashboard', id] })
+          }}
         />
       )}
       {showVersions && (
         <DashboardVersionsPanel dashboardId={id!} onClose={() => setShowVersions(false)} />
+      )}
+      {showHealth && (
+        <AppHealthPanel
+          dashboardId={id!}
+          onJumpToChapter={(chapterId) => setEditorTab(chapterId)}
+          onClose={() => setShowHealth(false)}
+        />
       )}
     </AppShell>
     </DashboardVariablesProvider>
@@ -1063,6 +1048,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
     minWidth: 0,
+    // Shrinks first when the action row is wide; the title ellipsizes rather
+    // than sliding under the controls (the previous overlap).
+    flex: '1 1 auto',
+    overflow: 'hidden',
   },
   backLink: {
     display: 'flex',
@@ -1088,6 +1077,9 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+    // A flex item needs min-width 0 to shrink below its content width; without
+    // it the title never ellipsizes and overflows under the header controls.
+    minWidth: 0,
     maxWidth: 400,
     cursor: 'pointer',
   },
@@ -1193,6 +1185,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pickerSelectDisabled: {
     opacity: 0.5,
+  },
+  pickerHint: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
   },
   pickerTextarea: {
     width: '100%',

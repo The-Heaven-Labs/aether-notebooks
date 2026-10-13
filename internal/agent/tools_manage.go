@@ -12,8 +12,11 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/the-heaven-labs/aether/internal/agent/guide"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
+	"github.com/the-heaven-labs/aether/internal/dashboardreview"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/validate"
 )
@@ -27,7 +30,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_dashboard",
-			Description: "Create a new dashboard. Returns the dashboard ID.",
+			Description: "Create a new dashboard — an App surface with chapters, filters, and widgets. Returns the dashboard ID.",
 			Parameters:  `{"type":"object","properties":{"title":{"type":"string"},"folder_id":{"type":"string","description":"Optional parent folder"}},"required":["title"]}`,
 		},
 		Handler: makeCreateDashboardHandler(pool),
@@ -69,8 +72,8 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "create_dashboard_widget",
-			Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); config carries per-widget options (e.g. config.metric for metric widgets).",
-			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string","description":"Notebook for a cell-backed widget"},"cell_id":{"type":"string","description":"Cell for a cell-backed widget"},"connector_id":{"type":"string","description":"Connector for a query-backed widget (requires query)"},"query":{"type":"string","description":"SQL for a query-backed widget (requires connector_id)"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output, 'metric' for a single value, 'text' for markdown"},"config":{"type":"object","description":"Per-widget config, e.g. {\"metric\":{\"value_column\":\"x\",\"aggregation\":\"sum\"}}"},"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","type"]}`,
+			Description: "Add a widget to a dashboard. A widget reads either a notebook cell (notebook_id + cell_id) or a query (connector_id + query); typed chart/metric/table blocks (or raw config) create a fully-configured widget in one call.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"notebook_id":{"type":"string","description":"Notebook for a cell-backed widget"},"cell_id":{"type":"string","description":"Cell for a cell-backed widget"},"connector_id":{"type":"string","description":"Connector for a query-backed widget (requires query)"},"query":{"type":"string","description":"SQL for a query-backed widget (requires connector_id)"},"type":{"type":"string","enum":["chart","table","metric","text"],"description":"Widget type — use 'chart' for cells with chart config, 'table' for table output, 'metric' for a single value, 'text' for markdown"},"config":{"type":"object","description":"Per-widget config, e.g. {\"metric\":{\"value_column\":\"x\",\"aggregation\":\"sum\"}}"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `,"row":{"type":"number","description":"Row position (0-based)"},"col":{"type":"number","description":"Column position (0-based)"},"width":{"type":"number","description":"Widget width in columns (default 6)"},"height":{"type":"number","description":"Widget height in rows (default 4)"}},"required":["dashboard_id","type"]}`,
 		},
 		Handler: makeCreateDashboardWidgetHandler(pool),
 		Timeout: 15 * time.Second,
@@ -98,7 +101,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_dashboard_widget",
-			Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or config keys to shallow-merge into the widget's config.",
+			Description: "Update a dashboard widget: position (row, col), size (width, height), type (chart/table/metric/text), tab (App chapter), or raw config keys to shallow-merge. For typed chart/metric/table config, use set_widget_config.",
 			Parameters:  `{"type":"object","properties":{"widget_id":{"type":"string"},"dashboard_id":{"type":"string"},"row":{"type":"number"},"col":{"type":"number"},"width":{"type":"number"},"height":{"type":"number"},"tab":{"type":"string","description":"App tab id (lowercase letters, digits, dashes); empty falls back to the first tab"},"type":{"type":"string","enum":["chart","table","metric","text"]},"config":{"type":"object","description":"Config keys to shallow-merge into the widget's existing config"}},"required":["widget_id","dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardWidgetHandler(pool),
@@ -111,8 +114,22 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Description string `json:"description"`
 			Parameters  any    `json:"parameters"`
 		}{
+			Name:        "set_widget_config",
+			Description: "Set a dashboard widget's typed render config. chart uses create_chart's vocabulary (chart_type, x_column, y_columns, group_by, bar_mode, series_colors, mark_lines, …) and stores the converted chart config; metric sets the metric widget's value_column/aggregation/label/format/comparison/sparkline; table sets per-column number/currency/percent formats (columns: [{name, format}]). Each block replaces its config section; unrelated keys stay.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"widget_id":{"type":"string"},"chart":` + widgetChartBlockSchema + `,"metric":` + widgetMetricBlockSchema + `,"table":` + widgetTableBlockSchema + `},"required":["dashboard_id","widget_id"]}`,
+		},
+		Handler: makeSetWidgetConfigHandler(),
+		Timeout: 15 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
 			Name:        "get_dashboard",
-			Description: "Get a dashboard with its widgets. Use this to see the current state of a dashboard before making changes.",
+			Description: "Get a dashboard with its settings (app, chapters/tabs, variables) and widgets. Read this before changing a dashboard.",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeGetDashboardHandler(pool),
@@ -140,7 +157,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_dashboard",
-			Description: "Update a dashboard's title or grid settings (e.g., grid_cols: 12 for 12-column grid).",
+			Description: "Update a dashboard's title or grid density (grid_cols, default 12). Widget placement lives in set_dashboard_layout.",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string"},"grid_cols":{"type":"number","description":"Number of columns in the grid layout (default 12)"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardHandler(),
@@ -154,8 +171,8 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "update_dashboard_settings",
-			Description: "Update a dashboard's App settings: title, app (e.g. app.title, app.subtitle, app.theme with hex colors), and tabs (App chapters, e.g. [{id, title}]).",
-			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string","description":"Dashboard title"},"app":{"type":"object","description":"App surface settings; theme fields are hex colors, e.g. {\"title\":\"Sales\",\"theme\":{\"accent\":\"#7c5cff\",\"color_scheme\":\"dark\"}}"},"tabs":{"type":"array","description":"App chapters; ids are lowercase letters/digits/dashes","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}}},"required":["dashboard_id"]}`,
+			Description: "Update a dashboard's App settings: title, app (title/subtitle/width/show toggles/filter_scope/theme with hex colors), and tabs (App chapters, e.g. [{id, title}]).",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"title":{"type":"string","description":"Dashboard title"},"app":{"type":"object","description":"App surface settings; filter_scope is \"all\" (default) or \"tab\" (each chapter shows only the filters its widgets use); theme fields are hex colors, e.g. {\"title\":\"Sales\",\"filter_scope\":\"tab\",\"theme\":{\"accent\":\"#7c5cff\",\"color_scheme\":\"dark\"}}"},"tabs":{"type":"array","description":"App chapters; ids are lowercase letters/digits/dashes","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeUpdateDashboardSettingsHandler(pool),
 		Timeout: 15 * time.Second,
@@ -168,7 +185,7 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "set_dashboard_layout",
-			Description: "Arrange a dashboard's App surface: set tabs, place widgets into tabs (placements), and merge widget appearance (e.g. {background: transparent|card, padding: none|sm|md, align: left|center|right, border}).",
+			Description: "Arrange a dashboard's App surface: set tabs, place widgets into tabs (placements), and merge widget appearance (background/padding/align/border).",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"},"tabs":{"type":"array","description":"Replaces the App tab list","items":{"type":"object","properties":{"id":{"type":"string"},"title":{"type":"string"}},"required":["id","title"]}},"placements":{"type":"array","description":"Move widgets into tabs","items":{"type":"object","properties":{"widget_id":{"type":"string"},"tab":{"type":"string","description":"Tab id; empty falls back to the first tab"}},"required":["widget_id","tab"]}},"appearance":{"type":"array","description":"Merge appearance into each widget's config","items":{"type":"object","properties":{"widget_id":{"type":"string"},"appearance":{"type":"object"}},"required":["widget_id","appearance"]}}},"required":["dashboard_id"]}`,
 		},
 		Handler: makeSetDashboardLayoutHandler(),
@@ -182,11 +199,39 @@ func RegisterManageTools(reg *ToolRegistry, pool *pgxpool.Pool) {
 			Parameters  any    `json:"parameters"`
 		}{
 			Name:        "publish_dashboard",
-			Description: "Publish the dashboard's current draft as a new version. Viewers see the latest published version until the next publish.",
+			Description: "Publish the dashboard's current draft as a new immutable version. Viewers see the latest published version until the next publish; review_dashboard lists anything blocking a publish.",
 			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
 		},
 		Handler: makePublishDashboardHandler(pool),
 		Timeout: 30 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "review_dashboard",
+			Description: "Review a dashboard's App composition (layout, content, surface): returns prioritized findings naming the widget/chapter and the tool call that fixes each, plus the app view/draft-preview links and the public link when the dashboard is shared.",
+			Parameters:  `{"type":"object","properties":{"dashboard_id":{"type":"string"}},"required":["dashboard_id"]}`,
+		},
+		Handler: makeReviewDashboardHandler(pool),
+		Timeout: 15 * time.Second,
+	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "dashboard_guide",
+			Description: "Read the App Builder guide: widget configs (metric/text/table/chart), chapters and filter scoping, theming tokens and guardrails, publish/version semantics, troubleshooting, and composition guidance. No arguments.",
+			Parameters:  `{"type":"object","properties":{}}`,
+		},
+		Handler: makeDashboardGuideHandler(),
+		Timeout: 15 * time.Second,
 	})
 
 	reg.Register(&ToolDef{
@@ -412,17 +457,20 @@ func validateDashboardLogoAttachment(ctx context.Context, pool *pgxpool.Pool, or
 func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
-			DashboardID string         `json:"dashboard_id"`
-			NotebookID  string         `json:"notebook_id"`
-			CellID      string         `json:"cell_id"`
-			ConnectorID string         `json:"connector_id"`
-			Query       string         `json:"query"`
-			Type        string         `json:"type"`
-			Config      map[string]any `json:"config"`
-			Row         int            `json:"row"`
-			Col         int            `json:"col"`
-			Width       int            `json:"width"`
-			Height      int            `json:"height"`
+			DashboardID string                       `json:"dashboard_id"`
+			NotebookID  string                       `json:"notebook_id"`
+			CellID      string                       `json:"cell_id"`
+			ConnectorID string                       `json:"connector_id"`
+			Query       string                       `json:"query"`
+			Type        string                       `json:"type"`
+			Config      map[string]any               `json:"config"`
+			Chart       *validate.WidgetChartConfig  `json:"chart"`
+			Metric      *validate.WidgetMetricConfig `json:"metric"`
+			Table       *validate.WidgetTableConfig  `json:"table"`
+			Row         int                          `json:"row"`
+			Col         int                          `json:"col"`
+			Width       int                          `json:"width"`
+			Height      int                          `json:"height"`
 		}
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
@@ -469,6 +517,24 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 			return nil, fmt.Errorf("invalid widget type")
 		}
 
+		// Typed config blocks are validated before any reference/layout check
+		// or document load, so a rejected block writes nothing.
+		if req.Chart != nil {
+			if err := validate.ValidateWidgetChart(*req.Chart); err != nil {
+				return nil, err
+			}
+		}
+		if req.Metric != nil {
+			if err := validate.ValidateWidgetMetric(*req.Metric); err != nil {
+				return nil, err
+			}
+		}
+		if req.Table != nil {
+			if err := validate.ValidateWidgetTable(*req.Table); err != nil {
+				return nil, err
+			}
+		}
+
 		if hasCell {
 			// Validate the cell reference's notebook is viewable (prevents
 			// IDOR escalation) before checking the pair resolves.
@@ -510,6 +576,27 @@ func makeCreateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		widgetConfig := req.Config
 		if widgetConfig == nil {
 			widgetConfig = map[string]any{}
+		}
+		// Typed blocks convert to the stored shapes and merge over the raw
+		// config (chart keys at the root; metric/table replace their sections)
+		// so one call can create a fully-configured widget.
+		if req.Chart != nil || req.Metric != nil || req.Table != nil {
+			merged := make(map[string]any, len(widgetConfig)+3)
+			for k, v := range widgetConfig {
+				merged[k] = v
+			}
+			if req.Chart != nil {
+				for k, v := range validate.ToStoredWidgetChart(*req.Chart) {
+					merged[k] = v
+				}
+			}
+			if req.Metric != nil {
+				merged["metric"] = validate.ToStoredWidgetMetric(*req.Metric)
+			}
+			if req.Table != nil {
+				merged["table"] = validate.ToStoredWidgetTable(*req.Table)
+			}
+			widgetConfig = merged
 		}
 
 		// The widget is written through the dashboard document (the source of
@@ -696,6 +783,139 @@ func makeUpdateDashboardWidgetHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 
 		return map[string]any{"widget_id": widgetID}, nil
+	}
+}
+
+// The typed config-block schemas shared by set_widget_config and
+// create_dashboard_widget. The chart block mirrors create_chart's parameter
+// vocabulary; validate.WidgetChartConfig is the enforcement side (one source
+// of truth for both the schema and the conversion).
+const widgetChartBlockSchema = `{"type":"object","description":"Chart config using create_chart's vocabulary; converted to the stored chart config.","properties":{"chart_type":{"type":"string","enum":["bar","line","area","scatter","pie","donut","timeline","hierarchy_tree","big_number","map","sankey","funnel","heatmap","histogram"]},"x_column":{"type":"string"},"y_columns":{"type":"array","items":{"type":"string"}},"lat_column":{"type":"string","description":"Latitude column (map charts only)"},"lon_column":{"type":"string","description":"Longitude column (map charts only)"},"title":{"type":"string"},"time_column":{"type":"string"},"end_time_column":{"type":"string"},"label_column":{"type":"string"},"group_by":{"type":"string"},"id_column":{"type":"string"},"parent_id_column":{"type":"string"},"metric_columns":{"type":"array","items":{"type":"string"}},"value_column":{"type":"string"},"category_column":{"type":"string","description":"Category/label column for funnel charts"},"y_axis_column":{"type":"string","description":"Second category column for heatmap (y-axis categories)"},"funnel_sort":{"type":"string","enum":["ascending","descending","none"]},"bin_count":{"type":"number","description":"Number of bins for histogram"},"bar_mode":{"type":"string","enum":["grouped","stacked","horizontal"]},"area_mode":{"type":"string","enum":["area","stacked"]},"layout":{"type":"string","enum":["top-down","left-to-right"]},"show_labels":{"type":"boolean"},"show_legend":{"type":"boolean"},"show_grid":{"type":"boolean"},"skip_empty":{"type":"boolean"},"max_label_length":{"type":"number"},"show_connectors":{"type":"boolean"},"show_time_deltas":{"type":"boolean"},"decimal_places":{"type":"number"},"label":{"type":"string"},"prefix":{"type":"string"},"suffix":{"type":"string"},"series_colors":{"type":"object","description":"Map of series names to hex colors, e.g. {\"revenue\":\"#ff0000\"}"},"data_zoom":{"type":"boolean"},"smooth":{"type":"boolean"},"connect_nulls":{"type":"boolean"},"bar_width":{"type":"string"},"bar_category_gap":{"type":"string"},"rose_type":{"type":"string","enum":["radius","area"]},"start_angle":{"type":"number"},"pad_angle":{"type":"number"},"node_align":{"type":"string","enum":["justify","left","right"]},"node_width":{"type":"number"},"node_gap":{"type":"number"},"color_column":{"type":"string"},"size_column":{"type":"string"},"mark_lines":{"type":"array","items":{"type":"object","properties":{"value":{"type":"string"},"label":{"type":"string"},"position":{"type":"string","enum":["horizontal","vertical"]},"color":{"type":"string"}}}}},"required":["chart_type"]}`
+
+const widgetMetricBlockSchema = `{"type":"object","description":"Metric widget config.","properties":{"value_column":{"type":"string"},"aggregation":{"type":"string","enum":["none","sum","avg","min","max","median","count","count_distinct","first"]},"label":{"type":"string"},"format":{"type":"object","properties":{"style":{"type":"string","enum":["number","currency","percent"]},"currency":{"type":"string","description":"3-letter code like USD"},"decimals":{"type":"number"},"compact":{"type":"boolean"}}},"comparison":{"type":"object","properties":{"column":{"type":"string"},"mode":{"type":"string","enum":["delta","percent"]}}},"sparkline":{"type":"object","properties":{"x_column":{"type":"string"},"y_column":{"type":"string"}}}}}`
+
+const widgetTableBlockSchema = `{"type":"object","description":"Per-column formats for a table widget.","properties":{"columns":{"type":"array","items":{"type":"object","properties":{"name":{"type":"string"},"format":{"type":"object","properties":{"style":{"type":"string","enum":["number","currency","percent"]},"currency":{"type":"string","description":"3-letter code like USD"},"decimals":{"type":"number"},"compact":{"type":"boolean"}}}},"required":["name"]}}},"required":["columns"]}`
+
+// makeSetWidgetConfigHandler implements set_widget_config: typed chart/metric/
+// table blocks are validated and converted to the stored shapes (see
+// internal/validate/widget_config.go), merged over the widget's projected
+// config, and written through the dashboard document in one store. Every
+// block is validated before the document loads, so a rejected request never
+// lazily seeds it.
+func makeSetWidgetConfigHandler() ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string                       `json:"dashboard_id"`
+			WidgetID    string                       `json:"widget_id"`
+			Chart       *validate.WidgetChartConfig  `json:"chart"`
+			Metric      *validate.WidgetMetricConfig `json:"metric"`
+			Table       *validate.WidgetTableConfig  `json:"table"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+		if ctx.DashboardDocStore == nil {
+			return nil, fmt.Errorf("dashboard document store not configured")
+		}
+		if req.Chart == nil && req.Metric == nil && req.Table == nil {
+			return nil, fmt.Errorf("nothing to update")
+		}
+		if req.Chart != nil {
+			if err := validate.ValidateWidgetChart(*req.Chart); err != nil {
+				return nil, err
+			}
+		}
+		if req.Metric != nil {
+			if err := validate.ValidateWidgetMetric(*req.Metric); err != nil {
+				return nil, err
+			}
+		}
+		if req.Table != nil {
+			if err := validate.ValidateWidgetTable(*req.Table); err != nil {
+				return nil, err
+			}
+		}
+
+		// Document widget keys are canonical lowercase UUIDs; canonicalize the
+		// requested ID so any UUID spelling addresses the same widget.
+		widgetUUID, err := uuid.Parse(req.WidgetID)
+		if err != nil {
+			return nil, fmt.Errorf("widget not found")
+		}
+		widgetID := widgetUUID.String()
+
+		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("load dashboard document: %w", err)
+		}
+		proj, err := dashboarddoc.Project(state)
+		if err != nil {
+			return nil, fmt.Errorf("read dashboard document: %w", err)
+		}
+		existing, ok := proj.Widgets[widgetID]
+		if !ok {
+			return nil, fmt.Errorf("widget not found")
+		}
+
+		// Read-merge: config is a whole-value document field, so the converted
+		// blocks merge over a working copy of the projected config and the
+		// whole map is written back. Chart keys merge at the config root;
+		// metric/table replace their sections (their typed blocks are the
+		// complete spec for that section).
+		config := make(map[string]any, len(existing.Config)+3)
+		for k, v := range existing.Config {
+			config[k] = v
+		}
+		if req.Chart != nil {
+			for k, v := range validate.ToStoredWidgetChart(*req.Chart) {
+				config[k] = v
+			}
+		}
+		if req.Metric != nil {
+			config["metric"] = validate.ToStoredWidgetMetric(*req.Metric)
+		}
+		if req.Table != nil {
+			config["table"] = validate.ToStoredWidgetTable(*req.Table)
+		}
+
+		newState, err := dashboarddoc.SetWidgetConfig(state, widgetID, config)
+		if errors.Is(err, dashboarddoc.ErrWidgetNotFound) {
+			return nil, fmt.Errorf("widget not found")
+		}
+		if err != nil {
+			return nil, fmt.Errorf("set widget config: %w", err)
+		}
+		if err := ctx.DashboardDocStore.Store(ctx.Context, req.DashboardID, newState); err != nil {
+			return nil, fmt.Errorf("set widget config: %w", err)
+		}
+
+		keys := make([]string, 0, 3)
+		if req.Chart != nil {
+			keys = append(keys, "chart")
+		}
+		if req.Metric != nil {
+			keys = append(keys, "metric")
+		}
+		if req.Table != nil {
+			keys = append(keys, "table")
+		}
+		_ = ctx.AuditLogWithMetadata("widget.update", "dashboard", req.DashboardID, map[string]any{
+			"widget_id": widgetID,
+			"keys":      keys,
+		})
+		return map[string]any{"widget_id": widgetID, "status": "updated", "keys": keys}, nil
+	}
+}
+
+// makeDashboardGuideHandler implements dashboard_guide: the embedded App
+// Builder guide served verbatim, so the agent pays no prompt cost until it
+// asks for the reference.
+func makeDashboardGuideHandler() ToolHandler {
+	return func(_ json.RawMessage, _ *ToolContext) (any, error) {
+		return guide.Markdown, nil
 	}
 }
 
@@ -1228,6 +1448,63 @@ func makeShareDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 
 		_ = ctx.AuditLog("dashboard.share", "dashboard", req.DashboardID)
 		return map[string]any{"token": token, "url": "/public/" + token}, nil
+	}
+}
+
+// makeReviewDashboardHandler implements review_dashboard: the dashboard
+// document is projected, the cohesion heuristics run over it, and the result
+// carries the findings plus the app URLs (view, draft preview, and the public
+// link when the dashboard is already shared — the tool never mints a token).
+func makeReviewDashboardHandler(pool *pgxpool.Pool) ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			DashboardID string `json:"dashboard_id"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		if err := ctx.CheckPermission("dashboard", req.DashboardID, "edit"); err != nil {
+			return nil, err
+		}
+		if ctx.DashboardDocStore == nil {
+			return nil, fmt.Errorf("dashboard document store not configured")
+		}
+
+		state, err := ctx.DashboardDocStore.LoadOrSeed(ctx.Context, ctx.OrgID, req.DashboardID)
+		if err != nil {
+			return nil, fmt.Errorf("load dashboard document: %w", err)
+		}
+		proj, err := dashboarddoc.Project(state)
+		if err != nil {
+			return nil, fmt.Errorf("read dashboard document: %w", err)
+		}
+
+		// Published hash (latest version) vs the canonical draft hash — the
+		// same comparison the versions status endpoint uses, so "unpublished
+		// changes" agrees everywhere.
+		var publishedHash string
+		err = pool.QueryRow(ctx.Context,
+			`SELECT content_hash FROM dashboard_versions WHERE dashboard_id = $1 ORDER BY version DESC LIMIT 1`,
+			req.DashboardID).Scan(&publishedHash)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("read dashboard versions: %w", err)
+		}
+		snapshot := dashboarddoc.SnapshotFromProjection(proj)
+		draftHash := dashboarddoc.ContentHash(snapshot.Title, snapshot.Settings, snapshot.Widgets)
+
+		var token string
+		if err := pool.QueryRow(ctx.Context,
+			`SELECT token FROM public_tokens WHERE resource_type='dashboard' AND resource_id=$1`,
+			req.DashboardID).Scan(&token); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, fmt.Errorf("read dashboard share token: %w", err)
+		}
+
+		// The report assembly is shared with the REST endpoint, so the tool
+		// and the editor health panel can never disagree.
+		return dashboardreview.BuildReport(req.DashboardID, proj, dashboardreview.Options{
+			PublishedHash: publishedHash,
+			DraftHash:     draftHash,
+		}, ctx.BaseURL, token), nil
 	}
 }
 

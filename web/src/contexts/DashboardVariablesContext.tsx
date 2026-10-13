@@ -20,10 +20,17 @@ interface DashboardVariablesContextValue {
   /** Resets every variable to its configured default. */
   resetAll: () => void
   optionState: Record<string, VariableOptionsState>
+  /**
+   * Definitions that are not part of the visible (`variables`) set — chapter
+   * scoping hides them — but still carry a value in the URL. Drives the quiet
+   * "n filters set in other chapters" hint.
+   */
+  hiddenFilterCount: number
 }
 
 const Ctx = createContext<DashboardVariablesContextValue>({
   variables: [], values: {}, setValue: () => {}, setValues: () => {}, resetAll: () => {}, optionState: {},
+  hiddenFilterCount: 0,
 })
 
 function storageKey(dashboardId: string) { return `aether_dashvars_${dashboardId}` }
@@ -109,9 +116,17 @@ function serializeValue(v: DashboardVariable, value: unknown): string[] {
   }
 }
 
-export function DashboardVariablesProvider({ dashboardId, variables, children, endpointBase, storageId, viewerConnectorId, published = false }: {
+export function DashboardVariablesProvider({ dashboardId, variables, allVariables, children, endpointBase, storageId, viewerConnectorId, published = false }: {
   dashboardId: string
+  /** The visible (possibly chapter-scoped) variables: rendered controls and options loads. */
   variables: DashboardVariable[]
+  /**
+   * Every variable the dashboard defines. Values and URL pins load for all of
+   * them (so a chapter switch never loses a hidden filter's value), while the
+   * strip, options loading, and URL persistence stay scoped to `variables`.
+   * Defaults to `variables` when the caller has no scoping in play.
+   */
+  allVariables?: DashboardVariable[]
   children: React.ReactNode
   /** Overrides the options endpoint base, e.g. `/api/v1/public/{token}` for public dashboards. */
   endpointBase?: string
@@ -128,13 +143,14 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
 }) {
   const storageNamespace = storageId ?? dashboardId
   const optionsBase = endpointBase ?? `/api/v1/dashboards/${dashboardId}`
+  const allDefinitions = allVariables ?? variables
   const [searchParams, setSearchParams] = useSearchParams()
-  const [values, setValuesState] = useState<Record<string, unknown>>(() => loadInitial(storageNamespace, variables, searchParams))
+  const [values, setValuesState] = useState<Record<string, unknown>>(() => loadInitial(storageNamespace, allDefinitions, searchParams))
   // Names the viewer explicitly chose (URL pins at mount + setter calls).
   // Persisted next to the values so explicit choices survive a reload and are
   // never overwritten when a definition's default changes live.
   const [touched] = useState<Set<string>>(() => {
-    const set = loadTouched(storageNamespace, variables, searchParams)
+    const set = loadTouched(storageNamespace, allDefinitions, searchParams)
     persistTouched(storageNamespace, set)
     return set
   })
@@ -146,7 +162,8 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     try { localStorage.setItem(storageKey(storageNamespace), JSON.stringify(next)) } catch { /* ignore quota */ }
     // Rebuild only the variable keys onto the params already in the URL:
     // unrelated params (e.g. the App surface's `?tab=`) must survive a filter
-    // change instead of being dropped.
+    // change instead of being dropped. Scoped variables only — hidden
+    // (other-chapter) pins stay in the URL untouched.
     setSearchParams(prev => {
       const params = new URLSearchParams(prev)
       for (const v of variables) {
@@ -185,7 +202,9 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     // values below are the current defaults, and later default changes apply.
     touched.clear()
     persistTouched(storageNamespace, touched)
-    const next: Record<string, unknown> = {}
+    // Hidden variables keep their current values: `persist` below only
+    // rewrites the visible names, so their URL pins survive the reset.
+    const next: Record<string, unknown> = { ...valuesRef.current }
     for (const v of variables) next[v.name] = v.default
     valuesRef.current = next
     setValuesState(next)
@@ -272,9 +291,17 @@ export function DashboardVariablesProvider({ dashboardId, variables, children, e
     return out
   }, [optionState, variables])
 
+  // Hidden-but-pinned filters: definitions outside the visible set that still
+  // carry a URL param (a pin from a shared link, or the viewer's own choice
+  // made while another chapter was active). Drives the strip's quiet hint.
+  const hiddenFilterCount = useMemo(() => {
+    const visible = new Set(variables.map((v) => v.name))
+    return allDefinitions.filter((v) => !visible.has(v.name) && searchParams.has(v.name)).length
+  }, [allDefinitions, variables, searchParams])
+
   const value = useMemo(
-    () => ({ variables, values, setValue, setValues, resetAll, optionState: optionStateWithStatic }),
-    [variables, values, setValue, setValues, resetAll, optionStateWithStatic],
+    () => ({ variables, values, setValue, setValues, resetAll, optionState: optionStateWithStatic, hiddenFilterCount }),
+    [variables, values, setValue, setValues, resetAll, optionStateWithStatic, hiddenFilterCount],
   )
 
   return (

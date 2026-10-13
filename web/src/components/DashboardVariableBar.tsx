@@ -137,6 +137,12 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4,
     cursor: 'pointer',
   },
+  scopeHint: {
+    margin: 0,
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
+  },
   error: {
     fontSize: 12,
     color: 'var(--danger, #d33)',
@@ -321,7 +327,7 @@ function VariableControl({ variable }: { variable: DashboardVariable }) {
 }
 
 export function DashboardVariableBar() {
-  const { variables, values, resetAll, optionState } = useDashboardVariables()
+  const { variables, values, resetAll, optionState, hiddenFilterCount } = useDashboardVariables()
   if (!variables.length) return null
   const anyActive = variables.some((v) => !isVariableDefault(v, values[v.name]))
   return (
@@ -371,6 +377,15 @@ export function DashboardVariableBar() {
           )
         })}
       </div>
+      {/* Filter scoping: the strip shows only the active chapter's variables,
+          so name the ones still set — and still interpolating into the other
+          chapters' queries — from elsewhere. No reveal control: switching
+          "All filters everywhere" in App settings is the escape. */}
+      {hiddenFilterCount > 0 && (
+        <p style={styles.scopeHint} role="status">
+          {hiddenFilterCount === 1 ? '1 filter set in other chapters' : `${hiddenFilterCount} filters set in other chapters`}
+        </p>
+      )}
     </section>
   )
 }

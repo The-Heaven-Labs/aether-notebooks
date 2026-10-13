@@ -584,6 +584,19 @@ describe('WidgetConfigDrawer', () => {
     )
   })
 
+  test('metric fields carry accessible field help from the shared source', async () => {
+    renderWithQuery(
+      <WidgetConfigDrawer dashboardId="d1" dashboard={dashboard} widget={queryWidget({ type: 'metric', config: { metric: { value_column: 'x' } } })} onClose={() => {}} onSaved={() => {}} />,
+    )
+
+    const trigger = await screen.findByRole('button', { name: 'Help: Value column' })
+    trigger.focus()
+    expect(trigger).toHaveFocus()
+    fireEvent.click(trigger)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('The numeric column the metric computes over.')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('revenue')
+  })
+
   test('renders the metric preview and column suggestions after a run', async () => {
     server.use(
       http.post('/api/v1/dashboards/d1/execute', () =>

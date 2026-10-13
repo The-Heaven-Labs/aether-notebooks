@@ -492,6 +492,10 @@ func (s *Server) routes() {
 	s.mux.Handle("POST /api/v1/dashboards/{id}/publish", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handlePublishDashboard))))
 	s.mux.Handle("GET /api/v1/dashboards/{id}/versions", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handleListDashboardVersions))))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/versions/{version}/restore", authMW(s.requirePermission("dashboard", "id", "edit")(http.HandlerFunc(s.handleRestoreDashboardVersion))))
+	// The review handler checks existence (404) and edit permission (403)
+	// itself: the permission middleware cannot distinguish a missing dashboard
+	// from a forbidden one.
+	s.mux.Handle("GET /api/v1/dashboards/{id}/review", authMW(http.HandlerFunc(s.handleDashboardReview)))
 	s.mux.Handle("POST /api/v1/dashboards/{id}/attachments", authMW(http.HandlerFunc(s.handleUploadDashboardAttachment)))
 	s.mux.Handle("POST /api/v1/public/{token}/execute",
 		s.rateLimit(rateLimitConfig{

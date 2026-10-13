@@ -47,6 +47,9 @@ func DashboardAppSettings(app *models.DashboardAppSettings) error {
 	if app.Layout != "" && app.Layout != "grid" && app.Layout != "custom" {
 		return fmt.Errorf(`app layout must be "grid" or "custom"`)
 	}
+	if app.FilterScope != "" && app.FilterScope != "all" && app.FilterScope != "tab" {
+		return fmt.Errorf(`app filter_scope must be "all" or "tab"`)
+	}
 	return dashboardAppTheme(app.Theme)
 }
 

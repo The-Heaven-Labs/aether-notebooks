@@ -1221,6 +1221,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				NotebookID:    session.NotebookID,
 				SessionID:     sessionID,
 				DB:            e.pool,
+				BaseURL:       e.linkBase(),
 				TurnCount:     turn,
 				Events:        &events,
 				MasterKey:     masterKey,
@@ -1631,6 +1632,15 @@ func (e *Engine) SetPublicURL(u string) {
 	e.publicURL = u
 }
 
+// linkBase is the base URL user-facing links use: the public URL when set,
+// else the frontend URL (empty when neither is configured).
+func (e *Engine) linkBase() string {
+	if e.publicURL != "" {
+		return e.publicURL
+	}
+	return e.frontendURL
+}
+
 func (e *Engine) SetStore(store storage.Storage) {
 	e.store = store
 }
@@ -1979,7 +1989,7 @@ func (e *Engine) buildNotebookContext(ctx context.Context, notebookID string) st
 	result += "\n\nYou have the spawn_subagents tool to run multiple independent tasks in parallel via separate AI sub-agents. Use it when a request contains several distinct subtasks that don't depend on each other's results. For example: exploring multiple schemas at once, generating several unrelated queries, or researching different topics simultaneously."
 
 	// Add dashboard tools mention
-	result += "\n\nDashboard tools: create_dashboard, get_dashboard (see widgets), create_dashboard_widget (add a cell or query widget), update_dashboard_widget (reposition/configure), delete_dashboard_widget, update_dashboard (rename/grid), update_dashboard_settings (app title/theme/tabs), set_dashboard_layout (tabs/placements/appearance), publish_dashboard (publish a version), delete_dashboard, list_dashboards, share_dashboard. To build a dashboard: create it, then list_cells on the notebook, check each cell's chart config (shown in list_cells output as 'chart'), then create_dashboard_widget for each cell. Copy the notebook_id when adding widgets. Query widgets take connector_id + query instead of notebook_id/cell_id."
+	result += "\n\nDashboard tools: create_dashboard, get_dashboard (settings + widgets), create_dashboard_widget (cell or query widget; typed chart/metric/table blocks), update_dashboard_widget (reposition/raw config), set_widget_config (typed chart/metric/table config), delete_dashboard_widget, update_dashboard (rename/grid), update_dashboard_settings (title/app/filter_scope/tabs), set_dashboard_layout (tabs/placements/appearance), publish_dashboard (publish a version), review_dashboard (composition findings + preview links), dashboard_guide (the App Builder reference), delete_dashboard, list_dashboards, share_dashboard. To build a dashboard: create it, then list_cells on the notebook, check each cell's chart config (shown in list_cells output as 'chart'), then create_dashboard_widget for each cell. Copy the notebook_id when adding widgets. Query widgets take connector_id + query instead of notebook_id/cell_id."
 
 	// Add resource link patterns
 	result += "\n\nResource link patterns (use these to provide clickable links to the user):"

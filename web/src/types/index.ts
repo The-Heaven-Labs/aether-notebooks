@@ -299,6 +299,7 @@ export interface DashboardAppSettings {
   logo_attachment_id?: string
   width?: 'fixed' | 'full'
   layout?: 'grid' | 'custom'
+  filter_scope?: 'all' | 'tab'
   show_header?: boolean
   show_refresh?: boolean
   show_last_updated?: boolean

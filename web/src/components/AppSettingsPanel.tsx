@@ -7,6 +7,8 @@ import { CHART_PALETTE_PRESETS, MAX_PALETTE_COLORS } from '../charts/palettes'
 import type { ChartPalettePresetValue } from '../charts/palettes'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useFocusTrap } from '../hooks/useFocusTrap'
+import { fieldHelpFor } from '../app-builder/fieldHelp'
+import { HelpTip } from './HelpTip'
 import type { Dashboard, DashboardAppSettings, DashboardAppTheme, DashboardTab, OrgBranding, Widget } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
@@ -84,6 +86,21 @@ type ColorField = 'accent' | 'background' | 'surface' | 'text' | 'border'
 const COLOR_FIELDS: ColorField[] = ['accent', 'background', 'surface', 'text', 'border']
 const COLOR_LABELS: Record<ColorField, string> = {
   accent: 'Accent', background: 'Background', surface: 'Surface', text: 'Text', border: 'Border',
+}
+
+/** A panel label with a HelpTip from the shared field-help source. */
+function LabelWithHelp({ htmlFor, helpKey, children }: {
+  htmlFor?: string
+  helpKey: string
+  children: React.ReactNode
+}) {
+  const help = fieldHelpFor(helpKey)
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+      <label style={styles.label} htmlFor={htmlFor}>{children}</label>
+      {help && <HelpTip help={help} />}
+    </span>
+  )
 }
 
 type LogoMode = 'none' | 'org' | 'upload'
@@ -196,13 +213,19 @@ async function clearWidgetTabs(dashboardId: string, affected: Widget[]): Promise
  * default title (`tab-1`, …) and stay stable across renames: widgets
  * reference the id, not the title.
  */
-export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initialSection, onClose, onSaved }: {
+export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initialSection, onGridColsSaved, onClose, onSaved }: {
   dashboardId: string
   dashboard: Dashboard & { org_branding?: OrgBranding }
   /** The dashboard's live widgets; used to clear a deleted tab's placements. */
   widgets?: Widget[]
   /** Opens with the Tabs section revealed and focused (the editor strip's +). */
   initialSection?: 'tabs'
+  /**
+   * Called after a successful save that changed `grid_cols`, with the old and
+   * new column counts, so the editor can rescale widget layouts (the panel
+   * cannot write widget layouts itself).
+   */
+  onGridColsSaved?: (from: number, to: number) => void
   onClose: () => void
   onSaved: () => void
 }) {
@@ -213,6 +236,11 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
   const [showHeader, setShowHeader] = useState(app?.show_header !== false)
   const [showRefresh, setShowRefresh] = useState(app?.show_refresh !== false)
   const [showLastUpdated, setShowLastUpdated] = useState(app?.show_last_updated !== false)
+  const [filterScope, setFilterScope] = useState<'all' | 'tab'>(app?.filter_scope === 'tab' ? 'tab' : 'all')
+  const [gridCols, setGridCols] = useState(() => dashboard.settings?.grid_cols ?? 12)
+  // The value at open, for the post-save rescale diff. A ref (not state):
+  // saving again in the same session must not re-trigger the rescale.
+  const initialGridColsRef = useRef(dashboard.settings?.grid_cols ?? 12)
   const [colors, setColors] = useState<Record<ColorField, string>>({
     accent: app?.theme?.accent ?? '',
     background: app?.theme?.background ?? '',
@@ -350,6 +378,10 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
       next.show_header = showHeader
       next.show_refresh = showRefresh
       next.show_last_updated = showLastUpdated
+      // "All filters everywhere" is the default: omit the key so absent stays
+      // the meaning and a previously stored "tab" is dropped.
+      if (filterScope === 'tab') next.filter_scope = 'tab'
+      else delete next.filter_scope
       if (logoMode === 'upload' && logoId) next.logo_attachment_id = logoId
       else delete next.logo_attachment_id
       if (built.theme) next.theme = built.theme
@@ -359,10 +391,16 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
         // Only the keys this panel owns are sent: the server merges settings
         // shallowly, so anything omitted keeps its stored value. `tabs` must
         // always ride along for chapter removals to apply.
-        settings: { app: next, tabs },
+        settings: { app: next, tabs, grid_cols: gridCols },
       })
       setSaved(true)
       onSaved()
+      // Layout rescaling is an editor concern (widget layout writes), so the
+      // panel only reports the change; it never touches widget rows itself.
+      if (gridCols !== initialGridColsRef.current) {
+        onGridColsSaved?.(initialGridColsRef.current, gridCols)
+        initialGridColsRef.current = gridCols
+      }
       if (droppedTabs.length > 0) {
         void clearWidgetTabs(dashboardId, widgets.filter((w) =>
           w.layout?.tab != null && droppedTabs.some((tab) => tab.id === w.layout.tab)))
@@ -439,7 +477,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             />
           </div>
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-width">Width</label>
+            <LabelWithHelp htmlFor="app-width" helpKey="app.width">Width</LabelWithHelp>
             <select
               id="app-width"
               aria-label="Width"
@@ -481,6 +519,23 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             />
             <label htmlFor="app-show-last-updated">Show last updated</label>
           </div>
+
+          <div style={styles.section} role="heading" aria-level={3}>Grid</div>
+          <div style={styles.field}>
+            <LabelWithHelp htmlFor="app-grid-cols" helpKey="dashboard.grid_cols">Grid columns</LabelWithHelp>
+            <select
+              id="app-grid-cols"
+              aria-label="Grid columns"
+              style={styles.input}
+              value={gridCols}
+              onChange={(e) => { setSaved(false); setGridCols(Number(e.target.value)) }}
+            >
+              {[6, 8, 12, 16, 24].map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <span style={styles.muted}>
+            {fieldHelpFor('dashboard.grid_cols')?.hint}
+          </span>
 
           <div style={styles.section} role="heading" aria-level={3}>Tabs</div>
           {tabs.map((tab, index) => (
@@ -539,10 +594,30 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             </span>
           )}
 
+          <div style={styles.section} role="heading" aria-level={3}>Filters</div>
+          <div role="radiogroup" aria-label="Filter scope" style={styles.radioRow}>
+            {([['all', 'All filters everywhere'], ['tab', "Only this chapter's filters"]] as const).map(([value, label]) => (
+              <label key={value} style={styles.radioOption}>
+                <input
+                  type="radio"
+                  name="app-filter-scope"
+                  value={value}
+                  checked={filterScope === value}
+                  aria-label={label}
+                  onChange={() => { setSaved(false); setFilterScope(value) }}
+                />
+                {label}
+              </label>
+            ))}
+          </div>
+          <span style={styles.muted}>
+            {fieldHelpFor('app.filter_scope')?.hint}
+          </span>
+
           <div style={styles.section} role="heading" aria-level={3}>Theme</div>
           {COLOR_FIELDS.map((field) => (
             <div key={field} style={styles.field}>
-              <label style={styles.label} htmlFor={`app-theme-${field}`}>{COLOR_LABELS[field]}</label>
+              <LabelWithHelp htmlFor={`app-theme-${field}`} helpKey={`app.theme.${field}`}>{COLOR_LABELS[field]}</LabelWithHelp>
               <div style={styles.colorRow}>
                 <input
                   type="color"
@@ -571,7 +646,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             </div>
           ))}
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-theme-radius">Corner radius</label>
+            <LabelWithHelp htmlFor="app-theme-radius" helpKey="app.theme.radius">Corner radius</LabelWithHelp>
             <input
               id="app-theme-radius"
               aria-label="Corner radius"
@@ -586,7 +661,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             />
           </div>
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-theme-font">Font family</label>
+            <LabelWithHelp htmlFor="app-theme-font" helpKey="app.theme.font_family">Font family</LabelWithHelp>
             <select
               id="app-theme-font"
               aria-label="Font family"
@@ -601,7 +676,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             </select>
           </div>
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-theme-scheme">Color scheme</label>
+            <LabelWithHelp htmlFor="app-theme-scheme" helpKey="app.theme.color_scheme">Color scheme</LabelWithHelp>
             <select
               id="app-theme-scheme"
               aria-label="Color scheme"
@@ -615,7 +690,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             </select>
           </div>
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-theme-palette">Chart palette</label>
+            <LabelWithHelp htmlFor="app-theme-palette" helpKey="app.theme.chart_palette">Chart palette</LabelWithHelp>
             <select
               id="app-theme-palette"
               aria-label="Chart palette"

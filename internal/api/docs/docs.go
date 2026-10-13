@@ -3427,6 +3427,58 @@ const docTemplate = `{
                 }
             }
         },
+        "/dashboards/{id}/review": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns cohesion findings (layout, content, surface) with the fixing tool call per finding, plus the app view, draft-preview, and public links",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "dashboards"
+                ],
+                "summary": "Review a dashboard's App composition",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Dashboard ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/dashboardreview.Report"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
         "/dashboards/{id}/share": {
             "get": {
                 "security": [
@@ -10787,6 +10839,69 @@ const docTemplate = `{
                 }
             }
         },
+        "dashboardreview.Finding": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "description": "layout | content | surface",
+                    "type": "string"
+                },
+                "chapter_id": {
+                    "type": "string"
+                },
+                "fix_tool": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                },
+                "severity": {
+                    "$ref": "#/definitions/dashboardreview.Severity"
+                },
+                "widget_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "dashboardreview.Report": {
+            "type": "object",
+            "properties": {
+                "count": {
+                    "type": "integer"
+                },
+                "dashboard_id": {
+                    "type": "string"
+                },
+                "findings": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/dashboardreview.Finding"
+                    }
+                },
+                "preview_url": {
+                    "type": "string"
+                },
+                "public_url": {
+                    "type": "string"
+                },
+                "view_url": {
+                    "type": "string"
+                }
+            }
+        },
+        "dashboardreview.Severity": {
+            "type": "string",
+            "enum": [
+                "error",
+                "warning",
+                "info"
+            ],
+            "x-enum-varnames": [
+                "SeverityError",
+                "SeverityWarning",
+                "SeverityInfo"
+            ]
+        },
         "models.Agent": {
             "type": "object",
             "properties": {
@@ -11077,6 +11192,10 @@ const docTemplate = `{
         "models.DashboardAppSettings": {
             "type": "object",
             "properties": {
+                "filter_scope": {
+                    "description": "\"all\" | \"tab\"; empty = \"all\"",
+                    "type": "string"
+                },
                 "layout": {
                     "description": "\"grid\" | \"custom\"; empty = grid (wave 4)",
                     "type": "string"

@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
+	"github.com/the-heaven-labs/aether/internal/dashboardreview"
 	"github.com/the-heaven-labs/aether/internal/database"
 )
 
@@ -1424,4 +1425,352 @@ func TestDashboardGetDashboardExposesOrgBranding(t *testing.T) {
 	require.Equal(t, "Acme Analytics", branding["app_name"])
 	require.Equal(t, "#7c5cff", branding["accent_color"])
 	require.Equal(t, []any{"#7c5cff", "#22c55e"}, branding["default_chart_palette"])
+}
+
+// TestDashboardSetWidgetConfig pins the typed config tool: snake_case blocks
+// are validated and converted to the stored shapes (camelCase chart keys at
+// the config root, config.metric, config.table), each block replaces its
+// section while unrelated config keys survive, and a rejected block leaves
+// the document untouched.
+func TestDashboardSetWidgetConfig(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Widget Config Dashboard")
+
+	widgetID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT day, revenue, cost FROM sales', 'sql', 'chart',
+		        '{"row":0,"col":0,"width":6,"height":6}',
+		        '{"appearance":{"background":"transparent"},"showLegend":true}')
+	`, widgetID, dashID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "set_widget_config")
+
+	// Chart block: snake_case in, camelCase ChartConfig out at the root.
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"chart": map[string]any{
+			"chart_type":    "bar",
+			"x_column":      "day",
+			"y_columns":     []string{"revenue", "cost"},
+			"group_by":      "region",
+			"bar_mode":      "stacked",
+			"series_colors": map[string]string{"revenue": "#ff0000"},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, widgetID, out.(map[string]any)["widget_id"])
+
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	require.Empty(t, proj.Warnings)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, "bar", w.Config["chartType"])
+	require.Equal(t, "day", w.Config["xAxis"])
+	require.Equal(t, []any{"revenue", "cost"}, w.Config["yAxis"])
+	require.Equal(t, "region", w.Config["groupBy"])
+	require.Equal(t, "stacked", w.Config["barMode"])
+	require.Equal(t, map[string]any{"revenue": "#ff0000"}, w.Config["seriesColors"])
+	require.Equal(t, true, w.Config["showLegend"], "unrelated config keys must survive")
+	require.Equal(t, map[string]any{"background": "transparent"}, w.Config["appearance"])
+
+	// Materialized row mirrors the document.
+	var configOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT config::text FROM widgets WHERE id = $1`, widgetID).Scan(&configOut))
+	require.JSONEq(t, `{
+		"appearance":{"background":"transparent"},
+		"showLegend":true,
+		"chartType":"bar","xAxis":"day","yAxis":["revenue","cost"],
+		"groupBy":"region","barMode":"stacked","seriesColors":{"revenue":"#ff0000"}
+	}`, configOut)
+
+	// Metric block: stored under config.metric in the snake_case shape, with
+	// the currency normalized; the chart keys survive.
+	metricArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"metric": map[string]any{
+			"value_column": "revenue",
+			"aggregation":  "sum",
+			"label":        "Revenue",
+			"format":       map[string]any{"style": "currency", "currency": "usd", "decimals": 2, "compact": true},
+			"comparison":   map[string]any{"column": "prev_revenue", "mode": "percent"},
+			"sparkline":    map[string]any{"x_column": "day", "y_column": "revenue"},
+		},
+	})
+	require.NoError(t, err)
+	_, err = handler(metricArgs, ctx)
+	require.NoError(t, err)
+
+	proj = storedDashboardDoc(t, db.Pool, dashID)
+	w = proj.Widgets[widgetID]
+	metric, ok := w.Config["metric"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, "revenue", metric["value_column"])
+	require.Equal(t, "sum", metric["aggregation"])
+	require.Equal(t, "Revenue", metric["label"])
+	require.Equal(t, map[string]any{"style": "currency", "currency": "USD", "decimals": float64(2), "compact": true}, metric["format"])
+	require.Equal(t, map[string]any{"column": "prev_revenue", "mode": "percent"}, metric["comparison"])
+	require.Equal(t, map[string]any{"x_column": "day", "y_column": "revenue"}, metric["sparkline"])
+	require.Equal(t, "bar", w.Config["chartType"], "the chart section must survive a metric update")
+
+	// Table block: stored under config.table with per-column formats.
+	tableArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"table": map[string]any{
+			"columns": []map[string]any{
+				{"name": "revenue", "format": map[string]any{"style": "currency", "currency": "usd", "decimals": 2}},
+				{"name": "notes"},
+			},
+		},
+	})
+	require.NoError(t, err)
+	_, err = handler(tableArgs, ctx)
+	require.NoError(t, err)
+
+	proj = storedDashboardDoc(t, db.Pool, dashID)
+	w = proj.Widgets[widgetID]
+	require.Equal(t, map[string]any{"columns": []any{
+		map[string]any{"name": "revenue", "format": map[string]any{"style": "currency", "currency": "USD", "decimals": float64(2)}},
+		map[string]any{"name": "notes"},
+	}}, w.Config["table"])
+	require.Equal(t, "bar", w.Config["chartType"])
+	require.NotNil(t, w.Config["metric"])
+
+	// A bad chart type is rejected before the document is rewritten.
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	badArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    widgetID,
+		"chart":        map[string]any{"chart_type": "waffle"},
+	})
+	require.NoError(t, err)
+	_, err = handler(badArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not supported")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected block must not rewrite the document")
+
+	// A request with no blocks is a no-op error, and a missing widget fails
+	// without touching the document.
+	noBlocks, err := json.Marshal(map[string]any{"dashboard_id": dashID, "widget_id": widgetID})
+	require.NoError(t, err)
+	_, err = handler(noBlocks, ctx)
+	require.ErrorContains(t, err, "nothing to update")
+
+	missing, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"widget_id":    uuid.NewString(),
+		"chart":        map[string]any{"chart_type": "bar", "x_column": "day", "y_columns": []string{"revenue"}},
+	})
+	require.NoError(t, err)
+	_, err = handler(missing, ctx)
+	require.ErrorContains(t, err, "widget not found")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID))
+}
+
+// TestDashboardCreateWidgetWithTypedBlocks pins the create-side typed blocks:
+// one call can create a fully-configured widget — the chart/metric/table
+// blocks convert to the stored shapes, merge with the raw config, and a
+// rejected block fails before anything is written.
+func TestDashboardCreateWidgetWithTypedBlocks(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Typed Create Dashboard")
+
+	connID := uuid.NewString()
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO connectors (id, org_id, name, type, config_encrypted)
+		VALUES ($1, $2, 'typed-create-connector', 'postgres', $3)
+	`, connID, orgID, []byte("encrypted"))
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	handler := dashboardTool(t, reg, "create_dashboard_widget")
+
+	args, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"connector_id": connID,
+		"query":        "SELECT day, revenue FROM sales",
+		"type":         "chart",
+		"config":       map[string]any{"appearance": map[string]any{"padding": "sm"}},
+		"chart": map[string]any{
+			"chart_type": "line",
+			"x_column":   "day",
+			"y_columns":  []string{"revenue"},
+			"smooth":     true,
+		},
+		"metric": map[string]any{"value_column": "revenue", "aggregation": "avg"},
+		"table": map[string]any{
+			"columns": []map[string]any{{"name": "revenue", "format": map[string]any{"style": "number", "decimals": 1}}},
+		},
+	})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	widgetID := out.(map[string]any)["widget_id"].(string)
+
+	proj := storedDashboardDoc(t, db.Pool, dashID)
+	require.Empty(t, proj.Warnings)
+	w, ok := proj.Widgets[widgetID]
+	require.True(t, ok)
+	require.Equal(t, "line", w.Config["chartType"])
+	require.Equal(t, "day", w.Config["xAxis"])
+	require.Equal(t, []any{"revenue"}, w.Config["yAxis"])
+	require.Equal(t, true, w.Config["smooth"])
+	require.Equal(t, map[string]any{"value_column": "revenue", "aggregation": "avg"}, w.Config["metric"])
+	require.Equal(t, map[string]any{"columns": []any{
+		map[string]any{"name": "revenue", "format": map[string]any{"style": "number", "decimals": float64(1)}},
+	}}, w.Config["table"])
+	require.Equal(t, map[string]any{"padding": "sm"}, w.Config["appearance"])
+
+	// Materialized row mirrors the document.
+	var configOut string
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT config::text FROM widgets WHERE id = $1`, widgetID).Scan(&configOut))
+	require.JSONEq(t, `{
+		"chartType":"line","xAxis":"day","yAxis":["revenue"],"smooth":true,
+		"metric":{"value_column":"revenue","aggregation":"avg"},
+		"table":{"columns":[{"name":"revenue","format":{"style":"number","decimals":1}}]},
+		"appearance":{"padding":"sm"}
+	}`, configOut)
+
+	// An invalid block fails before any write (no document is seeded).
+	before := storedDashboardDocState(t, db.Pool, dashID)
+	badArgs, err := json.Marshal(map[string]any{
+		"dashboard_id": dashID,
+		"connector_id": connID,
+		"query":        "SELECT 1",
+		"type":         "chart",
+		"chart":        map[string]any{"chart_type": "waffle"},
+	})
+	require.NoError(t, err)
+	_, err = handler(badArgs, ctx)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not supported")
+	require.Equal(t, before, storedDashboardDocState(t, db.Pool, dashID),
+		"a rejected block must not rewrite the document")
+}
+
+// TestDashboardReviewTool pins review_dashboard: findings name the widget or
+// chapter plus the fixing tool, and the result carries the app URLs (public
+// only once the dashboard is shared).
+func TestDashboardReviewTool(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	dashID := createTestDashboard(t, db.Pool, orgID, userID, "Review Dashboard")
+
+	_, err := db.Pool.Exec(context.Background(), `
+		UPDATE dashboards SET settings = '{"tabs":[{"id":"overview","title":"Overview"},{"id":"orders","title":"Orders"}]}'
+		WHERE id = $1`, dashID)
+	require.NoError(t, err)
+
+	widgetID := uuid.NewString()
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO widgets (id, dashboard_id, query, language, type, layout, config)
+		VALUES ($1, $2, 'SELECT 1 AS revenue', 'sql', 'metric',
+		        '{"row":0,"col":0,"width":4,"height":4,"tab":"overview"}',
+		        '{"metric":{"value_column":"revenue"}}')
+	`, widgetID, dashID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, db.Pool)
+	ctx := dashboardToolContext(t, db, orgID, userID)
+	ctx.BaseURL = "https://app.example.test"
+	handler := dashboardTool(t, reg, "review_dashboard")
+
+	args, err := json.Marshal(map[string]any{"dashboard_id": dashID})
+	require.NoError(t, err)
+	out, err := handler(args, ctx)
+	require.NoError(t, err)
+	report, ok := out.(dashboardreview.Report)
+	require.True(t, ok, "review_dashboard must return a Report, got %T", out)
+
+	findings := report.Findings
+	var chapterFinding, metricFinding *dashboardreview.Finding
+	for i := range findings {
+		if findings[i].ChapterID == "orders" && strings.Contains(findings[i].Message, "no widgets") {
+			chapterFinding = &findings[i]
+		}
+		if findings[i].WidgetID == widgetID {
+			metricFinding = &findings[i]
+		}
+	}
+	require.NotNil(t, chapterFinding, "empty chapter must be reported: %+v", findings)
+	require.Equal(t, "set_dashboard_layout", chapterFinding.FixTool)
+	require.NotNil(t, metricFinding, "the untitled metric must be reported: %+v", findings)
+	require.Equal(t, "set_widget_config", metricFinding.FixTool)
+	require.Equal(t, "overview", metricFinding.ChapterID)
+
+	require.Equal(t, "https://app.example.test/dashboards/"+dashID+"/view", report.ViewURL)
+	require.Equal(t, "https://app.example.test/dashboards/"+dashID+"/view?preview=draft", report.PreviewURL)
+	require.Empty(t, report.PublicURL, "an unshared dashboard has no public link")
+
+	// Sharing turns the public link on (the tool must never mint a token).
+	token := "review-token-1"
+	_, err = db.Pool.Exec(context.Background(), `
+		INSERT INTO public_tokens (org_id, resource_type, resource_id, token, created_by)
+		VALUES ($1, 'dashboard', $2, $3, $4)
+	`, orgID, dashID, token, userID)
+	require.NoError(t, err)
+
+	out, err = handler(args, ctx)
+	require.NoError(t, err)
+	report = out.(dashboardreview.Report)
+	require.Equal(t, "https://app.example.test/public/dashboards/"+token, report.PublicURL)
+}
+
+// TestDashboardGuide pins the guide tool: the embedded markdown is returned
+// verbatim (no arguments, no per-request prompt cost), covers every section,
+// and documents the typed config vocabulary the tools accept.
+func TestDashboardGuide(t *testing.T) {
+	reg := agent.NewToolRegistry()
+	agent.RegisterManageTools(reg, nil)
+	handler := dashboardTool(t, reg, "dashboard_guide")
+
+	out, err := handler(json.RawMessage(`{}`), &agent.ToolContext{})
+	require.NoError(t, err)
+	text, ok := out.(string)
+	require.True(t, ok, "dashboard_guide must return the markdown string, got %T", out)
+	require.NotEmpty(t, text)
+
+	for _, section := range []string{
+		"## Composition",
+		"## Widget types",
+		"### metric",
+		"### text",
+		"### table",
+		"### chart",
+		"## Chapters",
+		"## Filter scoping",
+		"## Theming",
+		"## Publishing",
+		"## Troubleshooting",
+	} {
+		require.Contains(t, text, section)
+	}
+
+	// The typed vocabulary the agent tools accept must appear (the field-help
+	// cross-check in the web suite guards the same surface).
+	for _, key := range []string{
+		"chart_type", "x_column", "y_columns", "group_by", "bar_mode",
+		"series_colors", "mark_lines", "value_column", "aggregation", "label",
+		"comparison", "sparkline", "format", "columns", "filter_scope",
+		"tabs", "publish_dashboard", "set_widget_config", "review_dashboard",
+	} {
+		require.Contains(t, text, key, "the guide must document %q", key)
+	}
 }

@@ -301,6 +301,7 @@ func TestDashboardAppSettings(t *testing.T) {
 		Subtitle    string `json:"subtitle"`
 		Width       string `json:"width"`
 		ShowRefresh *bool  `json:"show_refresh"`
+		FilterScope string `json:"filter_scope"`
 	}
 	getApp := func() appSettings {
 		r := httptest.NewRequest("GET", "/api/v1/dashboards/"+dashID, nil)
@@ -357,6 +358,46 @@ func TestDashboardAppSettings(t *testing.T) {
 	long := strings.Repeat("x", 200)
 	if rec = put(map[string]interface{}{"app": map[string]interface{}{"title": long}}); rec.Code != http.StatusBadRequest {
 		t.Fatalf("overlong title: expected 400, got %d", rec.Code)
+	}
+
+	// filter_scope: the two enum values round-trip; anything else is rejected
+	// and leaves the stored value untouched.
+	if rec = put(map[string]interface{}{"app": map[string]interface{}{"filter_scope": "tab"}}); rec.Code != http.StatusOK {
+		t.Fatalf("filter_scope=tab: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := getApp(); got.FilterScope != "tab" {
+		t.Fatalf("filter_scope=tab did not round-trip: %+v", got)
+	}
+	if rec = put(map[string]interface{}{"app": map[string]interface{}{"filter_scope": "all"}}); rec.Code != http.StatusOK {
+		t.Fatalf("filter_scope=all: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := getApp(); got.FilterScope != "all" {
+		t.Fatalf("filter_scope=all did not round-trip: %+v", got)
+	}
+	if rec = put(map[string]interface{}{"app": map[string]interface{}{"filter_scope": "everywhere"}}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("filter_scope=everywhere: expected 400, got %d", rec.Code)
+	}
+	if got := getApp(); got.FilterScope != "all" {
+		t.Fatalf("rejected filter_scope changed stored settings: %+v", got)
+	}
+
+	// Absent filter_scope is omitted from the serialized settings.
+	if rec = put(map[string]interface{}{"app": map[string]interface{}{"title": "No Scope"}}); rec.Code != http.StatusOK {
+		t.Fatalf("app without filter_scope: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	rawReq := httptest.NewRequest("GET", "/api/v1/dashboards/"+dashID, nil)
+	rawReq.Header.Set("Authorization", "Bearer "+token)
+	rawReq.Header.Set("X-AETHER-Admin-Mode", "true")
+	rawRec := httptest.NewRecorder()
+	srv.ServeHTTP(rawRec, rawReq)
+	var raw struct {
+		Settings struct {
+			App map[string]interface{} `json:"app"`
+		} `json:"settings"`
+	}
+	json.NewDecoder(rawRec.Body).Decode(&raw)
+	if _, ok := raw.Settings.App["filter_scope"]; ok {
+		t.Fatalf("absent filter_scope should be omitted, got %v", raw.Settings.App["filter_scope"])
 	}
 }
 

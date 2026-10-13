@@ -63,7 +63,7 @@ function renderPanel(
   dashboard: PanelDashboard,
   onSaved = vi.fn(),
   onClose = vi.fn(),
-  options: { widgets?: Widget[]; initialSection?: 'tabs' } = {},
+  options: { widgets?: Widget[]; initialSection?: 'tabs'; onGridColsSaved?: (from: number, to: number) => void } = {},
 ) {
   render(
     <AppSettingsPanel
@@ -71,6 +71,7 @@ function renderPanel(
       dashboard={dashboard}
       widgets={options.widgets}
       initialSection={options.initialSection}
+      onGridColsSaved={options.onGridColsSaved}
       onClose={onClose}
       onSaved={onSaved}
     />,
@@ -164,6 +165,7 @@ describe('AppSettingsPanel', () => {
         show_last_updated: true,
       },
       tabs: [],
+      grid_cols: 12,
     })
     expect(onSaved).toHaveBeenCalledTimes(1)
   })
@@ -726,5 +728,92 @@ describe('AppSettingsPanel', () => {
   test('initialSection tabs focuses Add tab when there are no chapters yet', () => {
     renderPanel(dashboardWith({}), vi.fn(), vi.fn(), { initialSection: 'tabs' })
     expect(screen.getByRole('button', { name: 'Add tab' })).toHaveFocus()
+  })
+})
+
+describe('AppSettingsPanel filter scope', () => {
+  test('defaults to "All filters everywhere" with the inference explained', () => {
+    renderPanel(dashboardWith({ app: {} }))
+    expect(screen.getByRole('heading', { name: 'Filters', level: 3 })).toBeInTheDocument()
+    expect(screen.getByLabelText('All filters everywhere')).toBeChecked()
+    expect(screen.getByLabelText("Only this chapter's filters")).not.toBeChecked()
+    // The hint explains how chapter scoping derives the visible filters.
+    expect(screen.getByText(/filters its widgets use/)).toBeInTheDocument()
+  })
+
+  test('reflects a stored filter_scope of tab', () => {
+    renderPanel(dashboardWith({ app: { filter_scope: 'tab' } }))
+    expect(screen.getByLabelText("Only this chapter's filters")).toBeChecked()
+    expect(screen.getByLabelText('All filters everywhere')).not.toBeChecked()
+  })
+
+  test('choosing chapter scoping saves filter_scope: "tab"', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: {} }))
+
+    fireEvent.click(screen.getByLabelText("Only this chapter's filters"))
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(savedApp(bodies).filter_scope).toBe('tab')
+  })
+
+  test('choosing "All filters everywhere" omits the key from the payload', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: { filter_scope: 'tab' } }))
+
+    fireEvent.click(screen.getByLabelText('All filters everywhere'))
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect('filter_scope' in savedApp(bodies)).toBe(false)
+  })
+
+  test('theme fields carry accessible help from the shared source', async () => {
+    renderPanel(dashboardWith({ app: {} }))
+
+    const trigger = screen.getByRole('button', { name: 'Help: Accent' })
+    fireEvent.click(trigger)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('must clear 3:1 contrast')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('#7c5cff')
+
+    // The filter-scope explanation comes from the same source (and still
+    // explains the inference).
+    expect(screen.getByText(/filters its widgets use/)).toBeInTheDocument()
+  })
+})
+
+describe('AppSettingsPanel grid columns', () => {
+  test('renders the stored column count and saves changes', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ grid_cols: 8, app: {} }))
+    expect((screen.getByLabelText('Grid columns') as HTMLSelectElement).value).toBe('8')
+
+    fireEvent.change(screen.getByLabelText('Grid columns'), { target: { value: '24' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((bodies[0].settings as Record<string, unknown>).grid_cols).toBe(24)
+  })
+
+  test('a changed column count asks the editor to rescale after the save', async () => {
+    capturePuts()
+    const onGridColsSaved = vi.fn()
+    renderPanel(dashboardWith({ app: {} }), vi.fn(), vi.fn(), { onGridColsSaved })
+
+    fireEvent.change(screen.getByLabelText('Grid columns'), { target: { value: '6' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(onGridColsSaved).toHaveBeenCalledWith(12, 6))
+  })
+
+  test('an unchanged column count does not rescale', async () => {
+    const bodies = capturePuts()
+    const onGridColsSaved = vi.fn()
+    renderPanel(dashboardWith({ grid_cols: 12, app: {} }), vi.fn(), vi.fn(), { onGridColsSaved })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(onGridColsSaved).not.toHaveBeenCalled()
   })
 })

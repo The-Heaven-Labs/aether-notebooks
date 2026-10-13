@@ -324,7 +324,7 @@ test.describe('live dashboard collaboration', () => {
     // Every mutating control on the editor route is disabled for sol.
     await expect(viewer.page.getByRole('button', { name: '+ Add Widget' })).toBeDisabled()
     await expect(viewer.page.getByRole('button', { name: 'Variables' })).toBeDisabled()
-    await expect(viewer.page.getByRole('button', { name: '12 columns' })).toBeDisabled()
+    await expect(viewer.page.getByRole('button', { name: 'App' })).toBeDisabled()
     await expect(viewer.page.getByRole('button', { name: 'Remove widget' })).toBeDisabled()
 
     // The drawer opens read-only: the SQL editor is not editable and the

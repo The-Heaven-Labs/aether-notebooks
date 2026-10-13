@@ -307,6 +307,22 @@ The app reads as chapters: `settings.tabs` (≤10; id `^[a-z0-9][a-z0-9-]*$`; ti
 
 Publishing freezes the app for viewers: `POST /dashboards/{id}/publish` snapshots title + settings (variables folded in) + every widget definition into `dashboard_versions` (V130) with a canonical content hash. Viewers without `edit` are served the latest snapshot by default and never see draft edits; editors keep the draft and preview it at `?preview=draft`. Once a version exists the draft document is editor-only, published-mode execute/options resolve definitions server-side from the snapshot, and a draft whose widgets fail validation refuses to publish (422) instead of silently dropping them.
 
+### Filter Scoping (approved 2026-10-12)
+
+`settings.app.filter_scope` is `"all"` (default; today's behavior) or `"tab"`. Under `"tab"` the filter strip shows only the variables the **active chapter** uses — direct references in widget SQL and text-panel markdown, plus the transitive closure over `options.query` SQL and `depends_on`, so a visible filter never hides the filters that feed it. Widgets with no/unknown tab count toward the first chapter, matching the renderer; a chapter that uses nothing renders no strip.
+
+Values for hidden variables stay in the URL and keep applying in their own chapters; a muted "n filters set in other chapters" line names the hidden set when any hidden variable carries a URL pin (no reveal control — switching to `"all"` is the escape). Options queries load only for visible variables. Inference is a pure client util (`web/src/utils/chapterFilters.ts`); no per-tab fields to maintain.
+
+### Builder Guidance (approved 2026-10-12)
+
+The app-builder surfaces teach themselves from one source. `web/src/app-builder/fieldHelp.ts` holds `{label, hint, example?}` per config field; the UI renders those strings (inline one-liners and `HelpTip` popovers) and the agent guide (`internal/agent/guide/guide.md`, served by `dashboard_guide`) documents the same fields — a test asserts every key appears there, so the two can never drift.
+
+- **Voice:** quiet instrument, second person. One line per idea; mono for field/token names; no exclamation, no "just/simply". Copy names Aether's model (chapters, filters, draft → publish) and never reads as generic dashboard-builder filler.
+- **Affordance:** progressive disclosure — a one-line inline hint orients a section, and a `HelpTip` (focusable button, popover on click/Enter/Space, closes on Escape/blur, `aria-describedby` while open) appears only where a value needs an example (hex colors, formats, comparison/sparkline columns). Never hover-only.
+- **Empty states:** the editor's empty state teaches the story (readings + evidence, chaptered under App settings); the app view's says what viewers will see; the versions empty state keeps "publish the draft to create v1".
+- **App health panel:** the `review_dashboard` heuristics as a quiet editor checklist — findings grouped by severity with the chapter, the fixing tool as a "Fix" hint, and jump-to-widget (switching chapters when the target is in an inactive one). Each open re-checks; the app-wide 30s query staleTime does not apply.
+- **Findings copy:** messages name widgets the way the editor does (config title/label, else "the metric"/"the table"/"the text panel"); widget IDs stay in the structured fields for the agent.
+
 ### Inputs / Fields
 - **Style:** 1px hairline border, 6px radius for form fields (4px for inline notebook controls), canvas or surface background, 13–14px DM Sans text (mono for parameter names, connector selectors, and code-adjacent inputs).
 - **Focus:** the global 2px amethyst outline at 2px offset — no glow, no border-color swap, no custom ring.

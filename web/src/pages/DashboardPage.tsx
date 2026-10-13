@@ -19,6 +19,7 @@ import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContex
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { AppTabs, appTabButtonId, appTabPanelId, EmptyChapter } from '../components/AppTabs'
 import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
+import { variablesForChapter } from '../utils/chapterFilters'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { isTextPanel } from '../utils/widgetKind'
@@ -483,6 +484,20 @@ function DashboardContent({ id }: { id: string }) {
     }, { replace: true })
   }, [setSearchParams])
 
+  // Definitions and the app block are read before the early returns so the
+  // filter scope (which picks the visible variable set) is a stable hook.
+  const variables = settings?.variables ?? []
+  const app = settings?.app ?? dashboard?.settings?.app
+  // Filter scoping: under `filter_scope: "tab"` the strip shows only the
+  // active chapter's variables (plus everything they depend on); the default
+  // `all` keeps every filter visible, and tabs-free dashboards never scope.
+  const scopedVariables = useMemo(
+    () => (app?.filter_scope === 'tab'
+      ? variablesForChapter(widgets, variables, tabs, activeTab ?? '')
+      : variables),
+    [app?.filter_scope, widgets, variables, tabs, activeTab],
+  )
+
   // Grid density and the refresh cadence are persisted dashboard settings, so
   // they are edit actions — viewers don't get to restyle the shared board.
   const autoRefreshSecs = settings?.auto_refresh_seconds ?? 0
@@ -571,8 +586,6 @@ function DashboardContent({ id }: { id: string }) {
     )
   }
 
-  const variables = settings?.variables ?? []
-  const app = settings?.app ?? dashboard.settings?.app
   const appWidth = app?.width ?? 'fixed'
   // show_header=false hides the title block; the bar's escape hatches (back
   // link, actions) stay so the surface is never a dead end.
@@ -610,7 +623,7 @@ function DashboardContent({ id }: { id: string }) {
 
   return (
     <AppThemeProvider theme={app?.theme} branding={dashboard.org_branding}>
-    <DashboardVariablesProvider dashboardId={dashboard.id} variables={variables} viewerConnectorId={viewerConnectorId} published={published}>
+    <DashboardVariablesProvider dashboardId={dashboard.id} variables={scopedVariables} allVariables={variables} viewerConnectorId={viewerConnectorId} published={published}>
     <AppShell noPadding bare>
       {!showMasthead && <h1 className="sr-only">{appTitle}</h1>}
       <AppHeader
@@ -770,8 +783,9 @@ function DashboardContent({ id }: { id: string }) {
       )}
 
       {/* Quiet filter strip: the variable bar loses its panel chrome inside
-          (see .app-filter-strip) and is constrained to the masthead width. */}
-      {variables.length > 0 && (
+          (see .app-filter-strip) and is constrained to the masthead width.
+          Under `filter_scope: "tab"` only the active chapter's filters list. */}
+      {scopedVariables.length > 0 && (
         <div className="app-filter-strip">
           <div style={contentWidth}>
             <DashboardVariableBar />
@@ -785,7 +799,7 @@ function DashboardContent({ id }: { id: string }) {
         {widgets.length === 0 && variables.length === 0 ? (
           <EmptyState
             title="This app has no widgets yet"
-            text="Add widgets in the dashboard editor."
+            text="Add widgets in the editor — viewers see them here as chapters, filters, and readings."
           />
         ) : widgets.length === 0 ? null : (
           <div ref={gridRef}>
