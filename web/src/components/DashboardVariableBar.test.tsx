@@ -12,10 +12,13 @@ function Probe({ name }: { name: string }) {
   return <span data-testid={`probe-${name}`}>{JSON.stringify(values[name])}</span>
 }
 
-function renderBar(variables: DashboardVariable[]) {
+function renderBar(
+  variables: DashboardVariable[],
+  options: { allVariables?: DashboardVariable[]; initialEntries?: string[] } = {},
+) {
   return render(
-    <MemoryRouter initialEntries={['/dash/d1']}>
-      <DashboardVariablesProvider dashboardId="d1" variables={variables}>
+    <MemoryRouter initialEntries={options.initialEntries ?? ['/dash/d1']}>
+      <DashboardVariablesProvider dashboardId="d1" variables={variables} allVariables={options.allVariables}>
         <DashboardVariableBar />
         {variables.map((v) => <Probe key={v.name} name={v.name} />)}
       </DashboardVariablesProvider>
@@ -138,5 +141,43 @@ describe('DashboardVariableBar', () => {
     fireEvent.click(screen.getByRole('button', { name: /Reset filters/ }))
     expect(screen.getByTestId('probe-region')).toHaveTextContent('"EMEA"')
     expect(screen.queryByRole('button', { name: /Reset filters/ })).not.toBeInTheDocument()
+  })
+
+  test('hidden filters pinned in the URL raise the other-chapters hint', () => {
+    const visible: DashboardVariable[] = [{ name: 'overview_region', label: 'Overview region', type: 'text' }]
+    const all: DashboardVariable[] = [
+      ...visible,
+      { name: 'orders_status', label: 'Orders status', type: 'text', default: 'open' },
+    ]
+    renderBar(visible, { allVariables: all, initialEntries: ['/dash/d1?orders_status=closed'] })
+
+    expect(screen.getByText('1 filter set in other chapters')).toBeInTheDocument()
+  })
+
+  test('the hint stays away when no hidden filter is pinned or both filters are visible', () => {
+    const visible: DashboardVariable[] = [{ name: 'overview_region', label: 'Overview region', type: 'text' }]
+    const all: DashboardVariable[] = [
+      ...visible,
+      { name: 'orders_status', label: 'Orders status', type: 'text', default: 'open' },
+    ]
+    // A pin on a visible filter is not "in another chapter".
+    renderBar(visible, { allVariables: all, initialEntries: ['/dash/d1?overview_region=eu'] })
+    expect(screen.queryByText(/set in other chapters/)).not.toBeInTheDocument()
+
+    // Unpinned hidden filters do not count either.
+    renderBar(visible, { allVariables: all, initialEntries: ['/dash/d1'] })
+    expect(screen.queryByText(/set in other chapters/)).not.toBeInTheDocument()
+  })
+
+  test('the hint pluralizes for two hidden pins', () => {
+    const visible: DashboardVariable[] = [{ name: 'overview_region', label: 'Overview region', type: 'text' }]
+    const all: DashboardVariable[] = [
+      ...visible,
+      { name: 'orders_status', label: 'Orders status', type: 'text' },
+      { name: 'orders_tier', label: 'Orders tier', type: 'text' },
+    ]
+    renderBar(visible, { allVariables: all, initialEntries: ['/dash/d1?orders_status=closed&orders_tier=gold'] })
+
+    expect(screen.getByText('2 filters set in other chapters')).toBeInTheDocument()
   })
 })

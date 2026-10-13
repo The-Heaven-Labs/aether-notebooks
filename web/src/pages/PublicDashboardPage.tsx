@@ -12,6 +12,7 @@ import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContex
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { AppTabs, appTabButtonId, appTabPanelId, EmptyChapter } from '../components/AppTabs'
 import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
+import { variablesForChapter } from '../utils/chapterFilters'
 import { QueryDataWidget } from '../components/QueryDataWidget'
 import { TextWidget } from '../components/TextWidget'
 import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
@@ -106,6 +107,12 @@ export function PublicDashboardPage() {
   // too — a chapter authored at high rows shows no blank space above it.
   const tabs = dashboard.settings?.tabs ?? NO_TABS
   const activeTab = activeTabId(tabs, searchParams.get('tab'))
+  // Filter scoping (`settings.app.filter_scope: "tab"`): the strip shows only
+  // the active chapter's variables, mirroring the internal app viewer. The
+  // full list still feeds text-panel interpolation and the hidden hint.
+  const scopedVariables = app?.filter_scope === 'tab'
+    ? variablesForChapter(shownWidgets, variables, tabs, activeTab ?? '')
+    : variables
   const chapters = tabs.length > 0
     ? tabs.map((tab) => ({
         tabId: tab.id as string | null,
@@ -148,7 +155,7 @@ export function PublicDashboardPage() {
             <AppTabs tabs={tabs} activeId={activeTab} onChange={handleTabChange} />
           </div>
         )}
-        {publicLive && variables.length > 0 && (
+        {publicLive && scopedVariables.length > 0 && (
           <div style={{ marginBottom: 20 }}>
             <DashboardVariableBar />
           </div>
@@ -289,7 +296,8 @@ export function PublicDashboardPage() {
   return (
     <DashboardVariablesProvider
       dashboardId={dashboard.id}
-      variables={variables}
+      variables={scopedVariables}
+      allVariables={variables}
       endpointBase={endpointBase}
       storageId={`pub_${token}`}
     >

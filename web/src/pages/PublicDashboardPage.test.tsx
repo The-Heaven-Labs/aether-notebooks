@@ -233,3 +233,92 @@ describe('PublicDashboardPage chapter tabs', () => {
     expect(placeholder).toBeVisible()
   })
 })
+
+describe('PublicDashboardPage filter scoping', () => {
+  const TABS = [
+    { id: 'overview', title: 'Overview' },
+    { id: 'orders', title: 'Orders' },
+  ]
+
+  const VARIABLES = [
+    { name: 'overview_region', label: 'Overview region', type: 'text', default: 'us' },
+    { name: 'orders_status', label: 'Orders status', type: 'text', default: 'open' },
+  ]
+
+  function scopedPublicDashboard(filterScope?: string) {
+    return publicDashboard({
+      settings: {
+        public_live: true,
+        tabs: TABS,
+        variables: VARIABLES,
+        ...(filterScope ? { app: { filter_scope: filterScope } } : {}),
+      },
+      widgets: [
+        {
+          id: 'w1', dashboard_id: 'd1', notebook_id: null, cell_id: null,
+          connector_id: 'c1', query: 'SELECT 1 WHERE r = {{overview_region}}', language: 'sql',
+          type: 'table', layout: { row: 0, col: 0, width: 6, height: 6, tab: 'overview' },
+          config: {}, created_at: '2026-01-01T00:00:00Z',
+        },
+        {
+          id: 'w2', dashboard_id: 'd1', notebook_id: null, cell_id: null,
+          connector_id: 'c1', query: 'SELECT 2 WHERE s = {{orders_status}}', language: 'sql',
+          type: 'table', layout: { row: 0, col: 6, width: 6, height: 6, tab: 'orders' },
+          config: {}, created_at: '2026-01-01T00:00:00Z',
+        },
+      ],
+    })
+  }
+
+  test('scopes the strip to the active chapter and follows chapter switches', async () => {
+    server.use(
+      http.post(`/api/v1/public/${PUBLIC_TOKEN}/execute`, () => HttpResponse.json({
+        outputs: [{ type: 'table', data: { columns: [{ name: 'x', type: 'String' }], rows: [[1]] } }],
+        metrics: {},
+        cached: false,
+      })),
+    )
+    mockPublicDashboard(scopedPublicDashboard('tab'))
+    renderPublicPage()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(await screen.findByLabelText('Overview region')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Orders status')).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
+    expect(await screen.findByLabelText('Orders status')).toBeInTheDocument()
+    expect(screen.queryByLabelText('Overview region')).not.toBeInTheDocument()
+  })
+
+  test('hidden filters pinned in the URL raise the other-chapters hint', async () => {
+    server.use(
+      http.post(`/api/v1/public/${PUBLIC_TOKEN}/execute`, () => HttpResponse.json({
+        outputs: [{ type: 'table', data: { columns: [{ name: 'x', type: 'String' }], rows: [[1]] } }],
+        metrics: {},
+        cached: false,
+      })),
+    )
+    mockPublicDashboard(scopedPublicDashboard('tab'))
+    renderPublicPage(`/public/dashboards/${PUBLIC_TOKEN}?orders_status=closed`)
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(await screen.findByText('1 filter set in other chapters')).toBeInTheDocument()
+  })
+
+  test('filter_scope absent keeps every filter visible', async () => {
+    server.use(
+      http.post(`/api/v1/public/${PUBLIC_TOKEN}/execute`, () => HttpResponse.json({
+        outputs: [{ type: 'table', data: { columns: [{ name: 'x', type: 'String' }], rows: [[1]] } }],
+        metrics: {},
+        cached: false,
+      })),
+    )
+    mockPublicDashboard(scopedPublicDashboard())
+    renderPublicPage()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(await screen.findByLabelText('Overview region')).toBeInTheDocument()
+    expect(screen.getByLabelText('Orders status')).toBeInTheDocument()
+    expect(screen.queryByText(/set in other chapters/)).not.toBeInTheDocument()
+  })
+})

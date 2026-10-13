@@ -132,13 +132,23 @@ vi.mock('../components/QueryDataWidget', async () => {
 })
 
 // Reads the real variables context so the test can see which definitions the
-// page handed the provider (REST first, doc after sync).
+// page handed the provider (REST first, doc after sync) and how many hidden
+// (other-chapter) filters the scoping pass reports.
 vi.mock('../components/DashboardVariableBar', async () => {
   const { useDashboardVariables } = await import('../contexts/DashboardVariablesContext')
   return {
     DashboardVariableBar: () => {
-      const { variables } = useDashboardVariables()
-      return <div data-testid="variable-bar">{variables.map(v => v.name).join(',')}</div>
+      const { variables, hiddenFilterCount } = useDashboardVariables()
+      return (
+        <div data-testid="variable-bar">
+          {variables.map(v => v.name).join(',')}
+          {hiddenFilterCount > 0 && (
+            <span data-testid="other-chapters-hint">
+              {hiddenFilterCount === 1 ? '1 filter set in other chapters' : `${hiddenFilterCount} filters set in other chapters`}
+            </span>
+          )}
+        </div>
+      )
     },
   }
 })
@@ -619,6 +629,117 @@ describe('DashboardPage chapter tabs', () => {
 
     await waitFor(() => expect(ordersRefresh).toHaveBeenCalledTimes(1))
     expect(overviewRefresh).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('DashboardPage filter scoping', () => {
+  const TABS = [
+    { id: 'overview', title: 'Overview' },
+    { id: 'orders', title: 'Orders' },
+  ]
+
+  const SCOPED_VARIABLES: DashboardVariable[] = [
+    {
+      name: 'overview_region',
+      label: 'Overview region',
+      type: 'text',
+      default: 'us',
+      options: { mode: 'query', query: { connector_id: 'c1', sql: 'SELECT 1' } },
+    },
+    {
+      name: 'orders_status',
+      label: 'Orders status',
+      type: 'text',
+      default: 'open',
+      options: { mode: 'query', query: { connector_id: 'c1', sql: 'SELECT 2' } },
+    },
+  ]
+
+  function scopedDashboard(filterScope?: string) {
+    return {
+      ...REST_DASHBOARD,
+      settings: {
+        ...REST_DASHBOARD.settings,
+        variables: SCOPED_VARIABLES,
+        tabs: TABS,
+        ...(filterScope ? { app: { filter_scope: filterScope } } : {}),
+      },
+      widgets: [
+        queryWidget({
+          id: 'w2',
+          query: 'SELECT * FROM t WHERE r = {{overview_region}}',
+          layout: { row: 0, col: 0, width: 6, height: 8, tab: 'overview' },
+        }),
+        queryWidget({
+          id: 'w3',
+          query: 'SELECT * FROM t WHERE s = {{orders_status}}',
+          layout: { row: 0, col: 6, width: 6, height: 8, tab: 'orders' },
+        }),
+      ],
+    }
+  }
+
+  function mockScopedDashboard(filterScope?: string) {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json(scopedDashboard(filterScope))))
+  }
+
+  test('chapter A shows only its variables and switching chapters re-scopes the strip', async () => {
+    mockScopedDashboard('tab')
+    renderDashboard()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(screen.getByTestId('variable-bar')).toHaveTextContent('overview_region')
+    expect(screen.getByTestId('variable-bar')).not.toHaveTextContent('orders_status')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
+    expect(screen.getByTestId('variable-bar')).toHaveTextContent('orders_status')
+    expect(screen.getByTestId('variable-bar')).not.toHaveTextContent('overview_region')
+  })
+
+  test('a hidden filter pinned in the URL raises the other-chapters hint', async () => {
+    mockScopedDashboard('tab')
+    renderDashboard('/dashboards/d1/view?orders_status=closed')
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(await screen.findByTestId('other-chapters-hint')).toHaveTextContent('1 filter set in other chapters')
+  })
+
+  test('a pin on the visible chapter’s own filter raises no hint', async () => {
+    mockScopedDashboard('tab')
+    renderDashboard('/dashboards/d1/view?overview_region=eu')
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(screen.getByTestId('variable-bar')).toHaveTextContent('overview_region')
+    expect(screen.queryByTestId('other-chapters-hint')).not.toBeInTheDocument()
+  })
+
+  test('options load only for visible variables; switching chapters loads the newly visible ones', async () => {
+    const requested: string[] = []
+    server.use(
+      http.get('/api/v1/dashboards/d1', () => HttpResponse.json(scopedDashboard('tab'))),
+      http.post('/api/v1/dashboards/d1/variables/:name/options', ({ params }) => {
+        requested.push(String(params.name))
+        return HttpResponse.json({ options: [] })
+      }),
+    )
+    renderDashboard()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    await waitFor(() => expect(requested).toContain('overview_region'), { timeout: 3000 })
+    expect(requested).not.toContain('orders_status')
+
+    fireEvent.click(screen.getByRole('tab', { name: 'Orders' }))
+    await waitFor(() => expect(requested).toContain('orders_status'), { timeout: 3000 })
+  })
+
+  test('filter_scope absent keeps every filter visible', async () => {
+    mockScopedDashboard()
+    renderDashboard()
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    expect(screen.getByTestId('variable-bar')).toHaveTextContent('overview_region')
+    expect(screen.getByTestId('variable-bar')).toHaveTextContent('orders_status')
+    expect(screen.queryByTestId('other-chapters-hint')).not.toBeInTheDocument()
   })
 })
 
