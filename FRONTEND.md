@@ -566,9 +566,10 @@ summary rail on the left, configuration fields on the right, and a full-screen t
 - Bare `AppShell` (no rail or top bar): `AppHeader` masthead (title, subtitle, freshness, refresh) → quiet filter strip (`DashboardVariableBar`) → widget grid (react-grid-layout)
 - Masthead content comes from `dashboards.settings.app`: `title`, `subtitle`, `width` (`fixed` = 1200px content column, `full` = viewport), and the `show_header` / `show_refresh` / `show_last_updated` toggles; `layout` (`grid` | `custom`) is reserved for a later wave
 - **Chapters** — `settings.tabs` (≤10) renders a tab bar under the masthead; each widget belongs to a chapter via `widgets.layout.tab` (empty or unknown → the first tab), the active chapter rides `?tab=`, and each chapter's grid compacts its own rows. No tabs → a single implicit chapter and no bar
+- **Filter scoping** — `settings.app.filter_scope: "tab"` shows each chapter only the filters its widgets use (plus the transitive option/depends_on closure); hidden pins stay in the URL and a muted "n filters set in other chapters" line names them. Inference: `web/src/utils/chapterFilters.ts`
 - **Published vs draft** — viewers render the latest published snapshot (`published_version`) and never connect to the relay; editors get a `Preview draft` / `View published` toggle. `?preview=draft` connects the live document (LIVE chip + muted `Draft preview` badge) and is the only mode with auto-refresh controls
 - **Theme** — the surface is wrapped in `AppThemeProvider`, which resolves `settings.app.theme` over `org_branding` over the defaults into scoped CSS variables on an `.app-theme` container (plus a chart-palette override); unreadable tokens fall back per field (WCAG guardrails in `web/src/utils/appTheme.ts`). Fonts are the curated self-hosted set (DM Sans / JetBrains Mono / system)
-- The editor (`/dashboards/:id`, `DashboardEditorPage.tsx`) keeps the standard app shell; its **View** link opens this surface and its **App settings** panel edits `settings.app`; its header carries the publish status chip (`vN` / `Not published`, amber dot on unpublished changes) + **Publish** button, with the version drawer for history + restore ("restore copies the version into the draft — publish to make it live")
+- The editor (`/dashboards/:id`, `DashboardEditorPage.tsx`) keeps the standard app shell; its **View** link opens this surface, its **App settings** panel edits `settings.app` (incl. the filter-scope toggle and field HelpTips), and its **Review** button opens the App health drawer (the `review_dashboard` heuristics with jump-to-widget); its header carries the publish status chip (`vN` / `Not published`, amber dot on unpublished changes) + **Publish** button, with the version drawer for history + restore ("restore copies the version into the draft — publish to make it live")
 - The public dashboard page reuses the same renderer, with `public_live` gating live queries
 
 **Widgets**:
@@ -712,6 +713,35 @@ interface PermissionsPanelProps {
 ```
 
 **Component**: `web/src/components/PermissionsPanel.tsx`
+
+### AppHealthPanel
+
+**Purpose**: The editor's cohesion checklist — the same heuristics the agent's `review_dashboard` tool runs, with jump-to-widget
+
+**Trigger**: The editor header's **Review** button (desktop, next to App; requires editing)
+
+**Visual**:
+- Right drawer (420px, same chrome as App settings / version history; portal + backdrop, Escape closes, focus trap)
+- Note line: "The same composition checks the agent runs before publishing. Findings with a widget jump to it."
+- Findings grouped by severity as instrument labels — **Errors (n) / Warnings (n) / Notes (n)** — each a recessed card: message, then a meta row with the chapter id (uppercase mono) and the fixing tool as an accent "Fix" hint ("Configure the widget", "Arrange the layout", "Open App settings", "Publish the draft")
+- Widget-scoped rows are buttons: clicking scrolls to, focuses, and flashes the widget (`.dash-widget-highlight` forces the hover ring); a target in an inactive chapter asks the editor to switch chapters first, then retries
+- Messages name widgets the editor way (config title/label, else "the metric"/"the table"/"the text panel"); widget IDs never surface in copy
+- Empty state: "No issues found" + "Layout, content, and surface checks are clear."
+- Every open re-checks (`staleTime: 0`, `refetchOnMount: 'always'`), so the app-wide 30s staleTime never serves a stale report
+
+**API calls**: `GET /api/v1/dashboards/:id/review` (edit-gated; findings + view/preview/public links)
+
+**Component**: `web/src/components/AppHealthPanel.tsx`
+
+### HelpTip
+
+**Purpose**: Accessible field help from the shared source (`web/src/app-builder/fieldHelp.ts`), used by the widget drawer and the App settings panel
+
+**Visual**:
+- A 16px muted ⓘ button beside a field label; a small popover (260px, card background, hairline, shadow) opens below it with the field label, one-line hint, and — where the value is subtle — a mono example chip
+- Opens on click, Enter, or Space (explicit key handling cancels the native button activation so the toggle runs once); closes on Escape (focus returns to the trigger) or when focus leaves the tip; the trigger carries `aria-describedby` while open. Never hover-only, so keyboard and touch reach the same help
+
+**Component**: `web/src/components/HelpTip.tsx`
 
 ## Common Visual States
 
