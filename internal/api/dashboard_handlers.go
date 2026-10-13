@@ -721,7 +721,7 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 	// The document format only carries known types and SQL; reject anything
 	// else up front instead of failing inside the document write.
 	switch req.Type {
-	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML:
+	case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML, models.WidgetCustom:
 	default:
 		writeError(w, http.StatusBadRequest, "invalid widget type")
 		return
@@ -733,6 +733,16 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 		}
 		if !s.orgHTMLPanelsEnabled(ctx, claims.OrgID) {
 			writeError(w, http.StatusBadRequest, "html panels are disabled for this organization")
+			return
+		}
+	}
+	if req.Type == models.WidgetCustom {
+		if err := validate.ValidateWidgetCustom(validate.WidgetCustomConfigFrom(req.Config)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.validateCustomBindingRefs(ctx, claims.OrgID, dashID, req.Config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	}
@@ -836,10 +846,14 @@ func (s *Server) handleAddWidget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.audit.Log(ctx, audit.Entry{
+	entry := audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "widget.create", ResourceType: "widget", ResourceID: widget.ID,
-	})
+	}
+	if widget.Type == models.WidgetCustom {
+		entry.Metadata = map[string]any{"type": "custom", "js_bytes": len(validate.WidgetCustomConfigFrom(widget.Config).JS)}
+	}
+	s.audit.Log(ctx, entry)
 
 	writeJSON(w, http.StatusCreated, widget)
 }
@@ -856,6 +870,38 @@ func widgetHTMLConfigFrom(config map[string]interface{}) validate.WidgetHTMLConf
 		cfg.CSS = s
 	}
 	return cfg
+}
+
+// validateCustomBindingRefs rejects a custom widget whose bindings do not name
+// widgets of this dashboard: the renderer would otherwise show permanent
+// error states, and a cross-dashboard id would be a data-confusion bug (the
+// execute pipeline would refuse it anyway — this fails at write time).
+func (s *Server) validateCustomBindingRefs(ctx context.Context, orgID, dashID string, config map[string]interface{}) error {
+	ids := validate.WidgetCustomBindingIDs(config)
+	if len(ids) == 0 {
+		return nil
+	}
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id FROM widgets WHERE dashboard_id = $1 AND id = ANY($2)`,
+		dashID, ids)
+	if err != nil {
+		return fmt.Errorf("check binding references: %w", err)
+	}
+	defer rows.Close()
+	found := make(map[string]bool, len(ids))
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("check binding references: %w", err)
+		}
+		found[id] = true
+	}
+	for _, id := range ids {
+		if !found[id] {
+			return fmt.Errorf("binding widget %s is not a widget of this dashboard", id)
+		}
+	}
+	return nil
 }
 
 // @Summary Update a widget
@@ -921,7 +967,7 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Type != nil {
 		switch *req.Type {
-		case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML:
+		case models.WidgetChart, models.WidgetTable, models.WidgetText, models.WidgetMetric, models.WidgetHTML, models.WidgetCustom:
 		default:
 			writeError(w, http.StatusBadRequest, "invalid widget type")
 			return
@@ -933,6 +979,13 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Config != nil {
 		if err := validate.ValidateWidgetHTML(widgetHTMLConfigFrom(req.Config)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// The custom block mirrors the html caps check: validate whatever the
+		// request carries, and bindings against the *merged* config below
+		// (a partial patch can introduce or keep bindings).
+		if err := validate.ValidateWidgetCustom(validate.WidgetCustomConfigFrom(req.Config)); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
@@ -1030,6 +1083,20 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		merged.Language = *req.Language
 	}
 
+	// Custom components carry a bundle and bindings: validate the merged view
+	// (a partial patch can introduce, keep, or convert to custom) and check
+	// that every binding names a widget of this dashboard.
+	if merged.Type == string(models.WidgetCustom) {
+		if err := validate.ValidateWidgetCustom(validate.WidgetCustomConfigFrom(merged.Config)); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := s.validateCustomBindingRefs(r.Context(), claims.OrgID, dashID, merged.Config); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+
 	// A merged notebook/cell pair (the request has no ref fields, so it
 	// comes from the existing widget) must still resolve to a real cell: the
 	// materializer would otherwise skip the widget and delete its derived
@@ -1120,10 +1187,14 @@ func (s *Server) handleUpdateWidget(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.audit.Log(r.Context(), audit.Entry{
+	updateEntry := audit.Entry{
 		OrgID: claims.OrgID, UserID: claims.UserID,
 		Action: "widget.update", ResourceType: "widget", ResourceID: widgetID,
-	})
+	}
+	if merged.Type == string(models.WidgetCustom) {
+		updateEntry.Metadata = map[string]any{"type": "custom", "js_bytes": len(validate.WidgetCustomConfigFrom(merged.Config).JS)}
+	}
+	s.audit.Log(r.Context(), updateEntry)
 
 	w.WriteHeader(http.StatusNoContent)
 }
