@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { X, Play, Loader2 } from 'lucide-react'
+import { X, Play, Loader2, Plus } from 'lucide-react'
 import { api } from '../api/client'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useDashboardVariables } from '../contexts/DashboardVariablesContext'
@@ -18,9 +18,13 @@ import type { ValueFormat } from '../utils/valueFormat'
 import { tableConfigFrom } from '../utils/tableConfig'
 import { textConfigFrom } from '../utils/textConfig'
 import { htmlConfigFrom } from '../utils/htmlConfig'
+import { customConfigFrom } from '../utils/customConfig'
+import type { CustomBinding } from '../utils/customConfig'
 import { appearanceFrom, type WidgetAppearance } from '../utils/widgetAppearance'
 import { isHTMLPanel, isQueryWidget, isTextPanel } from '../utils/widgetKind'
 import { HtmlWidget } from './HtmlWidget'
+import { SandboxedFrame } from './SandboxedFrame'
+import { CodeMirrorField } from './CodeMirrorField'
 import { fieldHelpFor } from '../app-builder/fieldHelp'
 import { HelpTip } from './HelpTip'
 import type { Dashboard, DashboardVariableType, ResultSet, Widget, WidgetQueryResult } from '../types'
@@ -132,6 +136,35 @@ const styles: Record<string, React.CSSProperties> = {
     flexDirection: 'column',
     overflow: 'auto',
     background: 'var(--bg-card)',
+  },
+  bindingRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 6,
+    marginBottom: 6,
+  },
+  bindingRemove: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 4,
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'transparent',
+    color: 'var(--text-muted)',
+    cursor: 'pointer',
+  },
+  bindingAdd: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 4,
+    padding: '4px 8px',
+    fontSize: 12,
+    border: '1px solid var(--border)',
+    borderRadius: 4,
+    background: 'transparent',
+    color: 'var(--text-secondary)',
+    cursor: 'pointer',
   },
   select: {
     padding: '7px 10px',
@@ -293,7 +326,7 @@ export function mergeChartConfigInto(
     : { ...config, ...withWidgetOverride(chartConfig) }
 }
 
-export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true, editingEnabled = true, docSynced = false, htmlPanelsEnabled = true }: {
+export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, onSaved, onDefineVariable, closeOnEscape = true, editingEnabled = true, docSynced = false, htmlPanelsEnabled = true, customCodeEnabled = false }: {
   dashboardId: string
   dashboard: Dashboard
   widget: Widget
@@ -307,6 +340,8 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   docSynced?: boolean
   /** False when the org switch is off — no html option, editors, or preview. */
   htmlPanelsEnabled?: boolean
+  /** False when the org switch is off (default) — no custom option or authoring. */
+  customCodeEnabled?: boolean
 }) {
   const isQuery = isQueryWidget(widget)
   const canRun = dashboard.can_view_with_data !== false
@@ -421,6 +456,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
   const metric = metricConfigFrom(config)
   const text = textConfigFrom(config)
   const html = htmlConfigFrom(config)
+  const custom = customConfigFrom(config)
   const appearance = appearanceFrom(config)
   const tableColumns = tableConfigFrom(config).columns
   // First table output of the last run: source for the metric preview, the
@@ -483,6 +519,23 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
 
   const saveAppearance = (patch: Partial<WidgetAppearance>) =>
     saveWidgetConfig({ appearance: { ...appearanceFrom(configRef.current), ...patch } })
+
+  // Custom-component bindings authoring: rows serialize straight into
+  // config.bindings; the server validates key charset, duplicates, and
+  // same-dashboard references. The picker lists the dashboard's other widgets.
+  const bindableWidgets = (dashboard.widgets ?? []).filter(w => w.id !== widget.id)
+  const saveBindings = (bindings: CustomBinding[]) => void saveWidgetConfig({ bindings })
+  const bindingTargetLabel = (w: Widget) => {
+    const title = typeof w.config?.title === 'string' ? w.config.title : ''
+    return title || `${w.type} ${w.id.slice(0, 8)}`
+  }
+  const addBinding = () => {
+    const first = bindableWidgets[0]
+    if (!first) return
+    let n = custom.bindings.length + 1
+    while (custom.bindings.some(b => b.key === `binding${n}`)) n++
+    saveBindings([...custom.bindings, { key: `binding${n}`, widget_id: first.id }])
+  }
 
   // Writes the table block, preserving any sibling keys under it: only columns
   // with a format are listed, so setting a column back to Default removes its
@@ -707,6 +760,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             <option value="metric">Metric</option>
             <option value="text">Text</option>
             {htmlPanelsEnabled && <option value="html">HTML panel</option>}
+            {customCodeEnabled && <option value="custom">Custom component</option>}
           </select>
 
           {/* Placement is a chapter control: nothing to choose without tabs. */}
@@ -915,6 +969,105 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                   <HtmlWidget
                     html={html.html}
                     css={html.css}
+                    theme={dashboard.settings?.app?.theme}
+                    branding={dashboard.org_branding}
+                  />
+                </div>
+              </>
+            )
+          )}
+
+          {widgetType === 'custom' && (
+            !customCodeEnabled ? (
+              <div style={styles.muted} role="note">
+                Custom code is disabled for this organization.
+              </div>
+            ) : (
+              <>
+                <FieldLabel section helpKey="custom.html">Component HTML</FieldLabel>
+                <CodeMirrorField
+                  label="Component HTML"
+                  language="html"
+                  value={custom.html}
+                  editable={editingEnabled}
+                  onSave={markup => void saveWidgetConfig({ html: markup })}
+                />
+                <FieldLabel section helpKey="custom.css">Component CSS</FieldLabel>
+                <CodeMirrorField
+                  label="Component CSS"
+                  language="css"
+                  value={custom.css}
+                  editable={editingEnabled}
+                  onSave={css => void saveWidgetConfig({ css })}
+                />
+                <FieldLabel section helpKey="custom.js">Component JS</FieldLabel>
+                <CodeMirrorField
+                  label="Component JS"
+                  language="javascript"
+                  value={custom.js}
+                  editable={editingEnabled}
+                  onSave={js => void saveWidgetConfig({ js })}
+                />
+
+                <FieldLabel section helpKey="custom.bindings">Data bindings</FieldLabel>
+                {custom.bindings.map((binding, i) => (
+                  <div key={i} style={styles.bindingRow}>
+                    <input
+                      aria-label="Binding key"
+                      type="text"
+                      style={{ ...styles.input, flex: '0 0 110px' }}
+                      value={binding.key}
+                      placeholder="key"
+                      disabled={!editingEnabled}
+                      onChange={e => saveBindings(custom.bindings.map((b, j) => (j === i ? { ...b, key: e.target.value } : b)))}
+                    />
+                    <select
+                      aria-label="Binding widget"
+                      style={{ ...styles.select, flex: 1, minWidth: 0 }}
+                      value={binding.widget_id}
+                      disabled={!editingEnabled}
+                      onChange={e => saveBindings(custom.bindings.map((b, j) => (j === i ? { ...b, widget_id: e.target.value } : b)))}
+                    >
+                      {!bindableWidgets.some(w => w.id === binding.widget_id) && (
+                        <option value={binding.widget_id}>(missing) {binding.widget_id.slice(0, 8)}</option>
+                      )}
+                      {bindableWidgets.map(w => (
+                        <option key={w.id} value={w.id}>{bindingTargetLabel(w)}</option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      style={styles.bindingRemove}
+                      title="Remove binding"
+                      aria-label={`Remove binding ${binding.key}`}
+                      disabled={!editingEnabled}
+                      onClick={() => saveBindings(custom.bindings.filter((_, j) => j !== i))}
+                    >
+                      <X size={11} />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  style={styles.bindingAdd}
+                  disabled={!editingEnabled || bindableWidgets.length === 0}
+                  onClick={addBinding}
+                >
+                  <Plus size={11} /> Add binding
+                </button>
+                <div style={styles.muted}>
+                  Source-less: the component reads data only through these bindings.
+                  Bound query widgets run as the viewer; bound cell widgets read their stored outputs.
+                </div>
+                <div style={styles.muted}>
+                  The component runs sandboxed; it can only see data you bind here, through a bridge.
+                </div>
+                <div style={{ ...styles.preview, height: 240, minHeight: 120 }}>
+                  <SandboxedFrame
+                    html={custom.html}
+                    css={custom.css}
+                    js={custom.js}
+                    onMessage={() => {}}
                     theme={dashboard.settings?.app?.theme}
                     branding={dashboard.org_branding}
                   />

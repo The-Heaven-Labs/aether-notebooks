@@ -95,6 +95,28 @@ export const fieldHelp: Record<string, FieldHelp> = {
     example: '.stat { font-size: 28px; color: var(--accent); }',
   },
 
+  // ── custom ──────────────────────────────────────────────────────────────
+  'custom.html': {
+    label: 'Component HTML',
+    hint: 'Markup for the sandboxed component; scripts live in Component JS.',
+    example: '<div id="root"></div>',
+  },
+  'custom.css': {
+    label: 'Component CSS',
+    hint: 'Stylesheet for the component; the app theme’s CSS variables are available.',
+    example: '#root { color: var(--accent); }',
+  },
+  'custom.js': {
+    label: 'Component JS',
+    hint: 'Inline script (no network); use aether.requestData(key) for bound data.',
+    example: "aether.requestData('sales')",
+  },
+  'custom.bindings': {
+    label: 'Data bindings',
+    hint: 'Widgets of this dashboard the component may read through the bridge, keyed by name.',
+    example: 'sales → Revenue by day',
+  },
+
   // ── table ───────────────────────────────────────────────────────────────
   'table.columns': {
     label: 'Table columns',

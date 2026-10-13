@@ -17,6 +17,12 @@ describe('validTypesForSource', () => {
   it('offers metric for query widgets', () => {
     expect(validTypesForSource('query')).toEqual(['table', 'chart', 'metric'])
   })
+  it('offers the custom component for the source-less option only when enabled', () => {
+    expect(validTypesForSource('none', true, true)).toContain('custom')
+    expect(validTypesForSource('none', true, false)).not.toContain('custom')
+    // Default: off (the org switch is absent/disabled by default).
+    expect(validTypesForSource('none', true)).not.toContain('custom')
+  })
 })
 
 describe('buildAddWidgetPayload', () => {
@@ -44,6 +50,13 @@ describe('buildAddWidgetPayload', () => {
   it('builds a source-less html panel with no source keys', () => {
     expect(buildAddWidgetPayload({ source: 'none', type: 'html', layout })).toEqual({
       type: 'html',
+      layout,
+      config: {},
+    })
+  })
+  it('builds a source-less custom component with an empty config', () => {
+    expect(buildAddWidgetPayload({ source: 'none', type: 'custom', layout })).toEqual({
+      type: 'custom',
       layout,
       config: {},
     })

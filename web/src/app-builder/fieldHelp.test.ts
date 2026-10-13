@@ -12,6 +12,7 @@ const REQUIRED_FIELDS = [
   'metric.sparkline.x_column', 'metric.sparkline.y_column',
   'text.markdown',
   'html.html', 'html.css',
+  'custom.html', 'custom.css', 'custom.js', 'custom.bindings',
   'table.columns', 'table.columns.format',
   'appearance.background', 'appearance.border', 'appearance.padding', 'appearance.align',
   'chart.chart_type', 'chart.x_column', 'chart.y_columns', 'chart.group_by',

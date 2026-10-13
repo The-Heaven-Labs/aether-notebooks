@@ -60,6 +60,7 @@ const WIDGET_TYPE_DESCRIPTORS: Record<AddWidgetType, string> = {
   metric: 'Metric — one number from the query.',
   text: 'Text — markdown with live {{filters}}.',
   html: 'Script-free HTML/CSS section.',
+  custom: 'Sandboxed HTML/CSS/JS with data bindings.',
 }
 
 const WIDGET_SOURCE_DESCRIPTORS: Record<AddWidgetSource, string> = {
@@ -468,10 +469,12 @@ export function DashboardEditorPage() {
 
   const pickerCells = pickerNotebook?.cells ?? []
 
-  // REST-only field (the document does not carry it): the picker and drawer
-  // offer the html panel only while the org switch is on.
+  // REST-only fields (the document does not carry them): the picker and
+  // drawer offer the html panel and the custom component only while their
+  // org switches are on (`custom_code_enabled` is absent/off by default).
   const htmlPanelsEnabled = dashboard?.html_panels_enabled !== false
-  const pickerValidTypes = validTypesForSource(pickerSource, htmlPanelsEnabled)
+  const customCodeEnabled = dashboard?.custom_code_enabled === true
+  const pickerValidTypes = validTypesForSource(pickerSource, htmlPanelsEnabled, customCodeEnabled)
   const pickerSourceComplete =
     pickerSource === 'cell'
       ? !!pickerNotebookId && !!pickerCellId
@@ -734,7 +737,7 @@ export function DashboardEditorPage() {
                 onChange={(e) => {
                   const source = e.target.value as AddWidgetSource
                   setPickerSource(source)
-                  const valid = validTypesForSource(source, htmlPanelsEnabled)
+                  const valid = validTypesForSource(source, htmlPanelsEnabled, customCodeEnabled)
                   if (!valid.includes(pickerType)) setPickerType(valid[0])
                 }}
               >
@@ -1033,6 +1036,7 @@ export function DashboardEditorPage() {
           editingEnabled={editingEnabled}
           docSynced={liveDoc.synced}
           htmlPanelsEnabled={htmlPanelsEnabled}
+          customCodeEnabled={customCodeEnabled}
           onClose={() => setEditingWidget(null)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
           onDefineVariable={(name, suggestedType) => {
