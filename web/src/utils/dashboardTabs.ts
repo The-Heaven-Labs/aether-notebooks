@@ -1,5 +1,10 @@
 import type { DashboardTab, Widget } from '../types'
 
+/** The identity a chapter is referenced by; titles are presentation only. */
+export interface DashboardTabLike {
+  id: string
+}
+
 /**
  * Stable identity for a dashboard without tabs, so callers can fall back to
  * it without creating a fresh array on every render (which would defeat any
@@ -24,7 +29,7 @@ export function activeTabId(tabs: DashboardTab[], requested: string | null | und
  * no longer exists falls back to the first tab, so a deleted tab never
  * strands its widgets off-screen. Null when the dashboard defines no tabs.
  */
-export function widgetTabId(widget: Widget, tabs: DashboardTab[]): string | null {
+export function widgetTabId(widget: Widget, tabs: readonly DashboardTabLike[]): string | null {
   if (tabs.length === 0) return null
   const tab = widget.layout?.tab
   return tab && tabs.some((t) => t.id === tab) ? tab : tabs[0].id
