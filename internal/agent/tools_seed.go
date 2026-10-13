@@ -3,9 +3,10 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"strings"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -82,6 +83,28 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "ask_question", Description: "Ask the user a question and wait for their response. Use this when you need a decision, clarification, or input from the user to proceed. You can provide multiple choice options for the user to pick from, or leave it open-ended.", HandlerName: "ask_question", Rev: builtinSeedRev, Schema: map[string]any{"type": "object", "properties": map[string]any{"question": map[string]any{"type": "string", "description": "The question to ask the user"}, "options": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"title": map[string]any{"type": "string", "description": "The option title/label"}, "description": map[string]any{"type": "string", "description": "Optional subtitle or explanation"}}, "required": []any{"title"}}, "description": "Optional multiple choice options"}, "allow_custom": map[string]any{"type": "boolean", "description": "Whether to allow the user to type a custom answer (default: true)"}}, "required": []any{"question"}}},
 }
 
+// builtinCatalogValues renders the catalog as a SQL VALUES list for the bulk
+// upserts: one tuple per builtin, with the schema/config JSON already encoded.
+// offset is the number of leading parameters the caller binds before the
+// catalog args ($1..$offset), so the tuple placeholders continue from there.
+func builtinCatalogValues(offset int) (placeholders []string, args []any) {
+	const perTuple = 5
+	for i, bt := range BuiltinTools {
+		schema := bt.Schema
+		if schema == nil {
+			schema = map[string]any{"type": "object", "properties": map[string]any{}}
+		}
+		schemaJSON, _ := json.Marshal(schema)
+		config, _ := json.Marshal(map[string]string{"handler_name": bt.HandlerName})
+		base := offset + i*perTuple
+		placeholders = append(placeholders, fmt.Sprintf(
+			"($%d::text, $%d::text, $%d::jsonb, $%d::jsonb, $%d::int)",
+			base+1, base+2, base+3, base+4, base+5))
+		args = append(args, bt.Name, bt.Description, string(schemaJSON), string(config), bt.Rev)
+	}
+	return placeholders, args
+}
+
 func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 	var systemUserID string
 	err := pool.QueryRow(ctx, `SELECT user_id FROM org_members WHERE org_id = $1 LIMIT 1`, orgID).Scan(&systemUserID)
@@ -106,45 +129,52 @@ func SeedBuiltinTools(ctx context.Context, pool *pgxpool.Pool, orgID string) {
 		return
 	}
 
-	for _, bt := range BuiltinTools {
-		schema := bt.Schema
-		if schema == nil {
-			schema = map[string]any{"type": "object", "properties": map[string]any{}}
-		}
-		schemaJSON, _ := json.Marshal(schema)
-		config, _ := json.Marshal(map[string]string{"handler_name": bt.HandlerName})
-		toolID := uuid.New().String()
-		_, err := pool.Exec(ctx, `
-			INSERT INTO tools (id, org_id, name, description, type, schema, config, seed_rev, created_by, created_at, updated_at)
-			VALUES ($1, $2, $3, $4, 'builtin', $5, $6, $7, $8, NOW(), NOW())
-			ON CONFLICT (org_id, name) DO NOTHING`,
-			toolID, orgID, bt.Name, bt.Description, string(schemaJSON), string(config), bt.Rev, systemUserID)
-		if err != nil {
-			slog.Warn("seed builtin tool failed", "tool", bt.Name, "error", err)
-			continue
-		}
-		// Refresh a stale row: builtin descriptions and parameters are
-		// platform-managed, so a row older than the catalog's revision is
-		// overwritten (a user edit to a builtin is replaced on the next bump).
+	// One bulk statement per condition (not one per tool): a large dev
+	// database can carry tens of thousands of orgs, and per-tool round trips
+	// turned startup seeding into millions of queries.
+	refreshPlaceholders, refreshArgs := builtinCatalogValues(1)
+	insertPlaceholders, insertArgs := builtinCatalogValues(2)
+
+	// Refresh stale rows: builtin descriptions and parameters are
+	// platform-managed, so a row older than the catalog's revision is
+	// overwritten (a user edit to a builtin is replaced on the next bump).
+	if stale > 0 {
 		if _, err := pool.Exec(ctx, `
-			UPDATE tools SET description = $1, schema = $2, config = $3, seed_rev = $4, updated_at = NOW()
-			WHERE org_id = $5 AND name = $6 AND type = 'builtin' AND seed_rev < $4`,
-			bt.Description, string(schemaJSON), string(config), bt.Rev, orgID, bt.Name); err != nil {
-			slog.Warn("refresh builtin tool failed", "tool", bt.Name, "error", err)
+			UPDATE tools SET description = v.description, schema = v.schema, config = v.config,
+			                 seed_rev = v.seed_rev, updated_at = NOW()
+			FROM (VALUES `+strings.Join(refreshPlaceholders, ",")+`) AS v(name, description, schema, config, seed_rev)
+			WHERE tools.org_id = $1 AND tools.type = 'builtin'
+			  AND tools.name = v.name AND tools.seed_rev < v.seed_rev`,
+			append([]any{orgID}, refreshArgs...)...); err != nil {
+			slog.Warn("refresh builtin tools failed", "org", orgID, "error", err)
 		}
-		// Seed management ACL: all org members can view tools (UI listing);
-		// 'use' is not needed — assignment is gated by validateToolAccess which checks
-		// user-level or org-role 'use' permission. Built-in tools default to view-only
-		// for 'everyone'; admins get full management.
+	}
+
+	// Insert missing rows (a fresh org, or an org seeded before a tool
+	// existed), then seed the management ACLs for any builtin row lacking
+	// them: all org members can view tools (UI listing); 'use' is not needed
+	// — assignment is gated by validateToolAccess, which checks user-level or
+	// org-role 'use' permission. Built-ins default to view-only for
+	// 'everyone'; admins get full management.
+	if count < len(BuiltinTools) {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO tools (id, org_id, name, description, type, schema, config, seed_rev, created_by, created_at, updated_at)
+			SELECT gen_random_uuid(), $1::uuid, v.name, v.description, 'builtin', v.schema, v.config, v.seed_rev, $2::uuid, NOW(), NOW()
+			FROM (VALUES `+strings.Join(insertPlaceholders, ",")+`) AS v(name, description, schema, config, seed_rev)
+			ON CONFLICT (org_id, name) DO NOTHING`,
+			append([]any{orgID, systemUserID}, insertArgs...)...); err != nil {
+			slog.Warn("seed builtin tools failed", "org", orgID, "error", err)
+			return
+		}
 		pool.Exec(ctx, `
 			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-			VALUES ($1, 'tool', $2::uuid, 'org_role', 'everyone', ARRAY['view'])
-			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
-			orgID, toolID)
+			SELECT t.org_id, 'tool', t.id, 'org_role', 'everyone', ARRAY['view']
+			FROM tools t WHERE t.org_id = $1 AND t.type = 'builtin'
+			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`, orgID)
 		pool.Exec(ctx, `
 			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-			VALUES ($1, 'tool', $2::uuid, 'org_role', 'admin', ARRAY['view','use','edit','delete'])
-			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`,
-			orgID, toolID)
+			SELECT t.org_id, 'tool', t.id, 'org_role', 'admin', ARRAY['view','use','edit','delete']
+			FROM tools t WHERE t.org_id = $1 AND t.type = 'builtin'
+			ON CONFLICT (resource_type, resource_id, subject_type, subject_id) DO NOTHING`, orgID)
 	}
 }
