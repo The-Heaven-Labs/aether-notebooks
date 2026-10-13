@@ -16,6 +16,10 @@ type OrgSettings struct {
 	DefaultMaxRows      int          `json:"default_max_rows,omitempty"`
 	AuditRetentionDays  int          `json:"audit_retention_days,omitempty"`
 	Branding            *OrgBranding `json:"branding,omitempty"`
+	// HTMLPanelsEnabled gates the `html` widget type org-wide. nil (absent)
+	// means enabled; an explicit false hides every panel behind a placeholder
+	// and rejects creation/conversion.
+	HTMLPanelsEnabled *bool `json:"html_panels_enabled,omitempty"`
 }
 
 // OrgBranding is the org-level theming that app surfaces fall back to when the

@@ -774,3 +774,86 @@ func TestDashboardHTMLWidget(t *testing.T) {
 	})
 	require.Equal(t, 400, rec.Code)
 }
+
+func TestOrgHTMLPanelsSwitch(t *testing.T) {
+	t.Setenv("AETHER_RATE_LIMIT_REGISTER", "500")
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("dash-org-switch-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "HTML Switch Org")
+
+	rec := doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards", map[string]any{"title": "Switch"})
+	require.Equal(t, 201, rec.Code)
+	var dashResp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&dashResp))
+	dashID := dashResp["id"].(string)
+
+	// A text widget for the update-path enforcement checks (created while the
+	// switch is still absent/enabled).
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type":   "text",
+		"layout": map[string]int{"row": 0, "col": 0, "width": 4, "height": 4},
+		"config": map[string]any{"text": map[string]any{"markdown": "hello"}},
+	})
+	require.Equal(t, 201, rec.Code)
+	var textWidget map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&textWidget))
+	textWidgetID := textWidget["id"].(string)
+	widgetPath := "/api/v1/dashboards/" + dashID + "/widgets/" + textWidgetID
+
+	// Default: absent means enabled — dashboard GET reports true.
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/dashboards/"+dashID, nil)
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), `"html_panels_enabled":true`)
+
+	// Disable org-wide; the setting round-trips and the dashboard GET flips.
+	rec = doDashboardJSON(t, srv, token, "PUT", "/api/v1/org/settings", map[string]any{"html_panels_enabled": false})
+	require.Equal(t, 200, rec.Code)
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/org/settings", nil)
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), `"html_panels_enabled":false`)
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/dashboards/"+dashID, nil)
+	require.Contains(t, rec.Body.String(), `"html_panels_enabled":false`)
+
+	// Creating an html widget is rejected while disabled…
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "html", "layout": map[string]int{"row": 5, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
+
+	// …as is converting a widget to html and writing panel config keys.
+	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"type": "html"})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
+	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"config": map[string]any{"html": "<p>x</p>"}})
+	require.Equal(t, 400, rec.Code)
+	require.Contains(t, rec.Body.String(), "disabled")
+
+	// The public dashboard GET carries the resolved switch too (field present
+	// and false while disabled).
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/share", nil)
+	require.Contains(t, []int{200, 201}, rec.Code)
+	var shareResp map[string]any
+	require.NoError(t, json.NewDecoder(rec.Body).Decode(&shareResp))
+	publicToken := shareResp["token"].(string)
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/public/"+publicToken, nil)
+	require.Equal(t, 200, rec.Code)
+	require.Contains(t, rec.Body.String(), `"html_panels_enabled":false`)
+
+	// …and allowed again after re-enabling (explicit true round-trips too).
+	rec = doDashboardJSON(t, srv, token, "PUT", "/api/v1/org/settings", map[string]any{"html_panels_enabled": true})
+	require.Equal(t, 200, rec.Code)
+	rec = doDashboardJSON(t, srv, token, "GET", "/api/v1/org/settings", nil)
+	require.Contains(t, rec.Body.String(), `"html_panels_enabled":true`)
+	rec = doDashboardJSON(t, srv, token, "POST", "/api/v1/dashboards/"+dashID+"/widgets", map[string]any{
+		"type": "html", "layout": map[string]int{"row": 5, "col": 0, "width": 4, "height": 4},
+	})
+	require.Equal(t, 201, rec.Code)
+
+	// The re-enabled update paths work again.
+	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"type": "html"})
+	require.Equal(t, 204, rec.Code)
+	rec = doDashboardJSON(t, srv, token, "PUT", widgetPath, map[string]any{"config": map[string]any{"html": "<p>x</p>"}})
+	require.Equal(t, 204, rec.Code)
+}
