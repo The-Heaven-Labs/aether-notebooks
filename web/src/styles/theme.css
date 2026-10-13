@@ -1558,6 +1558,12 @@ input[type="color"] {
   border-color: var(--accent);
 }
 
+/* App health jump-to-widget flash: forces the hover ring on the targeted
+   card so a finding's target is unmistakable after the scroll. */
+.dash-widget-highlight .dash-widget-card {
+  outline-color: var(--accent);
+}
+
 /* ── Floating panel entrance (notebook history) ─────────────────────────── */
 @keyframes floating-panel-in {
   from { opacity: 0; transform: translateX(10px); }

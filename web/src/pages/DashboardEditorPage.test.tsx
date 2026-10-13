@@ -270,6 +270,24 @@ describe('DashboardEditorPage live document wiring', () => {
     expect(screen.queryByLabelText('Edit Rest widget')).not.toBeInTheDocument()
   })
 
+  test('the Review button opens the App health panel', async () => {
+    server.use(http.get('/api/v1/dashboards/d1/review', () => HttpResponse.json({
+      dashboard_id: 'd1', count: 0, findings: [], view_url: '', preview_url: '',
+    })))
+    docStore.set({
+      synced: true,
+      connected: true,
+      title: 'Ops board',
+      widgets: [widget()],
+    })
+    renderEditor()
+    await screen.findByTestId('grid')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Review' }))
+    expect(await screen.findByRole('dialog', { name: 'App health' })).toBeInTheDocument()
+    expect(await screen.findByText('No issues found')).toBeInTheDocument()
+  })
+
   test('a drag/resize stop writes the layout, tab included, to the document and never PUTs the widget', async () => {
     let widgetPuts = 0
     server.use(

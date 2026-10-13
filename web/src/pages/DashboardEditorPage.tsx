@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { ArrowLeft, X, Plus, Eye, Pencil, Shield, LayoutTemplate } from 'lucide-react'
+import { ArrowLeft, X, Plus, Eye, Pencil, Shield, LayoutTemplate, ListChecks } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
@@ -32,6 +32,7 @@ import { ConfirmDialog } from '../components/ConfirmDialog'
 import { WidgetConfigDrawer } from '../components/WidgetConfigDrawer'
 import { DashboardVariablesPanel } from '../components/DashboardVariablesPanel'
 import { AppSettingsPanel } from '../components/AppSettingsPanel'
+import { AppHealthPanel } from '../components/AppHealthPanel'
 import { DashboardVersionsPanel, useDashboardVersions } from '../components/DashboardVersionsPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
@@ -269,6 +270,7 @@ const markSaved = useCallback(() => {
   // invalidation and polls while the editor stays open.
   const versionsQuery = useDashboardVersions(id, !!dashboard && dashboard.can_edit !== false)
   const [showVersions, setShowVersions] = useState(false)
+  const [showHealth, setShowHealth] = useState(false)
   const publishDashboard = useMutation({
     mutationFn: () => api.post(`/api/v1/dashboards/${id}/publish`),
     onSuccess: () => {
@@ -589,15 +591,28 @@ const markSaved = useCallback(() => {
             Variables
           </button>
           {!isMobileLayout && (
-            <button
-              type="button"
-              className="nav-btn"
-              onClick={() => { setAppSettingsSection(undefined); setShowAppSettings(true) }}
-              disabled={!editingEnabled}
-              title={editingEnabled ? 'App settings' : 'Editing is paused'}
-            >
-              <LayoutTemplate size={12} /> App
-            </button>
+            <>
+              <button
+                type="button"
+                className="nav-btn"
+                onClick={() => { setAppSettingsSection(undefined); setShowAppSettings(true) }}
+                disabled={!editingEnabled}
+                title={editingEnabled ? 'App settings' : 'Editing is paused'}
+              >
+                <LayoutTemplate size={12} /> App
+              </button>
+              {/* App health: the review_dashboard heuristics as a quiet
+                  editor checklist with jump-to-widget. */}
+              <button
+                type="button"
+                className="nav-btn"
+                onClick={() => setShowHealth(true)}
+                disabled={!editingEnabled}
+                title={editingEnabled ? 'Review the app composition' : 'Editing is paused'}
+              >
+                <ListChecks size={12} /> Review
+              </button>
+            </>
           )}
           {saveStatus && (
             <span style={{
@@ -866,7 +881,7 @@ const markSaved = useCallback(() => {
             ) : containerWidth === 0 ? null : isMobileLayout ? (
               <div style={styles.mobileGrid}>
                 {shownWidgets.map((widget: Widget) => (
-                  <div key={widget.id} style={styles.mobileWidgetCard}>
+                  <div key={widget.id} id={`dash-widget-${widget.id}`} tabIndex={-1} style={styles.mobileWidgetCard}>
                     <div className="dash-widget-head">
                       <span className="dash-widget-kind">{widgetKindLabel(widget)}</span>
                       <div className="dash-widget-head-actions">
@@ -919,7 +934,7 @@ const markSaved = useCallback(() => {
                 style={{ minHeight: 240 }}
               >
                 {shownWidgets.map((widget: Widget) => (
-                  <div key={widget.id} style={{ position: 'relative' }}>
+                  <div key={widget.id} id={`dash-widget-${widget.id}`} tabIndex={-1} style={{ position: 'relative' }}>
                     <div className="widget-drag-handle dash-widget-drag" title="Drag to move" />
                     <div className="dash-widget-card" style={styles.widgetCard}>
                       <div className="dash-widget-head">
@@ -1026,6 +1041,13 @@ const markSaved = useCallback(() => {
       )}
       {showVersions && (
         <DashboardVersionsPanel dashboardId={id!} onClose={() => setShowVersions(false)} />
+      )}
+      {showHealth && (
+        <AppHealthPanel
+          dashboardId={id!}
+          onJumpToChapter={(chapterId) => setEditorTab(chapterId)}
+          onClose={() => setShowHealth(false)}
+        />
       )}
     </AppShell>
     </DashboardVariablesProvider>
