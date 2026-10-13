@@ -21,6 +21,8 @@ interface OrgSettingsPayload {
   default_max_rows?: number
   audit_retention_days?: number
   branding?: OrgBranding
+  /** Org switch for html panels; absent means enabled. */
+  html_panels_enabled?: boolean
 }
 
 /** The preset whose colors match `palette` (case-insensitive, order-sensitive); unmatched palettes are Custom. */
@@ -451,6 +453,9 @@ export function OrgSettingsPage() {
   // key wholesale — sibling keys are last-write-wins, which the retention save
   // below mitigates by refreshing this snapshot.
   const [orgSettings, setOrgSettings] = useState<OrgSettingsPayload>({})
+  // App-builder switches stored under orgs.settings (the branding GET carries
+  // them; absent means enabled).
+  const [htmlPanelsEnabled, setHtmlPanelsEnabled] = useState(true)
   const [brandingAppName, setBrandingAppName] = useState('')
   const [brandingAccentColor, setBrandingAccentColor] = useState('')
   const [brandingPalette, setBrandingPalette] = useState<ChartPalettePresetValue>('default')
@@ -514,6 +519,7 @@ export function OrgSettingsPage() {
       .then(r => {
         setAuditRetentionDays(r.audit_retention_days ?? 7)
         setOrgSettings(r)
+        setHtmlPanelsEnabled(r.html_panels_enabled !== false)
         const branding = r.branding
         setBrandingAppName(branding?.app_name ?? '')
         setBrandingAccentColor(branding?.accent_color ?? '')
@@ -535,6 +541,14 @@ export function OrgSettingsPage() {
   async function handleToggleSharing(enabled: boolean) {
     await api.put('/api/v1/org/sharing', { public_sharing_enabled: enabled })
     setSharingEnabled(enabled)
+  }
+
+  async function handleToggleHtmlPanels(enabled: boolean) {
+    await api.put('/api/v1/org/settings', { html_panels_enabled: enabled })
+    setHtmlPanelsEnabled(enabled)
+    // Keep the full snapshot current so a later branding save (which PUTs the
+    // whole payload) cannot revert this toggle.
+    setOrgSettings(prev => ({ ...prev, html_panels_enabled: enabled }))
   }
 
   async function handleToggleInvitations(enabled: boolean) {
@@ -1345,6 +1359,27 @@ const formInput: React.CSSProperties = {
             {auditRetentionError && <span style={{ fontSize: 12, color: 'var(--error)', alignSelf: 'center' }}>{auditRetentionError}</span>}
           </div>
         </section>
+
+        {/* ── App Builder ── */}
+        {isAdmin && (
+          <section style={styles.section}>
+            <div style={styles.sectionTitle}>App builder</div>
+            <p style={styles.sectionDesc}>
+              Script-free HTML/CSS sections on app surfaces. When off, existing panels show a
+              placeholder and new ones cannot be added.
+            </p>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={htmlPanelsEnabled}
+                onChange={e => void handleToggleHtmlPanels(e.target.checked)}
+              />
+              <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+                Allow HTML panels
+              </span>
+            </label>
+          </section>
+        )}
 
         {/* ── J. Branding ── */}
         {isAdmin && (
