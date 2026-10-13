@@ -19,6 +19,8 @@ import { tableConfigFrom } from '../utils/tableConfig'
 import { textConfigFrom } from '../utils/textConfig'
 import { appearanceFrom, type WidgetAppearance } from '../utils/widgetAppearance'
 import { isQueryWidget, isTextPanel } from '../utils/widgetKind'
+import { fieldHelpFor } from '../app-builder/fieldHelp'
+import { HelpTip } from './HelpTip'
 import type { Dashboard, DashboardVariableType, ResultSet, Widget, WidgetQueryResult } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
@@ -184,6 +186,21 @@ function detectedTokens(query: string): string[] {
 // by tableConfigFrom and tolerated by formatValue's fallback.
 function normalizeCurrency(value: string): string {
   return value.trim().toUpperCase()
+}
+
+/**
+ * A field label with an optional HelpTip from the shared field-help source.
+ * Progressive disclosure: only fields whose values need an example get the
+ * trigger; the label itself stays the same.
+ */
+function FieldLabel({ helpKey, section = false, children }: { helpKey?: string; section?: boolean; children: React.ReactNode }) {
+  const help = helpKey ? fieldHelpFor(helpKey) : undefined
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+      <span style={section ? styles.sectionLabel : styles.fieldLabel}>{children}</span>
+      {help && <HelpTip help={help} />}
+    </span>
+  )
 }
 
 /**
@@ -705,7 +722,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             <>
               <span style={styles.sectionLabel}>Metric</span>
               <div style={styles.field}>
-                <span style={styles.fieldLabel}>Value column</span>
+                <FieldLabel helpKey="metric.value_column">Value column</FieldLabel>
                 <DebouncedTextInput
                   label="Value column"
                   value={metric.value_column ?? ''}
@@ -720,7 +737,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                 </datalist>
               )}
               <div style={styles.field}>
-                <span style={styles.fieldLabel}>Aggregation</span>
+                <FieldLabel helpKey="metric.aggregation">Aggregation</FieldLabel>
                 <select
                   aria-label="Aggregation"
                   style={styles.select}
@@ -739,7 +756,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                 </select>
               </div>
               <div style={styles.field}>
-                <span style={styles.fieldLabel}>Label</span>
+                <FieldLabel helpKey="metric.label">Label</FieldLabel>
                 <DebouncedTextInput
                   label="Label"
                   value={metric.label ?? ''}
@@ -748,7 +765,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                 />
               </div>
               <div style={styles.field}>
-                <span style={styles.fieldLabel}>Format</span>
+                <FieldLabel helpKey="metric.format.style">Format</FieldLabel>
                 <select
                   aria-label="Format"
                   style={styles.select}
@@ -798,7 +815,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                 <label htmlFor="widget-metric-compact">Compact (1.2M)</label>
               </div>
               <div style={styles.field}>
-                <span style={styles.fieldLabel}>Comparison column</span>
+                <FieldLabel helpKey="metric.comparison.column">Comparison column</FieldLabel>
                 <DebouncedTextInput
                   label="Comparison column"
                   value={metric.comparison?.column ?? ''}
@@ -821,7 +838,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
               <span style={styles.fieldLabel}>Sparkline</span>
               <div style={styles.fieldPair}>
                 <div style={{ ...styles.field, flex: 1 }}>
-                  <span style={styles.fieldLabel}>X column</span>
+                  <FieldLabel helpKey="metric.sparkline.x_column">X column</FieldLabel>
                   <DebouncedTextInput
                     label="Sparkline x column"
                     value={metric.sparkline?.x_column ?? ''}
@@ -829,7 +846,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
                   />
                 </div>
                 <div style={{ ...styles.field, flex: 1 }}>
-                  <span style={styles.fieldLabel}>Y column</span>
+                  <FieldLabel helpKey="metric.sparkline.y_column">Y column</FieldLabel>
                   <DebouncedTextInput
                     label="Sparkline y column"
                     value={metric.sparkline?.y_column ?? ''}
@@ -842,7 +859,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
 
           {widgetType === 'text' && (
             <>
-              <span style={styles.sectionLabel}>Text</span>
+              <FieldLabel section helpKey="text.markdown">Text</FieldLabel>
               <DebouncedTextInput
                 label="Markdown"
                 value={text.markdown}
@@ -858,7 +875,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
 
           {isQuery && widgetType === 'table' && (
             <>
-              <span style={styles.sectionLabel}>Table columns</span>
+              <FieldLabel section helpKey="table.columns">Table columns</FieldLabel>
               {resultColumns.length === 0 ? (
                 <div style={styles.muted}>Run the query to configure columns.</div>
               ) : (
@@ -916,7 +933,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
 
           <span style={styles.sectionLabel}>Appearance</span>
           <div style={styles.field}>
-            <span style={styles.fieldLabel}>Background</span>
+            <FieldLabel helpKey="appearance.background">Background</FieldLabel>
             <select
               aria-label="Background"
               style={styles.select}
@@ -942,7 +959,7 @@ export function WidgetConfigDrawer({ dashboardId, dashboard, widget, onClose, on
             <div style={styles.muted}>Transparent widgets never draw a border.</div>
           )}
           <div style={styles.field}>
-            <span style={styles.fieldLabel}>Padding</span>
+            <FieldLabel helpKey="appearance.padding">Padding</FieldLabel>
             <select
               aria-label="Padding"
               style={styles.select}

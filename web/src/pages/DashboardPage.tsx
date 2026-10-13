@@ -799,7 +799,7 @@ function DashboardContent({ id }: { id: string }) {
         {widgets.length === 0 && variables.length === 0 ? (
           <EmptyState
             title="This app has no widgets yet"
-            text="Add widgets in the dashboard editor."
+            text="Add widgets in the editor — viewers see them here as chapters, filters, and readings."
           />
         ) : widgets.length === 0 ? null : (
           <div ref={gridRef}>

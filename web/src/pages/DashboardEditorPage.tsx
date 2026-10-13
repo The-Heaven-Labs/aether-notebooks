@@ -48,6 +48,20 @@ interface DashboardWithWidgets extends Dashboard {
   widgets: Widget[]
 }
 
+/** One-line picker descriptors (quiet instrument, micro-example). */
+const WIDGET_TYPE_DESCRIPTORS: Record<AddWidgetType, string> = {
+  table: 'Table — the query’s rows, with optional column formats.',
+  chart: 'Chart — a plot of the rows (bar, line, pie, …).',
+  metric: 'Metric — one number from the query.',
+  text: 'Text — markdown with live {{filters}}.',
+}
+
+const WIDGET_SOURCE_DESCRIPTORS: Record<AddWidgetSource, string> = {
+  cell: 'Reuses a notebook cell’s stored output.',
+  query: 'Runs SQL on a connector, as the viewer.',
+  none: 'No query — authored markdown.',
+}
+
 
 /**
  * The next free layout for a widget added through the picker. When a chapter
@@ -777,6 +791,7 @@ const markSaved = useCallback(() => {
                 <option value="query">Query</option>
                 <option value="none">None — text panel</option>
               </select>
+              <span style={styles.pickerHint}>{WIDGET_SOURCE_DESCRIPTORS[pickerSource]}</span>
 
               {pickerSource === 'cell' ? (
                 <>
@@ -843,6 +858,7 @@ const markSaved = useCallback(() => {
                 <option value="metric" disabled={!pickerValidTypes.includes('metric')}>Metric</option>
                 <option value="text" disabled={!pickerValidTypes.includes('text')}>Text</option>
               </select>
+              <span style={styles.pickerHint}>{WIDGET_TYPE_DESCRIPTORS[pickerType]}</span>
 
               {pickerError && (
                 <p style={styles.pickerError}>{pickerError}</p>
@@ -867,7 +883,7 @@ const markSaved = useCallback(() => {
         {widgets.length === 0 ? (
           <EmptyState
             title="No widgets yet"
-            text="Add queries as tables, charts, or metrics — or write a text panel — to this dashboard."
+            text="Add readings (metrics, charts) and evidence (tables, text panels), then chapter them under App settings."
             action={editingEnabled ? { label: '+ Add Widget', onClick: () => setShowPicker(true) } : undefined}
           />
         ) : (
@@ -1215,6 +1231,11 @@ const styles: Record<string, React.CSSProperties> = {
   },
   pickerSelectDisabled: {
     opacity: 0.5,
+  },
+  pickerHint: {
+    fontSize: 11,
+    color: 'var(--text-muted)',
+    fontStyle: 'italic',
   },
   pickerTextarea: {
     width: '100%',

@@ -103,6 +103,14 @@ describe('PublicDashboardPage app surface', () => {
     expect(screen.getByText('Powered by Heaven Labs')).toBeInTheDocument()
     expect(screen.queryByText('Powered by Aether')).not.toBeInTheDocument()
   })
+
+  test('the empty public app explains what viewers see', async () => {
+    mockPublicDashboard(publicDashboard())
+    renderPublicPage()
+
+    expect(await screen.findByText('No widgets in this dashboard')).toBeInTheDocument()
+    expect(screen.getByText("The owner hasn't added any widgets yet.")).toBeInTheDocument()
+  })
 })
 
 describe('PublicDashboardPage published widgets', () => {

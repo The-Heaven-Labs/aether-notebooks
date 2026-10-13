@@ -391,6 +391,18 @@ describe('DashboardPage live document wiring', () => {
     // Cell outputs still come from the REST widgets_data payload.
     expect(screen.getByTestId('output-renderer')).toHaveAttribute('data-count', '2')
   })
+
+  test('the empty app explains what viewers will see', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      settings: {},
+      widgets: [],
+    })))
+    renderDashboard()
+
+    expect(await screen.findByText('This app has no widgets yet')).toBeInTheDocument()
+    expect(screen.getByText(/viewers see them here as chapters, filters, and readings/)).toBeInTheDocument()
+  })
 })
 
 describe('DashboardPage live auto re-run', () => {

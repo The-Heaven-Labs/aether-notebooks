@@ -7,6 +7,8 @@ import { CHART_PALETTE_PRESETS, MAX_PALETTE_COLORS } from '../charts/palettes'
 import type { ChartPalettePresetValue } from '../charts/palettes'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useFocusTrap } from '../hooks/useFocusTrap'
+import { fieldHelpFor } from '../app-builder/fieldHelp'
+import { HelpTip } from './HelpTip'
 import type { Dashboard, DashboardAppSettings, DashboardAppTheme, DashboardTab, OrgBranding, Widget } from '../types'
 
 const styles: Record<string, React.CSSProperties> = {
@@ -84,6 +86,21 @@ type ColorField = 'accent' | 'background' | 'surface' | 'text' | 'border'
 const COLOR_FIELDS: ColorField[] = ['accent', 'background', 'surface', 'text', 'border']
 const COLOR_LABELS: Record<ColorField, string> = {
   accent: 'Accent', background: 'Background', surface: 'Surface', text: 'Text', border: 'Border',
+}
+
+/** A panel label with a HelpTip from the shared field-help source. */
+function LabelWithHelp({ htmlFor, helpKey, children }: {
+  htmlFor?: string
+  helpKey: string
+  children: React.ReactNode
+}) {
+  const help = fieldHelpFor(helpKey)
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center' }}>
+      <label style={styles.label} htmlFor={htmlFor}>{children}</label>
+      {help && <HelpTip help={help} />}
+    </span>
+  )
 }
 
 type LogoMode = 'none' | 'org' | 'upload'
@@ -444,7 +461,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             />
           </div>
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-width">Width</label>
+            <LabelWithHelp htmlFor="app-width" helpKey="app.width">Width</LabelWithHelp>
             <select
               id="app-width"
               aria-label="Width"
@@ -561,15 +578,13 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             ))}
           </div>
           <span style={styles.muted}>
-            Chapter scoping derives itself from usage: each chapter shows the filters
-            its widgets use, plus the filters those depend on. Filters set in other
-            chapters keep their values and stay applied there.
+            {fieldHelpFor('app.filter_scope')?.hint}
           </span>
 
           <div style={styles.section} role="heading" aria-level={3}>Theme</div>
           {COLOR_FIELDS.map((field) => (
             <div key={field} style={styles.field}>
-              <label style={styles.label} htmlFor={`app-theme-${field}`}>{COLOR_LABELS[field]}</label>
+              <LabelWithHelp htmlFor={`app-theme-${field}`} helpKey={`app.theme.${field}`}>{COLOR_LABELS[field]}</LabelWithHelp>
               <div style={styles.colorRow}>
                 <input
                   type="color"
@@ -598,7 +613,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             </div>
           ))}
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-theme-radius">Corner radius</label>
+            <LabelWithHelp htmlFor="app-theme-radius" helpKey="app.theme.radius">Corner radius</LabelWithHelp>
             <input
               id="app-theme-radius"
               aria-label="Corner radius"
@@ -613,7 +628,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             />
           </div>
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-theme-font">Font family</label>
+            <LabelWithHelp htmlFor="app-theme-font" helpKey="app.theme.font_family">Font family</LabelWithHelp>
             <select
               id="app-theme-font"
               aria-label="Font family"
@@ -628,7 +643,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             </select>
           </div>
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-theme-scheme">Color scheme</label>
+            <LabelWithHelp htmlFor="app-theme-scheme" helpKey="app.theme.color_scheme">Color scheme</LabelWithHelp>
             <select
               id="app-theme-scheme"
               aria-label="Color scheme"
@@ -642,7 +657,7 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             </select>
           </div>
           <div style={styles.field}>
-            <label style={styles.label} htmlFor="app-theme-palette">Chart palette</label>
+            <LabelWithHelp htmlFor="app-theme-palette" helpKey="app.theme.chart_palette">Chart palette</LabelWithHelp>
             <select
               id="app-theme-palette"
               aria-label="Chart palette"

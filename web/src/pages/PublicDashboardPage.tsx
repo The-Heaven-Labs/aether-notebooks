@@ -163,7 +163,7 @@ export function PublicDashboardPage() {
         {shownWidgets.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
             <p style={{ fontSize: 14, fontWeight: 600, margin: '0 0 4px' }}>No widgets in this dashboard</p>
-            <p style={{ fontSize: 13, margin: 0 }}>The dashboard owner hasn't added any widgets yet.</p>
+            <p style={{ fontSize: 13, margin: 0 }}>The owner hasn't added any widgets yet.</p>
           </div>
         ) : (
           <div ref={measureRef}>

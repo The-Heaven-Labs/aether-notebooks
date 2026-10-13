@@ -1351,7 +1351,9 @@ const formInput: React.CSSProperties = {
           <section style={styles.section}>
             <div style={styles.sectionTitle}>Branding</div>
             <p style={styles.sectionDesc}>
-              Organization-wide defaults for app surfaces. A dashboard's app settings override these values.
+              Organization-wide defaults for app surfaces — the name titles public pages, and accent,
+              palette, and logo apply when an app doesn't set its own. A dashboard's app settings
+              override these values.
             </p>
             {brandingLoadError && (
               <p role="alert" style={{ fontSize: 12, color: 'var(--error)', marginTop: 0, marginBottom: 12 }}>

@@ -288,6 +288,30 @@ describe('DashboardEditorPage live document wiring', () => {
     expect(await screen.findByText('No issues found')).toBeInTheDocument()
   })
 
+  test('the picker explains each source and widget type', async () => {
+    docStore.set({
+      synced: true,
+      connected: true,
+      title: 'Ops board',
+      widgets: [widget()],
+    })
+    renderEditor()
+    await screen.findByTestId('grid')
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Widget' }))
+    expect(screen.getByText('Reuses a notebook cell’s stored output.')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Widget source'), { target: { value: 'query' } })
+    expect(screen.getByText('Runs SQL on a connector, as the viewer.')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Widget type'), { target: { value: 'metric' } })
+    expect(screen.getByText('Metric — one number from the query.')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Widget source'), { target: { value: 'none' } })
+    expect(screen.getByText('No query — authored markdown.')).toBeInTheDocument()
+    expect(screen.getByText('Text — markdown with live {{filters}}.')).toBeInTheDocument()
+  })
+
   test('a drag/resize stop writes the layout, tab included, to the document and never PUTs the widget', async () => {
     let widgetPuts = 0
     server.use(

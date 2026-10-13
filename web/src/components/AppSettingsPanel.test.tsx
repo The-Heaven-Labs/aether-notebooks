@@ -766,4 +766,17 @@ describe('AppSettingsPanel filter scope', () => {
     await waitFor(() => expect(bodies.length).toBe(1))
     expect('filter_scope' in savedApp(bodies)).toBe(false)
   })
+
+  test('theme fields carry accessible help from the shared source', async () => {
+    renderPanel(dashboardWith({ app: {} }))
+
+    const trigger = screen.getByRole('button', { name: 'Help: Accent' })
+    fireEvent.click(trigger)
+    expect(screen.getByRole('tooltip')).toHaveTextContent('must clear 3:1 contrast')
+    expect(screen.getByRole('tooltip')).toHaveTextContent('#7c5cff')
+
+    // The filter-scope explanation comes from the same source (and still
+    // explains the inference).
+    expect(screen.getByText(/filters its widgets use/)).toBeInTheDocument()
+  })
 })
