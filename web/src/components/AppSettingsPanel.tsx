@@ -213,13 +213,19 @@ async function clearWidgetTabs(dashboardId: string, affected: Widget[]): Promise
  * default title (`tab-1`, …) and stay stable across renames: widgets
  * reference the id, not the title.
  */
-export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initialSection, onClose, onSaved }: {
+export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initialSection, onGridColsSaved, onClose, onSaved }: {
   dashboardId: string
   dashboard: Dashboard & { org_branding?: OrgBranding }
   /** The dashboard's live widgets; used to clear a deleted tab's placements. */
   widgets?: Widget[]
   /** Opens with the Tabs section revealed and focused (the editor strip's +). */
   initialSection?: 'tabs'
+  /**
+   * Called after a successful save that changed `grid_cols`, with the old and
+   * new column counts, so the editor can rescale widget layouts (the panel
+   * cannot write widget layouts itself).
+   */
+  onGridColsSaved?: (from: number, to: number) => void
   onClose: () => void
   onSaved: () => void
 }) {
@@ -231,6 +237,10 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
   const [showRefresh, setShowRefresh] = useState(app?.show_refresh !== false)
   const [showLastUpdated, setShowLastUpdated] = useState(app?.show_last_updated !== false)
   const [filterScope, setFilterScope] = useState<'all' | 'tab'>(app?.filter_scope === 'tab' ? 'tab' : 'all')
+  const [gridCols, setGridCols] = useState(() => dashboard.settings?.grid_cols ?? 12)
+  // The value at open, for the post-save rescale diff. A ref (not state):
+  // saving again in the same session must not re-trigger the rescale.
+  const initialGridColsRef = useRef(dashboard.settings?.grid_cols ?? 12)
   const [colors, setColors] = useState<Record<ColorField, string>>({
     accent: app?.theme?.accent ?? '',
     background: app?.theme?.background ?? '',
@@ -381,10 +391,16 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
         // Only the keys this panel owns are sent: the server merges settings
         // shallowly, so anything omitted keeps its stored value. `tabs` must
         // always ride along for chapter removals to apply.
-        settings: { app: next, tabs },
+        settings: { app: next, tabs, grid_cols: gridCols },
       })
       setSaved(true)
       onSaved()
+      // Layout rescaling is an editor concern (widget layout writes), so the
+      // panel only reports the change; it never touches widget rows itself.
+      if (gridCols !== initialGridColsRef.current) {
+        onGridColsSaved?.(initialGridColsRef.current, gridCols)
+        initialGridColsRef.current = gridCols
+      }
       if (droppedTabs.length > 0) {
         void clearWidgetTabs(dashboardId, widgets.filter((w) =>
           w.layout?.tab != null && droppedTabs.some((tab) => tab.id === w.layout.tab)))
@@ -503,6 +519,23 @@ export function AppSettingsPanel({ dashboardId, dashboard, widgets = [], initial
             />
             <label htmlFor="app-show-last-updated">Show last updated</label>
           </div>
+
+          <div style={styles.section} role="heading" aria-level={3}>Grid</div>
+          <div style={styles.field}>
+            <LabelWithHelp htmlFor="app-grid-cols" helpKey="dashboard.grid_cols">Grid columns</LabelWithHelp>
+            <select
+              id="app-grid-cols"
+              aria-label="Grid columns"
+              style={styles.input}
+              value={gridCols}
+              onChange={(e) => { setSaved(false); setGridCols(Number(e.target.value)) }}
+            >
+              {[6, 8, 12, 16, 24].map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </div>
+          <span style={styles.muted}>
+            {fieldHelpFor('dashboard.grid_cols')?.hint}
+          </span>
 
           <div style={styles.section} role="heading" aria-level={3}>Tabs</div>
           {tabs.map((tab, index) => (

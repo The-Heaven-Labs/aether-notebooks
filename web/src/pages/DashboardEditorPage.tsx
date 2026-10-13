@@ -36,6 +36,7 @@ import { AppHealthPanel } from '../components/AppHealthPanel'
 import { DashboardVersionsPanel, useDashboardVersions } from '../components/DashboardVersionsPanel'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 import { SqlEditor } from '../components/SqlEditor'
+import { VariableSelect } from '../components/VariableSelect'
 import { useDashboardDoc } from '../hooks/useDashboardDoc'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -194,24 +195,6 @@ export function DashboardEditorPage() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
   const [mutationError, setMutationError] = useState<string | null>(null)
-const [saveStatus, setSaveStatus] = useState<'saving' | 'saved' | null>(null)
-const pendingSaves = useRef(0)
-const saveStatusTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-const markSaving = useCallback(() => {
-  pendingSaves.current++
-  setSaveStatus('saving')
-  if (saveStatusTimer.current) clearTimeout(saveStatusTimer.current)
-}, [])
-
-const markSaved = useCallback(() => {
-  pendingSaves.current--
-  if (pendingSaves.current <= 0) {
-    pendingSaves.current = 0
-    setSaveStatus('saved')
-    saveStatusTimer.current = setTimeout(() => setSaveStatus(null), 2000)
-  }
-}, [])
 
   const [showPicker, setShowPicker] = useState(false)
   const [showPermissions, setShowPermissions] = useState(false)
@@ -559,42 +542,6 @@ const markSaved = useCallback(() => {
         </div>
         <div style={styles.headerRight}>
           <CollaboratorAvatars awareness={liveDoc.awareness} currentUserEmail={userEmail} />
-          {!isMobileLayout && (
-            <div className="nav-seg" role="group" aria-label="Grid columns">
-              <span style={{ fontSize: 10, color: 'var(--nav-text-muted)', fontWeight: 700, fontFamily: 'var(--font-mono)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '0 4px' }}>Cols</span>
-              {[6, 8, 12, 16, 24].map(c => (
-                <button
-                  key={c}
-                  type="button"
-                  title={`${c} grid columns — ${c <= 8 ? 'compact' : c <= 12 ? 'standard' : 'wide'} layout`}
-                  aria-label={`${c} columns`}
-                  aria-pressed={gridCols === c}
-                  disabled={!editingEnabled}
-                  onClick={async () => {
-                    if (!editingEnabled) return
-                    markSaving()
-                    const oldCols = gridCols
-                    // Settings live in the document; the server merges this
-                    // partial update into it and materializes the row.
-                    await api.put(`/api/v1/dashboards/${id}`, {
-                      settings: { grid_cols: c },
-                    })
-                    if (oldCols !== c) {
-                      // Reflow layouts with the new column count so widgets
-                      // stay inside the grid instead of overflowing the canvas.
-                      // Layouts are document fields, so write them to the doc.
-                      const updates = rescaleWidgetLayouts(widgets, oldCols, c)
-                      updates.forEach(u => updateDocLayout(u.id, u.layout))
-                    }
-                    qc.invalidateQueries({ queryKey: ['dashboard', id] })
-                    markSaved()
-                  }}
-                >
-                  {c}
-                </button>
-              ))}
-            </div>
-          )}
           <button
             type="button"
             className="nav-btn"
@@ -627,14 +574,6 @@ const markSaved = useCallback(() => {
                 <ListChecks size={12} /> Review
               </button>
             </>
-          )}
-          {saveStatus && (
-            <span style={{
-              fontSize: 11, fontWeight: 600, color: saveStatus === 'saving' ? 'var(--nav-text-muted)' : 'var(--nav-text)',
-              textTransform: 'uppercase', letterSpacing: '0.04em',
-            }}>
-              {saveStatus === 'saving' ? 'Saving…' : 'Saved'}
-            </span>
           )}
           {/* Publish controls are editor-only (the versions API requires
               dashboard `edit`) and hidden on mobile like the App button. */}
@@ -797,34 +736,33 @@ const markSaved = useCallback(() => {
               {pickerSource === 'cell' ? (
                 <>
                   <label style={styles.pickerLabel}>Notebook</label>
-                  <select
-                    style={styles.pickerSelect}
+                  {/* Searchable picker: the notebook list can be long, so it
+                      filters as you type instead of dumping every option. */}
+                  <VariableSelect
+                    id="picker-notebook"
+                    options={notebooks.map((nb) => ({ label: nb.title, value: nb.id }))}
                     value={pickerNotebookId}
-                    onChange={(e) => {
-                      setPickerNotebookId(e.target.value)
+                    onChange={(v) => {
+                      setPickerNotebookId(typeof v === 'string' ? v : '')
                       setPickerCellId('')
                     }}
-                  >
-                    <option value="">Select notebook…</option>
-                    {notebooks.map((nb) => (
-                      <option key={nb.id} value={nb.id}>{nb.title}</option>
-                    ))}
-                  </select>
+                    emptyLabel="Select notebook…"
+                    ariaLabel="Notebook"
+                  />
 
                   <label style={styles.pickerLabel}>Cell</label>
-                  <select
-                    style={{ ...styles.pickerSelect, ...(!pickerNotebookId ? styles.pickerSelectDisabled : {}) }}
+                  <VariableSelect
+                    id="picker-cell"
+                    options={pickerCells.map((cell, i) => ({
+                      label: `Cell ${i + 1} (${cell.type})${cell.source ? ` — ${cell.source.slice(0, 40)}` : ''}`,
+                      value: cell.id,
+                    }))}
                     value={pickerCellId}
-                    onChange={(e) => setPickerCellId(e.target.value)}
+                    onChange={(v) => setPickerCellId(typeof v === 'string' ? v : '')}
                     disabled={!pickerNotebookId}
-                  >
-                    <option value="">Select cell…</option>
-                    {pickerCells.map((cell, i) => (
-                      <option key={cell.id} value={cell.id}>
-                        Cell {i + 1} ({cell.type}){cell.source ? ` — ${cell.source.slice(0, 40)}` : ''}
-                      </option>
-                    ))}
-                  </select>
+                    emptyLabel="Select cell…"
+                    ariaLabel="Cell"
+                  />
                 </>
               ) : pickerSource === 'query' ? (
                 <>
@@ -1054,6 +992,14 @@ const markSaved = useCallback(() => {
           initialSection={appSettingsSection}
           onClose={() => setShowAppSettings(false)}
           onSaved={() => qc.invalidateQueries({ queryKey: ['dashboard', id] })}
+          onGridColsSaved={(from, to) => {
+            // Reflow layouts with the new column count so widgets stay inside
+            // the grid instead of overflowing the canvas. Layouts are document
+            // fields, so each rescale writes through the live doc.
+            const updates = rescaleWidgetLayouts(widgets, from, to)
+            updates.forEach(u => updateDocLayout(u.id, u.layout))
+            qc.invalidateQueries({ queryKey: ['dashboard', id] })
+          }}
         />
       )}
       {showVersions && (
@@ -1102,6 +1048,10 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: 'center',
     gap: 10,
     minWidth: 0,
+    // Shrinks first when the action row is wide; the title ellipsizes rather
+    // than sliding under the controls (the previous overlap).
+    flex: '1 1 auto',
+    overflow: 'hidden',
   },
   backLink: {
     display: 'flex',
@@ -1127,6 +1077,9 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: 'nowrap',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+    // A flex item needs min-width 0 to shrink below its content width; without
+    // it the title never ellipsizes and overflows under the header controls.
+    minWidth: 0,
     maxWidth: 400,
     cursor: 'pointer',
   },

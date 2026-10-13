@@ -312,6 +312,80 @@ describe('DashboardEditorPage live document wiring', () => {
     expect(screen.getByText('Text — markdown with live {{filters}}.')).toBeInTheDocument()
   })
 
+  test('changing grid columns in App settings rescales the widgets', async () => {
+    let putBody: Record<string, unknown> | null = null
+    server.use(http.put('/api/v1/dashboards/d1', async ({ request }) => {
+      putBody = (await request.json()) as Record<string, unknown>
+      return HttpResponse.json({})
+    }))
+    docStore.set({
+      synced: true,
+      connected: true,
+      title: 'Ops board',
+      widgets: [widget({ layout: { row: 0, col: 0, width: 6, height: 8 } })],
+    })
+    renderEditor()
+    await screen.findByTestId('grid')
+
+    fireEvent.click(screen.getByTitle('App settings'))
+    fireEvent.change(screen.getByLabelText('Grid columns'), { target: { value: '24' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    // 6 of 12 columns doubles to 12 of 24; the layout write goes through the doc.
+    await waitFor(() => expect(docStore.mutators.updateLayout).toHaveBeenCalledWith(
+      'w1', { row: 0, col: 0, width: 12, height: 8 }))
+    expect((putBody!.settings as Record<string, unknown>).grid_cols).toBe(24)
+  })
+
+  test('the notebook picker filters as you type and loads cells on selection', async () => {
+    server.use(
+      http.get('/api/v1/notebooks', () => HttpResponse.json(
+        Array.from({ length: 9 }, (_, i) => ({
+          id: `nb-${i + 1}`,
+          org_id: 'org-1',
+          title: i === 2 ? 'Churn analysis' : `Notebook ${i + 1}`,
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        })),
+      )),
+      http.get('/api/v1/notebooks/nb-3', () => HttpResponse.json({
+        id: 'nb-3',
+        title: 'Churn analysis',
+        cells: [
+          { id: 'cell-1', notebook_id: 'nb-3', position: 0, type: 'code', language: 'sql', source: 'SELECT churn' },
+          { id: 'cell-2', notebook_id: 'nb-3', position: 1, type: 'code', language: 'sql', source: 'SELECT users' },
+        ],
+      })),
+    )
+    docStore.set({
+      synced: true,
+      connected: true,
+      title: 'Ops board',
+      widgets: [widget()],
+    })
+    renderEditor()
+    await screen.findByTestId('grid')
+
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Widget' }))
+    // The list is long enough to search; typing filters it. Wait for the
+    // notebooks query before opening the picker.
+    const notebookTrigger = await screen.findByRole('button', { name: 'Notebook' })
+    await waitFor(() => expect(notebookTrigger).toHaveTextContent('Select notebook…'))
+    fireEvent.click(notebookTrigger)
+    fireEvent.change(screen.getByLabelText('Search Notebook'), { target: { value: 'churn' } })
+    expect(screen.getByRole('option', { name: 'Churn analysis' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Notebook 1' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('option', { name: 'Churn analysis' }))
+    // The notebook's cells load into the (now enabled) cell picker.
+    const cellTrigger = await screen.findByRole('button', { name: 'Cell' })
+    await waitFor(() => expect(cellTrigger).not.toBeDisabled())
+    fireEvent.click(cellTrigger)
+    fireEvent.click(screen.getByRole('option', { name: /Cell 1 \(code\)/ }))
+
+    expect(screen.getByRole('button', { name: 'Add Widget' })).not.toBeDisabled()
+  })
+
   test('a drag/resize stop writes the layout, tab included, to the document and never PUTs the widget', async () => {
     let widgetPuts = 0
     server.use(

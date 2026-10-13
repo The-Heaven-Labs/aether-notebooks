@@ -17,6 +17,9 @@ reading and its evidence. A chapter with no widgets breaks the story; a metric
 without a label makes the reader guess. Text panels open a chapter with a
 markdown heading (`## …`), not a bare paragraph.
 
+The chapter grids sit on `settings.grid_cols` (default 12, editor: App settings
+→ Grid); changing it rescales widget layouts proportionally.
+
 ## Widget types
 
 Widgets are `chart`, `table`, `metric`, or `text`. A widget reads a notebook

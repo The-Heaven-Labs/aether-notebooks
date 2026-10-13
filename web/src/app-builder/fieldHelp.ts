@@ -165,6 +165,11 @@ export const fieldHelp: Record<string, FieldHelp> = {
   },
 
   // ── app settings ────────────────────────────────────────────────────────
+  'dashboard.grid_cols': {
+    label: 'Grid columns',
+    hint: 'Columns per chapter grid (default 12); widget layouts rescale proportionally when this changes.',
+    example: '12',
+  },
   'app.title': {
     label: 'App title',
     hint: 'Names the app in the masthead. Defaults to the dashboard title.',

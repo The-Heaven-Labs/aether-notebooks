@@ -63,7 +63,7 @@ function renderPanel(
   dashboard: PanelDashboard,
   onSaved = vi.fn(),
   onClose = vi.fn(),
-  options: { widgets?: Widget[]; initialSection?: 'tabs' } = {},
+  options: { widgets?: Widget[]; initialSection?: 'tabs'; onGridColsSaved?: (from: number, to: number) => void } = {},
 ) {
   render(
     <AppSettingsPanel
@@ -71,6 +71,7 @@ function renderPanel(
       dashboard={dashboard}
       widgets={options.widgets}
       initialSection={options.initialSection}
+      onGridColsSaved={options.onGridColsSaved}
       onClose={onClose}
       onSaved={onSaved}
     />,
@@ -164,6 +165,7 @@ describe('AppSettingsPanel', () => {
         show_last_updated: true,
       },
       tabs: [],
+      grid_cols: 12,
     })
     expect(onSaved).toHaveBeenCalledTimes(1)
   })
@@ -778,5 +780,40 @@ describe('AppSettingsPanel filter scope', () => {
     // The filter-scope explanation comes from the same source (and still
     // explains the inference).
     expect(screen.getByText(/filters its widgets use/)).toBeInTheDocument()
+  })
+})
+
+describe('AppSettingsPanel grid columns', () => {
+  test('renders the stored column count and saves changes', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ grid_cols: 8, app: {} }))
+    expect((screen.getByLabelText('Grid columns') as HTMLSelectElement).value).toBe('8')
+
+    fireEvent.change(screen.getByLabelText('Grid columns'), { target: { value: '24' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect((bodies[0].settings as Record<string, unknown>).grid_cols).toBe(24)
+  })
+
+  test('a changed column count asks the editor to rescale after the save', async () => {
+    capturePuts()
+    const onGridColsSaved = vi.fn()
+    renderPanel(dashboardWith({ app: {} }), vi.fn(), vi.fn(), { onGridColsSaved })
+
+    fireEvent.change(screen.getByLabelText('Grid columns'), { target: { value: '6' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(onGridColsSaved).toHaveBeenCalledWith(12, 6))
+  })
+
+  test('an unchanged column count does not rescale', async () => {
+    const bodies = capturePuts()
+    const onGridColsSaved = vi.fn()
+    renderPanel(dashboardWith({ grid_cols: 12, app: {} }), vi.fn(), vi.fn(), { onGridColsSaved })
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(onGridColsSaved).not.toHaveBeenCalled()
   })
 })
