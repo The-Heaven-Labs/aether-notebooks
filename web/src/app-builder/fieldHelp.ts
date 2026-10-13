@@ -219,6 +219,11 @@ export const fieldHelp: Record<string, FieldHelp> = {
     hint: 'fixed centers content at a reading width; full uses the viewport.',
     example: 'fixed',
   },
+  'app.layout': {
+    label: 'Layout',
+    hint: 'grid arranges widgets in chapters; custom renders the first custom component full-bleed (other widgets become data sources).',
+    example: 'custom',
+  },
   'app.show_header': {
     label: 'Show header',
     hint: 'Hides the masthead for embedded surfaces.',

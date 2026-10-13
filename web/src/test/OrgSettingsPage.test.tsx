@@ -409,3 +409,29 @@ test('renders the html panels toggle off when org settings disable it', async ()
   const toggle = await screen.findByRole('checkbox', { name: /Allow HTML panels/ })
   expect(toggle).not.toBeChecked()
 })
+
+test('custom code toggle defaults off and flips through org settings', async () => {
+  const bodies: Array<Record<string, unknown>> = []
+  server.use(captureSettingsPuts(bodies))
+  renderWithProviders(<OrgSettingsPage />, { initialPath: '/settings' })
+
+  const toggle = await screen.findByRole('checkbox', { name: /Allow custom code/ })
+  // Absent means DISABLED — arbitrary code is opt-in.
+  expect(toggle).not.toBeChecked()
+
+  fireEvent.click(toggle)
+  await waitFor(() => expect(bodies).toContainEqual({ custom_code_enabled: true }))
+  expect(toggle).toBeChecked()
+})
+
+test('renders the custom code toggle on when org settings enable it', async () => {
+  server.use(
+    http.get('/api/v1/org/settings', () =>
+      HttpResponse.json({ audit_retention_days: 7, custom_code_enabled: true }),
+    ),
+  )
+  renderWithProviders(<OrgSettingsPage />, { initialPath: '/settings' })
+
+  const toggle = await screen.findByRole('checkbox', { name: /Allow custom code/ })
+  expect(toggle).toBeChecked()
+})

@@ -23,6 +23,8 @@ interface OrgSettingsPayload {
   branding?: OrgBranding
   /** Org switch for html panels; absent means enabled. */
   html_panels_enabled?: boolean
+  /** Org switch for custom components; absent means DISABLED (opt-in code). */
+  custom_code_enabled?: boolean
 }
 
 /** The preset whose colors match `palette` (case-insensitive, order-sensitive); unmatched palettes are Custom. */
@@ -454,8 +456,9 @@ export function OrgSettingsPage() {
   // below mitigates by refreshing this snapshot.
   const [orgSettings, setOrgSettings] = useState<OrgSettingsPayload>({})
   // App-builder switches stored under orgs.settings (the branding GET carries
-  // them; absent means enabled).
+  // them; absent means enabled for html panels, disabled for custom code).
   const [htmlPanelsEnabled, setHtmlPanelsEnabled] = useState(true)
+  const [customCodeEnabled, setCustomCodeEnabled] = useState(false)
   const [brandingAppName, setBrandingAppName] = useState('')
   const [brandingAccentColor, setBrandingAccentColor] = useState('')
   const [brandingPalette, setBrandingPalette] = useState<ChartPalettePresetValue>('default')
@@ -520,6 +523,8 @@ export function OrgSettingsPage() {
         setAuditRetentionDays(r.audit_retention_days ?? 7)
         setOrgSettings(r)
         setHtmlPanelsEnabled(r.html_panels_enabled !== false)
+        // Absent means DISABLED here (arbitrary code is opt-in).
+        setCustomCodeEnabled(r.custom_code_enabled === true)
         const branding = r.branding
         setBrandingAppName(branding?.app_name ?? '')
         setBrandingAccentColor(branding?.accent_color ?? '')
@@ -549,6 +554,14 @@ export function OrgSettingsPage() {
     // Keep the full snapshot current so a later branding save (which PUTs the
     // whole payload) cannot revert this toggle.
     setOrgSettings(prev => ({ ...prev, html_panels_enabled: enabled }))
+  }
+
+  async function handleToggleCustomCode(enabled: boolean) {
+    await api.put('/api/v1/org/settings', { custom_code_enabled: enabled })
+    setCustomCodeEnabled(enabled)
+    // Same snapshot sync as html panels: a later branding save must not
+    // revert this toggle.
+    setOrgSettings(prev => ({ ...prev, custom_code_enabled: enabled }))
   }
 
   async function handleToggleInvitations(enabled: boolean) {
@@ -1378,6 +1391,20 @@ const formInput: React.CSSProperties = {
                 Allow HTML panels
               </span>
             </label>
+            <label style={styles.checkRow}>
+              <input
+                type="checkbox"
+                checked={customCodeEnabled}
+                onChange={e => void handleToggleCustomCode(e.target.checked)}
+              />
+              <span style={{ fontSize: 13, color: 'var(--text-primary)' }}>
+                Allow custom code
+              </span>
+            </label>
+            <p style={{ ...styles.sectionDesc, marginTop: 6 }}>
+              Sandboxed HTML/CSS/JS components on app surfaces. When off, existing components show
+              a placeholder and new ones cannot be added.
+            </p>
           </section>
         )}
 

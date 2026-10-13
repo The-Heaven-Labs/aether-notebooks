@@ -816,4 +816,30 @@ describe('AppSettingsPanel grid columns', () => {
     await waitFor(() => expect(bodies.length).toBe(1))
     expect(onGridColsSaved).not.toHaveBeenCalled()
   })
+
+  test('saves the custom page layout through the app block', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: { width: 'fixed' } }))
+
+    const select = await screen.findByLabelText('Layout')
+    expect(select).toHaveValue('grid')
+
+    fireEvent.change(select, { target: { value: 'custom' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    expect(savedApp(bodies).layout).toBe('custom')
+  })
+
+  test('grid layout is the default and stays out of the payload', async () => {
+    const bodies = capturePuts()
+    renderPanel(dashboardWith({ app: { width: 'fixed' } }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save app settings' }))
+
+    await waitFor(() => expect(bodies.length).toBe(1))
+    // Absent means grid: echoing the default would only risk reverting a
+    // concurrent change made elsewhere.
+    expect('layout' in savedApp(bodies)).toBe(false)
+  })
 })
