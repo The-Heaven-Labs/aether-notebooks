@@ -19,6 +19,8 @@ const queryWidget = widget({ id: 'q1', connector_id: 'c1', query: 'SELECT 1' })
 const cellWidget = widget({ id: 'k1', notebook_id: 'n1', cell_id: 'cell1' })
 const textPanel = (id: string, markdown: string) =>
   widget({ id, type: 'text', config: { text: { markdown } } })
+const htmlPanel = (id: string, html: string, css = '') =>
+  widget({ id, type: 'html', config: { html, css } })
 
 describe('visibleWidgets', () => {
   it('excludes query widgets when the dashboard is not live', () => {
@@ -41,6 +43,17 @@ describe('visibleWidgets', () => {
     const panel = textPanel('t1', '## What changed')
     expect(visibleWidgets([panel], {}, false)).toEqual([panel])
     expect(visibleWidgets([panel], {}, true)).toEqual([panel])
+  })
+  it('excludes html panels with no markup and no stylesheet', () => {
+    expect(visibleWidgets([htmlPanel('h1', '   \n  ')], {}, false)).toEqual([])
+    expect(visibleWidgets([htmlPanel('h1', '', '  ')], {}, true)).toEqual([])
+  })
+  it('includes authored html panels (markup or stylesheet), static or live', () => {
+    const panel = htmlPanel('h1', '<div class="stat">42</div>')
+    expect(visibleWidgets([panel], {}, false)).toEqual([panel])
+    expect(visibleWidgets([panel], {}, true)).toEqual([panel])
+    const cssOnly = htmlPanel('h2', '', '.stat { color: red; }')
+    expect(visibleWidgets([cssOnly], {}, false)).toEqual([cssOnly])
   })
   it('filters a mixed list without reordering', () => {
     const empty = textPanel('t2', '  ')

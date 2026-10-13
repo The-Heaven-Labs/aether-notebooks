@@ -76,6 +76,16 @@ test.describe('HTML panels', () => {
         () => (window as unknown as { __pwned?: boolean }).__pwned,
       ),
     ).toBeUndefined()
+
+    // The public page renders the same static panel through the share token
+    // (no relay, no session).
+    const shareResp = await request.post(`/api/v1/dashboards/${dashboardId}/share`, { headers: await authHeaders(page) })
+    expect(shareResp.ok()).toBeTruthy()
+    const share = (await shareResp.json()) as { token: string }
+    await page.goto(`/public/dashboards/${share.token}`)
+    await expect(
+      page.frameLocator('iframe[title="HTML panel"]').getByRole('heading', { name: 'Sanitized Panel' }),
+    ).toBeVisible()
   })
 
   test('authors panel markup and stylesheet in the widget drawer', async ({ page, request }) => {
