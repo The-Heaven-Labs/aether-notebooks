@@ -60,7 +60,7 @@ func Validate(headersIn map[string]any, secrets []string) error {
 			return fmt.Errorf("header %q value must be a string", name)
 		}
 		if len(value) > maxValueLength {
-			return fmt.Errorf("header %q value exceeds %d characters", name, maxValueLength)
+			return fmt.Errorf("header %q value exceeds %d bytes", name, maxValueLength)
 		}
 	}
 	for _, secret := range secrets {
@@ -132,8 +132,10 @@ func RedactSecrets(headersIn map[string]any, secrets []string) {
 }
 
 // RestoreSecrets applies update semantics in place: a sentinel value is
-// restored from oldHeaders when the name is still sensitive, and removed when
-// it is no longer sensitive. Fresh (non-sentinel) values are untouched.
+// restored from oldHeaders when the name is still sensitive and the old map
+// holds a value for it. Otherwise the entry is deleted — the name is no longer
+// sensitive, or there is nothing to restore — so a sentinel can never be
+// persisted or sent literally. Fresh (non-sentinel) values are untouched.
 func RestoreSecrets(oldHeaders, newHeaders map[string]any, secrets []string) {
 	secretSet := toSet(secrets)
 	for name, raw := range newHeaders {
@@ -144,15 +146,17 @@ func RestoreSecrets(oldHeaders, newHeaders map[string]any, secrets []string) {
 		if secretSet[strings.ToLower(name)] {
 			if oldValue, exists := findName(oldHeaders, name); exists {
 				newHeaders[name] = oldValue
+				continue
 			}
-		} else {
-			delete(newHeaders, name)
 		}
+		// No stored value to restore (or the name is no longer sensitive):
+		// drop the sentinel rather than persisting or sending it literally.
+		delete(newHeaders, name)
 	}
 }
 
 // NamesFromJSON normalizes a JSON-decoded secrets list ([]any of strings,
-// []string, or nil) into a string slice.
+// []string, or nil) into a string slice. Non-string entries are ignored.
 func NamesFromJSON(v any) []string {
 	switch list := v.(type) {
 	case []string:
