@@ -24,8 +24,8 @@ To execute this query, it's necessary to have the grant dictGet ON db.dict
 ```
 
 …for `SELECT * FROM db.dict`, `dictGet(...)`, `dictHas(...)`, and every other member of the
-`dictGet` function family. `SHOW CREATE DICTIONARY` additionally requires the `SHOW DICTIONARIES`
-privilege.
+`dictGet` function family. `SHOW CREATE DICTIONARY` is likewise denied to a `SELECT`-only state
+(it succeeds once `dictGet` is present; the bundle grants `SHOW DICTIONARIES` as well).
 
 ### Empirical findings (verified 2026-10-13 against `clickhouse-server 24.10.2`)
 
@@ -52,10 +52,13 @@ Re-verified grant matrix (24.10.2):
 | full bundle | ok | ok | ok |
 
 Version context: ClickHouse tightened dictionary ACLs over time (PRs #57362, #65359; strict
-`dictGet` enforcement observed from ~23.9 through our 24.10.2), then PR #72051 ("Correct permissions
-for dictionaries", backported to 24.3/24.8/24.9/24.10) relaxed **direct** reads to accept `SELECT`
-**or** `dictGet` — while `dictGet`-family *function* calls require `dictGet` in every version. A
-bundle containing both privileges is correct on old, current, and future servers.
+`dictGet` enforcement observed from ~23.9 through our pinned 24.10.2), and PR #72051 ("Correct
+permissions for dictionaries", backported to 24.3/24.8/24.9/24.10) relaxed **direct** reads to
+accept `SELECT` **or** `dictGet` in later patch releases — while `dictGet`-family *function* calls
+require `dictGet` in every version. Our pinned 24.10.2 server predates that backport and still
+denies `SELECT`-only direct reads, so the re-verified matrix above is the authoritative behavior
+for it. A bundle containing both `SELECT` and `dictGet` is correct on old, current, and future
+servers.
 
 ## Goals
 
