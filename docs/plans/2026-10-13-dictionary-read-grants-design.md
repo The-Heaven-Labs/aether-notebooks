@@ -1,7 +1,7 @@
 # Dictionary Read Grants for Managed ClickHouse Warehouses — Design
 
 **Date:** 2026-10-13
-**Status:** 🟡 Design approved — implementation pending
+**Status:** ✅ Implemented
 **Related:** `2026-09-19-clickhouse-warehouse-permissions-design.md` (identity model, wildcard policy),
 `2026-09-28-warehouse-hidden-tables-and-schema-visibility-design.md` (catalog/snapshots)
 
@@ -33,13 +33,23 @@ privilege.
 |---|---|
 | `GRANT SELECT ON db.dict` → `SELECT * FROM db.dict` | **ACCESS_DENIED**: `dictGet` required |
 | `GRANT SELECT ON db.dict` → `dictGet()` / `dictHas()` | **ACCESS_DENIED**: `dictGet` required |
-| `GRANT dictGet ON db.dict` → `SELECT *`, `dictGet()`, `dictHas()`, `dictGetOrDefault()` | all work |
-| `SHOW CREATE DICTIONARY db.dict` | requires `SHOW DICTIONARIES ON db.dict` |
+| `GRANT dictGet ON db.dict` → `dictGet()` / `dictHas()` | work with `dictGet` alone |
+| `GRANT dictGet ON db.dict` → `SELECT * FROM db.dict` | **ACCESS_DENIED**: additionally requires `SELECT` |
+| `SHOW CREATE DICTIONARY db.dict` | succeeds with `dictGet` (or `SELECT`+`dictGet`); a `SELECT`-only state is denied |
 | `GRANT SELECT, dictGet, SHOW DICTIONARIES ON dbtbl TO x` (plain table) | accepted; extras inert |
 | same bundle on a view | accepted; extras inert |
 | per-dictionary / database-scoped `SHOW DICTIONARIES` grants | accepted, but listing (`SHOW DICTIONARIES`, `system.dictionaries` rows) filters only on the **global** `SHOW DICTIONARIES ON *.*` grant |
 | dictionary grants vs. source tables | independent: `dictGet` works from a dictionary whose source table the user cannot read |
 | dictionaries in `system.tables` / `system.columns` (provisioner) | present (`engine = Dictionary`, attribute columns) |
+
+Re-verified grant matrix (24.10.2):
+
+| granted | `SELECT *` | `dictGet()`/`dictHas()` | `SHOW CREATE DICTIONARY` |
+|---|---|---|---|
+| `SELECT` only | denied (needs `dictGet`) | denied | denied |
+| `dictGet` only | denied (needs `SELECT`) | ok | ok |
+| `SELECT`+`dictGet` | ok | ok | ok |
+| full bundle | ok | ok | ok |
 
 Version context: ClickHouse tightened dictionary ACLs over time (PRs #57362, #65359; strict
 `dictGet` enforcement observed from ~23.9 through our 24.10.2), then PR #72051 ("Correct permissions
@@ -119,6 +129,10 @@ coupling.
 - Extras inside the managed set are revoked (consistent with today's extra-SELECT handling), not
   fail-closed: `dictGet`/`SHOW DICTIONARIES` are now Aether-managed read privileges. Manual
   wildcard forms still halt with `sync_status=error` and require manual remediation.
+- The drift report is asymmetric and object-labelled: missing means a desired object whose observed
+  privileges do not cover the mode bundle (a partially revoked object is present yet missing
+  access), unexpected means any managed privilege on an undesired object (a partial surplus is
+  still reported).
 
 ### 3. Version compatibility (probe + legacy mode)
 
@@ -167,6 +181,9 @@ Affected call sites: the reconcile loop, `dropWarehouseIdentitiesLocked`, and th
   `dictGet()`, `dictHas()`, `SHOW CREATE DICTIONARY`; revoke → all denied; manually injected extra
   `dictGet` on an un-granted dictionary → revoked by reconcile; manually injected wildcard
   `dictGet ON db.*` → `sync_status=error` fail closed.
+- Upgrade path: a simulated pre-feature deployment (role + user + SELECT-only dictionary grant
+  built by hand) is repaired by the next reconcile — the bundle lands on the existing grant and
+  the member can read the dictionary (TestWarehouseDictionaryGrantUpgradeRepair).
 - Existing golden DDL expectations update mechanically for the new bundle.
 
 ## Rollout

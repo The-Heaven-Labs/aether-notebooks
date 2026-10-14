@@ -23,6 +23,8 @@
 
 ---
 
+> **Implementation notes (post-implementation corrections):** Task 3's snippet originally derived object presence from the full bundle; during implementation this was corrected to the asymmetric drift rule — object maps are union presence (any managed privilege) while the MISSING direction checks bundle coverage (`coversBundle` in `internal/api/warehouse_sync.go`). Task 4's note "compare is object-level and untouched" is superseded accordingly. The design doc (`2026-10-13-dictionary-read-grants-design.md`) carries the final semantics.
+
 ## Task 1: Privilege model — types, bundle, mode probe
 
 **Files:**
