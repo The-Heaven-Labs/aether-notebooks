@@ -46,6 +46,50 @@ func TestModelConfigCustomHeaders(t *testing.T) {
 		cfgID = resp["id"]
 	})
 
+	t.Run("create sentinel for a secret cannot persist", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"name":     "Sentinel Model",
+			"provider": "openai",
+			"base_url": "https://api.example.com/v1",
+			"model":    "gpt-4o",
+			"api_key":  "sk-test",
+			"custom_headers": map[string]string{
+				"X-Api-Key": "__AETHER_REDACTED__",
+			},
+			"custom_header_secrets": []string{"X-Api-Key"},
+		})
+		req := httptest.NewRequest("POST", "/api/v1/model-configs", strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]string
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		var raw []byte
+		var secretNames []string
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT custom_headers, custom_header_secrets FROM model_configs WHERE id = $1`, resp["id"]).Scan(&raw, &secretNames); err != nil {
+			t.Fatalf("read stored headers: %v", err)
+		}
+		if strings.Contains(string(raw), "__AETHER_REDACTED__") {
+			t.Fatalf("sentinel must not be persisted: %s", raw)
+		}
+		var stored map[string]string
+		json.Unmarshal(raw, &stored)
+		if _, exists := stored["X-Api-Key"]; exists {
+			t.Fatalf("sentinel entry must be dropped, got %v", stored["X-Api-Key"])
+		}
+		for _, name := range secretNames {
+			if strings.EqualFold(name, "X-Api-Key") {
+				t.Fatalf("dropped sentinel must be pruned from custom_header_secrets, got %v", secretNames)
+			}
+		}
+	})
+
 	t.Run("secret is ciphertext at rest", func(t *testing.T) {
 		var raw []byte
 		if err := srv.DB().Pool.QueryRow(context.Background(),

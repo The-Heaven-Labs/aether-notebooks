@@ -7,7 +7,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -191,31 +190,18 @@ func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if rawHeaders != nil {
-			// A sentinel on create has nothing to restore: drop such entries
-			// rather than encrypting (and later sending) the literal
-			// placeholder, mirroring RestoreSecrets' orphan deletion. The
-			// secret-name list is pruned accordingly so stored secrets always
-			// name a present header.
-			secretSet := make(map[string]bool, len(secrets))
-			for _, name := range secrets {
-				secretSet[strings.ToLower(name)] = true
+			// A sentinel on create has nothing to restore: DropOrphanSentinels
+			// drops such entries rather than encrypting (and later sending)
+			// the literal placeholder, mirroring RestoreSecrets' orphan
+			// deletion, and prunes the secret-name list so stored secrets
+			// always name a present header.
+			kept := headers.DropOrphanSentinels(rawHeaders, secrets)
+			if len(kept) == 0 {
+				delete(req.Config, "secrets")
+			} else {
+				req.Config["secrets"] = kept
 			}
-			dropped := false
-			for name, raw := range rawHeaders {
-				value, ok := raw.(string)
-				if ok && value == headers.RedactedSentinel && secretSet[strings.ToLower(name)] {
-					delete(rawHeaders, name)
-					dropped = true
-				}
-			}
-			if dropped {
-				if kept := headers.PresentSecrets(rawHeaders, secrets); len(kept) == 0 {
-					delete(req.Config, "secrets")
-				} else {
-					req.Config["secrets"] = kept
-				}
-			}
-			encrypted, encErr := headers.EncryptSecrets(rawHeaders, secrets, h.server.masterKey)
+			encrypted, encErr := headers.EncryptSecrets(rawHeaders, kept, h.server.masterKey)
 			if encErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to encrypt header secrets")
 				return
@@ -411,9 +397,7 @@ func (h *toolHandlers) handleTest(w http.ResponseWriter, r *http.Request) {
 		bodyBytes, _ := json.Marshal(body)
 		req, _ := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
-		for k, v := range probeHeaders {
-			req.Header.Set(k, v)
-		}
+		headers.Apply(req, probeHeaders)
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
 		resp, err := http.DefaultClient.Do(req.WithContext(ctx))

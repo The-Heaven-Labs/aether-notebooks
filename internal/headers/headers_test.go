@@ -231,6 +231,51 @@ func TestRestoreSecrets(t *testing.T) {
 	})
 }
 
+func TestDropOrphanSentinels(t *testing.T) {
+	t.Run("drops a sentinel for a declared secret", func(t *testing.T) {
+		h := map[string]any{"X-Api-Key": headers.RedactedSentinel, "X-Title": "Aether"}
+		kept := headers.DropOrphanSentinels(h, []string{"X-Api-Key"})
+		if _, exists := h["X-Api-Key"]; exists {
+			t.Fatal("expected sentinel entry dropped")
+		}
+		if h["X-Title"] != "Aether" {
+			t.Fatalf("expected non-secret untouched, got %v", h["X-Title"])
+		}
+		if len(kept) != 0 {
+			t.Fatalf("expected pruned secret list, got %v", kept)
+		}
+	})
+	t.Run("keeps fresh values and their secret names", func(t *testing.T) {
+		h := map[string]any{"X-Api-Key": "brand-new"}
+		kept := headers.DropOrphanSentinels(h, []string{"X-Api-Key"})
+		if h["X-Api-Key"] != "brand-new" {
+			t.Fatalf("expected fresh value kept, got %v", h["X-Api-Key"])
+		}
+		if len(kept) != 1 || kept[0] != "X-Api-Key" {
+			t.Fatalf("expected kept secret X-Api-Key, got %v", kept)
+		}
+	})
+	t.Run("keeps a sentinel on a non-secret name", func(t *testing.T) {
+		h := map[string]any{"X-Api-Key": headers.RedactedSentinel, "X-Note": headers.RedactedSentinel}
+		kept := headers.DropOrphanSentinels(h, []string{"X-Api-Key"})
+		if h["X-Note"] != headers.RedactedSentinel {
+			t.Fatalf("only declared secrets are dropped, got %v", h["X-Note"])
+		}
+		if len(kept) != 0 {
+			t.Fatalf("expected no kept secrets, got %v", kept)
+		}
+	})
+	t.Run("returns a non-nil empty slice for empty input", func(t *testing.T) {
+		kept := headers.DropOrphanSentinels(nil, []string{"X-Api-Key"})
+		if kept == nil {
+			t.Fatal("expected non-nil empty slice so callers never store SQL NULL")
+		}
+		if len(kept) != 0 {
+			t.Fatalf("expected empty slice, got %v", kept)
+		}
+	})
+}
+
 func TestPresentSecrets(t *testing.T) {
 	t.Run("keeps only names present in the map", func(t *testing.T) {
 		h := map[string]any{"X-Api-Key": "enc:v1:stored", "X-Title": "Aether"}

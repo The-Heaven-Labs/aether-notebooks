@@ -168,6 +168,21 @@ func RestoreSecrets(oldHeaders, newHeaders map[string]any, secrets []string) {
 	}
 }
 
+// DropOrphanSentinels removes sentinel-valued entries for names in secrets.
+// A create has nothing to restore, so a sentinel there would otherwise be
+// encrypted and sent literally; this mirrors RestoreSecrets' orphan deletion.
+// Returns the pruned secret-name list (never nil).
+func DropOrphanSentinels(headersIn map[string]any, secrets []string) []string {
+	secretSet := toSet(secrets)
+	for name, raw := range headersIn {
+		value, ok := raw.(string)
+		if ok && value == RedactedSentinel && secretSet[strings.ToLower(name)] {
+			delete(headersIn, name)
+		}
+	}
+	return PresentSecrets(headersIn, secrets)
+}
+
 // PresentSecrets returns the subset of secrets whose names exist in headersIn
 // (case-insensitive). Use after RestoreSecrets so a deleted sentinel cannot
 // leave a dangling secret name behind.

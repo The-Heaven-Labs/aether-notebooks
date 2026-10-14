@@ -112,18 +112,17 @@ func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	encryptedHeaders, encErr := headers.EncryptSecrets(req.Headers, req.HeaderSecrets, h.server.masterKey)
+	// A sentinel on create has nothing to restore: it is dropped rather than
+	// encrypted (and later sent) literally, and the secret-name list is pruned
+	// so it only names present headers. DropOrphanSentinels never returns nil,
+	// so the NOT NULL header_secrets column accepts it directly.
+	secrets := headers.DropOrphanSentinels(req.Headers, req.HeaderSecrets)
+	encryptedHeaders, encErr := headers.EncryptSecrets(req.Headers, secrets, h.server.masterKey)
 	if encErr != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
 		return
 	}
 	headersJSON, _ := json.Marshal(encryptedHeaders)
-	// header_secrets is NOT NULL: a missing list must write an empty array
-	// rather than SQL NULL.
-	headerSecrets := req.HeaderSecrets
-	if headerSecrets == nil {
-		headerSecrets = []string{}
-	}
 
 	id := uuid.New().String()
 
@@ -131,7 +130,7 @@ func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request)
 		INSERT INTO mcp_servers (id, org_id, name, type, command, args, headers, header_secrets,
 			created_by, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
-	`, id, claims.OrgID, req.Name, req.Type, req.Command, req.Args, headersJSON, headerSecrets, claims.UserID)
+	`, id, claims.OrgID, req.Name, req.Type, req.Command, req.Args, headersJSON, secrets, claims.UserID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "an MCP server with this name already exists in your organization")
@@ -237,7 +236,10 @@ func (h *mcpServerHandlers) handleUpdate(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Custom headers are validated and prepared before the UPDATE: a rejected
-	// update must not partially apply.
+	// update must not partially apply. Omitting the secrets list on update
+	// means no header value is sensitive and values are stored in plaintext;
+	// clients round-tripping a GET response must resend the secrets list
+	// alongside headers.
 	var headersJSON []byte
 	var headerSecrets []string
 	if req.Headers != nil {

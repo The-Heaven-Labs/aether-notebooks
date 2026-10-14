@@ -60,6 +60,41 @@ func TestMCPServerCustomHeaders(t *testing.T) {
 		mcpID = resp["id"]
 	})
 
+	t.Run("create sentinel for a secret cannot persist", func(t *testing.T) {
+		rec := do(t, "POST", "/api/v1/mcp-servers", map[string]any{
+			"name":           "Sentinel MCP",
+			"type":           "http",
+			"command":        "https://sentinel.example.com/mcp",
+			"headers":        map[string]string{"Authorization": "__AETHER_REDACTED__"},
+			"header_secrets": []string{"Authorization"},
+		})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]string
+		json.NewDecoder(rec.Body).Decode(&resp)
+
+		var raw []byte
+		var secretNames []string
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT headers, header_secrets FROM mcp_servers WHERE id = $1`, resp["id"]).Scan(&raw, &secretNames); err != nil {
+			t.Fatalf("read stored headers: %v", err)
+		}
+		if strings.Contains(string(raw), "__AETHER_REDACTED__") {
+			t.Fatalf("sentinel must not be persisted: %s", raw)
+		}
+		var stored map[string]string
+		json.Unmarshal(raw, &stored)
+		if _, exists := stored["Authorization"]; exists {
+			t.Fatalf("sentinel entry must be dropped, got %v", stored["Authorization"])
+		}
+		for _, name := range secretNames {
+			if strings.EqualFold(name, "Authorization") {
+				t.Fatalf("dropped sentinel must be pruned from header_secrets, got %v", secretNames)
+			}
+		}
+	})
+
 	t.Run("secret is ciphertext at rest", func(t *testing.T) {
 		var raw []byte
 		var secretNames []string

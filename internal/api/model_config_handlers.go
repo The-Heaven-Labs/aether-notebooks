@@ -211,18 +211,17 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	encryptedHeaders, encErr := headers.EncryptSecrets(req.CustomHeaders, req.CustomHeaderSecrets, h.server.masterKey)
+	// A sentinel on create has nothing to restore: it is dropped rather than
+	// encrypted (and later sent) literally, and the secret-name list is pruned
+	// so it only names present headers. DropOrphanSentinels never returns nil,
+	// so the NOT NULL custom_header_secrets column accepts it directly.
+	secrets := headers.DropOrphanSentinels(req.CustomHeaders, req.CustomHeaderSecrets)
+	encryptedHeaders, encErr := headers.EncryptSecrets(req.CustomHeaders, secrets, h.server.masterKey)
 	if encErr != nil {
 		writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
 		return
 	}
 	customHeadersJSON, _ := json.Marshal(encryptedHeaders)
-	// custom_header_secrets is NOT NULL: a missing list must write an empty
-	// array rather than SQL NULL.
-	customHeaderSecrets := req.CustomHeaderSecrets
-	if customHeaderSecrets == nil {
-		customHeaderSecrets = []string{}
-	}
 
 	_, err = h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO model_configs (id, org_id, name, provider, base_url, model, api_key_encrypted,
@@ -233,7 +232,7 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 	`, cfgID, claims.OrgID, req.Name, req.Provider, req.BaseURL, req.Model, encryptedKey,
 		defaultParamsJSON, req.ContextWindow, req.PricePerInputToken, req.PricePerOutputToken,
 		req.PricePerCacheReadToken, req.FolderID, claims.UserID, apiKeyEnvVar,
-		customHeadersJSON, customHeaderSecrets)
+		customHeadersJSON, secrets)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -291,6 +290,9 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 
 	// Custom headers are validated and prepared before any write: a rejected
 	// update must not partially apply (e.g. replace the API key first).
+	// Omitting the secrets list on update means no header value is sensitive
+	// and values are stored in plaintext; clients round-tripping a GET
+	// response must resend the secrets list alongside headers.
 	var customHeadersJSON []byte
 	var customHeaderSecrets []string
 	if req.CustomHeaders != nil {
