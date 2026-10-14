@@ -192,6 +192,21 @@ func requireClickHouseDenied(t *testing.T, rec *httptest.ResponseRecorder) {
 		"expected a ClickHouse access-denied message, got: %s", rec.Body.String())
 }
 
+// requireClickHousePrivilegeCount asserts the number of observed system.grants
+// rows of one managed access type on an object, for a subject that is either a
+// user (user_name) or a role (role_name). Zero asserts the privilege is gone.
+func requireClickHousePrivilegeCount(t *testing.T, conn clickhouse.Conn, subject, access, database, table string, want uint64) {
+	t.Helper()
+	var n uint64
+	require.NoError(t, conn.QueryRow(context.Background(), `
+		SELECT count() FROM system.grants
+		WHERE access_type = ? AND database = ? AND table = ?
+		  AND (user_name = ? OR role_name = ?)`,
+		access, database, table, subject, subject).Scan(&n))
+	require.Equal(t, want, n,
+		"observed %s grants on %s.%s for %s (want %d, got %d)", access, database, table, subject, want, n)
+}
+
 // countRoleGrants counts a user's membership in one ClickHouse role.
 func countRoleGrants(t *testing.T, conn clickhouse.Conn, user, role string) int {
 	t.Helper()
@@ -363,8 +378,10 @@ func TestWarehouseDictionaryGrantsE2E(t *testing.T) {
 	ctx := context.Background()
 	fx := setupWarehouseRBACE2EFixture(t)
 
-	if mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn); err != nil || mode != chaccess.PrivilegeModeFull {
-		t.Skipf("server does not support granular dictionary privileges (mode=%q err=%v)", mode, err)
+	mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn)
+	require.NoError(t, err, "probe the ClickHouse privilege mode")
+	if mode != chaccess.PrivilegeModeFull {
+		t.Skipf("server does not support granular dictionary privileges (mode=%q)", mode)
 	}
 
 	// Grant only the dictionary to the group; t1 stays ungranted.
@@ -380,12 +397,7 @@ func TestWarehouseDictionaryGrantsE2E(t *testing.T) {
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
 
 	groupRole := chaccess.RoleIdent(fx.warehouseID, fx.orgID, fx.groupID)
-	var n uint64
-	require.NoError(t, fx.conn.QueryRow(ctx, `
-		SELECT count() FROM system.grants
-		WHERE access_type = 'dictGet' AND database = ? AND table = 'd1'
-		  AND role_name = ?`, fx.database, groupRole).Scan(&n))
-	require.Equal(t, uint64(1), n, "the reconcile must grant dictGet on the dictionary")
+	requireClickHousePrivilegeCount(t, fx.conn, groupRole, "dictGet", fx.database, "d1", 1)
 
 	// Direct read, dictGet-family call, and SHOW CREATE all work as the
 	// member's own identity.
@@ -401,9 +413,20 @@ func TestWarehouseDictionaryGrantsE2E(t *testing.T) {
 
 	rec = fx.runAs(t, fx.memberID, http.StatusOK,
 		"SELECT dictHas('"+fx.database+".d1', toUInt8(1)) AS has_key")
-	decodeExecuteOutputs(t, rec)
+	out = decodeExecuteOutputs(t, rec)
+	require.Equal(t, float64(1), out.Outputs[0].Data.Rows[0][0])
 
-	fx.runAs(t, fx.memberID, http.StatusOK, "SHOW CREATE DICTIONARY "+fx.table(t, "d1"))
+	rec = fx.runAs(t, fx.memberID, http.StatusOK, "SHOW CREATE DICTIONARY "+fx.table(t, "d1"))
+	out = decodeExecuteOutputs(t, rec)
+	returnedDDL := false
+	for _, row := range out.Outputs[0].Data.Rows {
+		for _, cell := range row {
+			if s, ok := cell.(string); ok && strings.Contains(s, "CREATE DICTIONARY") {
+				returnedDDL = true
+			}
+		}
+	}
+	require.True(t, returnedDDL, "SHOW CREATE DICTIONARY must return the dictionary DDL")
 
 	// The dictionary is a data grant of its own: the source table stays
 	// denied.
@@ -426,9 +449,18 @@ func TestWarehouseDictionaryGrantsE2E(t *testing.T) {
 	rec = deleteGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID, grantID)
 	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	// The direct read needs SELECT and dictGet, and the family function needs
+	// dictGet: both must be denied, and no managed privilege may remain.
 	rec = fx.runAs(t, fx.memberID, http.StatusForbidden,
 		"SELECT label FROM "+fx.table(t, "d1")+" WHERE id = 1")
 	requireClickHouseDenied(t, rec)
+	rec = fx.runAs(t, fx.memberID, http.StatusForbidden,
+		"SELECT dictGet('"+fx.database+".d1', 'label', toUInt8(1))")
+	requireClickHouseDenied(t, rec)
+	for _, access := range []string{"SELECT", "dictGet", "SHOW DICTIONARIES"} {
+		requireClickHousePrivilegeCount(t, fx.conn, groupRole, access, fx.database, "d1", 0)
+	}
 }
 
 // TestWarehouseDictionaryGrantUpgradeRepair simulates a deployment upgrading
@@ -439,8 +471,10 @@ func TestWarehouseDictionaryGrantsE2E(t *testing.T) {
 func TestWarehouseDictionaryGrantUpgradeRepair(t *testing.T) {
 	ctx := context.Background()
 	fx := setupWarehouseRBACE2EFixture(t)
-	if mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn); err != nil || mode != chaccess.PrivilegeModeFull {
-		t.Skipf("server does not support granular dictionary privileges (mode=%q err=%v)", mode, err)
+	mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn)
+	require.NoError(t, err, "probe the ClickHouse privilege mode")
+	if mode != chaccess.PrivilegeModeFull {
+		t.Skipf("server does not support granular dictionary privileges (mode=%q)", mode)
 	}
 
 	// The grant row is already there, exactly as an upgrading deployment
@@ -467,23 +501,40 @@ func TestWarehouseDictionaryGrantUpgradeRepair(t *testing.T) {
 	require.NoError(t, fx.conn.Exec(ctx, "GRANT SELECT ON "+fx.table(t, "d1")+" TO "+quotedRole))
 
 	// Sanity: the simulated state is genuinely SELECT-only.
-	var n uint64
-	require.NoError(t, fx.conn.QueryRow(ctx, `
-		SELECT count() FROM system.grants
-		WHERE access_type = 'dictGet' AND database = ? AND table = 'd1'
-		  AND role_name = ?`, fx.database, groupRole).Scan(&n))
-	require.Zero(t, n, "the simulated pre-upgrade state must not hold dictGet")
+	requireClickHousePrivilegeCount(t, fx.conn, groupRole, "dictGet", fx.database, "d1", 0)
+
+	// A deployed warehouse has already synced once: seed the header so the
+	// upgrade repairs in place instead of provisioning from scratch, with a
+	// matching master-key fingerprint so no password re-key is due.
+	fingerprint := chaccess.Fingerprint(string(fx.s.masterKey))
+	_, err = fx.s.db.Pool.Exec(ctx, `
+		UPDATE warehouses SET sync_status = 'ready', applied_master_fp = $1 WHERE id = $2`,
+		fingerprint, fx.warehouseID.String())
+	require.NoError(t, err)
 
 	// The upgrade event: the first reconcile must repair the existing grant.
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
 
 	for _, access := range []string{"SELECT", "dictGet", "SHOW DICTIONARIES"} {
-		require.NoError(t, fx.conn.QueryRow(ctx, `
-			SELECT count() FROM system.grants
-			WHERE access_type = ? AND database = ? AND table = 'd1'
-			  AND role_name = ?`, access, fx.database, groupRole).Scan(&n))
-		require.Equal(t, uint64(1), n, "upgrade must repair %s on the existing dictionary grant", access)
+		requireClickHousePrivilegeCount(t, fx.conn, groupRole, access, fx.database, "d1", 1)
 	}
+
+	// The repair is drift: exactly one audit names the missing bundle.
+	var driftAudits int
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx, `
+		SELECT count(*) FROM audit_logs
+		WHERE org_id = $1 AND action = 'warehouse.drift' AND resource_id = $2
+		  AND metadata->'missing_grants' @> $3::jsonb`,
+		fx.orgID.String(), fx.warehouseID.String(),
+		fmt.Sprintf(`[%q]`, fx.database+".d1 for "+groupRole)).Scan(&driftAudits))
+	require.Equal(t, 1, driftAudits, "the repair must be audited as missing drift")
+
+	// The matching fingerprint means the member's password was not re-keyed.
+	var appliedFP *string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		"SELECT applied_master_fp FROM warehouses WHERE id = $1", fx.warehouseID.String()).Scan(&appliedFP))
+	require.NotNil(t, appliedFP)
+	require.Equal(t, fingerprint, *appliedFP)
 
 	// The acceptance outcome: the member can use the repaired dictionary.
 	rec = fx.runAs(t, fx.memberID, http.StatusOK,
@@ -503,8 +554,10 @@ func TestWarehouseDictionaryGrantUpgradeRepair(t *testing.T) {
 func TestWarehouseDictionaryGuardE2E(t *testing.T) {
 	ctx := context.Background()
 	fx := setupWarehouseRBACE2EFixture(t)
-	if mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn); err != nil || mode != chaccess.PrivilegeModeFull {
-		t.Skipf("server does not support granular dictionary privileges (mode=%q err=%v)", mode, err)
+	mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn)
+	require.NoError(t, err, "probe the ClickHouse privilege mode")
+	if mode != chaccess.PrivilegeModeFull {
+		t.Skipf("server does not support granular dictionary privileges (mode=%q)", mode)
 	}
 
 	rec := createGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID,
@@ -521,12 +574,7 @@ func TestWarehouseDictionaryGuardE2E(t *testing.T) {
 	require.NoError(t, fx.conn.Exec(ctx,
 		"GRANT dictGet ON "+fx.table(t, "d1")+" TO "+quotedRole))
 	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
-	var n uint64
-	require.NoError(t, fx.conn.QueryRow(ctx, `
-		SELECT count() FROM system.grants
-		WHERE access_type = 'dictGet' AND database = ? AND table = 'd1'
-		  AND role_name = ?`, fx.database, groupRole).Scan(&n))
-	require.Equal(t, uint64(0), n, "extra dictGet on an ungranted object must be revoked")
+	requireClickHousePrivilegeCount(t, fx.conn, groupRole, "dictGet", fx.database, "d1", 0)
 
 	// A wildcard dictGet is outside the model and fails closed.
 	require.NoError(t, fx.conn.Exec(ctx,
@@ -538,4 +586,73 @@ func TestWarehouseDictionaryGuardE2E(t *testing.T) {
 	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
 		"SELECT sync_status FROM warehouses WHERE id = $1", fx.warehouseID.String()).Scan(&status))
 	require.Equal(t, "error", status)
+}
+
+// TestWarehouseDictionaryPrefixWildcardGuardE2E pins the SHOW GRANTS fallback
+// path used on servers without system.grants.is_wildcard (24.x): a prefix
+// wildcard dictGet strips the star in system.grants, so only the SHOW GRANTS
+// parser can recognise it and fail the warehouse closed.
+func TestWarehouseDictionaryPrefixWildcardGuardE2E(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseRBACE2EFixture(t)
+	mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn)
+	require.NoError(t, err, "probe the ClickHouse privilege mode")
+	if mode != chaccess.PrivilegeModeFull {
+		t.Skipf("server does not support granular dictionary privileges (mode=%q)", mode)
+	}
+
+	// Anchor the role with a real grant so the wildcard scan has an identity
+	// to inspect.
+	rec := createGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID,
+		grantBody("group", fx.groupID.String(), fx.database, "t1"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	groupRole := chaccess.RoleIdent(fx.warehouseID, fx.orgID, fx.groupID)
+	quotedRole, err := chaccess.QuoteIdent(groupRole)
+	require.NoError(t, err)
+
+	// On 24.x system.grants stores this as table='d1' (star stripped), so
+	// only SHOW GRANTS FOR renders the wildcard.
+	require.NoError(t, fx.conn.Exec(ctx,
+		"GRANT dictGet ON "+fx.table(t, "d1")+"* TO "+quotedRole))
+	requireClickHousePrivilegeCount(t, fx.conn, groupRole, "dictGet", fx.database, "d1", 1)
+
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "manual remediation")
+	require.Contains(t, err.Error(), "wildcard grant")
+	require.Contains(t, err.Error(), fx.database+".d1*")
+	var status string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		"SELECT sync_status FROM warehouses WHERE id = $1", fx.warehouseID.String()).Scan(&status))
+	require.Equal(t, "error", status)
+}
+
+// TestWarehouseDictionaryUserSubjectE2E proves a direct user grant (not just
+// group roles) receives the dictionary bundle.
+func TestWarehouseDictionaryUserSubjectE2E(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseRBACE2EFixture(t)
+	mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn)
+	require.NoError(t, err, "probe the ClickHouse privilege mode")
+	if mode != chaccess.PrivilegeModeFull {
+		t.Skipf("server does not support granular dictionary privileges (mode=%q)", mode)
+	}
+
+	rec := createGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID,
+		grantBody("user", fx.memberID.String(), fx.database, "d1"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	// Direct user grants are recorded on user_name, not through a role.
+	memberIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.memberID)
+	for _, access := range []string{"SELECT", "dictGet", "SHOW DICTIONARIES"} {
+		requireClickHousePrivilegeCount(t, fx.conn, memberIdent, access, fx.database, "d1", 1)
+	}
+
+	rec = fx.runAs(t, fx.memberID, http.StatusOK,
+		"SELECT dictGet('"+fx.database+".d1', 'label', toUInt8(1)) AS label")
+	out := decodeExecuteOutputs(t, rec)
+	require.Equal(t, "one", out.Outputs[0].Data.Rows[0][0])
 }
