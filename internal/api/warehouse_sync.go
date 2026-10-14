@@ -126,6 +126,11 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	}
 	defer conn.Close()
 
+	mode, err := chaccess.DetectPrivilegeMode(ctx, conn)
+	if err != nil {
+		return s.failWarehouseSync(ctx, warehouseID, fmt.Errorf("detect clickhouse privilege mode: %w", err))
+	}
+
 	// Catalog observation powers the new-tables inbox. It is best-effort: a
 	// catalog read or cache write must never block access provisioning, and
 	// the next reconcile retries.
@@ -145,7 +150,7 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		return s.failWarehouseSync(ctx, warehouseID, err)
 	}
 
-	actual, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	actual, err := chaccess.LoadActual(ctx, conn, warehouseID, mode)
 	if err != nil {
 		return s.failWarehouseSync(ctx, warehouseID,
 			fmt.Errorf("load clickhouse actual state: %w", err))
@@ -157,7 +162,7 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	// Diff before applying so drift is reported from the same observation the
 	// plan is built from. A first provision legitimately reports everything as
 	// missing, so only warehouses that were provisioned before alert.
-	report := compareWarehouseState(warehouseID, desired, actual)
+	report := compareWarehouseState(warehouseID, desired, actual, mode)
 	prevProvisioned := hdr.appliedFP != nil || hdr.syncStatus == "ready"
 
 	// Fail closed: wildcards defeat table-level least privilege and foreign
@@ -181,7 +186,7 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		return syncErr
 	}
 
-	stmts, skipped := chaccess.Statements(desired, actual)
+	stmts, skipped := chaccess.Statements(desired, actual, mode)
 	auditReport := report
 	if !prevProvisioned {
 		auditReport = DriftReport{WarehouseID: warehouseID}
@@ -471,11 +476,15 @@ func (s *Server) loadWarehouseDesiredState(ctx context.Context, warehouseID, org
 // applies the plan, drift detection only reports.
 type DriftReport struct {
 	WarehouseID uuid.UUID
-	// UnexpectedGrants are actual SELECT grants absent from desired state,
-	// rendered "db.table for <subject>".
+	// UnexpectedGrants lists observed objects, by subject, that are not
+	// desired. Presence is a union: any managed privilege on an undesired
+	// object is a surplus, however partial the bundle. Rendered
+	// "db.table for <subject>".
 	UnexpectedGrants []string
-	// MissingGrants are desired SELECT grants absent from actual state,
-	// rendered "db.table for <subject>".
+	// MissingGrants lists desired objects, by subject, whose observed
+	// privileges do not cover the mode's read bundle (a partially granted
+	// object is present in ClickHouse yet still missing access). Rendered
+	// "db.table for <subject>".
 	MissingGrants []string
 	// UnexpectedUsers are users in the warehouse namespace that desired state
 	// does not know about.
@@ -494,8 +503,8 @@ type DriftReport struct {
 	// Wildcards are actual wildcard grants (subject + scope). They defeat
 	// table-level least privilege and make reconcile fail closed.
 	Wildcards []chaccess.WildcardGrant
-	// Unexpected mirrors chaccess.ActualState.Unexpected: non-SELECT grants,
-	// foreign role wiring, and grants held WITH GRANT OPTION.
+	// Unexpected mirrors chaccess.ActualState.Unexpected: grants outside the
+	// managed read set, foreign role wiring, and grants held WITH GRANT OPTION.
 	Unexpected []string
 	// DefaultRolesNotAll are desired users whose roles are provisioned but
 	// whose default role is not "all"; the next reconcile resets it.
@@ -542,16 +551,21 @@ func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID
 	}
 	defer conn.Close()
 
+	mode, err := chaccess.DetectPrivilegeMode(ctx, conn)
+	if err != nil {
+		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: detect clickhouse privilege mode: %w", warehouseID, err)
+	}
+
 	desired, err := s.loadWarehouseDesiredState(ctx, warehouseID, hdr.orgID)
 	if err != nil {
 		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: %w", warehouseID, err)
 	}
-	actual, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	actual, err := chaccess.LoadActual(ctx, conn, warehouseID, mode)
 	if err != nil {
 		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: load clickhouse actual state: %w", warehouseID, err)
 	}
 
-	report := compareWarehouseState(warehouseID, desired, actual)
+	report := compareWarehouseState(warehouseID, desired, actual, mode)
 	if !report.IsEmpty() {
 		s.auditWarehouseDriftReport(ctx, hdr.orgID, warehouseID, report, nil)
 	}
@@ -591,9 +605,10 @@ func (s *Server) withWarehouseSyncLock(ctx context.Context, warehouseID uuid.UUI
 // holds it across this drop and the row delete) so a concurrent reconcile
 // cannot recreate identities mid-drop. It returns whether any drop statements
 // ran (so callers can decide whether a refused delete needs a restoring
-// reconcile) and fails closed when the provisioner is missing/unreachable,
-// any statement fails, or identities remain afterwards. The warehouse row is
-// not touched here.
+// reconcile) and fails closed when the provisioner is missing/unreachable, the
+// privilege-mode probe fails (it runs on the same provisioner connection
+// before any observation), any statement fails, or identities remain
+// afterwards. The warehouse row is not touched here.
 func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID uuid.UUID) (bool, error) {
 	hdr, err := s.loadWarehouseHeader(ctx, warehouseID)
 	if err != nil {
@@ -619,11 +634,16 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 	}
 	defer conn.Close()
 
-	actual, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	mode, err := chaccess.DetectPrivilegeMode(ctx, conn)
+	if err != nil {
+		return false, fmt.Errorf("detect clickhouse privilege mode: %w", err)
+	}
+
+	actual, err := chaccess.LoadActual(ctx, conn, warehouseID, mode)
 	if err != nil {
 		return false, fmt.Errorf("load clickhouse actual state: %w", err)
 	}
-	stmts, skipped := chaccess.Statements(chaccess.DesiredState{}, actual)
+	stmts, skipped := chaccess.Statements(chaccess.DesiredState{}, actual, mode)
 	for i, stmt := range stmts {
 		if execErr := conn.Exec(ctx, stmt); execErr != nil {
 			return len(stmts) > 0, fmt.Errorf("execute drop statement %d of %d: %s",
@@ -644,7 +664,7 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 	// the only thing between a deleted row and orphaned identities, so any
 	// identity still visible (an unquotable name, a concurrent server-side
 	// change) must fail the cleanup instead of surviving it silently.
-	remaining, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	remaining, err := chaccess.LoadActual(ctx, conn, warehouseID, mode)
 	if err != nil {
 		return len(stmts) > 0, fmt.Errorf("verify clickhouse identities removed: %w", err)
 	}
@@ -697,10 +717,14 @@ func (s *Server) auditDeferredWarehouseIdentityCleanup(ctx context.Context, orgI
 	}
 }
 
-// compareWarehouseState diffs desired against actual. It is pure so it can be
-// unit-tested without ClickHouse.
-func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState, actual chaccess.ActualState) DriftReport {
+// compareWarehouseState diffs desired against actual. The unexpected direction
+// is object-level over the union maps (any observed managed privilege observes
+// the object); the missing direction requires the observed privilege set to
+// cover mode's full bundle for the object. It is pure so it can be unit-tested
+// without ClickHouse.
+func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState, actual chaccess.ActualState, mode chaccess.PrivilegeMode) DriftReport {
 	report := DriftReport{WarehouseID: warehouseID}
+	bundle := mode.Bundle()
 
 	for ident, grants := range actual.Roles {
 		want := map[chaccess.Grant]struct{}{}
@@ -732,12 +756,11 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 	}
 
 	for ident, rs := range desired.Roles {
-		have, exists := actual.Roles[ident]
-		if !exists {
+		if _, exists := actual.Roles[ident]; !exists {
 			report.MissingRoles = append(report.MissingRoles, ident)
 		}
 		for g := range rs.Grants {
-			if _, ok := have[g]; !ok {
+			if !coversBundle(actual.RolePrivileges[ident], g, bundle) {
 				report.MissingGrants = append(report.MissingGrants, grantDriftLabel(g, ident))
 			}
 		}
@@ -758,7 +781,7 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 			}
 		}
 		for g := range us.DirectGrants {
-			if _, ok := user.DirectGrants[g]; !ok {
+			if !coversBundle(user.DirectPrivileges, g, bundle) {
 				report.MissingGrants = append(report.MissingGrants, grantDriftLabel(g, ident))
 			}
 		}
@@ -780,6 +803,17 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 	report.MissingRoleMemberships = sortDedupe(report.MissingRoleMemberships)
 	report.DefaultRolesNotAll = sortDedupe(report.DefaultRolesNotAll)
 	return report
+}
+
+// coversBundle reports whether the observed privileges include every
+// privilege of mode's bundle for one object.
+func coversBundle(privs map[chaccess.GrantPrivilege]struct{}, g chaccess.Grant, bundle []chaccess.Privilege) bool {
+	for _, p := range bundle {
+		if _, ok := privs[chaccess.GrantPrivilege{Grant: g, Access: p}]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // grantDriftLabel renders one grant and its subject for a drift report.

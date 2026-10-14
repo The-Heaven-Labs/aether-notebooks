@@ -10,8 +10,8 @@ import (
 	"github.com/google/uuid"
 )
 
-// GrantRow is one relevant row of system.grants: SELECT grants without a
-// column list (the query filters access_type and column-level rows).
+// GrantRow is one relevant row of system.grants: managed read privileges
+// (SELECT, dictGet, SHOW DICTIONARIES) without a column list.
 type GrantRow struct {
 	UserName        string
 	RoleName        string
@@ -20,12 +20,18 @@ type GrantRow struct {
 	IsPartialRevoke uint8
 	GrantOption     uint8
 	IsWildcard      uint8
+	AccessType      string
 }
 
 // LoadActual reads users, roles, role grants, and direct grants for one
 // warehouse's namespace. The namespace is selected with startsWith on
 // IdentifierPrefix(warehouseID) rather than LIKE, so underscores in the
 // prefix are never treated as wildcards.
+//
+// Grants are read for the managed read privileges (SELECT, dictGet, SHOW
+// DICTIONARIES; SELECT only in legacy mode). The mode gates the query because
+// filtering system.grants.access_type by a literal the server's enum does not
+// know (dictGet on a pre-granular server) can itself error.
 //
 // Roles are enumerated from system.roles (not only from grant rows) so a
 // zero-grant orphan role is visible and can be dropped.
@@ -35,16 +41,17 @@ type GrantRow struct {
 // system.grants.is_wildcard on servers that have that column (ClickHouse
 // >= 26.x); older servers strip the "*" from the table name, so LoadActual
 // falls back to scanning SHOW GRANTS FOR for every namespace identity and
-// treats any SELECT line containing "*" as a wildcard. False positives fail
-// closed (the reconcile treats wildcards as drift).
+// treats any managed-privilege line containing "*" as a wildcard. False
+// positives fail closed (the reconcile treats wildcards as drift).
 //
-// Non-SELECT grants (INSERT, ALTER, DROP, ...) in the namespace are recorded
-// in Unexpected: Aether only ever grants SELECT, so they are drift.
+// Grants outside the managed read set (INSERT, ALTER, DROP, ...) in the
+// namespace are recorded in Unexpected: Aether never grants them, so they are
+// drift.
 //
 // It does NOT read password hashes: ClickHouse stores salted hashes that
 // cannot be compared. Password rotation is driven by
 // warehouses.applied_master_fp (see Task 9) via ActualState.ForcePasswordReset.
-func LoadActual(ctx context.Context, conn clickhouse.Conn, warehouseID uuid.UUID) (ActualState, error) {
+func LoadActual(ctx context.Context, conn clickhouse.Conn, warehouseID uuid.UUID, mode PrivilegeMode) (ActualState, error) {
 	prefix := IdentifierPrefix(warehouseID)
 
 	hasIsWildcard, err := hasIsWildcardColumn(ctx, conn)
@@ -52,7 +59,7 @@ func LoadActual(ctx context.Context, conn clickhouse.Conn, warehouseID uuid.UUID
 		return ActualState{}, err
 	}
 
-	grants, err := loadGrants(ctx, conn, prefix, hasIsWildcard)
+	grants, err := loadGrants(ctx, conn, prefix, hasIsWildcard, mode)
 	if err != nil {
 		return ActualState{}, err
 	}
@@ -67,7 +74,7 @@ func LoadActual(ctx context.Context, conn clickhouse.Conn, warehouseID uuid.UUID
 		return ActualState{}, err
 	}
 
-	nonSelect, err := loadNonSelectGrants(ctx, conn, prefix)
+	nonSelect, err := loadNonSelectGrants(ctx, conn, prefix, mode)
 	if err != nil {
 		return ActualState{}, err
 	}
@@ -103,14 +110,19 @@ func hasIsWildcardColumn(ctx context.Context, conn clickhouse.Conn) (bool, error
 	return n > 0, nil
 }
 
-func loadGrants(ctx context.Context, conn clickhouse.Conn, prefix string, hasIsWildcard bool) ([]GrantRow, error) {
+func loadGrants(ctx context.Context, conn clickhouse.Conn, prefix string, hasIsWildcard bool, mode PrivilegeMode) ([]GrantRow, error) {
 	cols := "coalesce(user_name,''), coalesce(role_name,''), coalesce(database,''), coalesce(table,''), is_partial_revoke, grant_option"
 	if hasIsWildcard {
 		cols += ", is_wildcard"
 	}
+	cols += ", access_type"
+	filter := "access_type = 'SELECT'"
+	if mode != PrivilegeModeLegacy {
+		filter = "access_type IN ('SELECT', 'dictGet', 'SHOW DICTIONARIES')"
+	}
 	query := "SELECT " + cols + " FROM system.grants" +
 		" WHERE (startsWith(user_name, ?) OR startsWith(role_name, ?))" +
-		" AND access_type = 'SELECT' AND is_partial_revoke = 0" +
+		" AND " + filter + " AND is_partial_revoke = 0" +
 		" AND coalesce(`column`, '') = ''"
 
 	rows, err := conn.Query(ctx, query, prefix, prefix)
@@ -124,6 +136,7 @@ func loadGrants(ctx context.Context, conn clickhouse.Conn, prefix string, hasIsW
 		if hasIsWildcard {
 			dest = append(dest, &r.IsWildcard)
 		}
+		dest = append(dest, &r.AccessType)
 		if err := rows.Scan(dest...); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("scan system.grants: %w", err)
@@ -204,8 +217,8 @@ func loadRoleGrants(ctx context.Context, conn clickhouse.Conn, prefix string) (m
 	return memberships, unexpected, nil
 }
 
-// NonSelectGrant is one non-SELECT grant in the warehouse namespace.
-// Aether only ever issues SELECT grants, so any of these is drift.
+// NonSelectGrant is one grant in the warehouse namespace outside the managed
+// read set. Aether never issues these, so any of them is drift.
 type NonSelectGrant struct {
 	AccessType string
 	UserName   string
@@ -214,15 +227,25 @@ type NonSelectGrant struct {
 	Table      string
 }
 
-// loadNonSelectGrants reads namespace grants whose access type is not SELECT
-// (INSERT, ALTER, DROP, ...). Partial revokes are not grants and are
-// excluded, matching loadGrants.
-func loadNonSelectGrants(ctx context.Context, conn clickhouse.Conn, prefix string) ([]NonSelectGrant, error) {
+// loadNonSelectGrants reads namespace grants outside the managed read set
+// (INSERT, ALTER, DROP, ...). The managed set is excluded in SQL so the enum
+// literal is only referenced on servers whose mode supports it; partial
+// revokes are not grants and are excluded, matching loadGrants.
+//
+// On a legacy-mode server that nevertheless reports dictionary privileges
+// (probe fallback), those rows are not part of the legacy managed set, so
+// they land in the returned drift list and fail the reconcile closed rather
+// than being revoked as managed extras.
+func loadNonSelectGrants(ctx context.Context, conn clickhouse.Conn, prefix string, mode PrivilegeMode) ([]NonSelectGrant, error) {
+	filter := "access_type != 'SELECT'"
+	if mode != PrivilegeModeLegacy {
+		filter = "access_type NOT IN ('SELECT', 'dictGet', 'SHOW DICTIONARIES')"
+	}
 	rows, err := conn.Query(ctx, `
 		SELECT access_type, coalesce(user_name,''), coalesce(role_name,''), coalesce(database,''), coalesce(table,'')
 		FROM system.grants
 		WHERE (startsWith(user_name, ?) OR startsWith(role_name, ?))
-		  AND access_type != 'SELECT' AND is_partial_revoke = 0`,
+		  AND `+filter+` AND is_partial_revoke = 0`,
 		prefix, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("system.grants (non-SELECT): %w", err)
@@ -370,13 +393,14 @@ func scanWildcardGrants(ctx context.Context, conn clickhouse.Conn, prefix string
 }
 
 // wildcardScopeFromGrantLine parses one line of SHOW GRANTS output. It is
-// deliberately conservative: any line that mentions SELECT and contains "*"
-// is reported as a wildcard (false positives fail closed). The scope is the
-// target between " ON " and " TO "/" FROM " with backticks stripped; a line
-// that cannot be split still counts as a wildcard, using the whole line.
+// deliberately conservative: any line that mentions one of the managed read
+// privileges and contains "*" is reported as a wildcard (false positives fail
+// closed). The scope is the target between " ON " and " TO "/" FROM " with
+// backticks stripped; a line that cannot be split still counts as a wildcard,
+// using the whole line.
 func wildcardScopeFromGrantLine(line string) (string, bool) {
 	upper := strings.ToUpper(line)
-	if !strings.Contains(upper, "SELECT") || !strings.Contains(line, "*") {
+	if !containsManagedPrivilege(upper) || !strings.Contains(line, "*") {
 		return "", false
 	}
 	onIdx := strings.Index(upper, " ON ")
@@ -393,29 +417,50 @@ func wildcardScopeFromGrantLine(line string) (string, bool) {
 	return cleanGrantTarget(rest[:end]), true
 }
 
+// containsManagedPrivilege reports whether an upper-cased SHOW GRANTS line
+// references one of the managed read privileges.
+func containsManagedPrivilege(upper string) bool {
+	return strings.Contains(upper, "SELECT") ||
+		strings.Contains(upper, "DICTGET") ||
+		strings.Contains(upper, "SHOW DICTIONARIES")
+}
+
 func cleanGrantTarget(s string) string {
 	return strings.TrimSpace(strings.ReplaceAll(s, "`", ""))
 }
 
+// buildActualFromGrantRows assembles the observed state from system.grants
+// rows. Object maps (Roles, UserActual.DirectGrants) carry the union of any
+// managed privilege: the drift report tables a surplus object no matter how
+// partial its bundle, so presence must not require the full bundle. Privilege
+// maps (RolePrivileges, DirectPrivileges) carry the raw (object, privilege)
+// detail the DDL diff and bundle-coverage checks consume.
 func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]struct{}, users map[string]UserActual, unexpected []string) ActualState {
-	a := ActualState{Roles: map[string]map[Grant]struct{}{}, Users: map[string]UserActual{}, Unexpected: append([]string{}, unexpected...)}
-	for name, gs := range roles {
-		if gs == nil {
-			gs = map[Grant]struct{}{}
-		}
-		a.Roles[name] = gs
+	a := ActualState{
+		Roles:          map[string]map[Grant]struct{}{},
+		RolePrivileges: map[string]map[GrantPrivilege]struct{}{},
+		Users:          map[string]UserActual{},
+		Unexpected:     append([]string{}, unexpected...),
+	}
+	for name := range roles {
+		a.Roles[name] = map[Grant]struct{}{}
 	}
 	for k, v := range users {
 		if v.Roles == nil {
 			v.Roles = map[string]struct{}{}
 		}
-		if v.DirectGrants == nil {
-			v.DirectGrants = map[Grant]struct{}{}
-		}
 		a.Users[k] = v
 	}
 	for _, r := range grants {
 		if r.IsPartialRevoke == 1 {
+			continue
+		}
+		if !managedAccessType(r.AccessType) {
+			// loadGrants filters to the managed set; belt and braces. The
+			// loader is mode-gated, so on a legacy server dictGet /
+			// SHOW DICTIONARIES rows cannot reach the builder; were one to
+			// arrive anyway, loadNonSelectGrants would surface it as
+			// Unexpected drift and fail the warehouse closed.
 			continue
 		}
 		subject := r.RoleName
@@ -451,24 +496,47 @@ func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]stru
 			a.Wildcards = append(a.Wildcards, WildcardGrant{Subject: subject, Scope: r.Database + "." + r.Table})
 			continue
 		}
-		gr := Grant{Database: r.Database, Table: r.Table}
+		gp := GrantPrivilege{
+			Grant:  Grant{Database: r.Database, Table: r.Table},
+			Access: Privilege(r.AccessType),
+		}
 		if r.RoleName != "" {
+			if a.RolePrivileges[r.RoleName] == nil {
+				a.RolePrivileges[r.RoleName] = map[GrantPrivilege]struct{}{}
+			}
+			a.RolePrivileges[r.RoleName][gp] = struct{}{}
+			// Union presence: any managed privilege observes the object, so
+			// the drift report's surplus direction flags a partial extra.
 			if a.Roles[r.RoleName] == nil {
 				a.Roles[r.RoleName] = map[Grant]struct{}{}
 			}
-			a.Roles[r.RoleName][gr] = struct{}{}
+			a.Roles[r.RoleName][gp.Grant] = struct{}{}
 		} else if r.UserName != "" {
 			u := a.Users[r.UserName]
+			if u.DirectPrivileges == nil {
+				u.DirectPrivileges = map[GrantPrivilege]struct{}{}
+			}
+			u.DirectPrivileges[gp] = struct{}{}
 			if u.DirectGrants == nil {
 				u.DirectGrants = map[Grant]struct{}{}
 			}
-			u.DirectGrants[gr] = struct{}{}
+			u.DirectGrants[gp.Grant] = struct{}{}
 			a.Users[r.UserName] = u
 		}
 	}
 	a.Wildcards = normalizeWildcards(a.Wildcards)
 	a.Unexpected = dedupeSorted(a.Unexpected)
 	return a
+}
+
+// managedAccessType reports whether accessType is one of the read privileges
+// Aether manages as part of the bundle.
+func managedAccessType(accessType string) bool {
+	switch Privilege(accessType) {
+	case AccessSelect, AccessDictGet, AccessShowDictionaries:
+		return true
+	}
+	return false
 }
 
 // wildcardScope renders the scope of a row flagged is_wildcard. ClickHouse

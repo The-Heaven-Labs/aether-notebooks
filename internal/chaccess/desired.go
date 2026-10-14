@@ -1,6 +1,9 @@
 package chaccess
 
-// Grant is a single table-level SELECT grant.
+// Grant identifies one granted object (database + name) in a warehouse. The
+// object kind is deliberately absent: tables, views, and dictionaries share
+// the name-based grant model, and the privileges granted for an object are
+// its mode's read bundle (see PrivilegeMode.Bundle).
 type Grant struct {
 	Database string
 	Table    string
@@ -26,11 +29,16 @@ type DesiredState struct {
 	Users map[string]UserState
 }
 
-// UserActual is the observed state of one ClickHouse user.
+// UserActual is the observed state of one ClickHouse user. DirectGrants is
+// the observed objects (union of any managed privilege); DirectPrivileges is
+// the raw (object, privilege) detail used for bundle-coverage checks and DDL.
 type UserActual struct {
 	Roles           map[string]struct{}
 	DirectGrants    map[Grant]struct{}
 	DefaultRolesAll bool
+	// DirectPrivileges is the raw observed (object, privilege) set; every
+	// entry is one of the managed read privileges.
+	DirectPrivileges map[GrantPrivilege]struct{}
 }
 
 // WildcardGrant is an unexpected ClickHouse wildcard grant. Aether never
@@ -51,7 +59,12 @@ type WildcardGrant struct {
 // namespace roles granted to users outside the namespace, and grants held
 // WITH GRANT OPTION. It is informational (used for sync error reporting).
 type ActualState struct {
-	Roles              map[string]map[Grant]struct{}
+	// Roles carries the observed objects (union of any managed privilege)
+	// for drift reporting.
+	Roles map[string]map[Grant]struct{}
+	// RolePrivileges carries the raw observed (object, privilege) sets the
+	// DDL diff and bundle-coverage checks consume.
+	RolePrivileges     map[string]map[GrantPrivilege]struct{}
 	Users              map[string]UserActual
 	Wildcards          []WildcardGrant
 	Unexpected         []string
