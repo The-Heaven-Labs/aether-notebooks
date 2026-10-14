@@ -1,6 +1,7 @@
 package crypto_test
 
 import (
+	"encoding/base64"
 	"strings"
 	"testing"
 
@@ -105,5 +106,55 @@ func TestDecryptStringWrongKey(t *testing.T) {
 	}
 	if _, err := crypto.DecryptString(enc, crypto.DeriveKey("key-two-long-enough-for-testing-32chars")); err == nil {
 		t.Fatal("expected error decrypting with wrong key")
+	}
+}
+
+func TestDecryptStringCorruptValue(t *testing.T) {
+	key := crypto.DeriveKey("test-master-key-that-is-long-enough-32")
+
+	if _, err := crypto.DecryptString("enc:v1:!!!not-base64!!!", key); err == nil {
+		t.Fatal("expected error for corrupt tagged value")
+	}
+
+	// Valid base64 that decodes to fewer bytes than a GCM nonce.
+	truncated := "enc:v1:" + base64.StdEncoding.EncodeToString([]byte("abc"))
+	if _, err := crypto.DecryptString(truncated, key); err == nil {
+		t.Fatal("expected error for truncated tagged value")
+	}
+}
+
+func TestEncryptStringEmptyPlaintext(t *testing.T) {
+	key := crypto.DeriveKey("test-master-key-that-is-long-enough-32")
+
+	enc, err := crypto.EncryptString("", key)
+	if err != nil {
+		t.Fatalf("encrypt empty string: %v", err)
+	}
+	if !crypto.IsEncryptedString(enc) {
+		t.Fatalf("expected tagged value, got %q", enc)
+	}
+
+	dec, err := crypto.DecryptString(enc, key)
+	if err != nil {
+		t.Fatalf("decrypt empty string: %v", err)
+	}
+	if dec != "" {
+		t.Fatalf("expected empty string, got %q", dec)
+	}
+}
+
+func TestEncryptStringNonceRandomness(t *testing.T) {
+	key := crypto.DeriveKey("test-master-key-that-is-long-enough-32")
+
+	first, err := crypto.EncryptString("same-secret", key)
+	if err != nil {
+		t.Fatalf("encrypt first: %v", err)
+	}
+	second, err := crypto.EncryptString("same-secret", key)
+	if err != nil {
+		t.Fatalf("encrypt second: %v", err)
+	}
+	if first == second {
+		t.Fatal("expected different ciphertexts for the same plaintext (random nonce)")
 	}
 }

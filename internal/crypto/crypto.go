@@ -1,4 +1,6 @@
-// Package crypto provides AES-based encryption/decryption for connector credentials.
+// Package crypto provides AES-based encryption/decryption for connector
+// credentials and secrets stored inline in database rows, plus the keyed
+// hashes used to look up API tokens.
 package crypto
 
 import (
@@ -93,7 +95,10 @@ func EncryptString(plaintext string, key []byte) (string, error) {
 
 // DecryptString decrypts a value produced by EncryptString. Values without the
 // enc:v1: prefix are returned unchanged, so rows written before encryption was
-// introduced keep working (lazy migration).
+// introduced keep working (lazy migration). A legacy plaintext value that
+// itself begins with enc:v1: cannot be distinguished from ciphertext and will
+// fail decryption; that is acceptable because stored header values are never
+// expected to carry the prefix.
 func DecryptString(value string, key []byte) (string, error) {
 	encoded, ok := strings.CutPrefix(value, encryptedStringPrefix)
 	if !ok {
@@ -105,7 +110,7 @@ func DecryptString(value string, key []byte) (string, error) {
 	}
 	plaintext, err := Decrypt(ciphertext, key)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("decrypt encrypted string: %w", err)
 	}
 	return string(plaintext), nil
 }
