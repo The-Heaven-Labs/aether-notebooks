@@ -14,6 +14,8 @@ import (
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
+// makeWebhookToolDef builds the runtime def for a webhook tool. Precondition:
+// config.headers must already be decrypted — see decryptWebhookHeaderSecrets.
 func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, error) {
 	rawURL, _ := t.Config["url"].(string)
 	if rawURL == "" {

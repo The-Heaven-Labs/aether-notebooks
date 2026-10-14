@@ -409,6 +409,9 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 					if len(config) > 0 {
 						json.Unmarshal(config, &t.Config)
 					}
+					// Same response treatment as GET /tools/{id}: sensitive
+					// header values must never leave as ciphertext.
+					redactToolConfig(&t)
 					a.Tools = append(a.Tools, t)
 				}
 			}

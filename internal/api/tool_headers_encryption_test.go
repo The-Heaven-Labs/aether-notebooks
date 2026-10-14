@@ -357,7 +357,8 @@ func TestWebhookHeaderSecretsEncryptedAtRest(t *testing.T) {
 
 // TestToolTestEndpointSendsDecryptedSecretHeaders pins the probe path: the
 // tool test endpoint must send the plaintext secret over the wire, never the
-// stored enc:v1: ciphertext.
+// stored enc:v1: ciphertext, and must fail closed without leaking when the
+// ciphertext is undecryptable.
 func TestToolTestEndpointSendsDecryptedSecretHeaders(t *testing.T) {
 	srv := setupTestServer(t)
 	email := fmt.Sprintf("tool-test-headers-%d@example.com", time.Now().UnixNano())
@@ -371,22 +372,137 @@ func TestToolTestEndpointSendsDecryptedSecretHeaders(t *testing.T) {
 	}))
 	defer hook.Close()
 
+	t.Run("probe sends decrypted secret headers", func(t *testing.T) {
+		toolID := createWebhookTool(t, srv, token, map[string]any{
+			"url":     hook.URL,
+			"method":  "POST",
+			"headers": map[string]string{"X-Api-Key": "probe-secret"},
+			"secrets": []string{"X-Api-Key"},
+		})
+
+		req := httptest.NewRequest("POST", "/api/v1/tools/"+toolID+"/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("test tool: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		if gotAPIKey != "probe-secret" {
+			t.Fatalf("expected decrypted X-Api-Key %q on the probe, got %q", "probe-secret", gotAPIKey)
+		}
+	})
+
+	t.Run("probe fails closed on undecryptable secret", func(t *testing.T) {
+		// SQL-seed a tool whose tagged secret cannot be decrypted (malformed
+		// ciphertext), mirroring the MCP probe precedent: the endpoint must
+		// error without sending a request and without echoing stored values.
+		var userID, orgID string
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT u.id, om.org_id FROM users u JOIN org_members om ON om.user_id = u.id WHERE u.email = $1`,
+			email).Scan(&userID, &orgID); err != nil {
+			t.Fatalf("lookup org/user: %v", err)
+		}
+		corruptID := uuid.New().String()
+		corruptConfig, _ := json.Marshal(map[string]any{
+			"url":     hook.URL,
+			"method":  "POST",
+			"headers": map[string]string{"X-Api-Key": "enc:v1:!!!not-base64!!!"},
+			"secrets": []string{"X-Api-Key"},
+		})
+		if _, err := srv.DB().Pool.Exec(context.Background(), `
+			INSERT INTO tools (id, org_id, name, type, config, created_by, created_at, updated_at)
+			VALUES ($1, $2, $3, 'webhook', $4, $5, NOW(), NOW())
+		`, corruptID, orgID, fmt.Sprintf("Corrupt Secret Tool %d", time.Now().UnixNano()), corruptConfig, userID); err != nil {
+			t.Fatalf("insert corrupt tool: %v", err)
+		}
+		if _, err := srv.DB().Pool.Exec(context.Background(), `
+			INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+			VALUES ($1, 'tool', $2::uuid, 'user', $3, ARRAY['view','edit','delete','use'])
+		`, orgID, corruptID, userID); err != nil {
+			t.Fatalf("insert corrupt tool acl: %v", err)
+		}
+
+		req := httptest.NewRequest("POST", "/api/v1/tools/"+corruptID+"/test", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusInternalServerError {
+			t.Fatalf("corrupt secret probe: expected 500, got %d: %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "enc:v1:") || strings.Contains(body, "not-base64") {
+			t.Fatalf("ciphertext leaked in failure response: %s", body)
+		}
+	})
+}
+
+// TestAgentGetRedactsEmbeddedToolSecrets pins the agent read path: the embedded
+// tool list must carry the redaction sentinel for sensitive headers, never the
+// stored enc:v1: ciphertext (or, historically, the plaintext).
+func TestAgentGetRedactsEmbeddedToolSecrets(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("agent-tool-redact-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Agent Tool Redact Org")
+
 	toolID := createWebhookTool(t, srv, token, map[string]any{
-		"url":     hook.URL,
+		"url":     "https://example.com/hook",
 		"method":  "POST",
-		"headers": map[string]string{"X-Api-Key": "probe-secret"},
+		"headers": map[string]string{"X-Api-Key": "embedded-secret", "X-Mode": "live"},
 		"secrets": []string{"X-Api-Key"},
 	})
 
-	req := httptest.NewRequest("POST", "/api/v1/tools/"+toolID+"/test", nil)
+	body, _ := json.Marshal(map[string]any{
+		"name":     fmt.Sprintf("Redact Agent %d", time.Now().UnixNano()),
+		"tool_ids": []string{toolID},
+	})
+	req := httptest.NewRequest("POST", "/api/v1/agents", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	srv.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("test tool: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create agent: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]any
+	json.NewDecoder(rec.Body).Decode(&created)
+	agentID, _ := created["id"].(string)
+	if agentID == "" {
+		t.Fatalf("create agent: no id in response: %v", created)
 	}
 
-	if gotAPIKey != "probe-secret" {
-		t.Fatalf("expected decrypted X-Api-Key %q on the probe, got %q", "probe-secret", gotAPIKey)
+	req = httptest.NewRequest("GET", "/api/v1/agents/"+agentID, nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec = httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("get agent: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	raw := rec.Body.String()
+	if strings.Contains(raw, "enc:v1:") {
+		t.Fatalf("ciphertext leaked in agent response: %s", raw)
+	}
+	var agent map[string]any
+	if err := json.Unmarshal([]byte(raw), &agent); err != nil {
+		t.Fatalf("decode agent: %v (%s)", err, raw)
+	}
+	var embedded map[string]any
+	tools, _ := agent["tools"].([]any)
+	for _, item := range tools {
+		tool, _ := item.(map[string]any)
+		if tool["id"] == toolID {
+			embedded = tool
+		}
+	}
+	if embedded == nil {
+		t.Fatalf("agent response missing embedded tool %s: %s", toolID, raw)
+	}
+	cfg, _ := embedded["config"].(map[string]any)
+	hdrs, _ := cfg["headers"].(map[string]any)
+	if hdrs["X-Api-Key"] != "__AETHER_REDACTED__" {
+		t.Fatalf("expected redacted embedded secret header, got %v", hdrs["X-Api-Key"])
+	}
+	if hdrs["X-Mode"] != "live" {
+		t.Fatalf("expected visible X-Mode in embedded tool, got %v", hdrs["X-Mode"])
 	}
 }

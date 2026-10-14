@@ -1456,7 +1456,7 @@ func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, mast
 		}
 		if t.Type == models.ToolTypeWebhook {
 			if err := decryptWebhookHeaderSecrets(&t, masterKey); err != nil {
-				slog.Warn("engine: failed to decrypt webhook header secrets", "tool", t.Name, "error", err)
+				slog.Warn("engine: failed to decrypt webhook header secrets", "tool", t.Name, "agent_id", agent.ID, "error", err)
 				continue
 			}
 		}
