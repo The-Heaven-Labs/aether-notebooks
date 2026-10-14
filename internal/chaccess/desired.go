@@ -26,7 +26,9 @@ type DesiredState struct {
 	Users map[string]UserState
 }
 
-// UserActual is the observed state of one ClickHouse user.
+// UserActual is the observed state of one ClickHouse user. DirectGrants is
+// the observed objects (union of any managed privilege); DirectPrivileges is
+// the raw (object, privilege) detail used for bundle-coverage checks and DDL.
 type UserActual struct {
 	Roles           map[string]struct{}
 	DirectGrants    map[Grant]struct{}
@@ -54,10 +56,11 @@ type WildcardGrant struct {
 // namespace roles granted to users outside the namespace, and grants held
 // WITH GRANT OPTION. It is informational (used for sync error reporting).
 type ActualState struct {
+	// Roles carries the observed objects (union of any managed privilege)
+	// for drift reporting.
 	Roles map[string]map[Grant]struct{}
 	// RolePrivileges carries the raw observed (object, privilege) sets the
-	// DDL diff consumes; Roles carries object-level presence (a full bundle)
-	// for drift reporting.
+	// DDL diff and bundle-coverage checks consume.
 	RolePrivileges     map[string]map[GrantPrivilege]struct{}
 	Users              map[string]UserActual
 	Wildcards          []WildcardGrant

@@ -429,6 +429,12 @@ func cleanGrantTarget(s string) string {
 	return strings.TrimSpace(strings.ReplaceAll(s, "`", ""))
 }
 
+// buildActualFromGrantRows assembles the observed state from system.grants
+// rows. Object maps (Roles, UserActual.DirectGrants) carry the union of any
+// managed privilege: the drift report tables a surplus object no matter how
+// partial its bundle, so presence must not require the full bundle. Privilege
+// maps (RolePrivileges, DirectPrivileges) carry the raw (object, privilege)
+// detail the DDL diff and bundle-coverage checks consume.
 func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]struct{}, users map[string]UserActual, unexpected []string, mode PrivilegeMode) ActualState {
 	a := ActualState{
 		Roles:          map[string]map[Grant]struct{}{},
@@ -499,56 +505,28 @@ func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]stru
 				a.RolePrivileges[r.RoleName] = map[GrantPrivilege]struct{}{}
 			}
 			a.RolePrivileges[r.RoleName][gp] = struct{}{}
+			// Union presence: any managed privilege observes the object, so
+			// the drift report's surplus direction flags a partial extra.
+			if a.Roles[r.RoleName] == nil {
+				a.Roles[r.RoleName] = map[Grant]struct{}{}
+			}
+			a.Roles[r.RoleName][gp.Grant] = struct{}{}
 		} else if r.UserName != "" {
 			u := a.Users[r.UserName]
 			if u.DirectPrivileges == nil {
 				u.DirectPrivileges = map[GrantPrivilege]struct{}{}
 			}
 			u.DirectPrivileges[gp] = struct{}{}
+			if u.DirectGrants == nil {
+				u.DirectGrants = map[Grant]struct{}{}
+			}
+			u.DirectGrants[gp.Grant] = struct{}{}
 			a.Users[r.UserName] = u
 		}
-	}
-	// Object-level presence requires the full bundle: a manually revoked
-	// privilege must resurface as a missing object grant in drift reports.
-	for name, privs := range a.RolePrivileges {
-		a.Roles[name] = fullBundleObjects(privs, mode)
-	}
-	for name, u := range a.Users {
-		u.DirectGrants = fullBundleObjects(u.DirectPrivileges, mode)
-		a.Users[name] = u
 	}
 	a.Wildcards = normalizeWildcards(a.Wildcards)
 	a.Unexpected = dedupeSorted(a.Unexpected)
 	return a
-}
-
-// fullBundleObjects returns the objects whose observed privileges cover every
-// privilege in mode's bundle. Partially granted objects (for example a manual
-// REVOKE of one bundle privilege) are deliberately absent: the drift report
-// is object-level, and partial bundles must resurface as missing grants.
-func fullBundleObjects(privs map[GrantPrivilege]struct{}, mode PrivilegeMode) map[Grant]struct{} {
-	byObject := map[Grant]map[Privilege]struct{}{}
-	for gp := range privs {
-		if byObject[gp.Grant] == nil {
-			byObject[gp.Grant] = map[Privilege]struct{}{}
-		}
-		byObject[gp.Grant][gp.Access] = struct{}{}
-	}
-	out := map[Grant]struct{}{}
-	bundle := mode.Bundle()
-	for gr, set := range byObject {
-		full := true
-		for _, p := range bundle {
-			if _, ok := set[p]; !ok {
-				full = false
-				break
-			}
-		}
-		if full {
-			out[gr] = struct{}{}
-		}
-	}
-	return out
 }
 
 // managedAccessType reports whether accessType is one of the read privileges

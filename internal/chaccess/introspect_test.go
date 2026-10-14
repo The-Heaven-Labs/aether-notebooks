@@ -16,9 +16,9 @@ func TestParseGrantRows(t *testing.T) {
 	users := map[string]UserActual{"aether_u_x": {}}
 	a := buildActualFromGrantRows(rows, nil, users, nil, PrivilegeModeFull)
 	require.Contains(t, a.Users["aether_u_x"].DirectGrants, Grant{"db", "t1"},
-		"a full bundle makes the object object-present")
-	require.NotContains(t, a.Users["aether_u_x"].DirectGrants, Grant{"db", "t2"},
-		"a partial bundle leaves the object privilege-only so drift can report it")
+		"any managed privilege makes the object observed")
+	require.Contains(t, a.Users["aether_u_x"].DirectGrants, Grant{"db", "t2"},
+		"union presence: a partial bundle still observes the object")
 	require.Contains(t, a.Users["aether_u_x"].DirectPrivileges,
 		GrantPrivilege{Grant: Grant{"db", "t2"}, Access: AccessSelect})
 	require.NotContains(t, a.Users["aether_u_x"].Roles, "aether_g_y")
@@ -107,9 +107,8 @@ func TestParseZeroGrantRolesAreLoaded(t *testing.T) {
 
 func TestParseGrantOptionIsUnexpectedDrift(t *testing.T) {
 	// Legacy mode keeps the "grant still applied" expectation literal: a
-	// SELECT-only row is the full bundle there. In full mode the object would
-	// stay privilege-only (the drift report still tables it via the missing
-	// bundle privileges).
+	// SELECT-only row is the full bundle there, so the object is observed.
+	// The grant-option drift entry fails the reconcile closed in every mode.
 	rows := []GrantRow{
 		{UserName: "aether_wh_u_x", Database: "db", Table: "t1", GrantOption: 1, AccessType: "SELECT"},
 	}
@@ -118,16 +117,17 @@ func TestParseGrantOptionIsUnexpectedDrift(t *testing.T) {
 	require.Equal(t, []string{"grant option on db.t1 for aether_wh_u_x"}, a.Unexpected)
 }
 
-func TestParseGrantOptionFullModeIsPrivilegeOnly(t *testing.T) {
-	// In full mode a lone SELECT WITH GRANT OPTION row is a partial bundle:
-	// the object must not be object-present (drift reports it as missing once
-	// repaired) while the grant-option drift entry still fails the reconcile
-	// closed regardless of mode.
+func TestParseGrantOptionFullModeUnionPresence(t *testing.T) {
+	// In full mode a lone SELECT WITH GRANT OPTION row is a partial bundle,
+	// but union presence still observes the object — the drift report's
+	// surplus direction must flag it — while the privilege map keeps the
+	// SELECT privilege for bundle-coverage checks. The grant-option drift
+	// entry still fails the reconcile closed regardless of mode.
 	rows := []GrantRow{
 		{UserName: "aether_wh_u_x", Database: "db", Table: "t1", AccessType: "SELECT", GrantOption: 1},
 	}
 	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
-	require.NotContains(t, a.Users["aether_wh_u_x"].DirectGrants, Grant{"db", "t1"})
+	require.Contains(t, a.Users["aether_wh_u_x"].DirectGrants, Grant{"db", "t1"}, "union presence")
 	require.Contains(t, a.Users["aether_wh_u_x"].DirectPrivileges,
 		GrantPrivilege{Grant: Grant{"db", "t1"}, Access: AccessSelect})
 	require.Equal(t, []string{"grant option on db.t1 for aether_wh_u_x"}, a.Unexpected)

@@ -162,7 +162,7 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	// Diff before applying so drift is reported from the same observation the
 	// plan is built from. A first provision legitimately reports everything as
 	// missing, so only warehouses that were provisioned before alert.
-	report := compareWarehouseState(warehouseID, desired, actual)
+	report := compareWarehouseState(warehouseID, desired, actual, mode)
 	prevProvisioned := hdr.appliedFP != nil || hdr.syncStatus == "ready"
 
 	// Fail closed: wildcards defeat table-level least privilege and foreign
@@ -561,7 +561,7 @@ func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID
 		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: load clickhouse actual state: %w", warehouseID, err)
 	}
 
-	report := compareWarehouseState(warehouseID, desired, actual)
+	report := compareWarehouseState(warehouseID, desired, actual, mode)
 	if !report.IsEmpty() {
 		s.auditWarehouseDriftReport(ctx, hdr.orgID, warehouseID, report, nil)
 	}
@@ -712,10 +712,14 @@ func (s *Server) auditDeferredWarehouseIdentityCleanup(ctx context.Context, orgI
 	}
 }
 
-// compareWarehouseState diffs desired against actual. It is pure so it can be
-// unit-tested without ClickHouse.
-func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState, actual chaccess.ActualState) DriftReport {
+// compareWarehouseState diffs desired against actual. The unexpected direction
+// is object-level over the union maps (any observed managed privilege observes
+// the object); the missing direction requires the observed privilege set to
+// cover mode's full bundle for the object. It is pure so it can be unit-tested
+// without ClickHouse.
+func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState, actual chaccess.ActualState, mode chaccess.PrivilegeMode) DriftReport {
 	report := DriftReport{WarehouseID: warehouseID}
+	bundle := mode.Bundle()
 
 	for ident, grants := range actual.Roles {
 		want := map[chaccess.Grant]struct{}{}
@@ -747,12 +751,11 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 	}
 
 	for ident, rs := range desired.Roles {
-		have, exists := actual.Roles[ident]
-		if !exists {
+		if _, exists := actual.Roles[ident]; !exists {
 			report.MissingRoles = append(report.MissingRoles, ident)
 		}
 		for g := range rs.Grants {
-			if _, ok := have[g]; !ok {
+			if !coversBundle(actual.RolePrivileges[ident], g, bundle) {
 				report.MissingGrants = append(report.MissingGrants, grantDriftLabel(g, ident))
 			}
 		}
@@ -773,7 +776,7 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 			}
 		}
 		for g := range us.DirectGrants {
-			if _, ok := user.DirectGrants[g]; !ok {
+			if !coversBundle(user.DirectPrivileges, g, bundle) {
 				report.MissingGrants = append(report.MissingGrants, grantDriftLabel(g, ident))
 			}
 		}
@@ -795,6 +798,17 @@ func compareWarehouseState(warehouseID uuid.UUID, desired chaccess.DesiredState,
 	report.MissingRoleMemberships = sortDedupe(report.MissingRoleMemberships)
 	report.DefaultRolesNotAll = sortDedupe(report.DefaultRolesNotAll)
 	return report
+}
+
+// coversBundle reports whether the observed privileges include every
+// privilege of mode's bundle for one object.
+func coversBundle(privs map[chaccess.GrantPrivilege]struct{}, g chaccess.Grant, bundle []chaccess.Privilege) bool {
+	for _, p := range bundle {
+		if _, ok := privs[chaccess.GrantPrivilege{Grant: g, Access: p}]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 // grantDriftLabel renders one grant and its subject for a drift report.

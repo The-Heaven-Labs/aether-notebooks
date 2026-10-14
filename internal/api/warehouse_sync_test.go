@@ -1094,6 +1094,18 @@ func TestReconcileWarehouseAuditsDriftForProvisionedWarehouse(t *testing.T) {
 	require.Equal(t, 1, driftAudits)
 }
 
+// fullBundlePrivs expands object grants into the modern bundle's (object,
+// privilege) pairs, matching the privilege maps introspection produces.
+func fullBundlePrivs(gs ...chaccess.Grant) map[chaccess.GrantPrivilege]struct{} {
+	m := make(map[chaccess.GrantPrivilege]struct{}, len(gs)*len(chaccess.PrivilegeModeFull.Bundle()))
+	for _, g := range gs {
+		for _, p := range chaccess.PrivilegeModeFull.Bundle() {
+			m[chaccess.GrantPrivilege{Grant: g, Access: p}] = struct{}{}
+		}
+	}
+	return m
+}
+
 // TestCompareWarehouseStateReportsAllDriftKinds exercises the pure diff
 // directly so every report field is covered without a provisioner.
 func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
@@ -1122,11 +1134,15 @@ func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
 			"role_want":   {grantPresent: {}},
 			"role_orphan": {},
 		},
+		RolePrivileges: map[string]map[chaccess.GrantPrivilege]struct{}{
+			"role_want": fullBundlePrivs(grantPresent),
+		},
 		Users: map[string]chaccess.UserActual{
 			"user_want": {
-				Roles:           map[string]struct{}{"role_want": {}},
-				DirectGrants:    map[chaccess.Grant]struct{}{grantExtra: {}},
-				DefaultRolesAll: false,
+				Roles:            map[string]struct{}{"role_want": {}},
+				DirectGrants:     map[chaccess.Grant]struct{}{grantExtra: {}},
+				DirectPrivileges: fullBundlePrivs(grantExtra),
+				DefaultRolesAll:  false,
 			},
 			"user_orphan": {},
 		},
@@ -1134,7 +1150,7 @@ func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
 		Unexpected: []string{"role x granted to y"},
 	}
 
-	report := compareWarehouseState(warehouseID, desired, actual)
+	report := compareWarehouseState(warehouseID, desired, actual, chaccess.PrivilegeModeFull)
 	require.Equal(t, []string{"analytics.secret for user_want"}, report.UnexpectedGrants)
 	require.Equal(t, []string{
 		"analytics.daily for role_absent",
@@ -1156,18 +1172,23 @@ func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
 			"role_want":   {grantPresent: {}},
 			"role_absent": {grantMissing: {}},
 		},
+		RolePrivileges: map[string]map[chaccess.GrantPrivilege]struct{}{
+			"role_want":   fullBundlePrivs(grantPresent),
+			"role_absent": fullBundlePrivs(grantMissing),
+		},
 		Users: map[string]chaccess.UserActual{
 			"user_want": {
-				Roles:           map[string]struct{}{"role_want": {}, "role_absent": {}},
-				DirectGrants:    map[chaccess.Grant]struct{}{grantMissing: {}},
-				DefaultRolesAll: true,
+				Roles:            map[string]struct{}{"role_want": {}, "role_absent": {}},
+				DirectGrants:     map[chaccess.Grant]struct{}{grantMissing: {}},
+				DirectPrivileges: fullBundlePrivs(grantMissing),
+				DefaultRolesAll:  true,
 			},
 			"user_absent": {
 				Roles:           map[string]struct{}{"role_want": {}},
 				DefaultRolesAll: true,
 			},
 		},
-	})
+	}, chaccess.PrivilegeModeFull)
 	require.True(t, matched.IsEmpty(), "matching state must report no drift: %+v", matched)
 }
 
