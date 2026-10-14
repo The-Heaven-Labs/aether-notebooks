@@ -30,6 +30,8 @@ export interface MCPServerOrg {
   type: 'stdio' | 'http'
   command: string
   args?: string[]
+  headers?: Record<string, unknown>
+  header_secrets?: string[]
   created_by: string
   created_at: string
   updated_at: string
