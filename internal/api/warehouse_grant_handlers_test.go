@@ -392,8 +392,9 @@ func TestWarehouseGrantRejectsEveryoneGroupSubject(t *testing.T) {
 }
 
 // TestWarehouseGrantWarningHonorsFolderServiceAccess pins the warning check to
-// the same ACL ancestor walk execution uses: `use` granted on a connector's
-// folder must clear the warning for the group and its members.
+// the same ACL ancestor walk execution uses: a folder grant of `edit` (the
+// content-operation rung, which the resolver expands to `use` on connectors
+// inside) must clear the warning for the group and its members.
 func TestWarehouseGrantWarningHonorsFolderServiceAccess(t *testing.T) {
 	s, _ := warehouseHandlersServer(t)
 	orgID, adminID, admin := seedWarehouseOrgAdmin(t, s)
@@ -433,11 +434,12 @@ func TestWarehouseGrantWarningHonorsFolderServiceAccess(t *testing.T) {
 	require.NoError(t, json.Unmarshal(beforeGroup.Body.Bytes(), &beforeGroupGrant))
 	require.Equal(t, "no_service_access", beforeGroupGrant.Warning)
 
-	// A `use` ACL on the connector's folder reaches both the group subject and
-	// (through membership) the user subject.
+	// A folder `edit` grant expands to `use` on the connector inside and
+	// reaches both the group subject and (through membership) the user
+	// subject.
 	_, err = s.db.Pool.Exec(context.Background(), `
 		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
-		VALUES ($1, 'folder', $2::uuid, 'group', $3, ARRAY['use'])`,
+		VALUES ($1, 'folder', $2::uuid, 'group', $3, ARRAY['view','edit'])`,
 		orgID.String(), folderID.String(), groupID.String())
 	require.NoError(t, err)
 
@@ -445,13 +447,13 @@ func TestWarehouseGrantWarningHonorsFolderServiceAccess(t *testing.T) {
 	require.Equal(t, http.StatusOK, afterUser.Code, afterUser.Body.String())
 	var afterUserGrant warehouseGrantCreateJSON
 	require.NoError(t, json.Unmarshal(afterUser.Body.Bytes(), &afterUserGrant))
-	require.Empty(t, afterUserGrant.Warning, "folder-inherited `use` must clear the user warning")
+	require.Empty(t, afterUserGrant.Warning, "folder-inherited `edit` must clear the user warning")
 
 	afterGroup := createGrantViaAPI(t, s, admin, wh, groupBody)
 	require.Equal(t, http.StatusOK, afterGroup.Code, afterGroup.Body.String())
 	var afterGroupGrant warehouseGrantCreateJSON
 	require.NoError(t, json.Unmarshal(afterGroup.Body.Bytes(), &afterGroupGrant))
-	require.Empty(t, afterGroupGrant.Warning, "folder-inherited `use` must clear the group warning")
+	require.Empty(t, afterGroupGrant.Warning, "folder-inherited `edit` must clear the group warning")
 }
 
 // TestWarehouseGrantWarningHonorsEveryoneGroupServiceAccess pins the warning

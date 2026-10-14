@@ -42,7 +42,8 @@ type warehouseValidationJSON struct {
 // `use` ACL on at least one live ClickHouse service of a warehouse. It mirrors
 // permissions.go resolution: a user's groups (including the implicit Everyone
 // group) and the org_role:everyone entry all count, and folder ancestors of a
-// connector carry their ACLs down.
+// connector carry their ACLs down — including a folder `edit` grant, which
+// the resolver expands to `use` on the connector (folderActionImplications).
 type warehouseServiceAccessIndex struct {
 	userServices     map[string]map[string]struct{} // user ID -> connector name set
 	groupServices    map[string]map[string]struct{} // group ID -> connector name set
@@ -92,9 +93,9 @@ func (s *Server) loadWarehouseServiceAccessIndex(ctx context.Context, orgID stri
 		JOIN warehouses w ON w.id = c.warehouse_id
 		JOIN acl_entries ae
 		  ON ae.org_id = $1
-		 AND 'use' = ANY(ae.actions)
 		 AND (
-		   (ae.resource_type = 'connector' AND ae.resource_id = c.id)
+		   (ae.resource_type = 'connector' AND ae.resource_id = c.id
+		    AND 'use' = ANY(ae.actions))
 		   OR (ae.resource_type = 'folder' AND ae.resource_id IN (
 		        WITH RECURSIVE ancestors AS (
 		          SELECT id, parent_id FROM folders WHERE id = c.folder_id
@@ -102,7 +103,8 @@ func (s *Server) loadWarehouseServiceAccessIndex(ctx context.Context, orgID stri
 		          SELECT f.id, f.parent_id
 		          FROM folders f JOIN ancestors a ON f.id = a.parent_id
 		        )
-		        SELECT id FROM ancestors))
+		        SELECT id FROM ancestors)
+		       AND ('use' = ANY(ae.actions) OR 'edit' = ANY(ae.actions)))
 		 )
 		WHERE c.org_id = $1
 		  AND c.warehouse_id = $2

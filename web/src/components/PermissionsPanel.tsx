@@ -59,6 +59,30 @@ const UNRENDERED_ACTIONS: Partial<Record<ResourceType, string[]>> = {
   notebook: ['create'],
 }
 
+// Ancestor folder grants are coarse: the folder chips
+// (view/create/edit/manage/delete) cannot name the item-specific actions, so
+// the resolver expands a folder `edit` grant to notebook run, connector/tool
+// use, and dashboard view_with_data, and a folder `manage` grant to share on
+// notebooks, connectors, and dashboards (internal/api/permissions.go
+// folderActionImplications). The inherited section mirrors that expansion so
+// its read-only chips show the access the folder actually confers.
+const FOLDER_IMPLIED_ACTIONS: Record<string, string[]> = {
+  edit: ['run', 'use', 'view_with_data'],
+  manage: ['share'],
+}
+
+/** Effective actions an inherited folder entry confers on this resource type. */
+function inheritedFolderActions(resourceType: ResourceType, entryActions: string[]): string[] {
+  if (resourceType === 'folder') return entryActions
+  const effective = new Set(entryActions)
+  for (const [folderAction, implied] of Object.entries(FOLDER_IMPLIED_ACTIONS)) {
+    if (entryActions.includes(folderAction)) {
+      for (const action of implied) effective.add(action)
+    }
+  }
+  return [...effective]
+}
+
 const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
   connector: {
     view:   'See connector name, type, host, and status',
@@ -84,8 +108,8 @@ const ACTION_DESCRIPTIONS: Record<ResourceType, Record<string, string>> = {
   folder: {
     view:   'See the folder and its contents',
     create: 'Create sub-folders and items',
-    edit:   'Rename or restructure the folder',
-    manage: 'Manage folder-level permissions',
+    edit:   'Rename or restructure the folder, and run or use items inside',
+    manage: 'Manage access to the folder and everything inside it',
     share:  'Share this folder with others',
     delete: 'Delete the folder permanently',
   },
@@ -985,7 +1009,7 @@ export function PermissionsPanel({
                             </div>
                             <ActionChips
                               actions={actions}
-                              selected={entry.actions}
+                              selected={inheritedFolderActions(resourceType, entry.actions)}
                               descriptions={ACTION_DESCRIPTIONS[resourceType] ?? {}}
                               disabled
                               onChange={() => {}}

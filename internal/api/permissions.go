@@ -285,7 +285,9 @@ func checkPermissionQ(ctx context.Context, q permissionQuerier, userID, orgID, o
 	// 6. Evaluate candidates: if any matching entry grants the action → allow.
 	//    A matching org_role:everyone entry that grants the action is sufficient
 	//    even when a more-specific non-everyone entry lacks the action (restrictive).
-	//    view is implied by use/edit/share/delete/admin.
+	//    view is implied by use/edit/share/delete/admin, and ancestor folder
+	//    grants expand onto the descendant actions the folder chip set cannot
+	//    name directly.
 	var (
 		everyoneGrants   bool
 		restrictiveMatch bool
@@ -295,7 +297,7 @@ func checkPermissionQ(ctx context.Context, q permissionQuerier, userID, orgID, o
 			continue
 		}
 
-		if grantsAction(c.actions, action) {
+		if candidateGrants(c, resourceType, action) {
 			if c.subjectType == "org_role" && c.subjectID == "everyone" {
 				everyoneGrants = true
 			} else {
@@ -366,6 +368,53 @@ func grantsAction(actions []string, action string) bool {
 	for _, a := range actions {
 		if a == action || (action == "view" && isViewImpliedBy(a)) {
 			return true
+		}
+	}
+	return false
+}
+
+// folderActionImplications expands an ancestor folder grant onto the actions
+// descendant resources support but the folder chip set cannot name directly.
+// Folders are granted with a coarse five-action vocabulary
+// (view/create/edit/manage/delete), so the rungs carry their whole content
+// capability to the items inside:
+//
+//   - edit:   operate on the contents — run notebooks, use connectors and
+//     tools, and read a dashboard with its underlying data.
+//   - manage: control access to the contents — share notebooks, connectors,
+//     and dashboards.
+//
+// Together with the same-named matches, a full folder grant therefore covers
+// every action of every resource inside the folder, while a partial grant
+// covers exactly its rung (a view-only folder grant still cannot run).
+// The expansion is deliberately ancestor-only: an entry on the resource
+// itself keeps its exact action list, so a direct notebook edit grant never
+// implies run.
+var folderActionImplications = map[string][]string{
+	"edit":   {"run", "use", "view_with_data"},
+	"manage": {"share"},
+}
+
+// candidateGrants reports whether one ACL candidate grants action on the
+// resource being checked. Candidates on the resource itself (specificity -1)
+// match by name and the view implication only; ancestor folder candidates
+// additionally expand through folderActionImplications. Folders are excluded
+// from the expansion because they have no descendant actions to imply.
+func candidateGrants(c aclCandidate, resourceType, action string) bool {
+	if grantsAction(c.actions, action) {
+		return true
+	}
+	if c.specificity < 0 || resourceType == "folder" {
+		return false
+	}
+	for folderAction, implied := range folderActionImplications {
+		if !grantsAction(c.actions, folderAction) {
+			continue
+		}
+		for _, a := range implied {
+			if a == action {
+				return true
+			}
 		}
 	}
 	return false
