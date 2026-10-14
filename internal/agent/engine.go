@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/headers"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
@@ -480,7 +481,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	mcpRows, err := e.pool.Query(ctx, `
-		SELECT ms.id, ms.org_id, ms.name, ms.type, ms.command, ms.args, ms.created_by, ms.created_at, ms.updated_at
+		SELECT ms.id, ms.org_id, ms.name, ms.type, ms.command, ms.args, ms.created_by, ms.created_at, ms.updated_at, ms.headers, ms.header_secrets
 		FROM agent_mcp_servers ams
 		JOIN mcp_servers ms ON ms.id = ams.mcp_server_id
 		WHERE ams.agent_id = $1
@@ -489,11 +490,13 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	if err == nil {
 		for mcpRows.Next() {
 			var s models.MCPServerOrg
-			var args []byte
-			if err := mcpRows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err == nil {
-				if args != nil {
-					json.Unmarshal(args, &s.Args)
+			var headersRaw []byte
+			var headerSecrets []string
+			if err := mcpRows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &headersRaw, &headerSecrets); err == nil {
+				if headersRaw != nil {
+					json.Unmarshal(headersRaw, &s.Headers)
 				}
+				s.HeaderSecrets = headerSecrets
 				agent.MCPServerIDs = append(agent.MCPServerIDs, s.ID)
 				agent.MCPServers = append(agent.MCPServers, s)
 			}
@@ -845,9 +848,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				continue
 			}
 			if ms.Type == "http" {
+				plain, err := headers.DecryptSecrets(ms.Headers, ms.HeaderSecrets, masterKey)
+				if err != nil {
+					slog.Warn("engine: failed to decrypt MCP server headers", "server", ms.Name, "session_id", sessionID, "error", err)
+					continue
+				}
 				allTools = append(allTools,
-					mcpListToolDef(ms.Name, makeMCPToolListHandlerHTTP(ms.Command)),
-					mcpCallToolDef(ms.Name, makeMCPToolCallHandlerHTTP(ms.Command)),
+					mcpListToolDef(ms.Name, makeMCPToolListHandlerHTTP(ms.Command, plain)),
+					mcpCallToolDef(ms.Name, makeMCPToolCallHandlerHTTP(ms.Command, plain)),
 				)
 			}
 		}

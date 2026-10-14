@@ -8,6 +8,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"github.com/the-heaven-labs/aether/internal/headers"
 )
 
 type MCPClient struct {
@@ -18,6 +20,9 @@ type MCPClient struct {
 	Env     map[string]string
 	Stdio   io.ReadCloser
 	HTTPURL string
+	// Headers are applied to every HTTP request this client makes. Values are
+	// plaintext at this point; decryption happens when the client is built.
+	Headers map[string]string
 }
 
 func RegisterMCPTools(reg *ToolRegistry, servers []*MCPClient) {
@@ -62,6 +67,7 @@ func makeMCPToolListHandler(srv *MCPClient) ToolHandler {
 		if err != nil {
 			return nil, fmt.Errorf("mcp list tools: %w", err)
 		}
+		headers.Apply(req, srv.Headers)
 		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Do(req)
 		if err != nil {
@@ -77,7 +83,7 @@ func makeMCPToolListHandler(srv *MCPClient) ToolHandler {
 	}
 }
 
-func makeMCPToolListHandlerHTTP(url string) ToolHandler {
+func makeMCPToolListHandlerHTTP(url string, hdrs map[string]string) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		httpCtx, cancel := context.WithTimeout(ctx.Context, 30*time.Second)
 		defer cancel()
@@ -86,6 +92,7 @@ func makeMCPToolListHandlerHTTP(url string) ToolHandler {
 		if err != nil {
 			return nil, fmt.Errorf("mcp list tools: %w", err)
 		}
+		headers.Apply(req, hdrs)
 
 		client := &http.Client{Timeout: 30 * time.Second}
 		resp, err := client.Do(req)
@@ -102,7 +109,7 @@ func makeMCPToolListHandlerHTTP(url string) ToolHandler {
 	}
 }
 
-func makeMCPToolCallHandlerHTTP(url string) ToolHandler {
+func makeMCPToolCallHandlerHTTP(url string, hdrs map[string]string) ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
 			Tool      string         `json:"tool"`
@@ -126,6 +133,7 @@ func makeMCPToolCallHandlerHTTP(url string) ToolHandler {
 			return nil, fmt.Errorf("create request: %w", err)
 		}
 		req2.Header.Set("Content-Type", "application/json")
+		headers.Apply(req2, hdrs)
 
 		client := &http.Client{Timeout: 60 * time.Second}
 		resp, err := client.Do(req2)
@@ -166,6 +174,7 @@ func makeMCPToolCallHandler(srv *MCPClient) ToolHandler {
 			return nil, fmt.Errorf("create request: %w", err)
 		}
 		req2.Header.Set("Content-Type", "application/json")
+		headers.Apply(req2, srv.Headers)
 
 		client := &http.Client{Timeout: 60 * time.Second}
 		resp, err := client.Do(req2)
