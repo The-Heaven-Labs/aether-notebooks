@@ -2,6 +2,7 @@ package headers_test
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
@@ -10,6 +11,31 @@ import (
 )
 
 func testKey() []byte { return crypto.DeriveKey("test-master-key-that-is-long-enough-32") }
+
+func TestApply(t *testing.T) {
+	req, err := http.NewRequest(http.MethodPost, "http://example.test/chat/completions", nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	headers.Apply(req, map[string]string{
+		"content-TYPE":  "text/plain", // reserved, case-insensitive: must be skipped
+		"Host":          "evil.test",  // reserved: must be skipped
+		"Authorization": "Custom gateway-auth",
+		"x-title":       "Aether",
+	})
+
+	if got := req.Header.Get("Content-Type"); got != "application/json" {
+		t.Fatalf("reserved Content-Type must survive, got %q", got)
+	}
+	if got := req.Header.Get("Authorization"); got != "Custom gateway-auth" {
+		t.Fatalf("expected Authorization applied, got %q", got)
+	}
+	if got := req.Header.Get("X-Title"); got != "Aether" {
+		t.Fatalf("expected normal header applied, got %q", got)
+	}
+}
 
 func TestValidate(t *testing.T) {
 	t.Run("accepts a valid map", func(t *testing.T) {

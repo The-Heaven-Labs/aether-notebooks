@@ -233,11 +233,9 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 		req.Header.Set("Content-Type", "application/json")
 
 		// Custom headers are applied last so they may intentionally override
-		// Authorization for gateways with custom auth schemes. Host,
-		// Content-Length and Content-Type are rejected at write time.
-		for name, value := range customHeaders {
-			req.Header.Set(name, value)
-		}
+		// Authorization for gateways with custom auth schemes. Reserved names
+		// are skipped by Apply.
+		headers.Apply(req, customHeaders)
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -315,9 +313,9 @@ func (c *LLMClient) ChatStream(ctx context.Context, messages []ChatMessage, tool
 	}
 	req.Header.Set("Authorization", "Bearer "+string(decryptedKey))
 	req.Header.Set("Content-Type", "application/json")
-	for name, value := range customHeaders {
-		req.Header.Set(name, value)
-	}
+	// Applied last so custom headers may intentionally override Authorization
+	// for gateways with custom auth schemes.
+	headers.Apply(req, customHeaders)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

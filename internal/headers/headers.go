@@ -6,6 +6,7 @@ package headers
 
 import (
 	"fmt"
+	"net/http"
 	"regexp"
 	"strings"
 
@@ -31,6 +32,18 @@ var reserved = map[string]bool{
 	"host":           true,
 	"content-length": true,
 	"content-type":   true,
+}
+
+// Apply sets the given header values on req, skipping reserved names. Write
+// paths reject reserved headers (Host, Content-Length, Content-Type), but a
+// skip here keeps a direct-DB edit from silently breaking the wire format.
+func Apply(req *http.Request, values map[string]string) {
+	for name, value := range values {
+		if reserved[strings.ToLower(name)] {
+			continue
+		}
+		req.Header.Set(name, value)
+	}
 }
 
 // Validate checks an incoming header map and its sensitive-name list. It is
