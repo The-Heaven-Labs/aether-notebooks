@@ -1094,9 +1094,10 @@ func TestReconcileWarehouseAuditsDriftForProvisionedWarehouse(t *testing.T) {
 	require.Equal(t, 1, driftAudits)
 }
 
-// fullBundlePrivs expands object grants into the modern bundle's (object,
-// privilege) pairs, matching the privilege maps introspection produces.
-func fullBundlePrivs(gs ...chaccess.Grant) map[chaccess.GrantPrivilege]struct{} {
+// fullModeBundlePrivs expands object grants into the full (modern) mode's
+// read bundle as (object, privilege) pairs, matching the privilege maps
+// introspection produces.
+func fullModeBundlePrivs(gs ...chaccess.Grant) map[chaccess.GrantPrivilege]struct{} {
 	m := make(map[chaccess.GrantPrivilege]struct{}, len(gs)*len(chaccess.PrivilegeModeFull.Bundle()))
 	for _, g := range gs {
 		for _, p := range chaccess.PrivilegeModeFull.Bundle() {
@@ -1135,13 +1136,13 @@ func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
 			"role_orphan": {},
 		},
 		RolePrivileges: map[string]map[chaccess.GrantPrivilege]struct{}{
-			"role_want": fullBundlePrivs(grantPresent),
+			"role_want": fullModeBundlePrivs(grantPresent),
 		},
 		Users: map[string]chaccess.UserActual{
 			"user_want": {
 				Roles:            map[string]struct{}{"role_want": {}},
 				DirectGrants:     map[chaccess.Grant]struct{}{grantExtra: {}},
-				DirectPrivileges: fullBundlePrivs(grantExtra),
+				DirectPrivileges: fullModeBundlePrivs(grantExtra),
 				DefaultRolesAll:  false,
 			},
 			"user_orphan": {},
@@ -1173,14 +1174,14 @@ func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
 			"role_absent": {grantMissing: {}},
 		},
 		RolePrivileges: map[string]map[chaccess.GrantPrivilege]struct{}{
-			"role_want":   fullBundlePrivs(grantPresent),
-			"role_absent": fullBundlePrivs(grantMissing),
+			"role_want":   fullModeBundlePrivs(grantPresent),
+			"role_absent": fullModeBundlePrivs(grantMissing),
 		},
 		Users: map[string]chaccess.UserActual{
 			"user_want": {
 				Roles:            map[string]struct{}{"role_want": {}, "role_absent": {}},
 				DirectGrants:     map[chaccess.Grant]struct{}{grantMissing: {}},
-				DirectPrivileges: fullBundlePrivs(grantMissing),
+				DirectPrivileges: fullModeBundlePrivs(grantMissing),
 				DefaultRolesAll:  true,
 			},
 			"user_absent": {
@@ -1190,6 +1191,57 @@ func TestCompareWarehouseStateReportsAllDriftKinds(t *testing.T) {
 		},
 	}, chaccess.PrivilegeModeFull)
 	require.True(t, matched.IsEmpty(), "matching state must report no drift: %+v", matched)
+}
+
+// TestCompareWarehouseStateReportsPartialExtraGrants pins the union side of
+// the direction asymmetry: a single observed managed privilege on an
+// undesired object is a surplus, however partial the bundle.
+func TestCompareWarehouseStateReportsPartialExtraGrants(t *testing.T) {
+	warehouseID := uuid.New()
+	grantExtra := chaccess.Grant{Database: "analytics", Table: "secret"}
+
+	report := compareWarehouseState(warehouseID, chaccess.DesiredState{
+		Users: map[string]chaccess.UserState{"user_want": {}},
+	}, chaccess.ActualState{
+		Users: map[string]chaccess.UserActual{
+			"user_want": {
+				DirectGrants: map[chaccess.Grant]struct{}{grantExtra: {}},
+				DirectPrivileges: map[chaccess.GrantPrivilege]struct{}{
+					{Grant: grantExtra, Access: chaccess.AccessDictGet}: {},
+				},
+			},
+		},
+	}, chaccess.PrivilegeModeFull)
+	require.Equal(t, []string{"analytics.secret for user_want"}, report.UnexpectedGrants,
+		"one managed privilege observes the object, so a partial extra must be reported")
+	require.Empty(t, report.MissingGrants)
+}
+
+// TestCompareWarehouseStateReportsPartialMissingGrants pins the coverage side:
+// a desired object observed with two of the three bundle privileges is present
+// in ClickHouse yet still missing access for the third.
+func TestCompareWarehouseStateReportsPartialMissingGrants(t *testing.T) {
+	warehouseID := uuid.New()
+	grantWant := chaccess.Grant{Database: "analytics", Table: "events"}
+
+	report := compareWarehouseState(warehouseID, chaccess.DesiredState{
+		Roles: map[string]chaccess.RoleState{
+			"role_want": {Grants: map[chaccess.Grant]struct{}{grantWant: {}}},
+		},
+	}, chaccess.ActualState{
+		Roles: map[string]map[chaccess.Grant]struct{}{
+			"role_want": {grantWant: {}},
+		},
+		RolePrivileges: map[string]map[chaccess.GrantPrivilege]struct{}{
+			"role_want": {
+				{Grant: grantWant, Access: chaccess.AccessSelect}:           {},
+				{Grant: grantWant, Access: chaccess.AccessShowDictionaries}: {},
+			},
+		},
+	}, chaccess.PrivilegeModeFull)
+	require.Equal(t, []string{"analytics.events for role_want"}, report.MissingGrants,
+		"missing one bundle privilege must report the object as missing")
+	require.Empty(t, report.UnexpectedGrants)
 }
 
 // loopWarehouseRecorder records enqueues from the reconcile loop.

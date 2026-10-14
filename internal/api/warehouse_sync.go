@@ -476,11 +476,15 @@ func (s *Server) loadWarehouseDesiredState(ctx context.Context, warehouseID, org
 // applies the plan, drift detection only reports.
 type DriftReport struct {
 	WarehouseID uuid.UUID
-	// UnexpectedGrants are actual SELECT grants absent from desired state,
-	// rendered "db.table for <subject>".
+	// UnexpectedGrants lists observed objects, by subject, that are not
+	// desired. Presence is a union: any managed privilege on an undesired
+	// object is a surplus, however partial the bundle. Rendered
+	// "db.table for <subject>".
 	UnexpectedGrants []string
-	// MissingGrants are desired SELECT grants absent from actual state,
-	// rendered "db.table for <subject>".
+	// MissingGrants lists desired objects, by subject, whose observed
+	// privileges do not cover the mode's read bundle (a partially granted
+	// object is present in ClickHouse yet still missing access). Rendered
+	// "db.table for <subject>".
 	MissingGrants []string
 	// UnexpectedUsers are users in the warehouse namespace that desired state
 	// does not know about.
@@ -499,8 +503,8 @@ type DriftReport struct {
 	// Wildcards are actual wildcard grants (subject + scope). They defeat
 	// table-level least privilege and make reconcile fail closed.
 	Wildcards []chaccess.WildcardGrant
-	// Unexpected mirrors chaccess.ActualState.Unexpected: non-SELECT grants,
-	// foreign role wiring, and grants held WITH GRANT OPTION.
+	// Unexpected mirrors chaccess.ActualState.Unexpected: grants outside the
+	// managed read set, foreign role wiring, and grants held WITH GRANT OPTION.
 	Unexpected []string
 	// DefaultRolesNotAll are desired users whose roles are provisioned but
 	// whose default role is not "all"; the next reconcile resets it.
@@ -601,9 +605,10 @@ func (s *Server) withWarehouseSyncLock(ctx context.Context, warehouseID uuid.UUI
 // holds it across this drop and the row delete) so a concurrent reconcile
 // cannot recreate identities mid-drop. It returns whether any drop statements
 // ran (so callers can decide whether a refused delete needs a restoring
-// reconcile) and fails closed when the provisioner is missing/unreachable,
-// any statement fails, or identities remain afterwards. The warehouse row is
-// not touched here.
+// reconcile) and fails closed when the provisioner is missing/unreachable, the
+// privilege-mode probe fails (it runs on the same provisioner connection
+// before any observation), any statement fails, or identities remain
+// afterwards. The warehouse row is not touched here.
 func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID uuid.UUID) (bool, error) {
 	hdr, err := s.loadWarehouseHeader(ctx, warehouseID)
 	if err != nil {
