@@ -16,10 +16,10 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.25"
+          go-version: "1.26.9"
       - uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
       - run: npm ci
         working-directory: web
       - uses: docker/login-action@v3

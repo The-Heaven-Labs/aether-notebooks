@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine
+FROM golang:1.26-alpine
 
 # Suppress toolchain auto-download — use whatever Go is in the image
 ENV GOTOOLCHAIN=local
