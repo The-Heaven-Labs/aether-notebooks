@@ -14,8 +14,7 @@ export const emptyHeaderRow = (): HeaderRow => ({ key: '', value: '', sensitive:
 export function headersToRows(headers?: Record<string, unknown>, secrets?: string[]): HeaderRow[] {
   const entries = headers ? Object.entries(headers) : []
   if (entries.length === 0) return [emptyHeaderRow()]
-  const secretNames = secrets ?? []
-  return entries.map(([key, value]) => ({ key, value: String(value), sensitive: secretNames.includes(key) }))
+  return entries.map(([key, value]) => ({ key, value: String(value), sensitive: secrets?.some(s => s.toLowerCase() === key.toLowerCase()) ?? false }))
 }
 
 /**
@@ -55,8 +54,8 @@ export function HeadersEditor({ rows, onChange, title = 'Headers', hint, style }
   }
 
   return (
-    <label style={{ ...styles.label, ...style }}>
-      {title}
+    <div role="group" aria-label={title} style={{ ...styles.label, ...style }}>
+      <span>{title}</span>
       {hint && <span style={styles.hint}>{hint}</span>}
       <div style={styles.rows}>
         {rows.map((h, i) => (
@@ -72,7 +71,7 @@ export function HeadersEditor({ rows, onChange, title = 'Headers', hint, style }
               aria-label={`Header ${i + 1} value`}
               type={h.sensitive ? 'password' : 'text'}
               style={{ ...styles.input, flex: 1 }}
-              placeholder="Value"
+              placeholder={h.value === REDACTED_SENTINEL ? '••••••••' : 'Value'}
               value={h.sensitive && h.value === REDACTED_SENTINEL ? '' : h.value}
               onChange={e => update(i, { value: e.target.value })}
             />
@@ -85,7 +84,7 @@ export function HeadersEditor({ rows, onChange, title = 'Headers', hint, style }
         ))}
         <button type="button" style={styles.addBtn} onClick={add}>+ Add Header</button>
       </div>
-    </label>
+    </div>
   )
 }
 

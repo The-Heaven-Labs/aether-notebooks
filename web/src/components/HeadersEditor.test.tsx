@@ -1,6 +1,6 @@
 import { describe, test, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
-import { HeadersEditor, headersToRows, rowsToPayload, REDACTED_SENTINEL } from './HeadersEditor'
+import { HeadersEditor, headersToRows, rowsToPayload, REDACTED_SENTINEL, type HeaderRow } from './HeadersEditor'
 
 describe('HeadersEditor', () => {
   test('renders rows and edits values', () => {
@@ -44,5 +44,25 @@ describe('HeadersEditor', () => {
       { key: 'X-Api-Key', value: 'v', sensitive: true },
     ])
     expect(headersToRows(undefined, undefined)).toEqual([{ key: '', value: '', sensitive: false }])
+  })
+
+  test('headersToRows matches secret names case-insensitively', () => {
+    expect(headersToRows({ 'x-api-key': 'v' }, ['X-API-Key'])).toEqual([
+      { key: 'x-api-key', value: 'v', sensitive: true },
+    ])
+  })
+
+  test('typing into a masked field replaces the sentinel', () => {
+    const onChange = vi.fn()
+    render(<HeadersEditor rows={[{ key: 'X-Api-Key', value: REDACTED_SENTINEL, sensitive: true }]} onChange={onChange} />)
+    fireEvent.change(screen.getByLabelText('Header 1 value'), { target: { value: 'fresh' } })
+    expect(rowsToPayload(onChange.mock.calls.at(-1)![0] as HeaderRow[]).headers).toEqual({ 'X-Api-Key': 'fresh' })
+  })
+
+  test('unchecking sensitive clears the value', () => {
+    const onChange = vi.fn()
+    render(<HeadersEditor rows={[{ key: 'X-Api-Key', value: REDACTED_SENTINEL, sensitive: true }]} onChange={onChange} />)
+    fireEvent.click(screen.getByRole('checkbox'))
+    expect(onChange).toHaveBeenCalledWith([{ key: 'X-Api-Key', value: '', sensitive: false }])
   })
 })
