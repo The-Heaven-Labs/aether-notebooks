@@ -94,6 +94,8 @@ func TestStatementsRevokeExtrasAndDropOrphans(t *testing.T) {
 	require.Contains(t, joined, "DROP ROLE IF EXISTS `aether_g_zzz`")
 	require.Contains(t, joined, "REVOKE `aether_g_old` FROM `aether_u_bbb`")
 	require.Contains(t, joined, "DROP USER IF EXISTS `aether_u_old`")
+	require.NotContains(t, joined, "TO `aether_g_aaa`",
+		"a fully granted role must produce no GRANT statement")
 }
 
 func TestStatementsRepairsMissingBundlePrivileges(t *testing.T) {
@@ -144,6 +146,81 @@ func TestStatementsPartialObjectRevokedAsObservedPrivileges(t *testing.T) {
 	}
 	stmts, _ := Statements(d, a, PrivilegeModeFull)
 	require.Contains(t, stmts, "REVOKE dictGet ON `db1`.`gone` FROM `aether_g_aaa`")
+}
+
+func TestStatementsRepairsMissingUserDirectBundle(t *testing.T) {
+	d := DesiredState{Users: map[string]UserState{
+		"aether_u_bbb": {Password: "Ae1_x", DirectGrants: grantSet(g("db1", "t1"))},
+	}}
+	a := ActualState{Users: map[string]UserActual{
+		"aether_u_bbb": {
+			DefaultRolesAll: true,
+			DirectPrivileges: map[GrantPrivilege]struct{}{
+				{Grant: g("db1", "t1"), Access: AccessSelect}: {},
+			},
+		},
+	}}
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
+	require.Empty(t, skipped)
+	require.Equal(t, []string{
+		"GRANT dictGet, SHOW DICTIONARIES ON `db1`.`t1` TO `aether_u_bbb`",
+	}, stmts)
+}
+
+func TestStatementsRevokesExtraUserDirectObject(t *testing.T) {
+	d := DesiredState{Users: map[string]UserState{
+		"aether_u_bbb": {Password: "Ae1_x"},
+	}}
+	a := ActualState{Users: map[string]UserActual{
+		"aether_u_bbb": {
+			DefaultRolesAll:  true,
+			DirectPrivileges: fullPrivSet(g("db1", "gone")),
+		},
+	}}
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
+	require.Empty(t, skipped)
+	require.Equal(t, []string{
+		"REVOKE SELECT, dictGet, SHOW DICTIONARIES ON `db1`.`gone` FROM `aether_u_bbb`",
+	}, stmts)
+}
+
+func TestStatementsMixedRepairAndRevokeInOnePlan(t *testing.T) {
+	d := DesiredState{
+		Roles: map[string]RoleState{
+			"aether_g_aaa": {Grants: grantSet(g("db1", "keep"))},
+		},
+	}
+	a := ActualState{
+		Roles: map[string]map[Grant]struct{}{"aether_g_aaa": {}},
+		RolePrivileges: map[string]map[GrantPrivilege]struct{}{
+			"aether_g_aaa": {
+				{Grant: g("db1", "keep"), Access: AccessSelect}:           {},
+				{Grant: g("db1", "drop"), Access: AccessSelect}:           {},
+				{Grant: g("db1", "drop"), Access: AccessDictGet}:          {},
+				{Grant: g("db1", "drop"), Access: AccessShowDictionaries}: {},
+			},
+		},
+	}
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
+	require.Empty(t, skipped)
+	require.Equal(t, []string{
+		"GRANT dictGet, SHOW DICTIONARIES ON `db1`.`keep` TO `aether_g_aaa`",
+		"REVOKE SELECT, dictGet, SHOW DICTIONARIES ON `db1`.`drop` FROM `aether_g_aaa`",
+	}, stmts)
+}
+
+func TestStatementsLegacyModeRevokeSelectOnly(t *testing.T) {
+	d := DesiredState{
+		Roles: map[string]RoleState{"aether_g_aaa": {}},
+	}
+	a := ActualState{
+		Roles: map[string]map[Grant]struct{}{"aether_g_aaa": {}},
+		RolePrivileges: map[string]map[GrantPrivilege]struct{}{
+			"aether_g_aaa": {{Grant: g("db1", "gone"), Access: AccessSelect}: {}},
+		},
+	}
+	stmts, _ := Statements(d, a, PrivilegeModeLegacy)
+	require.Contains(t, stmts, "REVOKE SELECT ON `db1`.`gone` FROM `aether_g_aaa`")
 }
 
 func TestStatementsOrdersDependencies(t *testing.T) {

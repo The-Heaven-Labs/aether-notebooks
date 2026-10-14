@@ -153,6 +153,7 @@ func tryQuoteIdent(name string) (string, bool) {
 // missing privileges in canonical order, so a partial repair never touches
 // privileges that are already correct. Unquotable names are skipped.
 func grantStatements(desired map[Grant]struct{}, actual map[GrantPrivilege]struct{}, mode PrivilegeMode, target string, skipped *[]string) []string {
+	bundle := mode.Bundle()
 	var out []string
 	for _, gr := range sortedGrants(desired) {
 		qdb, err1 := QuoteObjectIdent(gr.Database)
@@ -162,7 +163,7 @@ func grantStatements(desired map[Grant]struct{}, actual map[GrantPrivilege]struc
 			continue
 		}
 		var missing []string
-		for _, p := range mode.Bundle() {
+		for _, p := range bundle {
 			if _, ok := actual[GrantPrivilege{Grant: gr, Access: p}]; !ok {
 				missing = append(missing, string(p))
 			}
@@ -177,9 +178,9 @@ func grantStatements(desired map[Grant]struct{}, actual map[GrantPrivilege]struc
 }
 
 // revokeStatements emits one REVOKE per observed object that is no longer
-// desired, listing every observed privilege for it in canonical order.
-// Objects that are still desired cannot hold out-of-bundle privileges (the
-// managed set equals the bundle), so they never produce revokes here.
+// desired, listing every observed managed privilege for it in canonical
+// order. Objects that are still desired cannot hold out-of-bundle privileges
+// (the managed set equals the bundle), so they never produce revokes here.
 // Unquotable names are skipped.
 func revokeStatements(actual map[GrantPrivilege]struct{}, desired map[Grant]struct{}, target string, skipped *[]string) []string {
 	byObject := map[Grant]map[Privilege]struct{}{}
@@ -205,6 +206,9 @@ func revokeStatements(actual map[GrantPrivilege]struct{}, desired map[Grant]stru
 			if _, ok := byObject[gr][p]; ok {
 				privs = append(privs, string(p))
 			}
+		}
+		if len(privs) == 0 {
+			continue // unreachable while actual only carries managed privileges
 		}
 		out = append(out, fmt.Sprintf("REVOKE %s ON %s.%s FROM %s",
 			strings.Join(privs, ", "), qdb, qtbl, target))
