@@ -670,6 +670,16 @@ definitions:
         type: string
       created_by:
         type: string
+      header_secrets:
+        items:
+          type: string
+        type: array
+      headers:
+        allOf:
+        - $ref: '#/definitions/models.JSONMap'
+        description: |-
+          Headers may hold sensitive values (names listed in HeaderSecrets) stored as enc:v1: ciphertext; they must be redacted with headers.RedactSecrets before serialization.
+          HeaderSecrets names the headers whose values are sensitive and stored as ciphertext.
       id:
         type: string
       name:
@@ -691,6 +701,16 @@ definitions:
         type: string
       created_by:
         type: string
+      custom_header_secrets:
+        items:
+          type: string
+        type: array
+      custom_headers:
+        allOf:
+        - $ref: '#/definitions/models.JSONMap'
+        description: |-
+          CustomHeaders may hold sensitive values (names listed in CustomHeaderSecrets) stored as enc:v1: ciphertext; they must be redacted with headers.RedactSecrets before serialization.
+          CustomHeaderSecrets names the headers whose values are sensitive and stored as ciphertext.
       default_params:
         $ref: '#/definitions/models.JSONMap'
       folder_id:
@@ -927,12 +947,16 @@ definitions:
     - table
     - text
     - metric
+    - html
+    - custom
     type: string
     x-enum-varnames:
     - WidgetChart
     - WidgetTable
     - WidgetText
     - WidgetMetric
+    - WidgetHTML
+    - WidgetCustom
 host: localhost:8088
 info:
   contact: {}

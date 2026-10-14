@@ -11392,6 +11392,20 @@ const docTemplate = `{
                 "created_by": {
                     "type": "string"
                 },
+                "header_secrets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "headers": {
+                    "description": "Headers may hold sensitive values (names listed in HeaderSecrets) stored as enc:v1: ciphertext; they must be redacted with headers.RedactSecrets before serialization.\nHeaderSecrets names the headers whose values are sensitive and stored as ciphertext.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.JSONMap"
+                        }
+                    ]
+                },
                 "id": {
                     "type": "string"
                 },
@@ -11423,6 +11437,20 @@ const docTemplate = `{
                 },
                 "created_by": {
                     "type": "string"
+                },
+                "custom_header_secrets": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "custom_headers": {
+                    "description": "CustomHeaders may hold sensitive values (names listed in CustomHeaderSecrets) stored as enc:v1: ciphertext; they must be redacted with headers.RedactSecrets before serialization.\nCustomHeaderSecrets names the headers whose values are sensitive and stored as ciphertext.",
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/models.JSONMap"
+                        }
+                    ]
                 },
                 "default_params": {
                     "$ref": "#/definitions/models.JSONMap"
@@ -11778,13 +11806,17 @@ const docTemplate = `{
                 "chart",
                 "table",
                 "text",
-                "metric"
+                "metric",
+                "html",
+                "custom"
             ],
             "x-enum-varnames": [
                 "WidgetChart",
                 "WidgetTable",
                 "WidgetText",
-                "WidgetMetric"
+                "WidgetMetric",
+                "WidgetHTML",
+                "WidgetCustom"
             ]
         }
     },
