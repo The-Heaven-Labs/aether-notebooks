@@ -101,6 +101,66 @@ func TestWebhookHeaderSecretsEncryptedAtRest(t *testing.T) {
 		}
 	})
 
+	t.Run("list redacts the secret", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/tools", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list tools: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if strings.Contains(body, "enc:v1:") {
+			t.Fatalf("ciphertext leaked in list response: %s", body)
+		}
+		var tools []map[string]any
+		if err := json.Unmarshal([]byte(body), &tools); err != nil {
+			t.Fatalf("decode tool list: %v", err)
+		}
+		found := false
+		for _, tool := range tools {
+			if tool["id"] != toolID {
+				continue
+			}
+			found = true
+			cfg, _ := tool["config"].(map[string]any)
+			hdrs, _ := cfg["headers"].(map[string]any)
+			if hdrs["X-Mode"] != "live" {
+				t.Fatalf("expected visible X-Mode in list, got %v", hdrs["X-Mode"])
+			}
+			if hdrs["X-Api-Key"] != "__AETHER_REDACTED__" {
+				t.Fatalf("expected redacted secret in list, got %v", hdrs["X-Api-Key"])
+			}
+		}
+		if !found {
+			t.Fatalf("tool %s not found in list", toolID)
+		}
+	})
+
+	t.Run("update with secrets but no headers is rejected", func(t *testing.T) {
+		before := storedToolConfigRaw(t, srv, toolID)
+		body, _ := json.Marshal(map[string]any{
+			"config": map[string]any{
+				"url":     "https://example.com/hook",
+				"method":  "POST",
+				"secrets": []string{"X-Api-Key"},
+			},
+		})
+		req := httptest.NewRequest("PUT", "/api/v1/tools/"+toolID, strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for secrets without headers, got %d: %s", rec.Code, rec.Body.String())
+		}
+		after := storedToolConfigRaw(t, srv, toolID)
+		if string(before) != string(after) {
+			t.Fatalf("rejected update must not change stored config: before %s, after %s", before, after)
+		}
+	})
+
 	t.Run("update with sentinel keeps the stored ciphertext", func(t *testing.T) {
 		var beforeCfg map[string]any
 		json.Unmarshal(storedToolConfigRaw(t, srv, toolID), &beforeCfg)
@@ -163,6 +223,63 @@ func TestWebhookHeaderSecretsEncryptedAtRest(t *testing.T) {
 		secret, _ := hdrs["X-Api-Key"].(string)
 		if !strings.HasPrefix(secret, "enc:v1:") {
 			t.Fatalf("expected re-encrypted ciphertext, got %q", secret)
+		}
+	})
+
+	t.Run("update removing the sensitive header prunes secrets", func(t *testing.T) {
+		body, _ := json.Marshal(map[string]any{
+			"config": map[string]any{
+				"url":     "https://example.com/hook",
+				"method":  "POST",
+				"headers": map[string]string{"X-Mode": "live"},
+				"secrets": []string{},
+			},
+		})
+		req := httptest.NewRequest("PUT", "/api/v1/tools/"+toolID, strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		raw := storedToolConfigRaw(t, srv, toolID)
+		var cfg map[string]any
+		json.Unmarshal(raw, &cfg)
+		if _, exists := cfg["secrets"]; exists {
+			t.Fatalf("expected no secrets key after pruning, got %v", cfg["secrets"])
+		}
+		hdrs, _ := cfg["headers"].(map[string]any)
+		if _, exists := hdrs["X-Api-Key"]; exists {
+			t.Fatalf("expected X-Api-Key removed, got %v", hdrs["X-Api-Key"])
+		}
+	})
+
+	t.Run("create sentinel for a secret cannot persist", func(t *testing.T) {
+		sentinelToolID := createWebhookTool(t, srv, token, map[string]any{
+			"url":     "https://example.com/hook",
+			"method":  "POST",
+			"headers": map[string]string{"X-Api-Key": "__AETHER_REDACTED__"},
+			"secrets": []string{"X-Api-Key"},
+		})
+		raw := storedToolConfigRaw(t, srv, sentinelToolID)
+		if strings.Contains(string(raw), "__AETHER_REDACTED__") {
+			t.Fatalf("sentinel must not be persisted: %s", raw)
+		}
+		var cfg map[string]any
+		json.Unmarshal(raw, &cfg)
+		hdrs, _ := cfg["headers"].(map[string]any)
+		if _, exists := hdrs["X-Api-Key"]; exists {
+			t.Fatalf("sentinel entry must be dropped, got %v", hdrs["X-Api-Key"])
+		}
+		// The runtime iterates config.headers, so a dropped entry is never sent.
+		if secrets, ok := cfg["secrets"].([]any); ok {
+			for _, s := range secrets {
+				if s == "X-Api-Key" {
+					t.Fatalf("dropped sentinel must be pruned from secrets, got %v", secrets)
+				}
+			}
 		}
 	})
 

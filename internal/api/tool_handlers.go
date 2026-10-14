@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -191,6 +192,30 @@ func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if rawHeaders != nil {
+			// A sentinel on create has nothing to restore: drop such entries
+			// rather than encrypting (and later sending) the literal
+			// placeholder, mirroring RestoreSecrets' orphan deletion. The
+			// secret-name list is pruned accordingly so stored secrets always
+			// name a present header.
+			secretSet := make(map[string]bool, len(secrets))
+			for _, name := range secrets {
+				secretSet[strings.ToLower(name)] = true
+			}
+			dropped := false
+			for name, raw := range rawHeaders {
+				value, ok := raw.(string)
+				if ok && value == headers.RedactedSentinel && secretSet[strings.ToLower(name)] {
+					delete(rawHeaders, name)
+					dropped = true
+				}
+			}
+			if dropped {
+				if kept := headers.PresentSecrets(rawHeaders, secrets); len(kept) == 0 {
+					delete(req.Config, "secrets")
+				} else {
+					req.Config["secrets"] = kept
+				}
+			}
 			encrypted, encErr := headers.EncryptSecrets(rawHeaders, secrets, h.server.masterKey)
 			if encErr != nil {
 				writeError(w, http.StatusInternalServerError, "failed to encrypt header secrets")
@@ -265,15 +290,20 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 
 	// Webhook header secrets are validated and prepared before the UPDATE: a
 	// rejected update must not partially apply, and a failed read must surface
-	// so a sentinel can never be persisted literally.
+	// so a sentinel can never be persisted literally. Omitting secrets on
+	// update means no header value is sensitive and values are stored in
+	// plaintext; clients round-tripping a GET response must resend the secrets
+	// list alongside headers.
 	if req.Config != nil {
 		newHeaders, _ := (*req.Config)["headers"].(map[string]any)
 		secrets := headers.NamesFromJSON((*req.Config)["secrets"])
+		// Validation runs even without a headers map: secrets that name no
+		// header must 400, so a dangling secret name can never be persisted.
+		if err := headers.Validate(newHeaders, secrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		if newHeaders != nil {
-			if err := headers.Validate(newHeaders, secrets); err != nil {
-				writeError(w, http.StatusBadRequest, err.Error())
-				return
-			}
 			// Read the stored config for sentinel restore.
 			var oldConfigRaw []byte
 			err := h.server.db.Pool.QueryRow(r.Context(),
