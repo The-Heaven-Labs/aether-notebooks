@@ -487,19 +487,23 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		WHERE ams.agent_id = $1
 		ORDER BY ms.name
 	`, session.AgentID)
-	if err == nil {
+	if err != nil {
+		slog.Warn("engine: load mcp servers", "session_id", sessionID, "error", err)
+	} else {
 		for mcpRows.Next() {
 			var s models.MCPServerOrg
 			var headersRaw []byte
 			var headerSecrets []string
-			if err := mcpRows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &headersRaw, &headerSecrets); err == nil {
-				if headersRaw != nil {
-					json.Unmarshal(headersRaw, &s.Headers)
-				}
-				s.HeaderSecrets = headerSecrets
-				agent.MCPServerIDs = append(agent.MCPServerIDs, s.ID)
-				agent.MCPServers = append(agent.MCPServers, s)
+			if err := mcpRows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &headersRaw, &headerSecrets); err != nil {
+				slog.Warn("engine: scan mcp server row", "session_id", sessionID, "error", err)
+				continue
 			}
+			if headersRaw != nil {
+				json.Unmarshal(headersRaw, &s.Headers)
+			}
+			s.HeaderSecrets = headerSecrets
+			agent.MCPServerIDs = append(agent.MCPServerIDs, s.ID)
+			agent.MCPServers = append(agent.MCPServers, s)
 		}
 		if err := mcpRows.Err(); err != nil {
 			slog.Warn("error iterating mcp server rows", "session_id", sessionID, "error", err)

@@ -153,3 +153,106 @@ func TestProcessMessageSendsMCPCustomHeaders(t *testing.T) {
 		t.Fatalf("expected decrypted Authorization header on MCP call, got %q", got)
 	}
 }
+
+// TestProcessMessageSkipsMCPOnDecryptFailure pins the fail-safe behavior: when a
+// server's secret cannot be decrypted, the engine skips that server (no HTTP
+// request with placeholder/garbled values) and still completes the turn.
+func TestProcessMessageSkipsMCPOnDecryptFailure(t *testing.T) {
+	db := setupEngineTestDB(t)
+	orgID, userID := createEngineTestOrgAndUser(t, db)
+	engine := newTestEngine(db)
+	masterKey := testMasterKey()
+
+	var mu sync.Mutex
+	requests := 0
+	mcpSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		requests++
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{"result": "ok"})
+	}))
+	defer mcpSrv.Close()
+
+	// Ciphertext produced under a different key: decryption must fail.
+	wrongKey := testMasterKey()
+	wrongKey[0] ^= 0xff
+	secret, err := crypto.EncryptString("Bearer mcp-secret", wrongKey)
+	if err != nil {
+		t.Fatalf("encrypt secret: %v", err)
+	}
+	headersJSON, _ := json.Marshal(map[string]any{"Authorization": secret})
+
+	mcpID := uuid.New().String()
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO mcp_servers (id, org_id, name, type, command, args, headers, header_secrets, created_by, created_at, updated_at)
+		VALUES ($1,$2,'weather','http',$3,'{}',$4,ARRAY['Authorization'],$5,NOW(),NOW())
+	`, mcpID, orgID, mcpSrv.URL, headersJSON, userID); err != nil {
+		t.Fatalf("create mcp server: %v", err)
+	}
+
+	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
+	if _, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO agent_mcp_servers (agent_id, mcp_server_id) VALUES ($1,$2)
+	`, agentID, mcpID); err != nil {
+		t.Fatalf("link mcp server: %v", err)
+	}
+	nbID := createTestNotebook(t, db, orgID, userID)
+	sid := createTestSession(t, db, agentID, nbID, userID)
+
+	// The mock still asks for the MCP tool: with the server skipped it can only
+	// be rejected as unavailable, never dispatched.
+	callID := uuid.New().String()
+	responses := []ChatResponse{
+		{
+			Choices: []Choice{{
+				Message: ChatMessage{
+					ToolCalls: []ToolCall{{ID: callID, Type: "function", Function: struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					}{Name: "weather_call_tool", Arguments: `{"tool":"forecast","arguments":{}}`}}},
+				},
+				FinishReason: "tool_calls",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+		{
+			Choices: []Choice{{
+				Message:      ChatMessage{Content: "done"},
+				FinishReason: "stop",
+			}},
+			Usage: Usage{PromptTokens: 10, CompletionTokens: 5},
+		},
+	}
+	var captured []map[string]any
+	llmSrv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
+	defer llmSrv.Close()
+	encKey, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	engine.SetLLMClient(NewLLMClient(llmSrv.URL, "gpt-4", encKey, map[string]any{}, nil, nil))
+	engine.pool = db.Pool
+	engine.session = NewSessionStore(db.Pool, nil)
+
+	content, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hello", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		t.Fatalf("ProcessMessage failed on decrypt error: %v", err)
+	}
+	if content != "done" {
+		t.Fatalf("expected final assistant content %q, got %q", "done", content)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if requests != 0 {
+		t.Fatalf("expected zero MCP requests when headers cannot be decrypted, got %d", requests)
+	}
+
+	var toolContent *string
+	if err := db.Pool.QueryRow(context.Background(), `
+		SELECT content FROM agent_messages WHERE session_id = $1 AND role = 'tool' ORDER BY created_at DESC LIMIT 1
+	`, sid).Scan(&toolContent); err != nil {
+		t.Fatalf("read tool message: %v", err)
+	}
+	if toolContent == nil || !contains(*toolContent, "tool not available: weather_call_tool") {
+		t.Fatalf("expected the MCP tool to be unavailable after the skip, got %v", toolContent)
+	}
+}

@@ -20,8 +20,9 @@ type MCPClient struct {
 	Env     map[string]string
 	Stdio   io.ReadCloser
 	HTTPURL string
-	// Headers are applied to every HTTP request this client makes. Values are
-	// plaintext at this point; decryption happens when the client is built.
+	// Headers are applied to every HTTP request this client makes. Values must
+	// already be decrypted plaintext: no decryption happens here, so callers
+	// resolve stored secrets with headers.DecryptSecrets first.
 	Headers map[string]string
 }
 
@@ -59,28 +60,7 @@ func RegisterMCPTools(reg *ToolRegistry, servers []*MCPClient) {
 }
 
 func makeMCPToolListHandler(srv *MCPClient) ToolHandler {
-	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		httpCtx, cancel := context.WithTimeout(ctx.Context, 30*time.Second)
-		defer cancel()
-
-		req, err := http.NewRequestWithContext(httpCtx, "GET", srv.HTTPURL+"/tools/list", nil)
-		if err != nil {
-			return nil, fmt.Errorf("mcp list tools: %w", err)
-		}
-		headers.Apply(req, srv.Headers)
-		client := &http.Client{Timeout: 30 * time.Second}
-		resp, err := client.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("mcp list tools: %w", err)
-		}
-		defer resp.Body.Close()
-
-		var result map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return nil, fmt.Errorf("decode mcp response: %w", err)
-		}
-		return result, nil
-	}
+	return makeMCPToolListHandlerHTTP(srv.HTTPURL, srv.Headers)
 }
 
 func makeMCPToolListHandlerHTTP(url string, hdrs map[string]string) ToolHandler {
@@ -151,42 +131,5 @@ func makeMCPToolCallHandlerHTTP(url string, hdrs map[string]string) ToolHandler 
 }
 
 func makeMCPToolCallHandler(srv *MCPClient) ToolHandler {
-	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
-		var req struct {
-			Tool      string         `json:"tool"`
-			Arguments map[string]any `json:"arguments"`
-		}
-		if err := json.Unmarshal(args, &req); err != nil {
-			return nil, fmt.Errorf("invalid args: %w", err)
-		}
-
-		payload := map[string]any{
-			"tool":      req.Tool,
-			"arguments": req.Arguments,
-		}
-		body, _ := json.Marshal(payload)
-
-		httpCtx, cancel := context.WithTimeout(ctx.Context, 60*time.Second)
-		defer cancel()
-
-		req2, err := http.NewRequestWithContext(httpCtx, "POST", srv.HTTPURL+"/tools/call", bytes.NewReader(body))
-		if err != nil {
-			return nil, fmt.Errorf("create request: %w", err)
-		}
-		req2.Header.Set("Content-Type", "application/json")
-		headers.Apply(req2, srv.Headers)
-
-		client := &http.Client{Timeout: 60 * time.Second}
-		resp, err := client.Do(req2)
-		if err != nil {
-			return nil, fmt.Errorf("mcp call tool: %w", err)
-		}
-		defer resp.Body.Close()
-
-		var result map[string]any
-		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-			return nil, fmt.Errorf("decode mcp response: %w", err)
-		}
-		return result, nil
-	}
+	return makeMCPToolCallHandlerHTTP(srv.HTTPURL, srv.Headers)
 }
