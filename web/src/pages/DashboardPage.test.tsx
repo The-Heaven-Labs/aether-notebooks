@@ -29,6 +29,7 @@ const docStore = vi.hoisted(() => {
     variables: unknown[]
     widgets: unknown[]
     awareness: unknown
+    hasDocumentContent: boolean
   }
   const EMPTY: DocState = {
     synced: false,
@@ -38,6 +39,7 @@ const docStore = vi.hoisted(() => {
     variables: [],
     widgets: [],
     awareness: null,
+    hasDocumentContent: false,
   }
   const state: DocState = { ...EMPTY }
   let snapshot: DocState = { ...state }
@@ -289,6 +291,7 @@ describe('DashboardPage live document wiring', () => {
     act(() => {
       docStore.set({
         synced: true,
+        hasDocumentContent: true,
         connected: true,
         title: 'Doc board',
         settings: { grid_cols: 12 },
@@ -345,11 +348,21 @@ describe('DashboardPage live document wiring', () => {
     await screen.findByText('Rest board')
     expect(screen.queryByText('Live')).not.toBeInTheDocument()
 
-    act(() => { docStore.set({ connected: true }) })
+    act(() => { docStore.set({ connected: true, hasDocumentContent: true }) })
     expect(await screen.findByText('Live')).toBeInTheDocument()
 
     act(() => { docStore.set({ connected: false }) })
     await waitFor(() => expect(screen.queryByText('Live')).not.toBeInTheDocument())
+  })
+
+  test('a connected but content-less document does not claim Live', async () => {
+    renderDashboard()
+    await screen.findByText('Rest board')
+
+    // The relay accepted the connection but synced a zero-struct document:
+    // the surface is not actually live, so no Live chip.
+    act(() => { docStore.set({ connected: true, hasDocumentContent: false }) })
+    expect(screen.queryByText('Live')).not.toBeInTheDocument()
   })
 
   test('renders collaborator presence from the document awareness', async () => {
@@ -374,6 +387,7 @@ describe('DashboardPage live document wiring', () => {
     act(() => {
       docStore.set({
         synced: true,
+        hasDocumentContent: true,
         connected: true,
         title: 'Doc board',
         settings: { grid_cols: 8 },
@@ -426,7 +440,7 @@ describe('DashboardPage live auto re-run', () => {
     await screen.findByText('Rest board')
     vi.useFakeTimers()
     act(() => {
-      docStore.set({ synced: true, connected: true, title: 'Doc board', settings, variables, widgets })
+      docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Doc board', settings, variables, widgets })
     })
     await advance(AUTO_RERUN_DEBOUNCE_MS + 50)
   }
@@ -787,6 +801,7 @@ describe('DashboardPage published mode', () => {
     act(() => {
       docStore.set({
         synced: true,
+        hasDocumentContent: true,
         connected: true,
         title: 'Doc board',
         settings: { grid_cols: 8 },
@@ -859,6 +874,7 @@ describe('DashboardPage published mode', () => {
     act(() => {
       docStore.set({
         synced: true,
+        hasDocumentContent: true,
         connected: true,
         title: 'Doc board',
         settings: { grid_cols: 12 },
@@ -869,6 +885,28 @@ describe('DashboardPage published mode', () => {
     expect(await screen.findByText('Doc board')).toBeInTheDocument()
     expect(screen.getByText('Draft preview')).toBeInTheDocument()
     expect(screen.getByTestId('query-w2')).toHaveTextContent('SELECT 2 -- draft')
+  })
+
+  test('a synced but zero-struct document keeps the REST draft visible', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json(DRAFT_DASHBOARD)))
+    renderDashboard('/dashboards/d1/view?preview=draft')
+    await screen.findByText('Rest board')
+    expect(screen.getByTestId('query-w2')).toHaveTextContent('SELECT 2')
+
+    act(() => {
+      docStore.set({
+        synced: true,
+        // A stale relay synced an empty update: no structs, so the REST draft
+        // must keep painting instead of handing over to an empty document.
+        hasDocumentContent: false,
+        connected: true,
+        title: '',
+        widgets: [],
+      })
+    })
+
+    expect(screen.getByText('Rest board')).toBeInTheDocument()
+    expect(screen.getByTestId('query-w2')).toHaveTextContent('SELECT 2')
   })
 
   test('preview=draft without edit falls back to the published snapshot', async () => {
@@ -887,7 +925,7 @@ describe('DashboardPage published mode', () => {
     expect(screen.queryByRole('link', { name: /View published/ })).not.toBeInTheDocument()
     expect(screen.getByTestId('query-w2')).toHaveAttribute('data-published', 'true')
 
-    act(() => { docStore.set({ synced: true, connected: true, title: 'Doc board' }) })
+    act(() => { docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Doc board' }) })
     expect(screen.queryByText('Doc board')).not.toBeInTheDocument()
     expect(screen.queryByText('Live')).not.toBeInTheDocument()
   })
@@ -909,6 +947,7 @@ describe('DashboardPage published mode', () => {
     act(() => {
       docStore.set({
         synced: true,
+        hasDocumentContent: true,
         connected: true,
         title: 'Doc board',
         settings: { grid_cols: 12 },

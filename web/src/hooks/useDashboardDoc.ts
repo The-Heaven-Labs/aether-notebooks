@@ -15,8 +15,10 @@ import type { Widget } from '../types'
  * stays out of the initial chunk of pages that only render the hook.
  *
  * Projection handover: pages should render from REST until `synced` is true
- * and then switch to the projected values (widget `created_at` stays empty —
- * merge REST timestamps if needed).
+ * and `hasDocumentContent` is true, then switch to the projected values
+ * (widget `created_at` stays empty — merge REST timestamps if needed). A
+ * synced but zero-struct document is never legitimate and must keep the REST
+ * payload visible.
  */
 
 type DashboardCollabModule = typeof import('../components/dashboardCollabRuntime')
@@ -47,6 +49,13 @@ export interface DashboardDocSnapshot {
   widgets: Widget[]
   synced: boolean
   connected: boolean
+  /**
+   * Whether the synced document carried any structs (see
+   * DashboardDocProjection.hasDocumentContent). False for the empty snapshot
+   * and for a document the relay synced empty; pages gate the REST → doc
+   * handover on it so a zero-struct document can never blank the editor.
+   */
+  hasDocumentContent: boolean
 }
 
 export interface UseDashboardDocResult extends DashboardDocSnapshot {
@@ -69,6 +78,7 @@ const EMPTY_SNAPSHOT: DashboardDocSnapshot = {
   widgets: [],
   synced: false,
   connected: false,
+  hasDocumentContent: false,
 }
 
 interface ProjectionCache {
@@ -166,6 +176,7 @@ export function useDashboardDoc(
       widgets: projection.widgets,
       synced: entry.synced,
       connected: entry.connected,
+      hasDocumentContent: projection.hasDocumentContent,
     }
     projectionCacheRef.current = {
       doc: entry.doc,
@@ -209,6 +220,15 @@ export function useDashboardDoc(
   }, [entry, mod, dashboardId])
 
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, () => EMPTY_SNAPSHOT)
+
+  // A synced dashboard document with no structs is never legitimate (the
+  // backend seed always writes the meta entries): the relay synced an empty
+  // update. Pages keep the REST payload visible in that case, so warn once
+  // per transition to keep the degraded state observable.
+  useEffect(() => {
+    if (!snapshot.synced || snapshot.hasDocumentContent) return
+    console.warn('[yjs] dashboard document synced empty; keeping REST content until it syncs')
+  }, [snapshot.synced, snapshot.hasDocumentContent])
 
   // ── Editor mutators (no-ops unless `enabled`) ──────────────────────────────
   const updateLayout = useCallback((widgetId: string, layout: Widget['layout']) => {
@@ -262,6 +282,7 @@ export function useDashboardDoc(
     widgets: snapshot.widgets,
     synced: snapshot.synced,
     connected: snapshot.connected,
+    hasDocumentContent: snapshot.hasDocumentContent,
     awareness: entry?.provider.awareness ?? null,
     updateLayout,
     setQuery,

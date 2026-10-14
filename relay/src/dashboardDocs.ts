@@ -5,6 +5,8 @@
  * (see dashboardDocs.test.ts).
  */
 
+import * as Y from 'yjs'
+
 /** Document-name prefix for live dashboard documents. */
 export const DASHBOARD_DOC_PREFIX = 'dashboard:'
 
@@ -68,6 +70,36 @@ export function isDashboardDocument(documentName: string): boolean {
  */
 export function shouldRefreshResidentDocument(kind: DocumentKind, documentResident: boolean): boolean {
   return kind === 'dashboard' && documentResident
+}
+
+/**
+ * Whether a dashboard document state carries any CRDT structs at all (a
+ * non-empty state vector). Seed always writes the meta entries, so a healthy
+ * dashboard document — even one backing a dashboard with no widgets — always
+ * carries structs. A state with none applies to a Y.Doc as a no-op: clients
+ * would sync an empty document while REST reads stayed correct, which is
+ * exactly the flash-then-empty editor. The load and refresh paths therefore
+ * treat a zero-struct dashboard state as a failed fetch, never as content.
+ *
+ * Garbage bytes count as "no structs" (fail closed). Notebooks are exempt
+ * from the check at the call sites: an empty notebook document is legitimate.
+ */
+export function stateHasStructs(update: Uint8Array): boolean {
+  if (update.byteLength === 0) return false
+  const scratch = new Y.Doc()
+  try {
+    Y.applyUpdate(scratch, update)
+    return Y.encodeStateVector(scratch).length > 1
+  } catch {
+    return false
+  } finally {
+    scratch.destroy()
+  }
+}
+
+/** Whether a loaded dashboard document carries structs (see stateHasStructs). */
+export function documentHasStructs(doc: Y.Doc): boolean {
+  return Y.encodeStateVector(doc).length > 1
 }
 
 /**

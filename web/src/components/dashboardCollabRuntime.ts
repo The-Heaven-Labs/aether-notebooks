@@ -116,6 +116,15 @@ export interface DashboardDocProjection {
   settings: DashboardDocSettings
   variables: DashboardVariable[]
   widgets: Widget[]
+  /**
+   * Whether the document carries any CRDT structs at all. The backend seed
+   * always writes the meta entries, so a healthy dashboard document — even
+   * one for a dashboard with no widgets — has content. A synced document
+   * with none is never legitimate: it means the relay synced an empty
+   * update (e.g. a stale resident document), and pages must keep rendering
+   * the REST payload instead of handing over to it.
+   */
+  hasDocumentContent: boolean
 }
 
 const WIDGET_TYPES = new Set<Widget['type']>(['chart', 'table', 'metric', 'text', 'html', 'custom'])
@@ -176,7 +185,7 @@ export function projectDashboardDoc(doc: Y.Doc, dashboardId: string): DashboardD
     })
   }
 
-  return { title, settings: settings as DashboardDocSettings, variables, widgets }
+  return { title, settings: settings as DashboardDocSettings, variables, widgets, hasDocumentContent: Y.encodeStateVector(doc).length > 1 }
 }
 
 function projectLayout(value: unknown): Widget['layout'] {

@@ -324,8 +324,12 @@ function DashboardContent({ id }: { id: string }) {
     connect: !!dashboard && !published,
   })
   // The document only wins when this surface is not serving a published
-  // snapshot — a published view must never merge draft state.
-  const liveSynced = liveDoc.synced && !published
+  // snapshot — a published view must never merge draft state — and it
+  // actually carries content: a synced but zero-struct document is a stale
+  // relay serving an empty update (the backend seed always writes the meta
+  // entries), and handing over to it would blank the widget list while REST
+  // stayed correct.
+  const liveSynced = liveDoc.synced && liveDoc.hasDocumentContent && !published
   const liveTitle = liveSynced && liveDoc.title ? liveDoc.title : (dashboard?.title ?? '')
 
   // Per-widget fetch state, reported by the widgets themselves, so the header
@@ -657,7 +661,7 @@ function DashboardContent({ id }: { id: string }) {
             awareness={published ? null : liveDoc.awareness}
             currentUserEmail={userEmail}
           />
-          {!published && liveDoc.connected && (
+          {!published && liveDoc.connected && liveDoc.hasDocumentContent && (
             <span style={styles.liveIndicator} title="Live updates from collaborators">
               <span style={styles.liveDot} /> Live
             </span>

@@ -295,10 +295,16 @@ export function DashboardEditorPage() {
   const liveDoc = useDashboardDoc(id, { enabled: canEdit && editingArmed })
   const userEmail = localStorage.getItem('aether_user_email') ?? ''
   const { updateLayout: updateDocLayout, setConfig: setDocConfig } = liveDoc
-  const editingEnabled = canEdit && liveDoc.synced && liveDoc.connected
+  // A synced document is only usable when it carries content: a zero-struct
+  // document is never legitimate (the backend seed always writes the meta
+  // entries), so it is a stale relay serving an empty update. Keeping `ready`
+  // false keeps the REST payload visible and editing paused until the
+  // reconnect syncs real content.
+  const docReady = liveDoc.synced && liveDoc.hasDocumentContent
+  const editingEnabled = canEdit && docReady && liveDoc.connected
   if (editingArmed !== editingEnabled) setEditingArmed(editingEnabled)
 
-  const liveTitle = liveDoc.synced && liveDoc.title ? liveDoc.title : (dashboard?.title ?? '')
+  const liveTitle = docReady && liveDoc.title ? liveDoc.title : (dashboard?.title ?? '')
 
   useEffect(() => {
     document.title = liveTitle ? `${liveTitle} — Aether Notebooks` : 'Aether Notebooks'
@@ -311,16 +317,16 @@ export function DashboardEditorPage() {
     if (el) setContainerWidth(bodyContentWidth(el))
   }, [dashboard])
 
-  // Once the document has synced it is the source of truth for the widget
-  // list; until then the REST payload paints the page.
+  // Once the document has synced (and carries content) it is the source of
+  // truth for the widget list; until then the REST payload paints the page.
   const widgets = useMemo(
-    () => (liveDoc.synced ? liveDoc.widgets : (dashboard?.widgets ?? [])),
-    [liveDoc.synced, liveDoc.widgets, dashboard?.widgets],
+    () => (docReady ? liveDoc.widgets : (dashboard?.widgets ?? [])),
+    [docReady, liveDoc.widgets, dashboard?.widgets],
   )
 
-  // Chapters: doc-sourced once synced. An empty list hides the strip's chips
+  // Chapters: doc-sourced once ready. An empty list hides the strip's chips
   // and the grid filter (only the editor's add shortcut remains).
-  const tabs = liveDoc.synced
+  const tabs = docReady
     ? (liveDoc.settings.tabs ?? NO_TABS)
     : (dashboard?.settings?.tabs ?? NO_TABS)
   // A selected chapter that disappears (deleted by anyone) is forgotten so a
@@ -484,9 +490,10 @@ export function DashboardEditorPage() {
   const pickerTypeValid = pickerValidTypes.includes(pickerType)
   const pickerAddDisabled = addWidget.isPending || !pickerSourceComplete || !pickerTypeValid
 
-  // Live-merged dashboard for the panels and header: when the doc has synced,
-  // title/settings/variables come from it (the REST row is a derived cache).
-  const liveDashboard: DashboardWithWidgets = liveDoc.synced
+  // Live-merged dashboard for the panels and header: when the document is
+  // ready, title/settings/variables come from it (the REST row is a derived
+  // cache).
+  const liveDashboard: DashboardWithWidgets = docReady
     ? {
         ...dashboard,
         title: liveTitle,
@@ -643,7 +650,7 @@ export function DashboardEditorPage() {
         </div>
       </header>
 
-      {liveDoc.synced && !liveDoc.connected && (
+      {liveDoc.synced && (!liveDoc.connected || !liveDoc.hasDocumentContent) && (
         <ErrorBanner variant="warning" message="Reconnecting — editing is paused" />
       )}
 
@@ -1034,7 +1041,7 @@ export function DashboardEditorPage() {
           widget={editingWidget}
           closeOnEscape={!showVariables}
           editingEnabled={editingEnabled}
-          docSynced={liveDoc.synced}
+          docSynced={docReady}
           htmlPanelsEnabled={htmlPanelsEnabled}
           customCodeEnabled={customCodeEnabled}
           onClose={() => setEditingWidget(null)}

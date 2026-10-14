@@ -51,6 +51,16 @@ describe('projectLayout', () => {
     expect(layout).toEqual({ row: 0, col: 0, width: 6, height: 4 })
     expect('tab' in layout).toBe(false)
   })
+
+  test('hasDocumentContent is false for a zero-struct document and true once structs land', () => {
+    const doc = new Y.Doc()
+    // A stale relay syncing an empty update leaves the document with no
+    // structs at all: the pages must keep the REST payload.
+    expect(projectDashboardDoc(doc, 'd1').hasDocumentContent).toBe(false)
+
+    seedWidget(doc)
+    expect(projectDashboardDoc(doc, 'd1').hasDocumentContent).toBe(true)
+  })
 })
 
 describe('updateWidgetLayout', () => {

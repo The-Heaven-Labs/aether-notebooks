@@ -266,6 +266,22 @@ describe('useDashboardDoc', () => {
     expect(result.current.synced).toBe(true)
   })
 
+  test('hasDocumentContent reports whether the synced document carries structs', async () => {
+    const { result } = await renderDashboardDoc()
+    const provider = latestProvider()
+    const doc = sharedDoc()
+
+    expect(result.current.hasDocumentContent).toBe(false)
+
+    act(() => { provider.emit('synced', { state: true }) })
+    await waitFor(() => expect(result.current.synced).toBe(true))
+    // Synced but zero-struct (a stale relay): pages must keep REST content.
+    expect(result.current.hasDocumentContent).toBe(false)
+
+    act(() => { doc.getMap('meta').set('title', 'Ops') })
+    await waitFor(() => expect(result.current.hasDocumentContent).toBe(true))
+  })
+
   test('shares one provider per dashboard, sets the awareness user, and releases on the last unmount', async () => {
     const first = await renderDashboardDoc()
     const provider = latestProvider()
