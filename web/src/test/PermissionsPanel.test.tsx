@@ -125,6 +125,47 @@ describe('Panel renders', () => {
   })
 })
 
+// ── Inherited folder expansion ──────────────────────────────────────────────
+
+describe('Inherited folder expansion', () => {
+  const FULL_FOLDER_ENTRY = {
+    id: 'acl-folder-full', org_id: 'org-1', resource_type: 'folder', resource_id: 'f-eng',
+    subject_type: 'user', subject_id: 'user-2',
+    actions: ['view', 'create', 'edit', 'manage', 'delete'],
+    created_at: '2026-01-01T00:00:00Z',
+  }
+
+  test('notebook inherited chips show run and share for a full folder grant', async () => {
+    server.use(http.get('/api/v1/acl/folder/f-eng', () => HttpResponse.json([FULL_FOLDER_ENTRY])))
+    renderPanel({ parentFolderId: 'f-eng' })
+    const row = await waitFor(() => {
+      const r = findEntryRow('Bob Editor', true)
+      expect(r).not.toBeNull()
+      return r!
+    })
+    // Folder edit expands to run; folder manage expands to share.
+    for (const chip of ['view', 'run', 'edit', 'share', 'delete']) {
+      expect(within(row).getByRole('button', { name: chip })).toHaveAttribute('aria-pressed', 'true')
+    }
+  })
+
+  test('connector inherited chips show use for a folder edit grant', async () => {
+    server.use(
+      http.get('/api/v1/acl/folder/f-eng', () => HttpResponse.json([
+        { ...FULL_FOLDER_ENTRY, actions: ['view', 'edit'] },
+      ])),
+    )
+    renderPanel({ resourceType: 'connector', resourceId: 'conn-1', resourceName: 'Warehouse', parentFolderId: 'f-eng' })
+    const row = await waitFor(() => {
+      const r = findEntryRow('Bob Editor', true)
+      expect(r).not.toBeNull()
+      return r!
+    })
+    expect(within(row).getByRole('button', { name: 'use' })).toHaveAttribute('aria-pressed', 'true')
+    expect(within(row).getByRole('button', { name: 'share' })).toHaveAttribute('aria-pressed', 'false')
+  })
+})
+
 // ── Close ───────────────────────────────────────────────────────────────────
 
 describe('Close', () => {

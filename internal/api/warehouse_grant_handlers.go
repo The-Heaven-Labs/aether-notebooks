@@ -752,7 +752,10 @@ func (s *Server) handleDeleteWarehouseGrant(w http.ResponseWriter, r *http.Reque
 // It inspects `use` ACLs directly (including connector-folder ancestors,
 // matching checkPermission's walk) instead of calling checkPermission so the
 // answer does not depend on the caller's admin mode, and so group subjects can
-// be inspected without a user identity.
+// be inspected without a user identity. A folder ancestor qualifies through an
+// explicit `use` or through `edit` — the resolver's folder edit grant expands
+// to use on the connector (permissions.go folderActionImplications) — and the
+// same pair gates loadWarehouseServiceAccessIndex in warehouse_validation.go.
 func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, warehouseID uuid.UUID, subjectType, subjectID string) (bool, error) {
 	var (
 		userSubject   string
@@ -818,9 +821,9 @@ func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, ware
 			    SELECT 1
 			    FROM acl_entries ae
 			    WHERE ae.org_id = $1
-			      AND 'use' = ANY(ae.actions)
 			      AND (
-			        (ae.resource_type = 'connector' AND ae.resource_id = c.id)
+			        (ae.resource_type = 'connector' AND ae.resource_id = c.id
+			         AND 'use' = ANY(ae.actions))
 			        OR (ae.resource_type = 'folder' AND ae.resource_id IN (
 			             WITH RECURSIVE ancestors AS (
 			               SELECT id, parent_id FROM folders WHERE id = c.folder_id
@@ -829,7 +832,8 @@ func (s *Server) subjectHasServiceAccess(ctx context.Context, orgID string, ware
 			               FROM folders f JOIN ancestors a ON f.id = a.parent_id
 			             )
 			             SELECT id FROM ancestors
-			           ))
+			           )
+			           AND ('use' = ANY(ae.actions) OR 'edit' = ANY(ae.actions)))
 			      )
 			      AND (
 			        (ae.subject_type = 'user' AND ae.subject_id = $3)

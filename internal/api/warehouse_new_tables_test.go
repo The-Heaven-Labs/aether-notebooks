@@ -265,6 +265,55 @@ func TestWarehouseValidationWarnings(t *testing.T) {
 	require.Equal(t, groupNoTables.String(), resp.ServicesWithoutTables[0].SubjectID)
 }
 
+// TestWarehouseValidationHonorsFolderEditServiceAccess pins the validation
+// index to the resolver's folder expansion: a folder `edit` grant counts as
+// service access for the subjects it reaches, so a group with table grants but
+// no explicit `use` is not warned as granted-but-unusable.
+func TestWarehouseValidationHonorsFolderEditServiceAccess(t *testing.T) {
+	s, _ := warehouseHandlersServer(t)
+	orgID, adminID, admin := seedWarehouseOrgAdmin(t, s)
+	wh := createWarehouseViaAPI(t, s, admin, "Validation Folder Edit WH")
+	conn := seedWarehouseConnector(t, s, orgID, "Validation Folder Edit Service")
+	require.Equal(t, http.StatusOK, linkConnectorViaAPI(t, s, admin, conn, &wh).Code)
+
+	groupID := seedGrantGroup(t, s, orgID, "Validation Folder Edit Group")
+	require.Equal(t, http.StatusCreated,
+		createGrantViaAPI(t, s, admin, wh, grantBody("group", groupID.String(), "analytics", "events")).Code)
+
+	// Without service access the group is warned as granted but unusable.
+	resp := getWarehouseValidation(t, s, admin, wh)
+	require.Len(t, resp.TablesWithoutService, 1)
+	require.Equal(t, groupID.String(), resp.TablesWithoutService[0].SubjectID)
+	require.Empty(t, resp.ServicesWithoutTables)
+
+	// Put the connector in a folder the group can edit: the resolver expands
+	// that to `use`, so the warning clears.
+	folderID := uuid.New()
+	_, err := s.db.Pool.Exec(context.Background(), `
+		INSERT INTO folders (id, org_id, name, created_by) VALUES ($1, $2, $3, $4)`,
+		folderID.String(), orgID.String(), "Validation Folder Edit", adminID.String())
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := s.db.Pool.Exec(cleanupCtx, `DELETE FROM folders WHERE id = $1`, folderID.String()); err != nil {
+			t.Logf("cleanup folder: %v", err)
+		}
+	})
+	_, err = s.db.Pool.Exec(context.Background(),
+		`UPDATE connectors SET folder_id = $1 WHERE id = $2`, folderID.String(), conn.String())
+	require.NoError(t, err)
+	_, err = s.db.Pool.Exec(context.Background(), `
+		INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		VALUES ($1, 'folder', $2::uuid, 'group', $3, ARRAY['view','edit'])`,
+		orgID.String(), folderID.String(), groupID.String())
+	require.NoError(t, err)
+
+	resp = getWarehouseValidation(t, s, admin, wh)
+	require.Empty(t, resp.TablesWithoutService, "folder `edit` must count as service access")
+	require.Empty(t, resp.ServicesWithoutTables)
+}
+
 func TestWarehouseValidationEveryoneServiceWithoutTables(t *testing.T) {
 	s, _ := warehouseHandlersServer(t)
 	orgID, _, admin := seedWarehouseOrgAdmin(t, s)

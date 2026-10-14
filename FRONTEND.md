@@ -720,6 +720,8 @@ See also: `DashboardEditorPage.tsx` for the editor; `e2e/dashboard-app.spec.ts` 
 - `tool`: view, use, edit, delete
 - `agent_session`: view (read-only shares)
 
+Folder grants are coarse and expand onto the items inside (mirroring the resolver's `folderActionImplications`): the read-only inherited section shows folder `edit` as also granting notebook `run`, connector/tool `use`, and dashboard `view_with_data`, and folder `manage` as also granting `share`. A full folder grant therefore displays every chip selected for the inherited entry, matching the access the API actually enforces.
+
 **API calls**:
 - `GET /api/v1/acl/:resource_type/:resource_id` — load entries
 - `PUT /api/v1/acl/:resource_type/:resource_id` — replace full ACL (requires `manage`/`share` permission)
