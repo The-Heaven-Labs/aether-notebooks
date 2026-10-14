@@ -558,13 +558,17 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		slog.Debug("engine: using agent model config", "session_id", sessionID, "model_config_id", modelConfigID)
 		var mc models.ModelConfig
 		var defaultParams []byte
-		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, modelConfigID).Scan(
-			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+		var customHeadersRaw []byte
+		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at, custom_headers, custom_header_secrets FROM model_configs WHERE id = $1`, modelConfigID).Scan(
+			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &customHeadersRaw, &mc.CustomHeaderSecrets)
 		if err != nil {
 			return "", "", nil, events, nil, fmt.Errorf("get model config: %w", err)
 		}
 		if defaultParams != nil {
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
+		}
+		if customHeadersRaw != nil {
+			json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
 		}
 		if v, ok := mc.DefaultParams["compaction_threshold"]; ok {
 			if f, ok := v.(float64); ok {
@@ -578,7 +582,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 			mc.DefaultParams["reasoning_effort"] = effort
 		}
-		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, nil, nil)
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 		contextWindow = mc.ContextWindow
 	} else {
 		slog.Warn("engine: no model config on agent, using default LLM client", "session_id", sessionID, "default_llm_nil", e.llm == nil)
@@ -1569,17 +1573,21 @@ func (e *Engine) defaultSubagentLLM(ctx context.Context, pool *pgxpool.Pool, age
 
 	var mc models.ModelConfig
 	var defaultParams []byte
+	var customHeadersRaw []byte
 	err = pool.QueryRow(ctx, `
-		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window
+		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, custom_headers, custom_header_secrets
 		FROM model_configs WHERE id = $1
-	`, *configID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow)
+	`, *configID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &customHeadersRaw, &mc.CustomHeaderSecrets)
 	if err != nil {
 		return e.llm
 	}
 	if defaultParams != nil {
 		json.Unmarshal(defaultParams, &mc.DefaultParams)
 	}
-	return NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, nil, nil)
+	if customHeadersRaw != nil {
+		json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
+	}
+	return NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 }
 
 func (e *Engine) SetToolAllowedDomains(domains []string) {
@@ -1771,15 +1779,19 @@ func (e *Engine) summarizeSession(ctx context.Context, sessionID string, masterK
 	if agent.ModelConfigID != nil && *agent.ModelConfigID != "" {
 		var mc models.ModelConfig
 		var defaultParams []byte
-		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agent.ModelConfigID).Scan(
-			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+		var customHeadersRaw []byte
+		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at, custom_headers, custom_header_secrets FROM model_configs WHERE id = $1`, *agent.ModelConfigID).Scan(
+			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &customHeadersRaw, &mc.CustomHeaderSecrets)
 		if err != nil {
 			return nil, fmt.Errorf("get model config: %w", err)
 		}
 		if defaultParams != nil {
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
 		}
-		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, nil, nil)
+		if customHeadersRaw != nil {
+			json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
+		}
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 	}
 
 	if llmClient == nil {
@@ -1867,13 +1879,17 @@ func (e *Engine) generateSessionTitle(ctx context.Context, sessionID string, mas
 		if err == nil && agentModelConfigID != nil && *agentModelConfigID != "" {
 			var mc models.ModelConfig
 			var defaultParams []byte
-			err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agentModelConfigID).Scan(
-				&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+			var customHeadersRaw []byte
+			err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at, custom_headers, custom_header_secrets FROM model_configs WHERE id = $1`, *agentModelConfigID).Scan(
+				&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &customHeadersRaw, &mc.CustomHeaderSecrets)
 			if err == nil {
 				if defaultParams != nil {
 					json.Unmarshal(defaultParams, &mc.DefaultParams)
 				}
-				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, nil, nil)
+				if customHeadersRaw != nil {
+					json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
+				}
+				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 			}
 		}
 	}

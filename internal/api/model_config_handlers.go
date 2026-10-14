@@ -454,10 +454,11 @@ func (h *modelConfigHandlers) handleTest(w http.ResponseWriter, r *http.Request)
 	var mc models.ModelConfig
 	var apiKeyEncrypted []byte
 	var defaultParams []byte
+	var customHeadersRaw []byte
 	err := h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, price_per_input_token, price_per_output_token, price_per_cache_read_token, folder_id, created_by, created_at, updated_at, api_key_env_var
+		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, price_per_input_token, price_per_output_token, price_per_cache_read_token, folder_id, created_by, created_at, updated_at, api_key_env_var, custom_headers, custom_header_secrets
 		FROM model_configs WHERE id = $1 AND org_id = $2
-	`, cfgID, claims.OrgID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &apiKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.PricePerInputToken, &mc.PricePerOutputToken, &mc.PricePerCacheReadToken, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &mc.APIKeyEnvVar)
+	`, cfgID, claims.OrgID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &apiKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.PricePerInputToken, &mc.PricePerOutputToken, &mc.PricePerCacheReadToken, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &mc.APIKeyEnvVar, &customHeadersRaw, &mc.CustomHeaderSecrets)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "model config not found")
 		return
@@ -466,7 +467,10 @@ func (h *modelConfigHandlers) handleTest(w http.ResponseWriter, r *http.Request)
 	if defaultParams != nil {
 		json.Unmarshal(defaultParams, &mc.DefaultParams)
 	}
-	llmClient := agent.NewLLMClient(mc.BaseURL, mc.Model, apiKeyEncrypted, mc.DefaultParams, nil, nil)
+	if customHeadersRaw != nil {
+		json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
+	}
+	llmClient := agent.NewLLMClient(mc.BaseURL, mc.Model, apiKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 	resp, err := llmClient.Chat(r.Context(), []agent.ChatMessage{{Role: "user", Content: "Say 'OK' if you can hear me."}}, nil, h.server.masterKey)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "connection failed: "+err.Error())

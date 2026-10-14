@@ -379,3 +379,52 @@ func TestModelConfigCustomHeaders(t *testing.T) {
 		}
 	})
 }
+
+func TestModelConfigTestEndpointSendsCustomHeaders(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("mc-test-headers-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "MC Test Headers Org")
+
+	var gotHeaders http.Header
+	llmSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"id": "chatcmpl-1", "model": "gpt-4o",
+			"choices": []map[string]any{{"message": map[string]any{"role": "assistant", "content": "OK"}, "finish_reason": "stop"}},
+			"usage":   map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+		})
+	}))
+	defer llmSrv.Close()
+
+	body, _ := json.Marshal(map[string]any{
+		"name": "Test Headers", "provider": "openai", "base_url": llmSrv.URL,
+		"model": "gpt-4o", "api_key": "sk-test",
+		"custom_headers":        map[string]string{"X-Title": "Aether", "X-Api-Key": "supersecret"},
+		"custom_header_secrets": []string{"X-Api-Key"},
+	})
+	req := httptest.NewRequest("POST", "/api/v1/model-configs", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var created map[string]string
+	json.NewDecoder(rec.Body).Decode(&created)
+
+	testReq := httptest.NewRequest("POST", "/api/v1/model-configs/"+created["id"]+"/test", nil)
+	testReq.Header.Set("Authorization", "Bearer "+token)
+	testRec := httptest.NewRecorder()
+	srv.ServeHTTP(testRec, testReq)
+	if testRec.Code != http.StatusOK {
+		t.Fatalf("test endpoint: expected 200, got %d: %s", testRec.Code, testRec.Body.String())
+	}
+	if gotHeaders.Get("X-Title") != "Aether" {
+		t.Fatalf("expected X-Title on test request, got %q", gotHeaders.Get("X-Title"))
+	}
+	if gotHeaders.Get("X-Api-Key") != "supersecret" {
+		t.Fatalf("expected decrypted X-Api-Key on test request, got %q", gotHeaders.Get("X-Api-Key"))
+	}
+}
