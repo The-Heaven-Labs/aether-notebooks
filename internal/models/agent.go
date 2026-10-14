@@ -14,6 +14,8 @@ type ModelConfig struct {
 	APIKeyEncrypted        []byte    `json:"-"`
 	APIKeyEnvVar           *string   `json:"-"`
 	DefaultParams          JSONMap   `json:"default_params"`
+	CustomHeaders          JSONMap   `json:"custom_headers,omitempty"`
+	CustomHeaderSecrets    []string  `json:"custom_header_secrets,omitempty"`
 	ContextWindow          int       `json:"context_window"`
 	PricePerInputToken     float64   `json:"price_per_input_token"`
 	PricePerOutputToken    float64   `json:"price_per_output_token"`
@@ -37,15 +39,17 @@ type Skill struct {
 }
 
 type MCPServerOrg struct {
-	ID        string    `json:"id"`
-	OrgID     string    `json:"org_id"`
-	Name      string    `json:"name"`
-	Type      string    `json:"type"`
-	Command   string    `json:"command"`
-	Args      []string  `json:"args,omitempty"`
-	CreatedBy string    `json:"created_by"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            string    `json:"id"`
+	OrgID         string    `json:"org_id"`
+	Name          string    `json:"name"`
+	Type          string    `json:"type"`
+	Command       string    `json:"command"`
+	Args          []string  `json:"args,omitempty"`
+	Headers       JSONMap   `json:"headers,omitempty"`
+	HeaderSecrets []string  `json:"header_secrets,omitempty"`
+	CreatedBy     string    `json:"created_by"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 type ToolType string
