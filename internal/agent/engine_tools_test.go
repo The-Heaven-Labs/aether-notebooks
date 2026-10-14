@@ -123,7 +123,7 @@ func TestEngineLoadAgentToolDefs_AllBuiltin(t *testing.T) {
 		ToolIDs: allIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	defs := engine.loadAgentToolDefs(context.Background(), agent, nil)
 
 	names := map[string]bool{}
 	for _, d := range defs {
@@ -157,7 +157,7 @@ func TestEngineLoadAgentToolDefs_AlwaysUsesToolIDs(t *testing.T) {
 		ToolIDs:         paramToolIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	defs := engine.loadAgentToolDefs(context.Background(), agent, nil)
 
 	names := map[string]bool{}
 	for _, d := range defs {
@@ -187,7 +187,7 @@ func TestEngineLoadAgentToolDefs_ExplicitSelection(t *testing.T) {
 		ToolIDs:         paramToolIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	defs := engine.loadAgentToolDefs(context.Background(), agent, nil)
 
 	names := map[string]bool{}
 	for _, d := range defs {
@@ -218,7 +218,7 @@ func TestEngineLoadAgentToolDefs_ExplicitSkipsUnselected(t *testing.T) {
 		ToolIDs:         paramToolIDs,
 	}
 
-	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	defs := engine.loadAgentToolDefs(context.Background(), agent, nil)
 
 	for _, d := range defs {
 		if d.Function.Name == "set_notebook_parameters" {
@@ -249,7 +249,7 @@ func TestEngineLoadAgentToolDefs_NoACLCheckAnymore(t *testing.T) {
 		ToolIDs: toolIDs,
 	}
 	// New model: tool_ids is sole gate, ACL deletion should NOT affect loading
-	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	defs := engine.loadAgentToolDefs(context.Background(), agent, nil)
 	names := map[string]bool{}
 	for _, d := range defs {
 		names[d.Function.Name] = true
@@ -274,7 +274,7 @@ func TestEngineLoadAgentToolDefs_AdminModeIrrelevant(t *testing.T) {
 		OrgID:   orgID,
 		ToolIDs: toolIDs,
 	}
-	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	defs := engine.loadAgentToolDefs(context.Background(), agent, nil)
 	names := map[string]bool{}
 	for _, d := range defs {
 		names[d.Function.Name] = true
@@ -308,7 +308,7 @@ func TestEngineLoadAgentToolDefs_TimeoutOverride(t *testing.T) {
 	require.NoError(t, err)
 
 	agent := models.Agent{ID: uuid.New().String(), OrgID: orgID, ToolIDs: toolIDs}
-	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	defs := engine.loadAgentToolDefs(context.Background(), agent, nil)
 	require.Len(t, defs, 1)
 	require.Equal(t, 5*time.Second, defs[0].Timeout, "per-tool timeout_ms must apply to the resolved def")
 	require.NotSame(t, regDef, defs[0], "resolveToolDef must clone the shared registry def")
@@ -651,7 +651,7 @@ func TestProcessMessage_ToolNotInToolIDs_RejectedAtExecution(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	// Need to set pool's engine session store etc - already via newTestEngine the pool is set, but we need to ensure engine.pool is set
 	engine.pool = db.Pool
 	// Session store needs pool as well
@@ -719,7 +719,7 @@ func TestProcessMessage_DoesNotAdvertiseUnlistedTools(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
@@ -787,7 +787,7 @@ func TestProcessMessage_RegistryFallbackRemoved(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
@@ -821,7 +821,7 @@ func TestEndToEnd_ToolRemovedFromAgent_CannotCall(t *testing.T) {
 	var toolIDs []string
 	db.Pool.QueryRow(context.Background(), `SELECT tool_ids FROM agents WHERE id=$1`, agentID).Scan(&toolIDs)
 	agent = models.Agent{ID: agentID, OrgID: orgID, ToolIDs: toolIDs}
-	defs := engine.loadAgentToolDefs(context.Background(), agent)
+	defs := engine.loadAgentToolDefs(context.Background(), agent, nil)
 	if len(defs) != 2 {
 		t.Fatalf("expected 2 tools initially, got %d", len(defs))
 	}
@@ -832,7 +832,7 @@ func TestEndToEnd_ToolRemovedFromAgent_CannotCall(t *testing.T) {
 		t.Fatalf("update agent: %v", err)
 	}
 	agent.ToolIDs = listOnly
-	defs = engine.loadAgentToolDefs(context.Background(), agent)
+	defs = engine.loadAgentToolDefs(context.Background(), agent, nil)
 	names := map[string]bool{}
 	for _, d := range defs {
 		names[d.Function.Name] = true
@@ -876,7 +876,7 @@ func TestEndToEnd_ToolRemovedFromAgent_CannotCall(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err = engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
@@ -941,7 +941,7 @@ func TestEndToEnd_AdminModeDoesNotBypassToolIDs(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
@@ -1030,7 +1030,7 @@ func TestRunSubagentLoop_ToolTimeoutSurfaced(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	llm := NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{})
+	llm := NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil)
 
 	res := engine.runSubagentLoop(context.Background(), sid, taskID, "probe timeout", userID, orgID, "admin", masterKey, llm, []*ToolDef{probe}, 3)
 	require.Equal(t, "completed", res.Status)
@@ -1105,7 +1105,7 @@ func TestRunSubagent_ToolTimeoutSurfaced(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 
 	res := engine.runSubagent(context.Background(), sid, SubagentTaskConfig{Goal: "probe legacy timeout"}, userID, orgID, masterKey)
 	require.Equal(t, "completed", res.Status)

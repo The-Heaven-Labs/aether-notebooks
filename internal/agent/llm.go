@@ -8,9 +8,11 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/headers"
 )
 
 type LLMClient struct {
@@ -18,6 +20,10 @@ type LLMClient struct {
 	model         string
 	apiKey        []byte
 	defaultParams map[string]any
+	// customHeaders holds the raw stored header map: sensitive values may be
+	// enc:v1: ciphertext and are decrypted per call with the caller's masterKey.
+	customHeaders map[string]any
+	headerSecrets []string
 	httpClient    *http.Client
 }
 
@@ -149,12 +155,14 @@ type TokenBreakdown struct {
 	DurationMs      int `json:"duration_ms"`
 }
 
-func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string]any) *LLMClient {
+func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string]any, customHeaders map[string]any, headerSecrets []string) *LLMClient {
 	return &LLMClient{
 		baseURL:       baseURL,
 		model:         model,
 		apiKey:        apiKey,
 		defaultParams: defaultParams,
+		customHeaders: customHeaders,
+		headerSecrets: headerSecrets,
 		// No blanket http.Client.Timeout: these are non-streaming calls whose
 		// full generation (queue + reasoning + body) routinely exceeds a small
 		// cap. Timeouts are applied per-request below instead.
@@ -166,6 +174,32 @@ func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string
 // queue time plus the entire response body — not a safeguard against slow
 // models, just against hung connections.
 const llmRequestTimeout = 10 * time.Minute
+
+// maskHeaderSecretValues replaces occurrences of sensitive custom header
+// values in an upstream response body so a provider that echoes request
+// headers cannot leak secrets through error messages.
+func maskHeaderSecretValues(body []byte, applied map[string]string, headerSecrets []string) string {
+	masked := string(body)
+	if masked == "" || len(applied) == 0 || len(headerSecrets) == 0 {
+		return masked
+	}
+	secretNames := make(map[string]struct{}, len(headerSecrets))
+	for _, name := range headerSecrets {
+		if name != "" {
+			secretNames[strings.ToLower(name)] = struct{}{}
+		}
+	}
+	for name, value := range applied {
+		if value == "" {
+			continue
+		}
+		if _, ok := secretNames[strings.ToLower(name)]; !ok {
+			continue
+		}
+		masked = strings.ReplaceAll(masked, value, headers.RedactedSentinel)
+	}
+	return masked
+}
 
 func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []OpenAITool, masterKey []byte) (*ChatResponse, error) {
 	extra := make(map[string]any)
@@ -195,6 +229,11 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 		return nil, fmt.Errorf("decrypt api key: %w", err)
 	}
 
+	customHeaders, err := headers.DecryptSecrets(c.customHeaders, c.headerSecrets, masterKey)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt custom headers: %w", err)
+	}
+
 	// Bound the whole call (retries included) while still honoring the
 	// caller's cancellation.
 	ctx, cancel := context.WithTimeout(ctx, llmRequestTimeout)
@@ -220,6 +259,11 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 		req.Header.Set("Authorization", "Bearer "+string(decryptedKey))
 		req.Header.Set("Content-Type", "application/json")
 
+		// Custom headers are applied last so they may intentionally override
+		// Authorization for gateways with custom auth schemes. Reserved names
+		// are skipped by Apply.
+		headers.Apply(req, customHeaders)
+
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
 			return nil, fmt.Errorf("http call: %w", err)
@@ -240,7 +284,7 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 
 		retryable := resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode == 504 || resp.StatusCode == 529 || resp.StatusCode >= 500
 		if !retryable || attempt == maxRetries {
-			return nil, fmt.Errorf("llm error %d: %s", resp.StatusCode, string(errBody))
+			return nil, fmt.Errorf("llm error %d: %s", resp.StatusCode, maskHeaderSecretValues(errBody, customHeaders, c.headerSecrets))
 		}
 	}
 
@@ -289,8 +333,16 @@ func (c *LLMClient) ChatStream(ctx context.Context, messages []ChatMessage, tool
 	if err != nil {
 		return fmt.Errorf("decrypt api key: %w", err)
 	}
+
+	customHeaders, err := headers.DecryptSecrets(c.customHeaders, c.headerSecrets, masterKey)
+	if err != nil {
+		return fmt.Errorf("decrypt custom headers: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+string(decryptedKey))
 	req.Header.Set("Content-Type", "application/json")
+	// Applied last so custom headers may intentionally override Authorization
+	// for gateways with custom auth schemes.
+	headers.Apply(req, customHeaders)
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
@@ -300,7 +352,7 @@ func (c *LLMClient) ChatStream(ctx context.Context, messages []ChatMessage, tool
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("llm error %d: %s", resp.StatusCode, string(errBody))
+		return fmt.Errorf("llm error %d: %s", resp.StatusCode, maskHeaderSecretValues(errBody, customHeaders, c.headerSecrets))
 	}
 
 	decoder := json.NewDecoder(resp.Body)

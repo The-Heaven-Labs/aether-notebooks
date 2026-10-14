@@ -36,7 +36,7 @@ func TestProcessMessage_LLMFailureRetriesAndPersists(t *testing.T) {
 	srv := newFailingLLMServer(t)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 
@@ -118,7 +118,7 @@ func TestProcessMessage_PersistsToolCallResults(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 
@@ -193,7 +193,7 @@ func TestProcessMessage_ToolTimeoutSurfaced(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 
@@ -306,7 +306,7 @@ func TestProcessMessage_PropagatesRunningHooks(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 
@@ -414,7 +414,7 @@ func TestProcessMessage_SteeringFoldedAtTurnTop(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 

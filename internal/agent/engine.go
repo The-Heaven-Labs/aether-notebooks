@@ -16,6 +16,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/headers"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/storage"
 )
@@ -480,23 +481,29 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	}
 
 	mcpRows, err := e.pool.Query(ctx, `
-		SELECT ms.id, ms.org_id, ms.name, ms.type, ms.command, ms.args, ms.created_by, ms.created_at, ms.updated_at
+		SELECT ms.id, ms.org_id, ms.name, ms.type, ms.command, ms.args, ms.created_by, ms.created_at, ms.updated_at, ms.headers, ms.header_secrets
 		FROM agent_mcp_servers ams
 		JOIN mcp_servers ms ON ms.id = ams.mcp_server_id
 		WHERE ams.agent_id = $1
 		ORDER BY ms.name
 	`, session.AgentID)
-	if err == nil {
+	if err != nil {
+		slog.Warn("engine: load mcp servers", "session_id", sessionID, "error", err)
+	} else {
 		for mcpRows.Next() {
 			var s models.MCPServerOrg
-			var args []byte
-			if err := mcpRows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err == nil {
-				if args != nil {
-					json.Unmarshal(args, &s.Args)
-				}
-				agent.MCPServerIDs = append(agent.MCPServerIDs, s.ID)
-				agent.MCPServers = append(agent.MCPServers, s)
+			var headersRaw []byte
+			var headerSecrets []string
+			if err := mcpRows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt, &headersRaw, &headerSecrets); err != nil {
+				slog.Warn("engine: scan mcp server row", "session_id", sessionID, "error", err)
+				continue
 			}
+			if headersRaw != nil {
+				json.Unmarshal(headersRaw, &s.Headers)
+			}
+			s.HeaderSecrets = headerSecrets
+			agent.MCPServerIDs = append(agent.MCPServerIDs, s.ID)
+			agent.MCPServers = append(agent.MCPServers, s)
 		}
 		if err := mcpRows.Err(); err != nil {
 			slog.Warn("error iterating mcp server rows", "session_id", sessionID, "error", err)
@@ -509,7 +516,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	// Load agent tools from tools table
 	// Tool ACLs are enforced at assignment time (validateToolAccess in agent_handlers.go);
 	// tool_ids is the sole execution enforcement point.
-	agentTools := e.loadAgentToolDefs(ctx, agent)
+	agentTools := e.loadAgentToolDefs(ctx, agent, masterKey)
 
 	// Always include the ask_question tool so every agent can ask for user input
 	if qDef, ok := e.registry.Get("ask_question"); ok {
@@ -558,13 +565,17 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 		slog.Debug("engine: using agent model config", "session_id", sessionID, "model_config_id", modelConfigID)
 		var mc models.ModelConfig
 		var defaultParams []byte
-		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, modelConfigID).Scan(
-			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+		var customHeadersRaw []byte
+		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at, custom_headers, custom_header_secrets FROM model_configs WHERE id = $1`, modelConfigID).Scan(
+			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &customHeadersRaw, &mc.CustomHeaderSecrets)
 		if err != nil {
 			return "", "", nil, events, nil, fmt.Errorf("get model config: %w", err)
 		}
 		if defaultParams != nil {
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
+		}
+		if customHeadersRaw != nil {
+			json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
 		}
 		if v, ok := mc.DefaultParams["compaction_threshold"]; ok {
 			if f, ok := v.(float64); ok {
@@ -578,7 +589,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 			mc.DefaultParams["reasoning_effort"] = effort
 		}
-		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 		contextWindow = mc.ContextWindow
 	} else {
 		slog.Warn("engine: no model config on agent, using default LLM client", "session_id", sessionID, "default_llm_nil", e.llm == nil)
@@ -841,9 +852,14 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				continue
 			}
 			if ms.Type == "http" {
+				plain, err := headers.DecryptSecrets(ms.Headers, ms.HeaderSecrets, masterKey)
+				if err != nil {
+					slog.Warn("engine: failed to decrypt MCP server headers", "server", ms.Name, "session_id", sessionID, "error", err)
+					continue
+				}
 				allTools = append(allTools,
-					mcpListToolDef(ms.Name, makeMCPToolListHandlerHTTP(ms.Command)),
-					mcpCallToolDef(ms.Name, makeMCPToolCallHandlerHTTP(ms.Command)),
+					mcpListToolDef(ms.Name, makeMCPToolListHandlerHTTP(ms.Command, plain)),
+					mcpCallToolDef(ms.Name, makeMCPToolCallHandlerHTTP(ms.Command, plain)),
 				)
 			}
 		}
@@ -1407,7 +1423,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 // Tool access is governed solely by agent.ToolIDs; the legacy all_builtin_tools
 // flag is ignored. Tool ACLs are checked at assignment time (validateToolAccess)
 // — no ACL check at load time. tool_ids is the sole execution enforcement point.
-func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent) []*ToolDef {
+func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, masterKey []byte) []*ToolDef {
 	agentTools := make([]*ToolDef, 0)
 	if len(agent.ToolIDs) == 0 {
 		return agentTools
@@ -1438,6 +1454,12 @@ func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent) []*T
 		if config != nil {
 			json.Unmarshal(config, &t.Config)
 		}
+		if t.Type == models.ToolTypeWebhook {
+			if err := decryptWebhookHeaderSecrets(&t, masterKey); err != nil {
+				slog.Warn("engine: failed to decrypt webhook header secrets", "tool", t.Name, "agent_id", agent.ID, "error", err)
+				continue
+			}
+		}
 		toolDef, err := e.resolveToolDef(&t)
 		if err != nil {
 			slog.Warn("engine: failed to resolve tool", "tool", t.Name, "error", err)
@@ -1448,6 +1470,26 @@ func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent) []*T
 		}
 	}
 	return agentTools
+}
+
+// decryptWebhookHeaderSecrets resolves enc:v1: values named in
+// tools.config.secrets into plaintext before the tool def is built. Untagged
+// values pass through, so pre-encryption rows keep working.
+func decryptWebhookHeaderSecrets(t *models.Tool, masterKey []byte) error {
+	rawHeaders, ok := t.Config["headers"].(map[string]any)
+	if !ok || len(rawHeaders) == 0 {
+		return nil
+	}
+	plain, err := headers.DecryptSecrets(rawHeaders, headers.NamesFromJSON(t.Config["secrets"]), masterKey)
+	if err != nil {
+		return err
+	}
+	plainAny := make(map[string]any, len(plain))
+	for k, v := range plain {
+		plainAny[k] = v
+	}
+	t.Config["headers"] = plainAny
+	return nil
 }
 
 func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {
@@ -1569,17 +1611,21 @@ func (e *Engine) defaultSubagentLLM(ctx context.Context, pool *pgxpool.Pool, age
 
 	var mc models.ModelConfig
 	var defaultParams []byte
+	var customHeadersRaw []byte
 	err = pool.QueryRow(ctx, `
-		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window
+		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, custom_headers, custom_header_secrets
 		FROM model_configs WHERE id = $1
-	`, *configID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow)
+	`, *configID).Scan(&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &customHeadersRaw, &mc.CustomHeaderSecrets)
 	if err != nil {
 		return e.llm
 	}
 	if defaultParams != nil {
 		json.Unmarshal(defaultParams, &mc.DefaultParams)
 	}
-	return NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+	if customHeadersRaw != nil {
+		json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
+	}
+	return NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 }
 
 func (e *Engine) SetToolAllowedDomains(domains []string) {
@@ -1771,15 +1817,19 @@ func (e *Engine) summarizeSession(ctx context.Context, sessionID string, masterK
 	if agent.ModelConfigID != nil && *agent.ModelConfigID != "" {
 		var mc models.ModelConfig
 		var defaultParams []byte
-		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agent.ModelConfigID).Scan(
-			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+		var customHeadersRaw []byte
+		err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at, custom_headers, custom_header_secrets FROM model_configs WHERE id = $1`, *agent.ModelConfigID).Scan(
+			&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &customHeadersRaw, &mc.CustomHeaderSecrets)
 		if err != nil {
 			return nil, fmt.Errorf("get model config: %w", err)
 		}
 		if defaultParams != nil {
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
 		}
-		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+		if customHeadersRaw != nil {
+			json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
+		}
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 	}
 
 	if llmClient == nil {
@@ -1867,13 +1917,17 @@ func (e *Engine) generateSessionTitle(ctx context.Context, sessionID string, mas
 		if err == nil && agentModelConfigID != nil && *agentModelConfigID != "" {
 			var mc models.ModelConfig
 			var defaultParams []byte
-			err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at FROM model_configs WHERE id = $1`, *agentModelConfigID).Scan(
-				&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt)
+			var customHeadersRaw []byte
+			err = e.pool.QueryRow(ctx, `SELECT id, org_id, name, provider, base_url, model, api_key_encrypted, default_params, context_window, folder_id, created_by, created_at, updated_at, custom_headers, custom_header_secrets FROM model_configs WHERE id = $1`, *agentModelConfigID).Scan(
+				&mc.ID, &mc.OrgID, &mc.Name, &mc.Provider, &mc.BaseURL, &mc.Model, &mc.APIKeyEncrypted, &defaultParams, &mc.ContextWindow, &mc.FolderID, &mc.CreatedBy, &mc.CreatedAt, &mc.UpdatedAt, &customHeadersRaw, &mc.CustomHeaderSecrets)
 			if err == nil {
 				if defaultParams != nil {
 					json.Unmarshal(defaultParams, &mc.DefaultParams)
 				}
-				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+				if customHeadersRaw != nil {
+					json.Unmarshal(customHeadersRaw, &mc.CustomHeaders)
+				}
+				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, mc.CustomHeaders, mc.CustomHeaderSecrets)
 			}
 		}
 	}

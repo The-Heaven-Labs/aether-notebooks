@@ -11,9 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/the-heaven-labs/aether/internal/headers"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
+// makeWebhookToolDef builds the runtime def for a webhook tool. Precondition:
+// config.headers must already be decrypted — see decryptWebhookHeaderSecrets.
 func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, error) {
 	rawURL, _ := t.Config["url"].(string)
 	if rawURL == "" {
@@ -27,10 +30,10 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	headers := make(map[string]string)
+	headerMap := make(map[string]string)
 	if h, ok := t.Config["headers"].(map[string]any); ok {
 		for k, v := range h {
-			headers[k] = fmt.Sprintf("%v", v)
+			headerMap[k] = fmt.Sprintf("%v", v)
 		}
 	}
 
@@ -128,9 +131,7 @@ func makeWebhookToolDef(t *models.Tool, allowedDomains []string) (*ToolDef, erro
 			if req.Body != nil && req.Body != http.NoBody {
 				req.Header.Set("Content-Type", contentType)
 			}
-			for k, v := range headers {
-				req.Header.Set(k, v)
-			}
+			headers.Apply(req, headerMap)
 			c, cancel := context.WithTimeout(ctx.Context, 30*time.Second)
 			defer cancel()
 			resp, err := http.DefaultClient.Do(req.WithContext(c))

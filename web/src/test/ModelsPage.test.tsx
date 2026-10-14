@@ -69,6 +69,40 @@ describe('ModelsPage', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
   })
 
+  test('creates a model config with custom headers', async () => {
+    let postBody: Record<string, unknown> | null = null
+    server.use(
+      http.post('/api/v1/model-configs', async ({ request }) => {
+        postBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ id: 'm-new' }, { status: 201 })
+      }),
+    )
+    renderWithProviders(<ModelsPage />)
+    await screen.findByText('GPT-4o')
+
+    fireEvent.click(screen.getByText('+ New Model'))
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(screen.getByLabelText('Name'), { target: { value: 'Claude' } })
+    fireEvent.change(screen.getByLabelText('Provider'), { target: { value: 'anthropic' } })
+    fireEvent.change(screen.getByLabelText('Model'), { target: { value: 'claude-sonnet-4-20250514' } })
+
+    fireEvent.click(within(dialog).getByText('+ Add Header'))
+    fireEvent.change(within(dialog).getByLabelText('Header 1 name'), { target: { value: 'X-Title' } })
+    fireEvent.change(within(dialog).getByLabelText('Header 1 value'), { target: { value: 'Aether' } })
+    fireEvent.change(within(dialog).getByLabelText('Header 2 name'), { target: { value: 'X-Api-Key' } })
+    fireEvent.change(within(dialog).getByLabelText('Header 2 value'), { target: { value: 'sekret' } })
+    // Two rows render two "sensitive" checkboxes; the second one belongs to row 2.
+    fireEvent.click(within(dialog).getAllByRole('checkbox')[1])
+
+    fireEvent.click(within(dialog).getByText('Create'))
+
+    await waitFor(() => expect(postBody).not.toBeNull())
+    expect(postBody).toMatchObject({
+      custom_headers: { 'X-Title': 'Aether', 'X-Api-Key': 'sekret' },
+      custom_header_secrets: ['X-Api-Key'],
+    })
+  })
+
   test('edits a model config through the modal and keeps a blank API key', async () => {
     let putBody: Record<string, unknown> | null = null
     server.use(
@@ -121,5 +155,38 @@ describe('ModelsPage', () => {
     fireEvent.click(within(dialog).getByText('Delete'))
 
     await waitFor(() => expect(deleted).toBe(true))
+  })
+
+  test('sends custom headers and round-trips a masked secret', async () => {
+    let putBody: Record<string, unknown> | null = null
+    server.use(
+      http.get('/api/v1/model-configs', () => HttpResponse.json([
+        {
+          ...mockModels[0],
+          custom_headers: { 'X-Title': 'Aether', 'X-Api-Key': '__AETHER_REDACTED__' },
+          custom_header_secrets: ['X-Api-Key'],
+        },
+      ])),
+      http.put('/api/v1/model-configs/:id', async ({ request }) => {
+        putBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ id: 'm-1' })
+      }),
+    )
+    renderWithProviders(<ModelsPage />)
+    await screen.findByText('GPT-4o')
+
+    fireEvent.click(screen.getByLabelText('Edit model config'))
+    const dialog = await screen.findByRole('dialog')
+
+    const secretInput = within(dialog).getByLabelText('Header 2 value') as HTMLInputElement
+    expect(secretInput.value).toBe('')
+    expect(secretInput.type).toBe('password')
+
+    fireEvent.click(within(dialog).getByText('Save'))
+    await waitFor(() => expect(putBody).not.toBeNull())
+    expect(putBody).toMatchObject({
+      custom_headers: { 'X-Title': 'Aether', 'X-Api-Key': '__AETHER_REDACTED__' },
+      custom_header_secrets: ['X-Api-Key'],
+    })
   })
 })

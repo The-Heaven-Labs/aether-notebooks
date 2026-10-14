@@ -10,6 +10,8 @@ import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { FormModal } from '../components/FormModal'
 import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '../components/RowActions'
+import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
+import type { HeaderRow } from '../components/HeadersEditor'
 import type { MCPServerOrg } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 
@@ -18,6 +20,7 @@ interface MCPForm {
   type: 'stdio' | 'http'
   command: string
   args: string
+  headers: HeaderRow[]
 }
 
 const emptyForm = (): MCPForm => ({
@@ -25,6 +28,7 @@ const emptyForm = (): MCPForm => ({
   type: 'http',
   command: '',
   args: '',
+  headers: [emptyHeaderRow()],
 })
 
 export function MCPPage() {
@@ -65,6 +69,12 @@ export function MCPPage() {
       type: form.type,
       command: form.command,
       args: form.args ? form.args.split(' ').filter(Boolean) : [],
+      ...(form.type === 'http'
+        ? (() => {
+            const { headers, secrets } = rowsToPayload(form.headers)
+            return { headers, header_secrets: secrets }
+          })()
+        : {}),
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['mcp-servers'] })
@@ -79,6 +89,12 @@ export function MCPPage() {
       type: form.type,
       command: form.command,
       args: form.args ? form.args.split(' ').filter(Boolean) : [],
+      ...(form.type === 'http'
+        ? (() => {
+            const { headers, secrets } = rowsToPayload(form.headers)
+            return { headers, header_secrets: secrets }
+          })()
+        : {}),
     }),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['mcp-servers'] })
@@ -101,6 +117,7 @@ export function MCPPage() {
       type: s.type as 'stdio' | 'http',
       command: s.command,
       args: s.args?.join(' ') ?? '',
+      headers: headersToRows(s.headers, s.header_secrets),
     })
   }
 
@@ -268,6 +285,15 @@ function MCPFormFields({ form, setForm, nameRef }: {
       <label style={{ ...styles.label, gridColumn: '1 / -1' }}>Arguments (space-separated)
         <input style={styles.input} value={form.args} onChange={e => setForm(f => ({ ...f, args: e.target.value }))} placeholder="--flag value" />
       </label>
+      {form.type === 'http' && (
+        <HeadersEditor
+          rows={form.headers}
+          onChange={rows => setForm(f => ({ ...f, headers: rows }))}
+          title="Headers"
+          hint="Sent on every /tools/list and /tools/call request. Sensitive values are encrypted and never shown again."
+          style={{ gridColumn: '1 / -1' }}
+        />
+      )}
     </>
   )
 }

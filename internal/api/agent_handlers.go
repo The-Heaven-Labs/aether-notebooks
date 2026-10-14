@@ -102,6 +102,9 @@ type mcpGroup struct {
 }
 
 func (h *agentHandlers) batchLoadMCPHandlers(ctx context.Context, agentIDs []string) map[string]*mcpGroup {
+	// MCP header columns are intentionally not loaded here because agent GET
+	// embeds only redacted/safe fields (mirroring the tool-config redaction),
+	// so the response shape is unchanged.
 	rows, err := h.server.db.Pool.Query(ctx, `
 		SELECT ams.agent_id, ms.id, ms.org_id, ms.name, ms.type, ms.command, ms.args, ms.created_by, ms.created_at, ms.updated_at
 		FROM agent_mcp_servers ams
@@ -409,6 +412,9 @@ func (h *agentHandlers) handleGetAgent(w http.ResponseWriter, r *http.Request) {
 					if len(config) > 0 {
 						json.Unmarshal(config, &t.Config)
 					}
+					// Same response treatment as GET /tools/{id}: sensitive
+					// header values must never leave as ciphertext.
+					redactToolConfig(&t)
 					a.Tools = append(a.Tools, t)
 				}
 			}

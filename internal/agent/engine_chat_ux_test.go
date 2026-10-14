@@ -61,7 +61,7 @@ func TestProcessMessage_TokensDirect_PerTool(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 
@@ -138,7 +138,7 @@ func TestProcessMessage_TokensDirect_GlobalTotals(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 
@@ -230,7 +230,7 @@ func TestCompactionTriggerUsesCurrentNotCumulative(t *testing.T) {
 	// Update model_config base_url to mock server so ProcessMessage uses it
 	db.Pool.Exec(context.Background(), `UPDATE model_configs SET base_url=$1 WHERE id=$2`, srv.URL, mcID)
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{"compaction_threshold": 70}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{"compaction_threshold": 70}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 	var events []EngineEvent
@@ -267,7 +267,7 @@ func TestCompactionTriggerUsesCurrentNotCumulative(t *testing.T) {
 	srv.Close()
 	db.Pool.Exec(context.Background(), `UPDATE model_configs SET base_url=$1 WHERE id=$2`, srv2.URL, mcID)
 	enc2, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv2.URL, "gpt-4", enc2, map[string]any{"compaction_threshold": 70}))
+	engine.SetLLMClient(NewLLMClient(srv2.URL, "gpt-4", enc2, map[string]any{"compaction_threshold": 70}, nil, nil))
 	events = nil
 	_, _, _, _, _, err = engine.ProcessMessage(context.Background(), sid2, "test 800", nil, nil, masterKey, nil, nil, nil, nil, nil, func(evt EngineEvent) { events = append(events, evt) })
 	if err != nil {
@@ -362,7 +362,7 @@ func TestCompactionEmitsEventAndPersists(t *testing.T) {
 	defer srv.Close()
 	db.Pool.Exec(context.Background(), `UPDATE model_configs SET base_url=$1 WHERE id=$2`, srv.URL, mcID)
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{"compaction_threshold": 10}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{"compaction_threshold": 10}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 	var events []EngineEvent
@@ -404,7 +404,7 @@ func TestCompactionEmitsEventAndPersists(t *testing.T) {
 	defer srv2.Close()
 	db.Pool.Exec(context.Background(), `UPDATE model_configs SET base_url=$1 WHERE id=$2`, srv2.URL, mcID)
 	enc2, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv2.URL, "gpt-4", enc2, map[string]any{"compaction_threshold": 10}))
+	engine.SetLLMClient(NewLLMClient(srv2.URL, "gpt-4", enc2, map[string]any{"compaction_threshold": 10}, nil, nil))
 	_, _, _, _, _, err = engine.ProcessMessage(context.Background(), sid, "next", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("second ProcessMessage should succeed but got %v", err)
@@ -787,7 +787,7 @@ func (env *compactionTestEnv) useServer(t *testing.T, srv *httptest.Server, thre
 		t.Fatalf("update model_config base_url: %v", err)
 	}
 	enc, _ := crypto.Encrypt([]byte("sk-test"), env.masterKey)
-	env.engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{"compaction_threshold": threshold}))
+	env.engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{"compaction_threshold": threshold}, nil, nil))
 }
 
 func newCompactionScriptedServer(t *testing.T, mainPromptTokens int, summary string) *httptest.Server {

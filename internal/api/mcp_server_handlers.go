@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/headers"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -28,7 +30,8 @@ func (h *mcpServerHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	claims := ClaimsFromContext(r.Context())
 
 	rows, err := h.server.db.Pool.Query(r.Context(), `
-		SELECT id, org_id, name, type, command, args, created_by, created_at, updated_at
+		SELECT id, org_id, name, type, command, args, headers, header_secrets,
+			   created_by, created_at, updated_at
 		FROM mcp_servers WHERE org_id = $1 ORDER BY created_at DESC
 	`, claims.OrgID)
 	if err != nil {
@@ -40,10 +43,20 @@ func (h *mcpServerHandlers) handleList(w http.ResponseWriter, r *http.Request) {
 	servers := []models.MCPServerOrg{}
 	for rows.Next() {
 		var s models.MCPServerOrg
-		if err := rows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		var headersRaw []byte
+		var headerSecrets []string
+		if err := rows.Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &headersRaw, &headerSecrets, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		if headersRaw != nil {
+			json.Unmarshal(headersRaw, &s.Headers)
+		}
+		if s.Headers == nil {
+			s.Headers = models.JSONMap{}
+		}
+		s.HeaderSecrets = headerSecrets
+		headers.RedactSecrets(s.Headers, s.HeaderSecrets)
 		allowed, _ := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "mcp_server", s.ID, "view")
 		if !allowed {
 			continue
@@ -72,10 +85,12 @@ func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request)
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name    string   `json:"name"`
-		Type    string   `json:"type"`
-		Command string   `json:"command"`
-		Args    []string `json:"args"`
+		Name          string         `json:"name"`
+		Type          string         `json:"type"`
+		Command       string         `json:"command"`
+		Args          []string       `json:"args"`
+		Headers       models.JSONMap `json:"headers"`
+		HeaderSecrets []string       `json:"header_secrets"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -93,12 +108,29 @@ func (h *mcpServerHandlers) handleCreate(w http.ResponseWriter, r *http.Request)
 		req.Args = []string{}
 	}
 
+	if err := headers.Validate(req.Headers, req.HeaderSecrets); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// A sentinel on create has nothing to restore: it is dropped rather than
+	// encrypted (and later sent) literally, and the secret-name list is pruned
+	// so it only names present headers. DropOrphanSentinels never returns nil,
+	// so the NOT NULL header_secrets column accepts it directly.
+	secrets := headers.DropOrphanSentinels(req.Headers, req.HeaderSecrets)
+	encryptedHeaders, encErr := headers.EncryptSecrets(req.Headers, secrets, h.server.masterKey)
+	if encErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
+		return
+	}
+	headersJSON, _ := json.Marshal(encryptedHeaders)
+
 	id := uuid.New().String()
 
 	_, err := h.server.db.Pool.Exec(r.Context(), `
-		INSERT INTO mcp_servers (id, org_id, name, type, command, args, created_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
-	`, id, claims.OrgID, req.Name, req.Type, req.Command, req.Args, claims.UserID)
+		INSERT INTO mcp_servers (id, org_id, name, type, command, args, headers, header_secrets,
+			created_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
+	`, id, claims.OrgID, req.Name, req.Type, req.Command, req.Args, headersJSON, secrets, claims.UserID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "an MCP server with this name already exists in your organization")
@@ -143,10 +175,13 @@ func (h *mcpServerHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var s models.MCPServerOrg
+	var headersRaw []byte
+	var headerSecrets []string
 	err = h.server.db.Pool.QueryRow(r.Context(), `
-		SELECT id, org_id, name, type, command, args, created_by, created_at, updated_at
+		SELECT id, org_id, name, type, command, args, headers, header_secrets,
+			   created_by, created_at, updated_at
 		FROM mcp_servers WHERE id = $1 AND org_id = $2
-	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
+	`, id, claims.OrgID).Scan(&s.ID, &s.OrgID, &s.Name, &s.Type, &s.Command, &s.Args, &headersRaw, &headerSecrets, &s.CreatedBy, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "mcp server not found")
 		return
@@ -154,6 +189,14 @@ func (h *mcpServerHandlers) handleGet(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if headersRaw != nil {
+		json.Unmarshal(headersRaw, &s.Headers)
+	}
+	if s.Headers == nil {
+		s.Headers = models.JSONMap{}
+	}
+	s.HeaderSecrets = headerSecrets
+	headers.RedactSecrets(s.Headers, s.HeaderSecrets)
 
 	writeJSON(w, http.StatusOK, s)
 }
@@ -175,10 +218,12 @@ func (h *mcpServerHandlers) handleUpdate(w http.ResponseWriter, r *http.Request)
 	claims := ClaimsFromContext(r.Context())
 
 	var req struct {
-		Name    *string  `json:"name"`
-		Type    *string  `json:"type"`
-		Command *string  `json:"command"`
-		Args    []string `json:"args"`
+		Name          *string         `json:"name"`
+		Type          *string         `json:"type"`
+		Command       *string         `json:"command"`
+		Args          []string        `json:"args"`
+		Headers       *models.JSONMap `json:"headers"`
+		HeaderSecrets *[]string       `json:"header_secrets"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -190,15 +235,61 @@ func (h *mcpServerHandlers) handleUpdate(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	// Custom headers are validated and prepared before the UPDATE: a rejected
+	// update must not partially apply. Omitting the secrets list on update
+	// means no header value is sensitive and values are stored in plaintext;
+	// clients round-tripping a GET response must resend the secrets list
+	// alongside headers.
+	var headersJSON []byte
+	var headerSecrets []string
+	if req.Headers != nil {
+		secrets := []string{}
+		if req.HeaderSecrets != nil {
+			secrets = *req.HeaderSecrets
+		}
+		if err := headers.Validate(*req.Headers, secrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Sentinel values mean "keep the stored secret". A failed read must
+		// surface as an error so a sentinel can never be persisted literally.
+		var old models.JSONMap
+		var oldRaw []byte
+		readErr := h.server.db.Pool.QueryRow(r.Context(),
+			`SELECT headers FROM mcp_servers WHERE id = $1 AND org_id = $2`,
+			id, claims.OrgID).Scan(&oldRaw)
+		if readErr != nil && !errors.Is(readErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to load MCP server")
+			return
+		}
+		if readErr == nil && len(oldRaw) > 0 {
+			// A stored map that cannot be decoded is treated as absent, so its
+			// sentinels are dropped rather than persisted literally.
+			var parsed models.JSONMap
+			if err := json.Unmarshal(oldRaw, &parsed); err == nil {
+				old = parsed
+			}
+		}
+		encrypted, kept, encErr := headers.EncryptUpdate(*req.Headers, secrets, old, h.server.masterKey)
+		if encErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
+			return
+		}
+		headersJSON, _ = json.Marshal(encrypted)
+		headerSecrets = kept
+	}
+
 	result, err := h.server.db.Pool.Exec(r.Context(), `
 		UPDATE mcp_servers SET
 			name = COALESCE($2, name),
 			type = COALESCE($3, type),
 			command = COALESCE($4, command),
 			args = COALESCE($5, args),
+			headers = COALESCE($6, headers),
+			header_secrets = COALESCE($7, header_secrets),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $6
-	`, id, req.Name, req.Type, req.Command, req.Args, claims.OrgID)
+		WHERE id = $1 AND org_id = $8
+	`, id, req.Name, req.Type, req.Command, req.Args, headersJSON, headerSecrets, claims.OrgID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "an MCP server with this name already exists in your organization")
@@ -264,10 +355,12 @@ func (h *mcpServerHandlers) handleTestMCPServer(w http.ResponseWriter, r *http.R
 	claims := ClaimsFromContext(r.Context())
 
 	var serverType, command string
+	var headersRaw []byte
+	var secretNames []string
 	err := h.server.db.Pool.QueryRow(r.Context(),
-		`SELECT type, command FROM mcp_servers WHERE id = $1 AND org_id = $2`,
+		`SELECT type, command, headers, header_secrets FROM mcp_servers WHERE id = $1 AND org_id = $2`,
 		id, claims.OrgID,
-	).Scan(&serverType, &command)
+	).Scan(&serverType, &command, &headersRaw, &secretNames)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "MCP server not found")
@@ -278,8 +371,29 @@ func (h *mcpServerHandlers) handleTestMCPServer(w http.ResponseWriter, r *http.R
 	}
 
 	if serverType == "http" {
+		var headerMap models.JSONMap
+		if headersRaw != nil {
+			json.Unmarshal(headersRaw, &headerMap)
+		}
+		plain, decErr := headers.DecryptSecrets(headerMap, secretNames, h.server.masterKey)
+		if decErr != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   decErr.Error(),
+			})
+			return
+		}
+		req, reqErr := http.NewRequestWithContext(r.Context(), http.MethodGet, command, nil)
+		if reqErr != nil {
+			writeJSON(w, http.StatusOK, map[string]any{
+				"success": false,
+				"error":   reqErr.Error(),
+			})
+			return
+		}
+		headers.Apply(req, plain)
 		client := &http.Client{Timeout: 10 * time.Second}
-		resp, err := client.Get(command)
+		resp, err := client.Do(req)
 		if err != nil {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"success": false,

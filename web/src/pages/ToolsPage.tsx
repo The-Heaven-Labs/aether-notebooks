@@ -12,6 +12,8 @@ import { FormModal } from '../components/FormModal'
 import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '../components/RowActions'
 import type { Tool, ToolType } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
+import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
+import type { HeaderRow } from '../components/HeadersEditor'
 
 interface ParamDef {
   name: string
@@ -27,7 +29,7 @@ interface ToolForm {
   url: string
   method: string
   content_type: string
-  headers: { key: string; value: string; sensitive: boolean }[]
+  headers: HeaderRow[]
   connector_id: string
   sql: string
   parameters: ParamDef[]
@@ -47,7 +49,7 @@ const emptyForm = (): ToolForm => ({
   url: '',
   method: 'POST',
   content_type: 'application/json',
-  headers: [{ key: '', value: '', sensitive: false }],
+  headers: [emptyHeaderRow()],
   connector_id: '',
   sql: '',
   parameters: [],
@@ -113,14 +115,7 @@ export function ToolsPage() {
       payload.schema = { type: 'object', properties: {} }
     }
     if (form.type === 'webhook') {
-      const headers: Record<string, string> = {}
-      const secrets: string[] = []
-      for (const h of form.headers) {
-        if (h.key && h.value) {
-          headers[h.key] = h.value
-          if (h.sensitive) secrets.push(h.key)
-        }
-      }
+      const { headers, secrets } = rowsToPayload(form.headers)
       payload.config = {
         url: form.url,
         method: form.method,
@@ -202,9 +197,6 @@ export function ToolsPage() {
         }))
       : []
     const secrets = (config.secrets as string[]) || []
-    const headerEntries = typeof config.headers === 'object' && config.headers
-      ? Object.entries(config.headers).map(([key, value]) => ({ key, value: String(value), sensitive: secrets.includes(key) }))
-      : [{ key: '', value: '', sensitive: false }]
     setForm({
       name: tool.name,
       description: tool.description ?? '',
@@ -212,7 +204,7 @@ export function ToolsPage() {
       url: config.url ?? '',
       method: config.method ?? 'POST',
       content_type: config.content_type ?? 'application/json',
-      headers: headerEntries,
+      headers: headersToRows(config.headers as Record<string, unknown>, secrets),
       connector_id: config.connector_id ?? '',
       sql: config.query ?? config.sql ?? '',
       parameters,
@@ -381,14 +373,6 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
   const addParam = () => setForm(f => ({ ...f, parameters: [...f.parameters, { name: '', type: 'string', description: '', required: false }] }))
   const removeParam = (i: number) => setForm(f => ({ ...f, parameters: f.parameters.filter((_, idx) => idx !== i) }))
 
-  const addHeader = () => setForm(f => ({ ...f, headers: [...f.headers, { key: '', value: '', sensitive: false }] }))
-  const removeHeader = (i: number) => setForm(f => ({ ...f, headers: f.headers.filter((_, idx) => idx !== i) }))
-  const updateHeader = (i: number, field: 'key' | 'value', val: string) => setForm(f => {
-    const h = [...f.headers]
-    h[i] = { ...h[i], [field]: val }
-    return { ...f, headers: h }
-  })
-
   return (
     <>
       <label style={styles.label}>Name
@@ -422,31 +406,13 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
           <label style={styles.label}>Content-Type
             <input style={styles.input} value={form.content_type} onChange={setField('content_type')} placeholder="application/json" />
           </label>
-          <label style={{ ...styles.label, gridColumn: '1 / -1' }}>
-            Headers
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 4 }}>
-              {form.headers.map((h, i) => (
-                <div key={i} style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <input style={{ ...styles.input, flex: 1 }} placeholder="Key" value={h.key} onChange={e => updateHeader(i, 'key', e.target.value)} />
-                  <input type={h.sensitive ? 'password' : 'text'} style={{ ...styles.input, flex: 1 }} placeholder="Value" value={h.sensitive && h.value === '__AETHER_REDACTED__' ? '' : h.value} onChange={e => updateHeader(i, 'value', e.target.value)} />
-                  <label style={{ fontSize: 11, display: 'flex', alignItems: 'center', gap: 3, cursor: 'pointer', color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
-                    <input
-                      type="checkbox"
-                      checked={h.sensitive}
-                      onChange={() => setForm(f => {
-                        const hdrs = [...f.headers]
-                        hdrs[i] = { ...hdrs[i], sensitive: !hdrs[i].sensitive, value: hdrs[i].sensitive ? '' : hdrs[i].value }
-                        return { ...f, headers: hdrs }
-                      })}
-                    />
-                    sensitive
-                  </label>
-                  <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--error-full)', fontSize: 14, padding: '4px 6px' }} onClick={() => removeHeader(i)}>×</button>
-                </div>
-              ))}
-              <button type="button" style={{ ...styles.secondaryBtn, alignSelf: 'flex-start' }} onClick={addHeader}>+ Add Header</button>
-            </div>
-          </label>
+          <HeadersEditor
+            rows={form.headers}
+            onChange={rows => setForm(f => ({ ...f, headers: rows }))}
+            title="Headers"
+            hint="Sensitive values are encrypted at rest and never shown again."
+            style={{ gridColumn: '1 / -1' }}
+          />
         </>
       )}
 
