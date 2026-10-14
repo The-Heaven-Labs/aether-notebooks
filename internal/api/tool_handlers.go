@@ -11,7 +11,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/the-heaven-labs/aether/internal/headers"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -177,6 +179,27 @@ func (h *toolHandlers) handleCreate(w http.ResponseWriter, r *http.Request) {
 		req.Config = models.JSONMap{}
 	}
 
+	// Webhook header secrets are validated and encrypted before the INSERT: a
+	// rejected tool must never be written, and a sensitive value must never
+	// reach the database as plaintext. Configs without a headers map keep
+	// their stored shape.
+	if req.Type == "webhook" {
+		rawHeaders, _ := req.Config["headers"].(map[string]any)
+		secrets := headers.NamesFromJSON(req.Config["secrets"])
+		if err := headers.Validate(rawHeaders, secrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if rawHeaders != nil {
+			encrypted, encErr := headers.EncryptSecrets(rawHeaders, secrets, h.server.masterKey)
+			if encErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to encrypt header secrets")
+				return
+			}
+			req.Config["headers"] = encrypted
+		}
+	}
+
 	if req.FolderID != nil && *req.FolderID == "" {
 		req.FolderID = nil
 	}
@@ -240,14 +263,45 @@ func (h *toolHandlers) handleUpdate(w http.ResponseWriter, r *http.Request) {
 		req.FolderID = nil
 	}
 
-	// Restore redacted secret values from old config
+	// Webhook header secrets are validated and prepared before the UPDATE: a
+	// rejected update must not partially apply, and a failed read must surface
+	// so a sentinel can never be persisted literally.
 	if req.Config != nil {
-		var oldConfigRaw []byte
-		err := h.server.db.Pool.QueryRow(r.Context(), `SELECT config FROM tools WHERE id = $1 AND org_id = $2`, toolID, claims.OrgID).Scan(&oldConfigRaw)
-		if err == nil && len(oldConfigRaw) > 0 {
-			var oldConfig models.JSONMap
-			json.Unmarshal(oldConfigRaw, &oldConfig)
-			restoreSecrets(oldConfig, *req.Config)
+		newHeaders, _ := (*req.Config)["headers"].(map[string]any)
+		secrets := headers.NamesFromJSON((*req.Config)["secrets"])
+		if newHeaders != nil {
+			if err := headers.Validate(newHeaders, secrets); err != nil {
+				writeError(w, http.StatusBadRequest, err.Error())
+				return
+			}
+			// Read the stored config for sentinel restore.
+			var oldConfigRaw []byte
+			err := h.server.db.Pool.QueryRow(r.Context(),
+				`SELECT config FROM tools WHERE id = $1 AND org_id = $2`, toolID, claims.OrgID).Scan(&oldConfigRaw)
+			var oldHeaders map[string]any
+			switch {
+			case err == nil && len(oldConfigRaw) > 0:
+				var oldConfig models.JSONMap
+				if json.Unmarshal(oldConfigRaw, &oldConfig) == nil {
+					oldHeaders, _ = oldConfig["headers"].(map[string]any)
+				}
+			case errors.Is(err, pgx.ErrNoRows):
+				// final UPDATE will 404
+			default:
+				writeError(w, http.StatusInternalServerError, "failed to load tool")
+				return
+			}
+			encrypted, kept, encErr := headers.EncryptUpdate(newHeaders, secrets, oldHeaders, h.server.masterKey)
+			if encErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to encrypt header secrets")
+				return
+			}
+			(*req.Config)["headers"] = encrypted
+			if len(kept) == 0 {
+				delete(*req.Config, "secrets")
+			} else {
+				(*req.Config)["secrets"] = kept
+			}
 		}
 	}
 
@@ -388,56 +442,10 @@ func (h *toolHandlers) handleDelete(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
-const redactedSentinel = "__AETHER_REDACTED__"
-
 func redactToolConfig(t *models.Tool) {
 	if t.Type != "webhook" {
 		return
 	}
-	secrets, _ := t.Config["secrets"].([]any)
-	if len(secrets) == 0 {
-		return
-	}
-	headers, ok := t.Config["headers"].(map[string]any)
-	if !ok {
-		return
-	}
-	for _, s := range secrets {
-		name, _ := s.(string)
-		if _, exists := headers[name]; exists {
-			headers[name] = redactedSentinel
-		}
-	}
-}
-
-func restoreSecrets(oldConfig, newConfig models.JSONMap) {
-	oldHeaders, _ := oldConfig["headers"].(map[string]any)
-	newHeaders, _ := newConfig["headers"].(map[string]any)
-	if oldHeaders == nil || newHeaders == nil {
-		return
-	}
-
-	secrets, _ := newConfig["secrets"].([]any)
-	secretSet := map[string]bool{}
-	for _, s := range secrets {
-		if name, ok := s.(string); ok {
-			secretSet[name] = true
-		}
-	}
-
-	for name, newVal := range newHeaders {
-		str, ok := newVal.(string)
-		if !ok || str != redactedSentinel {
-			continue
-		}
-		if secretSet[name] {
-			// Still sensitive — restore old value
-			if oldVal, exists := oldHeaders[name]; exists {
-				newHeaders[name] = oldVal
-			}
-		} else {
-			// No longer sensitive — treat as removed
-			delete(newHeaders, name)
-		}
-	}
+	rawHeaders, _ := t.Config["headers"].(map[string]any)
+	headers.RedactSecrets(rawHeaders, headers.NamesFromJSON(t.Config["secrets"]))
 }
