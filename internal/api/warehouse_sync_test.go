@@ -655,6 +655,49 @@ func TestReconcileWarehouseStatementFailureMarksError(t *testing.T) {
 	requireClickHouseUserAbsent(t, fx.conn, chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.userID))
 }
 
+// TestDetectPrivilegeModeLeastPrivilegeProvisioner pins the probe ordering:
+// system.columns is access-filtered, so a metadata-first probe would
+// misclassify a modern server as legacy for a provisioner that cannot read
+// system.privileges metadata. The direct read of system.privileges must stay
+// authoritative.
+func TestDetectPrivilegeModeLeastPrivilegeProvisioner(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseFixture(t)
+
+	limitedUser := "whprobe_limited_" + uuid.NewString()[:8]
+	limitedPassword := "limited-password"
+	require.NoError(t, fx.conn.Exec(ctx,
+		fmt.Sprintf("CREATE USER %s IDENTIFIED WITH sha256_password BY '%s'", limitedUser, limitedPassword)))
+	t.Cleanup(func() {
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := fx.conn.Exec(cleanupCtx, "DROP USER IF EXISTS "+limitedUser); err != nil {
+			t.Logf("cleanup limited user: %v", err)
+		}
+	})
+	for _, grant := range []string{
+		"GRANT SELECT ON system.grants TO " + limitedUser,
+		"GRANT SELECT ON system.users TO " + limitedUser,
+		"GRANT SELECT ON system.roles TO " + limitedUser,
+		"GRANT SELECT ON system.role_grants TO " + limitedUser,
+		"GRANT CREATE ROLE ON *.* TO " + limitedUser,
+	} {
+		require.NoError(t, fx.conn.Exec(ctx, grant))
+	}
+
+	limitedCfg := warehouseSyncTestClickHouseConfig()
+	limitedCfg.User = limitedUser
+	limitedCfg.Password = limitedPassword
+	conn, err := openWarehouseProvisionerConn(ctx, limitedCfg)
+	require.NoError(t, err)
+	defer conn.Close()
+
+	mode, err := chaccess.DetectPrivilegeMode(ctx, conn)
+	require.NoError(t, err)
+	require.Equal(t, chaccess.PrivilegeModeFull, mode,
+		"a least-privilege provisioner must not be misclassified as legacy")
+}
+
 func TestReconcileWarehouseSoftDeletedProvisioner(t *testing.T) {
 	ctx := context.Background()
 	fx := setupWarehouseFixture(t)

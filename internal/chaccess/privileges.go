@@ -2,6 +2,7 @@ package chaccess
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -38,10 +39,17 @@ const (
 // Bundle returns the privileges granted for every managed object under mode.
 // The returned slice is an independent copy; callers must not mutate it.
 func (m PrivilegeMode) Bundle() []Privilege {
-	if m == PrivilegeModeLegacy {
+	switch m {
+	case PrivilegeModeLegacy:
 		return []Privilege{AccessSelect}
+	case PrivilegeModeFull:
+		return append([]Privilege(nil), privilegeOrder...)
+	default:
+		// DetectPrivilegeMode only returns the two defined modes and callers
+		// must propagate its error; an unknown mode is an internal invariant
+		// violation, so fail loudly instead of silently picking a bundle.
+		panic("Bundle: unknown privilege mode " + string(m))
 	}
-	return append([]Privilege(nil), privilegeOrder...)
 }
 
 // GrantPrivilege is one (object, privilege) pair: the unit of the ClickHouse
@@ -53,35 +61,48 @@ type GrantPrivilege struct {
 }
 
 // DetectPrivilegeMode probes the provisioner connection for granular
-// dictionary privileges. A probe failure other than "table/rows missing"
-// returns an error so a transient outage cannot silently flip modes and
-// trigger grant/revoke churn.
+// dictionary privileges (dictGet, SHOW DICTIONARIES).
+//
+// The direct read of system.privileges is authoritative and works for
+// least-privilege provisioners: system.columns is access-filtered, so a
+// provisioner without SELECT on system.privileges would wrongly see zero
+// privilege columns and a metadata-first probe would misclassify modern
+// servers as legacy. Only when the direct read fails does the existence
+// probe decide: zero visible columns means a pre-granular server (the table
+// does not exist) and legacy mode; anything else propagates the error so a
+// transient outage cannot silently flip modes.
 func DetectPrivilegeMode(ctx context.Context, conn clickhouse.Conn) (PrivilegeMode, error) {
-	var n uint64
+	var dictGet, showDictionaries uint64
 	err := conn.QueryRow(ctx, `
+		SELECT countIf(toString(privilege) = 'dictGet'),
+		       countIf(toString(privilege) = 'SHOW DICTIONARIES')
+		FROM system.privileges`).Scan(&dictGet, &showDictionaries)
+	if err == nil {
+		return modeFromProbe(true, dictGet > 0, showDictionaries > 0), nil
+	}
+	readErr := err
+
+	var visible uint64
+	metaErr := conn.QueryRow(ctx, `
 		SELECT count() FROM system.columns
-		WHERE database = 'system' AND table = 'privileges' AND name = 'privilege'`).Scan(&n)
-	if err != nil {
-		return "", fmt.Errorf("probe system.privileges: %w", err)
+		WHERE database = 'system' AND table = 'privileges' AND name = 'privilege'`).Scan(&visible)
+	switch {
+	case metaErr != nil:
+		return "", errors.Join(
+			fmt.Errorf("probe system.privileges: %w", readErr),
+			fmt.Errorf("probe system.privileges existence: %w", metaErr))
+	case visible == 0:
+		return PrivilegeModeLegacy, nil
+	default:
+		return "", fmt.Errorf("probe system.privileges: %w", readErr)
 	}
-	if n == 0 {
-		return modeFromProbe(false, 0), nil
-	}
-	err = conn.QueryRow(ctx, `
-		SELECT count() FROM system.privileges
-		WHERE toString(privilege) IN ('dictGet', 'SHOW DICTIONARIES')`).Scan(&n)
-	if err != nil {
-		return "", fmt.Errorf("probe dictionary privileges: %w", err)
-	}
-	return modeFromProbe(true, n), nil
 }
 
-// modeFromProbe maps the privilege-catalog probe result to a mode. Both
-// dictGet and SHOW DICTIONARIES must exist; anything else is the legacy
-// SELECT-only world.
-func modeFromProbe(hasPrivilegesTable bool, matching uint64) PrivilegeMode {
-	if !hasPrivilegesTable || matching < 2 {
-		return PrivilegeModeLegacy
+// modeFromProbe maps privilege-catalog observations to a mode. Both
+// dictionary privileges must be present for the modern bundle.
+func modeFromProbe(hasPrivilegesTable, hasDictGet, hasShowDictionaries bool) PrivilegeMode {
+	if hasPrivilegesTable && hasDictGet && hasShowDictionaries {
+		return PrivilegeModeFull
 	}
-	return PrivilegeModeFull
+	return PrivilegeModeLegacy
 }
