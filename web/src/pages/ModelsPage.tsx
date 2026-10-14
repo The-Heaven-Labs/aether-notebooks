@@ -10,6 +10,8 @@ import { api } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 import { FormModal } from '../components/FormModal'
 import { RowAction, RowActionsBreak, RowActionsCell, RowActionsHeader } from '../components/RowActions'
+import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
+import type { HeaderRow } from '../components/HeadersEditor'
 import type { ModelConfig } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 
@@ -26,6 +28,7 @@ interface ModelConfigForm {
   price_per_input_token: string
   price_per_output_token: string
   price_per_cache_read_token: string
+  headers: HeaderRow[]
 }
 
 const emptyForm = (): ModelConfigForm => ({
@@ -41,6 +44,7 @@ const emptyForm = (): ModelConfigForm => ({
   price_per_input_token: '0',
   price_per_output_token: '0',
   price_per_cache_read_token: '0',
+  headers: [emptyHeaderRow()],
 })
 
 const PROVIDERS = [
@@ -115,18 +119,23 @@ export function ModelsPage() {
   }
 
   const createMutation = useMutation({
-    mutationFn: () => api.post<{ id: string }>('/api/v1/model-configs', {
-      name: form.name,
-      provider: form.provider,
-      base_url: form.base_url,
-      model: form.model,
-      api_key: form.api_key,
-      context_window: form.context_window,
-      default_params: defaultParams(),
-      price_per_input_token: parseFloat(form.price_per_input_token) || 0,
-      price_per_output_token: parseFloat(form.price_per_output_token) || 0,
-      price_per_cache_read_token: parseFloat(form.price_per_cache_read_token) || 0,
-    }),
+    mutationFn: () => {
+      const { headers: customHeaders, secrets: customHeaderSecrets } = rowsToPayload(form.headers)
+      return api.post<{ id: string }>('/api/v1/model-configs', {
+        name: form.name,
+        provider: form.provider,
+        base_url: form.base_url,
+        model: form.model,
+        api_key: form.api_key,
+        context_window: form.context_window,
+        default_params: defaultParams(),
+        price_per_input_token: parseFloat(form.price_per_input_token) || 0,
+        price_per_output_token: parseFloat(form.price_per_output_token) || 0,
+        price_per_cache_read_token: parseFloat(form.price_per_cache_read_token) || 0,
+        custom_headers: customHeaders,
+        custom_header_secrets: customHeaderSecrets,
+      })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
       closeCreate()
@@ -135,18 +144,23 @@ export function ModelsPage() {
   })
 
   const updateMutation = useMutation({
-    mutationFn: (id: string) => api.put<{ id: string }>(`/api/v1/model-configs/${id}`, {
-      name: form.name,
-      provider: form.provider,
-      base_url: form.base_url,
-      model: form.model,
-      ...(form.api_key ? { api_key: form.api_key } : {}),
-      context_window: form.context_window,
-      default_params: defaultParams(),
-      price_per_input_token: parseFloat(form.price_per_input_token) || 0,
-      price_per_output_token: parseFloat(form.price_per_output_token) || 0,
-      price_per_cache_read_token: parseFloat(form.price_per_cache_read_token) || 0,
-    }),
+    mutationFn: (id: string) => {
+      const { headers: customHeaders, secrets: customHeaderSecrets } = rowsToPayload(form.headers)
+      return api.put<{ id: string }>(`/api/v1/model-configs/${id}`, {
+        name: form.name,
+        provider: form.provider,
+        base_url: form.base_url,
+        model: form.model,
+        ...(form.api_key ? { api_key: form.api_key } : {}),
+        context_window: form.context_window,
+        default_params: defaultParams(),
+        price_per_input_token: parseFloat(form.price_per_input_token) || 0,
+        price_per_output_token: parseFloat(form.price_per_output_token) || 0,
+        price_per_cache_read_token: parseFloat(form.price_per_cache_read_token) || 0,
+        custom_headers: customHeaders,
+        custom_header_secrets: customHeaderSecrets,
+      })
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['model-configs'] })
       closeEdit()
@@ -193,6 +207,7 @@ export function ModelsPage() {
       price_per_input_token: String(config.price_per_input_token ?? 0),
       price_per_output_token: String(config.price_per_output_token ?? 0),
       price_per_cache_read_token: String(config.price_per_cache_read_token ?? 0),
+      headers: headersToRows(config.custom_headers, config.custom_header_secrets),
     })
     setEditingId(config.id)
     setFormError(null)
@@ -396,6 +411,13 @@ function ModelFormFields({ form, setForm, nameRef }: {
         <input style={styles.input} type="text" value={form.price_per_cache_read_token} onChange={e => setForm(f => ({ ...f, price_per_cache_read_token: e.target.value }))} placeholder="0.075" />
         <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 400 }}>Cost per 1M cached input tokens (e.g. 0.075 for GPT-4o-mini).</span>
       </label>
+      <HeadersEditor
+        rows={form.headers}
+        onChange={rows => setForm(f => ({ ...f, headers: rows }))}
+        title="Custom Headers"
+        hint="Sent on every request to this endpoint. Sensitive values are encrypted and never shown again."
+        style={{ gridColumn: '1 / -1' }}
+      />
     </>
   )
 }

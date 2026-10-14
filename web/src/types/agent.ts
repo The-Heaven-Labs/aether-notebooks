@@ -43,6 +43,8 @@ export interface ModelConfig {
   base_url: string
   model: string
   default_params?: Record<string, unknown>
+  custom_headers?: Record<string, unknown>
+  custom_header_secrets?: string[]
   context_window: number
   price_per_input_token: number
   price_per_output_token: number

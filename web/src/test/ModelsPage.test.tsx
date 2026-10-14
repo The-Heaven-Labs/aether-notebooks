@@ -122,4 +122,37 @@ describe('ModelsPage', () => {
 
     await waitFor(() => expect(deleted).toBe(true))
   })
+
+  test('sends custom headers and round-trips a masked secret', async () => {
+    let putBody: Record<string, unknown> | null = null
+    server.use(
+      http.get('/api/v1/model-configs', () => HttpResponse.json([
+        {
+          ...mockModels[0],
+          custom_headers: { 'X-Title': 'Aether', 'X-Api-Key': '__AETHER_REDACTED__' },
+          custom_header_secrets: ['X-Api-Key'],
+        },
+      ])),
+      http.put('/api/v1/model-configs/:id', async ({ request }) => {
+        putBody = await request.json() as Record<string, unknown>
+        return HttpResponse.json({ id: 'm-1' })
+      }),
+    )
+    renderWithProviders(<ModelsPage />)
+    await screen.findByText('GPT-4o')
+
+    fireEvent.click(screen.getByLabelText('Edit model config'))
+    const dialog = await screen.findByRole('dialog')
+
+    const secretInput = within(dialog).getByLabelText('Header 2 value') as HTMLInputElement
+    expect(secretInput.value).toBe('')
+    expect(secretInput.type).toBe('password')
+
+    fireEvent.click(within(dialog).getByText('Save'))
+    await waitFor(() => expect(putBody).not.toBeNull())
+    expect(putBody).toMatchObject({
+      custom_headers: { 'X-Title': 'Aether', 'X-Api-Key': '__AETHER_REDACTED__' },
+      custom_header_secrets: ['X-Api-Key'],
+    })
+  })
 })
