@@ -7,9 +7,11 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strings"
 )
 
 // tokenLookupLabel domain-separates the API token lookup hash from other uses
@@ -72,4 +74,43 @@ func Decrypt(ciphertext, key []byte) ([]byte, error) {
 
 	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
 	return gcm.Open(nil, nonce, ciphertext, nil)
+}
+
+// encryptedStringPrefix tags inline-encrypted string values (e.g. sensitive
+// HTTP headers stored in JSON columns) so decryption can distinguish
+// ciphertext from legacy plaintext.
+const encryptedStringPrefix = "enc:v1:"
+
+// EncryptString encrypts a string value for inline storage in a JSON column.
+// The result carries the enc:v1: prefix so DecryptString can detect it.
+func EncryptString(plaintext string, key []byte) (string, error) {
+	ciphertext, err := Encrypt([]byte(plaintext), key)
+	if err != nil {
+		return "", err
+	}
+	return encryptedStringPrefix + base64.StdEncoding.EncodeToString(ciphertext), nil
+}
+
+// DecryptString decrypts a value produced by EncryptString. Values without the
+// enc:v1: prefix are returned unchanged, so rows written before encryption was
+// introduced keep working (lazy migration).
+func DecryptString(value string, key []byte) (string, error) {
+	encoded, ok := strings.CutPrefix(value, encryptedStringPrefix)
+	if !ok {
+		return value, nil
+	}
+	ciphertext, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return "", fmt.Errorf("decode encrypted string: %w", err)
+	}
+	plaintext, err := Decrypt(ciphertext, key)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
+}
+
+// IsEncryptedString reports whether value carries the inline-encryption tag.
+func IsEncryptedString(value string) bool {
+	return strings.HasPrefix(value, encryptedStringPrefix)
 }
