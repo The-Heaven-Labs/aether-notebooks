@@ -37,7 +37,9 @@ const (
 )
 
 // Bundle returns the privileges granted for every managed object under mode.
-// The returned slice is an independent copy; callers must not mutate it.
+// The returned slice is an independent copy; callers must not mutate it. It
+// panics on an unknown mode: callers must propagate DetectPrivilegeMode
+// errors rather than passing the zero value.
 func (m PrivilegeMode) Bundle() []Privilege {
 	switch m {
 	case PrivilegeModeLegacy:
@@ -63,14 +65,14 @@ type GrantPrivilege struct {
 // DetectPrivilegeMode probes the provisioner connection for granular
 // dictionary privileges (dictGet, SHOW DICTIONARIES).
 //
-// The direct read of system.privileges is authoritative and works for
-// least-privilege provisioners: system.columns is access-filtered, so a
-// provisioner without SELECT on system.privileges would wrongly see zero
-// privilege columns and a metadata-first probe would misclassify modern
-// servers as legacy. Only when the direct read fails does the existence
-// probe decide: zero visible columns means a pre-granular server (the table
-// does not exist) and legacy mode; anything else propagates the error so a
-// transient outage cannot silently flip modes.
+// The direct read of system.privileges is authoritative: it is world-readable
+// on servers that have the table (a static catalog; no grant required), while
+// system.columns is access-filtered, so a metadata-first probe would
+// misclassify a least-privilege provisioner's modern server as legacy. Only
+// when the direct read fails does the existence probe decide: zero visible
+// columns falls back to legacy — the table is absent on pre-granular servers,
+// or, narrowly, the provisioner's metadata view is filtered. Anything else
+// propagates the error so a transient outage cannot silently flip modes.
 func DetectPrivilegeMode(ctx context.Context, conn clickhouse.Conn) (PrivilegeMode, error) {
 	var dictGet, showDictionaries uint64
 	err := conn.QueryRow(ctx, `

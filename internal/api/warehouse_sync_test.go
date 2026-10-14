@@ -657,9 +657,9 @@ func TestReconcileWarehouseStatementFailureMarksError(t *testing.T) {
 
 // TestDetectPrivilegeModeLeastPrivilegeProvisioner pins the probe ordering:
 // system.columns is access-filtered, so a metadata-first probe would
-// misclassify a modern server as legacy for a provisioner that cannot read
-// system.privileges metadata. The direct read of system.privileges must stay
-// authoritative.
+// misclassify a modern server as legacy for a least-privilege provisioner
+// (the direct read of system.privileges is world-readable; its metadata view
+// is not). The direct read must stay authoritative.
 func TestDetectPrivilegeModeLeastPrivilegeProvisioner(t *testing.T) {
 	ctx := context.Background()
 	fx := setupWarehouseFixture(t)
