@@ -516,7 +516,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	// Load agent tools from tools table
 	// Tool ACLs are enforced at assignment time (validateToolAccess in agent_handlers.go);
 	// tool_ids is the sole execution enforcement point.
-	agentTools := e.loadAgentToolDefs(ctx, agent)
+	agentTools := e.loadAgentToolDefs(ctx, agent, masterKey)
 
 	// Always include the ask_question tool so every agent can ask for user input
 	if qDef, ok := e.registry.Get("ask_question"); ok {
@@ -1423,7 +1423,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 // Tool access is governed solely by agent.ToolIDs; the legacy all_builtin_tools
 // flag is ignored. Tool ACLs are checked at assignment time (validateToolAccess)
 // — no ACL check at load time. tool_ids is the sole execution enforcement point.
-func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent) []*ToolDef {
+func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent, masterKey []byte) []*ToolDef {
 	agentTools := make([]*ToolDef, 0)
 	if len(agent.ToolIDs) == 0 {
 		return agentTools
@@ -1454,6 +1454,12 @@ func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent) []*T
 		if config != nil {
 			json.Unmarshal(config, &t.Config)
 		}
+		if t.Type == models.ToolTypeWebhook {
+			if err := decryptWebhookHeaderSecrets(&t, masterKey); err != nil {
+				slog.Warn("engine: failed to decrypt webhook header secrets", "tool", t.Name, "error", err)
+				continue
+			}
+		}
 		toolDef, err := e.resolveToolDef(&t)
 		if err != nil {
 			slog.Warn("engine: failed to resolve tool", "tool", t.Name, "error", err)
@@ -1464,6 +1470,26 @@ func (e *Engine) loadAgentToolDefs(ctx context.Context, agent models.Agent) []*T
 		}
 	}
 	return agentTools
+}
+
+// decryptWebhookHeaderSecrets resolves enc:v1: values named in
+// tools.config.secrets into plaintext before the tool def is built. Untagged
+// values pass through, so pre-encryption rows keep working.
+func decryptWebhookHeaderSecrets(t *models.Tool, masterKey []byte) error {
+	rawHeaders, ok := t.Config["headers"].(map[string]any)
+	if !ok || len(rawHeaders) == 0 {
+		return nil
+	}
+	plain, err := headers.DecryptSecrets(rawHeaders, headers.NamesFromJSON(t.Config["secrets"]), masterKey)
+	if err != nil {
+		return err
+	}
+	plainAny := make(map[string]any, len(plain))
+	for k, v := range plain {
+		plainAny[k] = v
+	}
+	t.Config["headers"] = plainAny
+	return nil
 }
 
 func (e *Engine) resolveToolDef(t *models.Tool) (*ToolDef, error) {

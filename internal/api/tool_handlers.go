@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -399,17 +398,20 @@ func (h *toolHandlers) handleTest(w http.ResponseWriter, r *http.Request) {
 		if method == "" {
 			method = "POST"
 		}
-		headers := make(map[string]string)
-		if h, ok := cfg["headers"].(map[string]any); ok {
-			for k, v := range h {
-				headers[k] = fmt.Sprintf("%v", v)
+		probeHeaders := make(map[string]string)
+		if rawHeaders, ok := cfg["headers"].(map[string]any); ok {
+			plain, decErr := headers.DecryptSecrets(rawHeaders, headers.NamesFromJSON(cfg["secrets"]), h.server.masterKey)
+			if decErr != nil {
+				writeError(w, http.StatusInternalServerError, "failed to decrypt header secrets")
+				return
 			}
+			probeHeaders = plain
 		}
 		body := map[string]string{"test": "aether-tool-probe"}
 		bodyBytes, _ := json.Marshal(body)
 		req, _ := http.NewRequest(method, url, bytes.NewReader(bodyBytes))
 		req.Header.Set("Content-Type", "application/json")
-		for k, v := range headers {
+		for k, v := range probeHeaders {
 			req.Header.Set(k, v)
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

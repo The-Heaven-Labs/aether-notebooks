@@ -354,3 +354,39 @@ func TestWebhookHeaderSecretsEncryptedAtRest(t *testing.T) {
 		}
 	})
 }
+
+// TestToolTestEndpointSendsDecryptedSecretHeaders pins the probe path: the
+// tool test endpoint must send the plaintext secret over the wire, never the
+// stored enc:v1: ciphertext.
+func TestToolTestEndpointSendsDecryptedSecretHeaders(t *testing.T) {
+	srv := setupTestServer(t)
+	email := fmt.Sprintf("tool-test-headers-%d@example.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Tool Test Headers Org")
+
+	var gotAPIKey string
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("X-Api-Key")
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer hook.Close()
+
+	toolID := createWebhookTool(t, srv, token, map[string]any{
+		"url":     hook.URL,
+		"method":  "POST",
+		"headers": map[string]string{"X-Api-Key": "probe-secret"},
+		"secrets": []string{"X-Api-Key"},
+	})
+
+	req := httptest.NewRequest("POST", "/api/v1/tools/"+toolID+"/test", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rec := httptest.NewRecorder()
+	srv.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("test tool: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if gotAPIKey != "probe-secret" {
+		t.Fatalf("expected decrypted X-Api-Key %q on the probe, got %q", "probe-secret", gotAPIKey)
+	}
+}
