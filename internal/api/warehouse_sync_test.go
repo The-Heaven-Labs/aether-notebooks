@@ -594,7 +594,7 @@ func TestReconcileWarehouseStatementFailureMarksError(t *testing.T) {
 		"GRANT SELECT ON system.roles TO " + limitedUser,
 		"GRANT SELECT ON system.role_grants TO " + limitedUser,
 		"GRANT CREATE ROLE ON *.* TO " + limitedUser,
-		"GRANT SELECT ON analytics.* TO " + limitedUser + " WITH GRANT OPTION",
+		"GRANT SELECT, dictGet, SHOW DICTIONARIES ON analytics.* TO " + limitedUser + " WITH GRANT OPTION",
 	} {
 		require.NoError(t, fx.conn.Exec(ctx, grant))
 	}

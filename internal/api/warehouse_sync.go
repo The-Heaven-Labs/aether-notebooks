@@ -126,6 +126,11 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 	}
 	defer conn.Close()
 
+	mode, err := chaccess.DetectPrivilegeMode(ctx, conn)
+	if err != nil {
+		return s.failWarehouseSync(ctx, warehouseID, fmt.Errorf("detect clickhouse privilege mode: %w", err))
+	}
+
 	// Catalog observation powers the new-tables inbox. It is best-effort: a
 	// catalog read or cache write must never block access provisioning, and
 	// the next reconcile retries.
@@ -145,7 +150,7 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		return s.failWarehouseSync(ctx, warehouseID, err)
 	}
 
-	actual, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	actual, err := chaccess.LoadActual(ctx, conn, warehouseID, mode)
 	if err != nil {
 		return s.failWarehouseSync(ctx, warehouseID,
 			fmt.Errorf("load clickhouse actual state: %w", err))
@@ -181,7 +186,7 @@ func (s *Server) reconcileWarehouse(ctx context.Context, warehouseID uuid.UUID) 
 		return syncErr
 	}
 
-	stmts, skipped := chaccess.Statements(desired, actual)
+	stmts, skipped := chaccess.Statements(desired, actual, mode)
 	auditReport := report
 	if !prevProvisioned {
 		auditReport = DriftReport{WarehouseID: warehouseID}
@@ -542,11 +547,16 @@ func (s *Server) detectWarehouseDrift(ctx context.Context, warehouseID uuid.UUID
 	}
 	defer conn.Close()
 
+	mode, err := chaccess.DetectPrivilegeMode(ctx, conn)
+	if err != nil {
+		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: detect clickhouse privilege mode: %w", warehouseID, err)
+	}
+
 	desired, err := s.loadWarehouseDesiredState(ctx, warehouseID, hdr.orgID)
 	if err != nil {
 		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: %w", warehouseID, err)
 	}
-	actual, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	actual, err := chaccess.LoadActual(ctx, conn, warehouseID, mode)
 	if err != nil {
 		return DriftReport{}, fmt.Errorf("detect warehouse %s drift: load clickhouse actual state: %w", warehouseID, err)
 	}
@@ -619,11 +629,16 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 	}
 	defer conn.Close()
 
-	actual, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	mode, err := chaccess.DetectPrivilegeMode(ctx, conn)
+	if err != nil {
+		return false, fmt.Errorf("detect clickhouse privilege mode: %w", err)
+	}
+
+	actual, err := chaccess.LoadActual(ctx, conn, warehouseID, mode)
 	if err != nil {
 		return false, fmt.Errorf("load clickhouse actual state: %w", err)
 	}
-	stmts, skipped := chaccess.Statements(chaccess.DesiredState{}, actual)
+	stmts, skipped := chaccess.Statements(chaccess.DesiredState{}, actual, mode)
 	for i, stmt := range stmts {
 		if execErr := conn.Exec(ctx, stmt); execErr != nil {
 			return len(stmts) > 0, fmt.Errorf("execute drop statement %d of %d: %s",
@@ -644,7 +659,7 @@ func (s *Server) dropWarehouseIdentitiesLocked(ctx context.Context, warehouseID 
 	// the only thing between a deleted row and orphaned identities, so any
 	// identity still visible (an unquotable name, a concurrent server-side
 	// change) must fail the cleanup instead of surviving it silently.
-	remaining, err := chaccess.LoadActual(ctx, conn, warehouseID)
+	remaining, err := chaccess.LoadActual(ctx, conn, warehouseID, mode)
 	if err != nil {
 		return len(stmts) > 0, fmt.Errorf("verify clickhouse identities removed: %w", err)
 	}
