@@ -12,7 +12,7 @@ export const emptyHeaderRow = (): HeaderRow => ({ key: '', value: '', sensitive:
 
 /** Map an API header map + secrets list into editable rows. */
 export function headersToRows(headers?: Record<string, unknown>, secrets?: string[]): HeaderRow[] {
-  const entries = headers ? Object.entries(headers) : []
+  const entries = headers && typeof headers === 'object' ? Object.entries(headers) : []
   if (entries.length === 0) return [emptyHeaderRow()]
   return entries.map(([key, value]) => ({ key, value: String(value), sensitive: secrets?.some(s => s.toLowerCase() === key.toLowerCase()) ?? false }))
 }

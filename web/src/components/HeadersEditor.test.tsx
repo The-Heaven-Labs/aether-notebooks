@@ -52,6 +52,12 @@ describe('HeadersEditor', () => {
     ])
   })
 
+  test('headersToRows ignores malformed non-object header maps', () => {
+    expect(headersToRows('abc' as unknown as Record<string, unknown>, undefined)).toEqual([
+      { key: '', value: '', sensitive: false },
+    ])
+  })
+
   test('typing into a masked field replaces the sentinel', () => {
     const onChange = vi.fn()
     render(<HeadersEditor rows={[{ key: 'X-Api-Key', value: REDACTED_SENTINEL, sensitive: true }]} onChange={onChange} />)
