@@ -431,6 +431,72 @@ func TestWarehouseDictionaryGrantsE2E(t *testing.T) {
 	requireClickHouseDenied(t, rec)
 }
 
+// TestWarehouseDictionaryGrantUpgradeRepair simulates a deployment upgrading
+// to the dictionary read bundle: the grant row already exists in Postgres,
+// but ClickHouse still holds the pre-feature SELECT-only state. The first
+// reconcile after upgrade must repair dictGet and SHOW DICTIONARIES on the
+// existing grant, not just provision fresh grants with the full bundle.
+func TestWarehouseDictionaryGrantUpgradeRepair(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseRBACE2EFixture(t)
+	if mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn); err != nil || mode != chaccess.PrivilegeModeFull {
+		t.Skipf("server does not support granular dictionary privileges (mode=%q err=%v)", mode, err)
+	}
+
+	// The grant row is already there, exactly as an upgrading deployment
+	// would have it; no reconcile has run for it yet.
+	rec := createGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID,
+		grantBody("group", fx.groupID.String(), fx.database, "d1"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+
+	// Reconstruct the pre-feature ClickHouse state by hand: the group role,
+	// the member's identity (same password derivation the server uses, so the
+	// pooled execution path authenticates), and SELECT-only on d1.
+	groupRole := chaccess.RoleIdent(fx.warehouseID, fx.orgID, fx.groupID)
+	quotedRole, err := chaccess.QuoteIdent(groupRole)
+	require.NoError(t, err)
+	memberIdent := chaccess.UserIdent(fx.warehouseID, fx.orgID, fx.memberID)
+	quotedUser, err := chaccess.QuoteIdent(memberIdent)
+	require.NoError(t, err)
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE ROLE IF NOT EXISTS "+quotedRole))
+	require.NoError(t, fx.conn.Exec(ctx, "CREATE USER IF NOT EXISTS "+quotedUser+
+		" IDENTIFIED WITH sha256_password BY '"+
+		chaccess.DerivePassword(fx.s.masterKey, fx.warehouseID, fx.memberID)+"' GRANTEES NONE"))
+	require.NoError(t, fx.conn.Exec(ctx, "GRANT "+quotedRole+" TO "+quotedUser))
+	require.NoError(t, fx.conn.Exec(ctx, "SET DEFAULT ROLE ALL TO "+quotedUser))
+	require.NoError(t, fx.conn.Exec(ctx, "GRANT SELECT ON "+fx.table(t, "d1")+" TO "+quotedRole))
+
+	// Sanity: the simulated state is genuinely SELECT-only.
+	var n uint64
+	require.NoError(t, fx.conn.QueryRow(ctx, `
+		SELECT count() FROM system.grants
+		WHERE access_type = 'dictGet' AND database = ? AND table = 'd1'
+		  AND role_name = ?`, fx.database, groupRole).Scan(&n))
+	require.Zero(t, n, "the simulated pre-upgrade state must not hold dictGet")
+
+	// The upgrade event: the first reconcile must repair the existing grant.
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	for _, access := range []string{"SELECT", "dictGet", "SHOW DICTIONARIES"} {
+		require.NoError(t, fx.conn.QueryRow(ctx, `
+			SELECT count() FROM system.grants
+			WHERE access_type = ? AND database = ? AND table = 'd1'
+			  AND role_name = ?`, access, fx.database, groupRole).Scan(&n))
+		require.Equal(t, uint64(1), n, "upgrade must repair %s on the existing dictionary grant", access)
+	}
+
+	// The acceptance outcome: the member can use the repaired dictionary.
+	rec = fx.runAs(t, fx.memberID, http.StatusOK,
+		"SELECT label FROM "+fx.table(t, "d1")+" WHERE id = 1")
+	out := decodeExecuteOutputs(t, rec)
+	require.Equal(t, "one", out.Outputs[0].Data.Rows[0][0])
+
+	rec = fx.runAs(t, fx.memberID, http.StatusOK,
+		"SELECT dictGet('"+fx.database+".d1', 'label', toUInt8(1)) AS label")
+	out = decodeExecuteOutputs(t, rec)
+	require.Equal(t, "one", out.Outputs[0].Data.Rows[0][0])
+}
+
 // TestWarehouseDictionaryGuardE2E proves the drift guard now manages
 // dictGet: an outside-of-Aether grant on an ungranted object is revoked, and
 // a wildcard dictionary grant still fails the warehouse closed.
