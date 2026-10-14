@@ -88,7 +88,7 @@ func setupUsageTestEnv(t *testing.T, baseURL, defaultParams string, contextWindo
 	require.NoError(t, err)
 
 	engine := agent.NewEngine(ctx, db.Pool, nil)
-	engine.SetLLMClient(agent.NewLLMClient(baseURL, "gpt-4", encKey, nil))
+	engine.SetLLMClient(agent.NewLLMClient(baseURL, "gpt-4", encKey, nil, nil, nil))
 
 	return &usageTestEnv{db: db, engine: engine, store: store, sessionID: session.ID, masterKey: masterKey, apiKey: encKey}
 }
@@ -290,7 +290,7 @@ func TestRunQueuedTasksAccruesSubagentUsage(t *testing.T) {
 		}
 	}
 
-	llm := agent.NewLLMClient(srv.URL, "gpt-4", env.apiKey, nil)
+	llm := agent.NewLLMClient(srv.URL, "gpt-4", env.apiKey, nil, nil, nil)
 	results := env.engine.RunQueuedTasks(ctx, env.sessionID, []string{taskID}, env.masterKey, broadcastFn, "", llm, nil)
 	require.Len(t, results, 1)
 	require.Equal(t, "completed", results[0].Status)

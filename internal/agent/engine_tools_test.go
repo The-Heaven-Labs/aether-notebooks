@@ -651,7 +651,7 @@ func TestProcessMessage_ToolNotInToolIDs_RejectedAtExecution(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	// Need to set pool's engine session store etc - already via newTestEngine the pool is set, but we need to ensure engine.pool is set
 	engine.pool = db.Pool
 	// Session store needs pool as well
@@ -719,7 +719,7 @@ func TestProcessMessage_DoesNotAdvertiseUnlistedTools(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
@@ -787,7 +787,7 @@ func TestProcessMessage_RegistryFallbackRemoved(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
@@ -876,7 +876,7 @@ func TestEndToEnd_ToolRemovedFromAgent_CannotCall(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	engine.session = NewSessionStore(db.Pool, nil)
 	_, _, _, _, _, err = engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
@@ -941,7 +941,7 @@ func TestEndToEnd_AdminModeDoesNotBypassToolIDs(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 	engine.pool = db.Pool
 	_, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "hi", nil, nil, masterKey, nil, nil, nil, nil, nil, nil)
 	if err != nil {
@@ -1030,7 +1030,7 @@ func TestRunSubagentLoop_ToolTimeoutSurfaced(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	llm := NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{})
+	llm := NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil)
 
 	res := engine.runSubagentLoop(context.Background(), sid, taskID, "probe timeout", userID, orgID, "admin", masterKey, llm, []*ToolDef{probe}, 3)
 	require.Equal(t, "completed", res.Status)
@@ -1105,7 +1105,7 @@ func TestRunSubagent_ToolTimeoutSurfaced(t *testing.T) {
 	srv := newMockLLMServerWithCapture(t, masterKey, responses, &captured)
 	defer srv.Close()
 	enc, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 
 	res := engine.runSubagent(context.Background(), sid, SubagentTaskConfig{Goal: "probe legacy timeout"}, userID, orgID, masterKey)
 	require.Equal(t, "completed", res.Status)

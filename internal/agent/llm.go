@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/headers"
 )
 
 type LLMClient struct {
@@ -18,6 +19,10 @@ type LLMClient struct {
 	model         string
 	apiKey        []byte
 	defaultParams map[string]any
+	// customHeaders holds the raw stored header map: sensitive values may be
+	// enc:v1: ciphertext and are decrypted per call with the caller's masterKey.
+	customHeaders map[string]any
+	headerSecrets []string
 	httpClient    *http.Client
 }
 
@@ -149,12 +154,14 @@ type TokenBreakdown struct {
 	DurationMs      int `json:"duration_ms"`
 }
 
-func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string]any) *LLMClient {
+func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string]any, customHeaders map[string]any, headerSecrets []string) *LLMClient {
 	return &LLMClient{
 		baseURL:       baseURL,
 		model:         model,
 		apiKey:        apiKey,
 		defaultParams: defaultParams,
+		customHeaders: customHeaders,
+		headerSecrets: headerSecrets,
 		// No blanket http.Client.Timeout: these are non-streaming calls whose
 		// full generation (queue + reasoning + body) routinely exceeds a small
 		// cap. Timeouts are applied per-request below instead.
@@ -195,6 +202,11 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 		return nil, fmt.Errorf("decrypt api key: %w", err)
 	}
 
+	customHeaders, err := headers.DecryptSecrets(c.customHeaders, c.headerSecrets, masterKey)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt custom headers: %w", err)
+	}
+
 	// Bound the whole call (retries included) while still honoring the
 	// caller's cancellation.
 	ctx, cancel := context.WithTimeout(ctx, llmRequestTimeout)
@@ -219,6 +231,13 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 		}
 		req.Header.Set("Authorization", "Bearer "+string(decryptedKey))
 		req.Header.Set("Content-Type", "application/json")
+
+		// Custom headers are applied last so they may intentionally override
+		// Authorization for gateways with custom auth schemes. Host,
+		// Content-Length and Content-Type are rejected at write time.
+		for name, value := range customHeaders {
+			req.Header.Set(name, value)
+		}
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
@@ -289,8 +308,16 @@ func (c *LLMClient) ChatStream(ctx context.Context, messages []ChatMessage, tool
 	if err != nil {
 		return fmt.Errorf("decrypt api key: %w", err)
 	}
+
+	customHeaders, err := headers.DecryptSecrets(c.customHeaders, c.headerSecrets, masterKey)
+	if err != nil {
+		return fmt.Errorf("decrypt custom headers: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+string(decryptedKey))
 	req.Header.Set("Content-Type", "application/json")
+	for name, value := range customHeaders {
+		req.Header.Set(name, value)
+	}
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {

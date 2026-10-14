@@ -578,7 +578,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 			}
 			mc.DefaultParams["reasoning_effort"] = effort
 		}
-		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, nil, nil)
 		contextWindow = mc.ContextWindow
 	} else {
 		slog.Warn("engine: no model config on agent, using default LLM client", "session_id", sessionID, "default_llm_nil", e.llm == nil)
@@ -1579,7 +1579,7 @@ func (e *Engine) defaultSubagentLLM(ctx context.Context, pool *pgxpool.Pool, age
 	if defaultParams != nil {
 		json.Unmarshal(defaultParams, &mc.DefaultParams)
 	}
-	return NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+	return NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, nil, nil)
 }
 
 func (e *Engine) SetToolAllowedDomains(domains []string) {
@@ -1779,7 +1779,7 @@ func (e *Engine) summarizeSession(ctx context.Context, sessionID string, masterK
 		if defaultParams != nil {
 			json.Unmarshal(defaultParams, &mc.DefaultParams)
 		}
-		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+		llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, nil, nil)
 	}
 
 	if llmClient == nil {
@@ -1873,7 +1873,7 @@ func (e *Engine) generateSessionTitle(ctx context.Context, sessionID string, mas
 				if defaultParams != nil {
 					json.Unmarshal(defaultParams, &mc.DefaultParams)
 				}
-				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams)
+				llmClient = NewLLMClient(mc.BaseURL, mc.Model, mc.APIKeyEncrypted, mc.DefaultParams, nil, nil)
 			}
 		}
 	}

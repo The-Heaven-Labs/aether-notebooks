@@ -466,7 +466,7 @@ func (h *modelConfigHandlers) handleTest(w http.ResponseWriter, r *http.Request)
 	if defaultParams != nil {
 		json.Unmarshal(defaultParams, &mc.DefaultParams)
 	}
-	llmClient := agent.NewLLMClient(mc.BaseURL, mc.Model, apiKeyEncrypted, mc.DefaultParams)
+	llmClient := agent.NewLLMClient(mc.BaseURL, mc.Model, apiKeyEncrypted, mc.DefaultParams, nil, nil)
 	resp, err := llmClient.Chat(r.Context(), []agent.ChatMessage{{Role: "user", Content: "Say 'OK' if you can hear me."}}, nil, h.server.masterKey)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "connection failed: "+err.Error())

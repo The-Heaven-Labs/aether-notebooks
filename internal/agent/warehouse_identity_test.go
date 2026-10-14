@@ -827,7 +827,7 @@ func TestEnginePropagatesWarehouseExecutionHooks(t *testing.T) {
 	defer srv.Close()
 	enc, err := crypto.Encrypt([]byte("sk-test"), masterKey)
 	require.NoError(t, err)
-	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}))
+	engine.SetLLMClient(NewLLMClient(srv.URL, "gpt-4", enc, map[string]any{}, nil, nil))
 
 	if _, _, _, _, _, err := engine.ProcessMessage(context.Background(), sid, "probe", nil, []*ToolDef{probe}, masterKey, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatalf("ProcessMessage: %v", err)
