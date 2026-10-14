@@ -11,6 +11,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/headers"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -45,7 +46,7 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted,
 			   default_params, context_window, price_per_input_token, price_per_output_token,
 			   price_per_cache_read_token, folder_id, created_by, created_at, updated_at,
-			   api_key_env_var
+			   api_key_env_var, custom_headers, custom_header_secrets
 		FROM model_configs WHERE org_id = $1 ORDER BY name
 	`, claims.OrgID)
 	if err != nil {
@@ -57,12 +58,21 @@ func (h *modelConfigHandlers) handleList(w http.ResponseWriter, r *http.Request)
 	configs := []models.ModelConfig{}
 	for rows.Next() {
 		var c models.ModelConfig
-		var defaultParams []byte
+		var defaultParams, customHeaders []byte
+		var customHeaderSecrets []string
 		rows.Scan(&c.ID, &c.OrgID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &c.APIKeyEncrypted,
 			&defaultParams, &c.ContextWindow, &c.PricePerInputToken, &c.PricePerOutputToken,
 			&c.PricePerCacheReadToken, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
-			&c.APIKeyEnvVar)
+			&c.APIKeyEnvVar, &customHeaders, &customHeaderSecrets)
 		json.Unmarshal(defaultParams, &c.DefaultParams)
+		if customHeaders != nil {
+			json.Unmarshal(customHeaders, &c.CustomHeaders)
+		}
+		if c.CustomHeaders == nil {
+			c.CustomHeaders = models.JSONMap{}
+		}
+		c.CustomHeaderSecrets = customHeaderSecrets
+		headers.RedactSecrets(c.CustomHeaders, c.CustomHeaderSecrets)
 		allowed, _ := h.server.checkPermission(r.Context(), claims.UserID, claims.OrgID, claims.Role, "model_config", c.ID, "view")
 		if !allowed {
 			continue
@@ -98,22 +108,31 @@ func (h *modelConfigHandlers) handleGet(w http.ResponseWriter, r *http.Request) 
 
 	var c models.ModelConfig
 	var apiKeyEncrypted []byte
-	var defaultParams []byte
+	var defaultParams, customHeaders []byte
+	var customHeaderSecrets []string
 	err = h.server.db.Pool.QueryRow(r.Context(), `
 		SELECT id, org_id, name, provider, base_url, model, api_key_encrypted,
 			   default_params, context_window, price_per_input_token, price_per_output_token,
 			   price_per_cache_read_token, folder_id, created_by, created_at, updated_at,
-			   api_key_env_var
+			   api_key_env_var, custom_headers, custom_header_secrets
 		FROM model_configs WHERE id = $1 AND org_id = $2
 	`, id, claims.OrgID).Scan(&c.ID, &c.OrgID, &c.Name, &c.Provider, &c.BaseURL, &c.Model, &apiKeyEncrypted,
 		&defaultParams, &c.ContextWindow, &c.PricePerInputToken, &c.PricePerOutputToken,
 		&c.PricePerCacheReadToken, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt,
-		&c.APIKeyEnvVar)
+		&c.APIKeyEnvVar, &customHeaders, &customHeaderSecrets)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "model config not found")
 		return
 	}
 	json.Unmarshal(defaultParams, &c.DefaultParams)
+	if customHeaders != nil {
+		json.Unmarshal(customHeaders, &c.CustomHeaders)
+	}
+	if c.CustomHeaders == nil {
+		c.CustomHeaders = models.JSONMap{}
+	}
+	c.CustomHeaderSecrets = customHeaderSecrets
+	headers.RedactSecrets(c.CustomHeaders, c.CustomHeaderSecrets)
 	c.APIKeyEncrypted = nil
 
 	writeJSON(w, http.StatusOK, c)
@@ -143,6 +162,8 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 		PricePerOutputToken    float64        `json:"price_per_output_token"`
 		PricePerCacheReadToken float64        `json:"price_per_cache_read_token"`
 		FolderID               *string        `json:"folder_id"`
+		CustomHeaders          models.JSONMap `json:"custom_headers"`
+		CustomHeaderSecrets    []string       `json:"custom_header_secrets"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -184,15 +205,33 @@ func (h *modelConfigHandlers) handleCreate(w http.ResponseWriter, r *http.Reques
 		}
 	}
 
+	if err := headers.Validate(req.CustomHeaders, req.CustomHeaderSecrets); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	encryptedHeaders, encErr := headers.EncryptSecrets(req.CustomHeaders, req.CustomHeaderSecrets, h.server.masterKey)
+	if encErr != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
+		return
+	}
+	customHeadersJSON, _ := json.Marshal(encryptedHeaders)
+	// custom_header_secrets is NOT NULL: a missing list must write an empty
+	// array rather than SQL NULL.
+	customHeaderSecrets := req.CustomHeaderSecrets
+	if customHeaderSecrets == nil {
+		customHeaderSecrets = []string{}
+	}
+
 	_, err = h.server.db.Pool.Exec(r.Context(), `
 		INSERT INTO model_configs (id, org_id, name, provider, base_url, model, api_key_encrypted,
 			default_params, context_window, price_per_input_token, price_per_output_token,
 			price_per_cache_read_token, folder_id, created_by, created_at, updated_at,
-			api_key_env_var)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW(), $15)
+			api_key_env_var, custom_headers, custom_header_secrets)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, NOW(), NOW(), $15, $16, $17)
 	`, cfgID, claims.OrgID, req.Name, req.Provider, req.BaseURL, req.Model, encryptedKey,
 		defaultParamsJSON, req.ContextWindow, req.PricePerInputToken, req.PricePerOutputToken,
-		req.PricePerCacheReadToken, req.FolderID, claims.UserID, apiKeyEnvVar)
+		req.PricePerCacheReadToken, req.FolderID, claims.UserID, apiKeyEnvVar,
+		customHeadersJSON, customHeaderSecrets)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -240,6 +279,8 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 		PricePerInputToken     *float64        `json:"price_per_input_token"`
 		PricePerOutputToken    *float64        `json:"price_per_output_token"`
 		PricePerCacheReadToken *float64        `json:"price_per_cache_read_token"`
+		CustomHeaders          *models.JSONMap `json:"custom_headers"`
+		CustomHeaderSecrets    *[]string       `json:"custom_header_secrets"`
 	}
 	if err := decodeJSON(r, &req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request")
@@ -294,6 +335,36 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 
 	defaultParamsJSON, _ := json.Marshal(req.DefaultParams)
 
+	var customHeadersJSON []byte
+	var customHeaderSecrets []string
+	if req.CustomHeaders != nil {
+		secrets := []string{}
+		if req.CustomHeaderSecrets != nil {
+			secrets = *req.CustomHeaderSecrets
+		}
+		if err := headers.Validate(*req.CustomHeaders, secrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Sentinel values mean "keep the stored secret".
+		var oldRaw []byte
+		if err := h.server.db.Pool.QueryRow(r.Context(),
+			`SELECT custom_headers FROM model_configs WHERE id = $1 AND org_id = $2`,
+			cfgID, claims.OrgID).Scan(&oldRaw); err == nil && len(oldRaw) > 0 {
+			var old models.JSONMap
+			if err := json.Unmarshal(oldRaw, &old); err == nil {
+				headers.RestoreSecrets(old, *req.CustomHeaders, secrets)
+			}
+		}
+		encrypted, encErr := headers.EncryptSecrets(*req.CustomHeaders, secrets, h.server.masterKey)
+		if encErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
+			return
+		}
+		customHeadersJSON, _ = json.Marshal(encrypted)
+		customHeaderSecrets = secrets
+	}
+
 	result, err := h.server.db.Pool.Exec(r.Context(), `
 		UPDATE model_configs SET
 			name = COALESCE($2, name),
@@ -305,10 +376,13 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 			price_per_input_token = COALESCE($8, price_per_input_token),
 			price_per_output_token = COALESCE($9, price_per_output_token),
 			price_per_cache_read_token = COALESCE($10, price_per_cache_read_token),
+			custom_headers = COALESCE($11, custom_headers),
+			custom_header_secrets = COALESCE($12, custom_header_secrets),
 			updated_at = NOW()
-		WHERE id = $1 AND org_id = $11
+		WHERE id = $1 AND org_id = $13
 	`, cfgID, req.Name, req.Provider, req.BaseURL, req.Model, defaultParamsJSON, req.ContextWindow,
-		req.PricePerInputToken, req.PricePerOutputToken, req.PricePerCacheReadToken, claims.OrgID)
+		req.PricePerInputToken, req.PricePerOutputToken, req.PricePerCacheReadToken,
+		customHeadersJSON, customHeaderSecrets, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
