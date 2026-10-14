@@ -1,7 +1,7 @@
 # Custom Headers for Agents (LLM + MCP) & Encrypted Header Secrets — Design
 
 **Date:** 2026-10-14
-**Status:** 🚧 In progress
+**Status:** ✅ Implemented
 **Branch:** `feat/agent-custom-headers`
 
 ## Problem
