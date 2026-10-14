@@ -231,6 +231,11 @@ type NonSelectGrant struct {
 // (INSERT, ALTER, DROP, ...). The managed set is excluded in SQL so the enum
 // literal is only referenced on servers whose mode supports it; partial
 // revokes are not grants and are excluded, matching loadGrants.
+//
+// On a legacy-mode server that nevertheless reports dictionary privileges
+// (probe fallback), those rows are not part of the legacy managed set, so
+// they land in the returned drift list and fail the reconcile closed rather
+// than being revoked as managed extras.
 func loadNonSelectGrants(ctx context.Context, conn clickhouse.Conn, prefix string, mode PrivilegeMode) ([]NonSelectGrant, error) {
 	filter := "access_type != 'SELECT'"
 	if mode != PrivilegeModeLegacy {
@@ -445,7 +450,12 @@ func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]stru
 			continue
 		}
 		if !managedAccessType(r.AccessType) {
-			continue // loadGrants filters to the managed set; belt and braces
+			// loadGrants filters to the managed set; belt and braces. The
+			// loader is mode-gated, so on a legacy server dictGet /
+			// SHOW DICTIONARIES rows cannot reach the builder; were one to
+			// arrive anyway, loadNonSelectGrants would surface it as
+			// Unexpected drift and fail the warehouse closed.
+			continue
 		}
 		subject := r.RoleName
 		if subject == "" {

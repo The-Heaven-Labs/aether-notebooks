@@ -118,6 +118,21 @@ func TestParseGrantOptionIsUnexpectedDrift(t *testing.T) {
 	require.Equal(t, []string{"grant option on db.t1 for aether_wh_u_x"}, a.Unexpected)
 }
 
+func TestParseGrantOptionFullModeIsPrivilegeOnly(t *testing.T) {
+	// In full mode a lone SELECT WITH GRANT OPTION row is a partial bundle:
+	// the object must not be object-present (drift reports it as missing once
+	// repaired) while the grant-option drift entry still fails the reconcile
+	// closed regardless of mode.
+	rows := []GrantRow{
+		{UserName: "aether_wh_u_x", Database: "db", Table: "t1", AccessType: "SELECT", GrantOption: 1},
+	}
+	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	require.NotContains(t, a.Users["aether_wh_u_x"].DirectGrants, Grant{"db", "t1"})
+	require.Contains(t, a.Users["aether_wh_u_x"].DirectPrivileges,
+		GrantPrivilege{Grant: Grant{"db", "t1"}, Access: AccessSelect})
+	require.Equal(t, []string{"grant option on db.t1 for aether_wh_u_x"}, a.Unexpected)
+}
+
 func TestParseWildcardOrderingDeterministic(t *testing.T) {
 	rows := []GrantRow{
 		{RoleName: "aether_wh_g_z", Database: "db2", Table: "", AccessType: "SELECT"},
