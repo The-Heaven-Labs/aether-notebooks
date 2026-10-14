@@ -31,6 +31,9 @@ type UserActual struct {
 	Roles           map[string]struct{}
 	DirectGrants    map[Grant]struct{}
 	DefaultRolesAll bool
+	// DirectPrivileges is the raw observed (object, privilege) set; every
+	// entry is one of the managed read privileges.
+	DirectPrivileges map[GrantPrivilege]struct{}
 }
 
 // WildcardGrant is an unexpected ClickHouse wildcard grant. Aether never
@@ -51,7 +54,11 @@ type WildcardGrant struct {
 // namespace roles granted to users outside the namespace, and grants held
 // WITH GRANT OPTION. It is informational (used for sync error reporting).
 type ActualState struct {
-	Roles              map[string]map[Grant]struct{}
+	Roles map[string]map[Grant]struct{}
+	// RolePrivileges carries the raw observed (object, privilege) sets the
+	// DDL diff consumes; Roles carries object-level presence (a full bundle)
+	// for drift reporting.
+	RolePrivileges     map[string]map[GrantPrivilege]struct{}
 	Users              map[string]UserActual
 	Wildcards          []WildcardGrant
 	Unexpected         []string

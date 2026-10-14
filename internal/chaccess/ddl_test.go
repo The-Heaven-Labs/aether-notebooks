@@ -17,6 +17,18 @@ func grantSet(gs ...Grant) map[Grant]struct{} {
 	return m
 }
 
+// fullPrivSet expands object grants into the modern bundle's (object,
+// privilege) pairs, the shape ActualState carries after introspection.
+func fullPrivSet(gs ...Grant) map[GrantPrivilege]struct{} {
+	m := make(map[GrantPrivilege]struct{}, len(gs)*3)
+	for _, x := range gs {
+		for _, p := range PrivilegeModeFull.Bundle() {
+			m[GrantPrivilege{Grant: x, Access: p}] = struct{}{}
+		}
+	}
+	return m
+}
+
 func stmtIdx(t *testing.T, stmts []string, want string) int {
 	t.Helper()
 	for i, s := range stmts {
@@ -40,12 +52,12 @@ func TestStatementsCreateRoleUserAndGrants(t *testing.T) {
 			},
 		},
 	}
-	stmts, skipped := Statements(d, ActualState{})
+	stmts, skipped := Statements(d, ActualState{}, PrivilegeModeFull)
 	require.Empty(t, skipped)
 	require.Equal(t, []string{
 		"CREATE ROLE IF NOT EXISTS `aether_g_aaa`",
-		"GRANT SELECT ON `db1`.`t1` TO `aether_g_aaa`",
-		"GRANT SELECT ON `db1`.`t2` TO `aether_g_aaa`",
+		"GRANT SELECT, dictGet, SHOW DICTIONARIES ON `db1`.`t1` TO `aether_g_aaa`",
+		"GRANT SELECT, dictGet, SHOW DICTIONARIES ON `db1`.`t2` TO `aether_g_aaa`",
 		"CREATE USER IF NOT EXISTS `aether_u_bbb` IDENTIFIED WITH sha256_password BY 'Ae1_x' GRANTEES NONE",
 		"GRANT `aether_g_aaa` TO `aether_u_bbb`",
 		"SET DEFAULT ROLE ALL TO `aether_u_bbb`",
@@ -63,21 +75,75 @@ func TestStatementsRevokeExtrasAndDropOrphans(t *testing.T) {
 	}
 	a := ActualState{
 		Roles: map[string]map[Grant]struct{}{
-			"aether_g_aaa": grantSet(g("db1", "t1"), g("db1", "old")),
+			"aether_g_aaa": {},
 			"aether_g_zzz": grantSet(g("db1", "stale")),
+		},
+		RolePrivileges: map[string]map[GrantPrivilege]struct{}{
+			"aether_g_aaa": fullPrivSet(g("db1", "t1"), g("db1", "old")),
+			"aether_g_zzz": fullPrivSet(g("db1", "stale")),
 		},
 		Users: map[string]UserActual{
 			"aether_u_bbb": {Roles: map[string]struct{}{"aether_g_aaa": {}, "aether_g_old": {}}},
 			"aether_u_old": {Roles: map[string]struct{}{}},
 		},
 	}
-	stmts, skipped := Statements(d, a)
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
 	require.Empty(t, skipped)
 	joined := strings.Join(stmts, "\n")
-	require.Contains(t, joined, "REVOKE SELECT ON `db1`.`old` FROM `aether_g_aaa`")
+	require.Contains(t, joined, "REVOKE SELECT, dictGet, SHOW DICTIONARIES ON `db1`.`old` FROM `aether_g_aaa`")
 	require.Contains(t, joined, "DROP ROLE IF EXISTS `aether_g_zzz`")
 	require.Contains(t, joined, "REVOKE `aether_g_old` FROM `aether_u_bbb`")
 	require.Contains(t, joined, "DROP USER IF EXISTS `aether_u_old`")
+}
+
+func TestStatementsRepairsMissingBundlePrivileges(t *testing.T) {
+	d := DesiredState{
+		Roles: map[string]RoleState{
+			"aether_g_aaa": {Grants: grantSet(g("db1", "t1"))},
+		},
+	}
+	a := ActualState{
+		Roles: map[string]map[Grant]struct{}{"aether_g_aaa": {}},
+		RolePrivileges: map[string]map[GrantPrivilege]struct{}{
+			"aether_g_aaa": {{Grant: g("db1", "t1"), Access: AccessSelect}: {}},
+		},
+	}
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
+	require.Empty(t, skipped)
+	require.Equal(t, []string{
+		"GRANT dictGet, SHOW DICTIONARIES ON `db1`.`t1` TO `aether_g_aaa`",
+	}, stmts, "only the missing privileges are granted, in canonical order")
+}
+
+func TestStatementsLegacyModeEmitsSelectOnly(t *testing.T) {
+	d := DesiredState{
+		Roles: map[string]RoleState{
+			"aether_g_aaa": {Grants: grantSet(g("db1", "t1"))},
+		},
+	}
+	stmts, skipped := Statements(d, ActualState{}, PrivilegeModeLegacy)
+	require.Empty(t, skipped)
+	require.Equal(t, []string{
+		"CREATE ROLE IF NOT EXISTS `aether_g_aaa`",
+		"GRANT SELECT ON `db1`.`t1` TO `aether_g_aaa`",
+	}, stmts)
+}
+
+func TestStatementsPartialObjectRevokedAsObservedPrivileges(t *testing.T) {
+	// A partial bundle on a dropped object revokes exactly the observed
+	// privileges, never privileges the server never granted. The role stays
+	// desired; only the object is gone.
+	d := DesiredState{
+		Roles: map[string]RoleState{"aether_g_aaa": {}},
+	}
+	a := ActualState{
+		Roles: map[string]map[Grant]struct{}{"aether_g_aaa": {}},
+		RolePrivileges: map[string]map[GrantPrivilege]struct{}{
+			"aether_g_aaa": {{Grant: g("db1", "gone"), Access: AccessDictGet}: {}},
+		},
+	}
+	stmts, _ := Statements(d, a, PrivilegeModeFull)
+	require.Contains(t, stmts, "REVOKE dictGet ON `db1`.`gone` FROM `aether_g_aaa`")
 }
 
 func TestStatementsOrdersDependencies(t *testing.T) {
@@ -98,7 +164,7 @@ func TestStatementsOrdersDependencies(t *testing.T) {
 			"aether_u_bbb": {Roles: map[string]struct{}{"aether_g_old": {}}},
 		},
 	}
-	stmts, skipped := Statements(d, a)
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
 	require.Empty(t, skipped)
 
 	createRole := stmtIdx(t, stmts, "CREATE ROLE IF NOT EXISTS `aether_g_new`")
@@ -128,7 +194,7 @@ func TestStatementsResetsPasswordOnMasterKeyChange(t *testing.T) {
 			"aether_u_bbb": {},
 		},
 	}
-	stmts, _ := Statements(d, a)
+	stmts, _ := Statements(d, a, PrivilegeModeFull)
 	require.Contains(t, strings.Join(stmts, "\n"),
 		"ALTER USER `aether_u_bbb` IDENTIFIED WITH sha256_password BY 'Ae1_new'")
 }
@@ -137,14 +203,14 @@ func TestStatementsForcePasswordResetDoesNotAlterNewUser(t *testing.T) {
 	d := DesiredState{Users: map[string]UserState{
 		"aether_u_bbb": {Password: "Ae1_new", Roles: []string{"aether_g_aaa"}},
 	}}
-	stmts, _ := Statements(d, ActualState{ForcePasswordReset: true})
+	stmts, _ := Statements(d, ActualState{ForcePasswordReset: true}, PrivilegeModeFull)
 	joined := strings.Join(stmts, "\n")
 	require.Contains(t, joined, "CREATE USER IF NOT EXISTS `aether_u_bbb`")
 	require.NotContains(t, joined, "ALTER USER")
 }
 
 func TestStatementsNoOpOnEmptyState(t *testing.T) {
-	stmts, skipped := Statements(DesiredState{}, ActualState{})
+	stmts, skipped := Statements(DesiredState{}, ActualState{}, PrivilegeModeFull)
 	require.Empty(t, stmts)
 	require.Empty(t, skipped)
 }
@@ -162,6 +228,9 @@ func TestStatementsNoOpWhenDesiredMatchesActual(t *testing.T) {
 		Roles: map[string]map[Grant]struct{}{
 			"aether_g_aaa": grantSet(g("db1", "t1")),
 		},
+		RolePrivileges: map[string]map[GrantPrivilege]struct{}{
+			"aether_g_aaa": fullPrivSet(g("db1", "t1")),
+		},
 		Users: map[string]UserActual{
 			"aether_u_bbb": {
 				Roles:           map[string]struct{}{"aether_g_aaa": {}},
@@ -169,7 +238,7 @@ func TestStatementsNoOpWhenDesiredMatchesActual(t *testing.T) {
 			},
 		},
 	}
-	stmts, skipped := Statements(d, a)
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
 	require.Empty(t, stmts)
 	require.Empty(t, skipped)
 }
@@ -184,7 +253,7 @@ func TestStatementsSetsDefaultRoleWhenActualDefaultMissing(t *testing.T) {
 			DefaultRolesAll: false,
 		},
 	}}
-	stmts, skipped := Statements(d, a)
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
 	require.Empty(t, skipped)
 	require.Contains(t, stmts, "SET DEFAULT ROLE ALL TO `aether_u_bbb`")
 }
@@ -199,7 +268,7 @@ func TestStatementsSkipsDefaultRoleWhenActualDefaultSet(t *testing.T) {
 			DefaultRolesAll: true,
 		},
 	}}
-	stmts, skipped := Statements(d, a)
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
 	require.Empty(t, skipped)
 	require.NotContains(t, stmts, "SET DEFAULT ROLE ALL TO `aether_u_bbb`")
 }
@@ -211,7 +280,7 @@ func TestActualStateWildcards(t *testing.T) {
 	a.Wildcards = []WildcardGrant{{Subject: "aether_u_bbb", Scope: "analytics.*"}}
 	require.True(t, a.HasWildcard())
 
-	stmts, skipped := Statements(DesiredState{}, a)
+	stmts, skipped := Statements(DesiredState{}, a, PrivilegeModeFull)
 	require.Empty(t, stmts)
 	require.Empty(t, skipped)
 }
@@ -222,8 +291,8 @@ func TestStatementsSkipsUnquotableCatalogNames(t *testing.T) {
 			"aether_g_aaa": {Grants: grantSet(g("db1", "ok"), g("db1", "my table"))},
 		},
 	}
-	stmts, skipped := Statements(d, ActualState{})
-	require.Contains(t, stmts, "GRANT SELECT ON `db1`.`ok` TO `aether_g_aaa`")
+	stmts, skipped := Statements(d, ActualState{}, PrivilegeModeFull)
+	require.Contains(t, stmts, "GRANT SELECT, dictGet, SHOW DICTIONARIES ON `db1`.`ok` TO `aether_g_aaa`")
 	require.Equal(t, []string{"db1.my table"}, skipped)
 }
 
@@ -237,8 +306,11 @@ func TestStatementsSkipsUnquotableRevokeTarget(t *testing.T) {
 		Roles: map[string]map[Grant]struct{}{
 			"aether_g_aaa": grantSet(g("db1", "ok"), g("db1", "my table")),
 		},
+		RolePrivileges: map[string]map[GrantPrivilege]struct{}{
+			"aether_g_aaa": fullPrivSet(g("db1", "ok"), g("db1", "my table")),
+		},
 	}
-	stmts, skipped := Statements(d, a)
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
 	require.NotContains(t, strings.Join(stmts, "\n"), "REVOKE")
 	require.Equal(t, []string{"db1.my table"}, skipped)
 }
@@ -247,7 +319,7 @@ func TestStatementsSkipsUnquotableDirectGrant(t *testing.T) {
 	d := DesiredState{Users: map[string]UserState{
 		"aether_u_bbb": {Password: "Ae1_x", DirectGrants: grantSet(g("db1", "my table"))},
 	}}
-	stmts, skipped := Statements(d, ActualState{})
+	stmts, skipped := Statements(d, ActualState{}, PrivilegeModeFull)
 	require.Contains(t, strings.Join(stmts, "\n"), "CREATE USER IF NOT EXISTS `aether_u_bbb`")
 	require.Equal(t, []string{"db1.my table"}, skipped)
 }
@@ -257,7 +329,7 @@ func TestStatementsSkipsUnquotableActualNames(t *testing.T) {
 		Roles: map[string]map[Grant]struct{}{"aether_g_BAD": {}},
 		Users: map[string]UserActual{"aether_u_BAD": {}},
 	}
-	stmts, skipped := Statements(DesiredState{}, a)
+	stmts, skipped := Statements(DesiredState{}, a, PrivilegeModeFull)
 	require.Empty(t, stmts)
 	require.Equal(t, []string{"aether_g_BAD", "aether_u_BAD"}, skipped)
 }
@@ -269,7 +341,7 @@ func TestStatementsSkipsUnquotableActualRoleRevoke(t *testing.T) {
 	a := ActualState{Users: map[string]UserActual{
 		"aether_u_bbb": {Roles: map[string]struct{}{"aether_g_BAD": {}}},
 	}}
-	stmts, skipped := Statements(d, a)
+	stmts, skipped := Statements(d, a, PrivilegeModeFull)
 	require.Empty(t, stmts)
 	require.Equal(t, []string{"aether_g_BAD"}, skipped)
 }
@@ -283,7 +355,7 @@ func TestStatementsDedupesSkippedNames(t *testing.T) {
 			"aether_u_bbb": {Password: "Ae1_x", DirectGrants: grantSet(g("db1", "my table"))},
 		},
 	}
-	_, skipped := Statements(d, ActualState{})
+	_, skipped := Statements(d, ActualState{}, PrivilegeModeFull)
 	require.Equal(t, []string{"db1.my table"}, skipped)
 }
 

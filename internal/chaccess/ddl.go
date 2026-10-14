@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Fingerprint returns a stable, non-reversible change-detection fingerprint
@@ -17,9 +18,14 @@ func Fingerprint(key string) string {
 }
 
 func sortedGrants(m map[Grant]struct{}) []Grant {
+	return sortedGrantKeys(m)
+}
+
+// sortedGrantKeys returns the object keys of a map sorted deterministically.
+func sortedGrantKeys[V any](m map[Grant]V) []Grant {
 	out := make([]Grant, 0, len(m))
-	for x := range m {
-		out = append(out, x)
+	for k := range m {
+		out = append(out, k)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Database != out[j].Database {
@@ -31,38 +37,29 @@ func sortedGrants(m map[Grant]struct{}) []Grant {
 }
 
 // Statements returns an ordered, idempotent DDL plan that moves ClickHouse
-// from a to d. Generated identities are validated/quoted (a failure is an
-// internal invariant violation and panics); catalog database/table names and
-// observed identity names that cannot be quoted are reported in skipped and
-// omitted from the plan. The caller runs statements sequentially through the
-// provisioner connector.
+// from a to d. Every granted object receives mode's privilege bundle
+// (modern: SELECT, dictGet, SHOW DICTIONARIES; legacy: SELECT). Statements
+// are grouped per object and list exactly the privileges being added or
+// removed. Generated identities are validated/quoted (a failure is an
+// internal invariant violation and panics); catalog names and observed
+// identity names that cannot be quoted are reported in skipped and omitted
+// from the plan.
 //
 // Ordering matters: roles are created before they are granted, orphan role
-// drops come last (ClickHouse rejects REVOKE ... FROM user for a role that no
-// longer exists with UNKNOWN_ROLE), and user password resets happen before
+// drops come last (ClickHouse rejects REVOKE ... FROM user for a role that
+// no longer exists with UNKNOWN_ROLE), and user password resets happen before
 // membership changes.
-func Statements(d DesiredState, a ActualState) (out []string, skipped []string) {
+func Statements(d DesiredState, a ActualState, mode PrivilegeMode) (out []string, skipped []string) {
 	// 1. Roles: create, grant additions, revoke extras.
 	for _, ident := range sortedKeys(d.Roles) {
 		rs := d.Roles[ident]
 		if _, exists := a.Roles[ident]; !exists {
 			out = append(out, fmt.Sprintf("CREATE ROLE IF NOT EXISTS %s", mustQuote(ident)))
 		}
-		actual := a.Roles[ident]
-		for _, gr := range sortedGrants(rs.Grants) {
-			if _, ok := actual[gr]; !ok {
-				if stmt, ok := grantDDL(gr, mustQuote(ident), &skipped); ok {
-					out = append(out, stmt)
-				}
-			}
-		}
-		for _, gr := range sortedGrants(actual) {
-			if _, ok := rs.Grants[gr]; !ok {
-				if stmt, ok := revokeDDL(gr, mustQuote(ident), &skipped); ok {
-					out = append(out, stmt)
-				}
-			}
-		}
+		target := mustQuote(ident)
+		actualPrivs := a.RolePrivileges[ident]
+		out = append(out, grantStatements(rs.Grants, actualPrivs, mode, target, &skipped)...)
+		out = append(out, revokeStatements(actualPrivs, rs.Grants, target, &skipped)...)
 	}
 
 	// 2. Users: create, password reset, role membership, default roles,
@@ -104,20 +101,9 @@ func Statements(d DesiredState, a ActualState) (out []string, skipped []string) 
 		if len(us.Roles) > 0 && (rolesChanged || !actual.DefaultRolesAll) {
 			out = append(out, fmt.Sprintf("SET DEFAULT ROLE ALL TO %s", mustQuote(ident)))
 		}
-		for _, gr := range sortedGrants(us.DirectGrants) {
-			if _, ok := actual.DirectGrants[gr]; !ok {
-				if stmt, ok := grantDDL(gr, mustQuote(ident), &skipped); ok {
-					out = append(out, stmt)
-				}
-			}
-		}
-		for _, gr := range sortedGrants(actual.DirectGrants) {
-			if _, ok := us.DirectGrants[gr]; !ok {
-				if stmt, ok := revokeDDL(gr, mustQuote(ident), &skipped); ok {
-					out = append(out, stmt)
-				}
-			}
-		}
+		target := mustQuote(ident)
+		out = append(out, grantStatements(us.DirectGrants, actual.DirectPrivileges, mode, target, &skipped)...)
+		out = append(out, revokeStatements(actual.DirectPrivileges, us.DirectGrants, target, &skipped)...)
 	}
 
 	// 3. Orphans: drop users, then delete roles after every membership change
@@ -162,26 +148,68 @@ func tryQuoteIdent(name string) (string, bool) {
 	return q, true
 }
 
-// grantDDL/revokeDDL validate catalog object names and skip unquotable ones
-// (appended to skipped) rather than panicking or aborting the whole sync.
-func grantDDL(gr Grant, target string, skipped *[]string) (string, bool) {
-	db, err1 := QuoteObjectIdent(gr.Database)
-	tbl, err2 := QuoteObjectIdent(gr.Table)
-	if err1 != nil || err2 != nil {
-		*skipped = append(*skipped, gr.Database+"."+gr.Table)
-		return "", false
+// grantStatements emits one GRANT per desired object whose observed
+// privileges do not cover mode's bundle. The statement lists exactly the
+// missing privileges in canonical order, so a partial repair never touches
+// privileges that are already correct. Unquotable names are skipped.
+func grantStatements(desired map[Grant]struct{}, actual map[GrantPrivilege]struct{}, mode PrivilegeMode, target string, skipped *[]string) []string {
+	var out []string
+	for _, gr := range sortedGrants(desired) {
+		qdb, err1 := QuoteObjectIdent(gr.Database)
+		qtbl, err2 := QuoteObjectIdent(gr.Table)
+		if err1 != nil || err2 != nil {
+			*skipped = append(*skipped, gr.Database+"."+gr.Table)
+			continue
+		}
+		var missing []string
+		for _, p := range mode.Bundle() {
+			if _, ok := actual[GrantPrivilege{Grant: gr, Access: p}]; !ok {
+				missing = append(missing, string(p))
+			}
+		}
+		if len(missing) == 0 {
+			continue
+		}
+		out = append(out, fmt.Sprintf("GRANT %s ON %s.%s TO %s",
+			strings.Join(missing, ", "), qdb, qtbl, target))
 	}
-	return fmt.Sprintf("GRANT SELECT ON %s.%s TO %s", db, tbl, target), true
+	return out
 }
 
-func revokeDDL(gr Grant, target string, skipped *[]string) (string, bool) {
-	db, err1 := QuoteObjectIdent(gr.Database)
-	tbl, err2 := QuoteObjectIdent(gr.Table)
-	if err1 != nil || err2 != nil {
-		*skipped = append(*skipped, gr.Database+"."+gr.Table)
-		return "", false
+// revokeStatements emits one REVOKE per observed object that is no longer
+// desired, listing every observed privilege for it in canonical order.
+// Objects that are still desired cannot hold out-of-bundle privileges (the
+// managed set equals the bundle), so they never produce revokes here.
+// Unquotable names are skipped.
+func revokeStatements(actual map[GrantPrivilege]struct{}, desired map[Grant]struct{}, target string, skipped *[]string) []string {
+	byObject := map[Grant]map[Privilege]struct{}{}
+	for gp := range actual {
+		if _, ok := desired[gp.Grant]; ok {
+			continue
+		}
+		if byObject[gp.Grant] == nil {
+			byObject[gp.Grant] = map[Privilege]struct{}{}
+		}
+		byObject[gp.Grant][gp.Access] = struct{}{}
 	}
-	return fmt.Sprintf("REVOKE SELECT ON %s.%s FROM %s", db, tbl, target), true
+	var out []string
+	for _, gr := range sortedGrantKeys(byObject) {
+		qdb, err1 := QuoteObjectIdent(gr.Database)
+		qtbl, err2 := QuoteObjectIdent(gr.Table)
+		if err1 != nil || err2 != nil {
+			*skipped = append(*skipped, gr.Database+"."+gr.Table)
+			continue
+		}
+		var privs []string
+		for _, p := range privilegeOrder {
+			if _, ok := byObject[gr][p]; ok {
+				privs = append(privs, string(p))
+			}
+		}
+		out = append(out, fmt.Sprintf("REVOKE %s ON %s.%s FROM %s",
+			strings.Join(privs, ", "), qdb, qtbl, target))
+	}
+	return out
 }
 
 // escapePassword hardens the string literal. Derived passwords are already
