@@ -2806,7 +2806,7 @@ git commit -m "feat(web): custom headers editor on MCP servers"
 
 Behavioral parity requirements (the refactor must preserve these exactly):
 - Masked sensitive values show as empty password inputs but round-trip as the sentinel.
-- Toggling `sensitive` on clears the value.
+- Unchecking `sensitive` clears the value (matching the existing inline editor).
 - Rows without a key or value are skipped on save.
 
 **Step 2: Verify no regressions**
