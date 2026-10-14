@@ -5,15 +5,17 @@ import (
 )
 
 type ModelConfig struct {
-	ID                     string    `json:"id"`
-	OrgID                  string    `json:"org_id"`
-	Name                   string    `json:"name"`
-	Provider               string    `json:"provider"`
-	BaseURL                string    `json:"base_url"`
-	Model                  string    `json:"model"`
-	APIKeyEncrypted        []byte    `json:"-"`
-	APIKeyEnvVar           *string   `json:"-"`
-	DefaultParams          JSONMap   `json:"default_params"`
+	ID              string  `json:"id"`
+	OrgID           string  `json:"org_id"`
+	Name            string  `json:"name"`
+	Provider        string  `json:"provider"`
+	BaseURL         string  `json:"base_url"`
+	Model           string  `json:"model"`
+	APIKeyEncrypted []byte  `json:"-"`
+	APIKeyEnvVar    *string `json:"-"`
+	DefaultParams   JSONMap `json:"default_params"`
+	// CustomHeaders may hold sensitive values (names listed in CustomHeaderSecrets) stored as enc:v1: ciphertext; they must be redacted with headers.RedactSecrets before serialization.
+	// CustomHeaderSecrets names the headers whose values are sensitive and stored as ciphertext.
 	CustomHeaders          JSONMap   `json:"custom_headers,omitempty"`
 	CustomHeaderSecrets    []string  `json:"custom_header_secrets,omitempty"`
 	ContextWindow          int       `json:"context_window"`
@@ -39,12 +41,14 @@ type Skill struct {
 }
 
 type MCPServerOrg struct {
-	ID            string    `json:"id"`
-	OrgID         string    `json:"org_id"`
-	Name          string    `json:"name"`
-	Type          string    `json:"type"`
-	Command       string    `json:"command"`
-	Args          []string  `json:"args,omitempty"`
+	ID      string   `json:"id"`
+	OrgID   string   `json:"org_id"`
+	Name    string   `json:"name"`
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
+	// Headers may hold sensitive values (names listed in HeaderSecrets) stored as enc:v1: ciphertext; they must be redacted with headers.RedactSecrets before serialization.
+	// HeaderSecrets names the headers whose values are sensitive and stored as ciphertext.
 	Headers       JSONMap   `json:"headers,omitempty"`
 	HeaderSecrets []string  `json:"header_secrets,omitempty"`
 	CreatedBy     string    `json:"created_by"`
