@@ -2,12 +2,14 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/crypto"
@@ -287,6 +289,46 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// Custom headers are validated and prepared before any write: a rejected
+	// update must not partially apply (e.g. replace the API key first).
+	var customHeadersJSON []byte
+	var customHeaderSecrets []string
+	if req.CustomHeaders != nil {
+		secrets := []string{}
+		if req.CustomHeaderSecrets != nil {
+			secrets = *req.CustomHeaderSecrets
+		}
+		if err := headers.Validate(*req.CustomHeaders, secrets); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		// Sentinel values mean "keep the stored secret".
+		var oldRaw []byte
+		readErr := h.server.db.Pool.QueryRow(r.Context(),
+			`SELECT custom_headers FROM model_configs WHERE id = $1 AND org_id = $2`,
+			cfgID, claims.OrgID).Scan(&oldRaw)
+		if readErr != nil && !errors.Is(readErr, pgx.ErrNoRows) {
+			writeError(w, http.StatusInternalServerError, "failed to load model config")
+			return
+		}
+		if readErr == nil && len(oldRaw) > 0 {
+			var old models.JSONMap
+			if err := json.Unmarshal(oldRaw, &old); err == nil {
+				headers.RestoreSecrets(old, *req.CustomHeaders, secrets)
+			}
+		}
+		// A restored sentinel may have been dropped (no stored value), so keep
+		// the secrets list a subset of the names actually present.
+		secrets = headers.PresentSecrets(*req.CustomHeaders, secrets)
+		encrypted, encErr := headers.EncryptSecrets(*req.CustomHeaders, secrets, h.server.masterKey)
+		if encErr != nil {
+			writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
+			return
+		}
+		customHeadersJSON, _ = json.Marshal(encrypted)
+		customHeaderSecrets = secrets
+	}
+
 	if req.APIKey != nil {
 		if envVar := parseEnvVarRef(*req.APIKey); envVar != "" {
 			val, ok := os.LookupEnv(envVar)
@@ -334,36 +376,6 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 	}
 
 	defaultParamsJSON, _ := json.Marshal(req.DefaultParams)
-
-	var customHeadersJSON []byte
-	var customHeaderSecrets []string
-	if req.CustomHeaders != nil {
-		secrets := []string{}
-		if req.CustomHeaderSecrets != nil {
-			secrets = *req.CustomHeaderSecrets
-		}
-		if err := headers.Validate(*req.CustomHeaders, secrets); err != nil {
-			writeError(w, http.StatusBadRequest, err.Error())
-			return
-		}
-		// Sentinel values mean "keep the stored secret".
-		var oldRaw []byte
-		if err := h.server.db.Pool.QueryRow(r.Context(),
-			`SELECT custom_headers FROM model_configs WHERE id = $1 AND org_id = $2`,
-			cfgID, claims.OrgID).Scan(&oldRaw); err == nil && len(oldRaw) > 0 {
-			var old models.JSONMap
-			if err := json.Unmarshal(oldRaw, &old); err == nil {
-				headers.RestoreSecrets(old, *req.CustomHeaders, secrets)
-			}
-		}
-		encrypted, encErr := headers.EncryptSecrets(*req.CustomHeaders, secrets, h.server.masterKey)
-		if encErr != nil {
-			writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
-			return
-		}
-		customHeadersJSON, _ = json.Marshal(encrypted)
-		customHeaderSecrets = secrets
-	}
 
 	result, err := h.server.db.Pool.Exec(r.Context(), `
 		UPDATE model_configs SET

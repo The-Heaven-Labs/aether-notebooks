@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/the-heaven-labs/aether/internal/crypto"
 )
 
 func TestModelConfigCustomHeaders(t *testing.T) {
@@ -62,6 +65,23 @@ func TestModelConfigCustomHeaders(t *testing.T) {
 		}
 	})
 
+	t.Run("stored secret decrypts to the original value", func(t *testing.T) {
+		var raw []byte
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT custom_headers FROM model_configs WHERE id = $1`, cfgID).Scan(&raw); err != nil {
+			t.Fatalf("read stored headers: %v", err)
+		}
+		var stored map[string]string
+		json.Unmarshal(raw, &stored)
+		plaintext, err := crypto.DecryptString(stored["X-Api-Key"], crypto.DeriveKey("test-master-key-for-tests-only!"))
+		if err != nil {
+			t.Fatalf("decrypt stored secret: %v", err)
+		}
+		if plaintext != "supersecret" {
+			t.Fatalf("expected original secret, got %q", plaintext)
+		}
+	})
+
 	t.Run("get redacts the secret", func(t *testing.T) {
 		req := httptest.NewRequest("GET", "/api/v1/model-configs/"+cfgID, nil)
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -78,6 +98,39 @@ func TestModelConfigCustomHeaders(t *testing.T) {
 		}
 		if hdrs["X-Api-Key"] != "__AETHER_REDACTED__" {
 			t.Fatalf("expected redacted secret, got %v", hdrs["X-Api-Key"])
+		}
+	})
+
+	t.Run("list redacts the secret", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "/api/v1/model-configs", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("list: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		bodyText := rec.Body.String()
+		if strings.Contains(bodyText, "enc:v1:") {
+			t.Fatalf("ciphertext leaked in list response: %s", bodyText)
+		}
+		var cfgs []map[string]any
+		json.Unmarshal([]byte(bodyText), &cfgs)
+		found := false
+		for _, cfg := range cfgs {
+			if cfg["id"] != cfgID {
+				continue
+			}
+			found = true
+			hdrs, _ := cfg["custom_headers"].(map[string]any)
+			if hdrs["X-Title"] != "Aether" {
+				t.Fatalf("expected visible X-Title in list, got %v", hdrs["X-Title"])
+			}
+			if hdrs["X-Api-Key"] != "__AETHER_REDACTED__" {
+				t.Fatalf("expected redacted secret in list, got %v", hdrs["X-Api-Key"])
+			}
+		}
+		if !found {
+			t.Fatalf("model config %s not found in list", cfgID)
 		}
 	})
 
@@ -144,6 +197,125 @@ func TestModelConfigCustomHeaders(t *testing.T) {
 		}
 	})
 
+	t.Run("update without custom_headers keeps stored headers", func(t *testing.T) {
+		var before []byte
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT custom_headers FROM model_configs WHERE id = $1`, cfgID).Scan(&before); err != nil {
+			t.Fatalf("read headers before: %v", err)
+		}
+
+		body, _ := json.Marshal(map[string]any{"name": "Renamed"})
+		req := httptest.NewRequest("PUT", "/api/v1/model-configs/"+cfgID, strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var after []byte
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT custom_headers FROM model_configs WHERE id = $1`, cfgID).Scan(&after); err != nil {
+			t.Fatalf("read headers after: %v", err)
+		}
+		if !bytes.Equal(before, after) {
+			t.Fatalf("omitting custom_headers must preserve stored headers: before %s, after %s", before, after)
+		}
+	})
+
+	t.Run("sentinel without a declared secret deletes the header", func(t *testing.T) {
+		// Fail-safe: the sentinel cannot be restored when its name is not in
+		// custom_header_secrets, so the entry is dropped rather than persisted
+		// literally (and never encrypted as the sentinel string).
+		seed, _ := json.Marshal(map[string]any{
+			"custom_headers":        map[string]string{"X-Pin-Key": "pin-me"},
+			"custom_header_secrets": []string{"X-Pin-Key"},
+		})
+		req := httptest.NewRequest("PUT", "/api/v1/model-configs/"+cfgID, strings.NewReader(string(seed)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("seed update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		body, _ := json.Marshal(map[string]any{
+			"custom_headers": map[string]string{"X-Pin-Key": "__AETHER_REDACTED__"},
+		})
+		req = httptest.NewRequest("PUT", "/api/v1/model-configs/"+cfgID, strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec = httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var raw []byte
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT custom_headers FROM model_configs WHERE id = $1`, cfgID).Scan(&raw); err != nil {
+			t.Fatalf("read stored headers: %v", err)
+		}
+		var stored map[string]string
+		json.Unmarshal(raw, &stored)
+		if _, exists := stored["X-Pin-Key"]; exists {
+			t.Fatalf("expected orphaned sentinel dropped, got %q", stored["X-Pin-Key"])
+		}
+	})
+
+	t.Run("clearing headers with an empty map", func(t *testing.T) {
+		seed, _ := json.Marshal(map[string]any{
+			"custom_headers": map[string]string{"X-Repopulate": "v"},
+		})
+		req := httptest.NewRequest("PUT", "/api/v1/model-configs/"+cfgID, strings.NewReader(string(seed)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("seed update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		body, _ := json.Marshal(map[string]any{
+			"custom_headers":        map[string]string{},
+			"custom_header_secrets": []string{},
+		})
+		req = httptest.NewRequest("PUT", "/api/v1/model-configs/"+cfgID, strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec = httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("clear update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var raw []byte
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT custom_headers FROM model_configs WHERE id = $1`, cfgID).Scan(&raw); err != nil {
+			t.Fatalf("read stored headers: %v", err)
+		}
+		var stored map[string]string
+		json.Unmarshal(raw, &stored)
+		if len(stored) != 0 {
+			t.Fatalf("expected empty stored headers, got %v", stored)
+		}
+
+		req = httptest.NewRequest("GET", "/api/v1/model-configs/"+cfgID, nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec = httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("get: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var cfg map[string]any
+		json.NewDecoder(rec.Body).Decode(&cfg)
+		if hdrs, ok := cfg["custom_headers"].(map[string]any); ok && len(hdrs) != 0 {
+			t.Fatalf("expected omitted or empty custom_headers, got %v", hdrs)
+		}
+	})
+
 	t.Run("rejects reserved header", func(t *testing.T) {
 		body, _ := json.Marshal(map[string]any{
 			"name": "Bad", "provider": "openai", "base_url": "https://x.example.com",
@@ -157,6 +329,36 @@ func TestModelConfigCustomHeaders(t *testing.T) {
 		srv.ServeHTTP(rec, req)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 for reserved header, got %d: %s", rec.Code, rec.Body.String())
+		}
+	})
+
+	t.Run("rejected headers leave other fields untouched", func(t *testing.T) {
+		var before []byte
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT api_key_encrypted FROM model_configs WHERE id = $1`, cfgID).Scan(&before); err != nil {
+			t.Fatalf("read api key before: %v", err)
+		}
+
+		body, _ := json.Marshal(map[string]any{
+			"api_key":        "sk-should-not-apply",
+			"custom_headers": map[string]string{"Bad Header": "x"},
+		})
+		req := httptest.NewRequest("PUT", "/api/v1/model-configs/"+cfgID, strings.NewReader(string(body)))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 for invalid headers, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var after []byte
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT api_key_encrypted FROM model_configs WHERE id = $1`, cfgID).Scan(&after); err != nil {
+			t.Fatalf("read api key after: %v", err)
+		}
+		if !bytes.Equal(before, after) {
+			t.Fatal("rejected update must not replace the API key")
 		}
 	})
 

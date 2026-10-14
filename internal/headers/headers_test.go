@@ -205,6 +205,32 @@ func TestRestoreSecrets(t *testing.T) {
 	})
 }
 
+func TestPresentSecrets(t *testing.T) {
+	t.Run("keeps only names present in the map", func(t *testing.T) {
+		h := map[string]any{"X-Api-Key": "enc:v1:stored", "X-Title": "Aether"}
+		got := headers.PresentSecrets(h, []string{"X-Missing", "X-Api-Key"})
+		if len(got) != 1 || got[0] != "X-Api-Key" {
+			t.Fatalf("expected only X-Api-Key, got %v", got)
+		}
+	})
+	t.Run("matches names case-insensitively", func(t *testing.T) {
+		h := map[string]any{"x-api-key": "enc:v1:stored"}
+		got := headers.PresentSecrets(h, []string{"X-Api-Key"})
+		if len(got) != 1 || got[0] != "X-Api-Key" {
+			t.Fatalf("expected case-variant match, got %v", got)
+		}
+	})
+	t.Run("returns a non-nil empty slice when nothing matches", func(t *testing.T) {
+		got := headers.PresentSecrets(map[string]any{"X-Title": "Aether"}, []string{"X-Api-Key"})
+		if got == nil {
+			t.Fatal("expected non-nil empty slice so callers never store SQL NULL")
+		}
+		if len(got) != 0 {
+			t.Fatalf("expected empty slice, got %v", got)
+		}
+	})
+}
+
 func TestNamesFromJSON(t *testing.T) {
 	t.Run("passes through a string slice", func(t *testing.T) {
 		got := headers.NamesFromJSON([]string{"X-Api-Key"})

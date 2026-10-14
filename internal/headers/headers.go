@@ -155,6 +155,19 @@ func RestoreSecrets(oldHeaders, newHeaders map[string]any, secrets []string) {
 	}
 }
 
+// PresentSecrets returns the subset of secrets whose names exist in headersIn
+// (case-insensitive). Use after RestoreSecrets so a deleted sentinel cannot
+// leave a dangling secret name behind.
+func PresentSecrets(headersIn map[string]any, secrets []string) []string {
+	out := make([]string, 0, len(secrets))
+	for _, name := range secrets {
+		if containsName(headersIn, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
 // NamesFromJSON normalizes a JSON-decoded secrets list ([]any of strings,
 // []string, or nil) into a string slice. Non-string entries are ignored.
 func NamesFromJSON(v any) []string {
