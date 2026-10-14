@@ -181,6 +181,17 @@ func PresentSecrets(headersIn map[string]any, secrets []string) []string {
 	return out
 }
 
+// EncryptUpdate prepares an incoming header map for storage: sentinel values
+// are restored from the stored map (when still sensitive), secret names whose
+// entries were dropped are pruned, and sensitive values are encrypted.
+// Returns the map to store and the pruned secret-name list.
+func EncryptUpdate(incoming map[string]any, secrets []string, stored map[string]any, key []byte) (map[string]any, []string, error) {
+	RestoreSecrets(stored, incoming, secrets)
+	kept := PresentSecrets(incoming, secrets)
+	encrypted, err := EncryptSecrets(incoming, kept, key)
+	return encrypted, kept, err
+}
+
 // NamesFromJSON normalizes a JSON-decoded secrets list ([]any of strings,
 // []string, or nil) into a string slice. Non-string entries are ignored.
 func NamesFromJSON(v any) []string {

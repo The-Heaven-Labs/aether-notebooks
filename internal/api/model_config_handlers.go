@@ -302,7 +302,9 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
-		// Sentinel values mean "keep the stored secret".
+		// Sentinel values mean "keep the stored secret". A failed read must
+		// surface so a sentinel can never be persisted literally.
+		var old models.JSONMap
 		var oldRaw []byte
 		readErr := h.server.db.Pool.QueryRow(r.Context(),
 			`SELECT custom_headers FROM model_configs WHERE id = $1 AND org_id = $2`,
@@ -312,21 +314,20 @@ func (h *modelConfigHandlers) handleUpdate(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		if readErr == nil && len(oldRaw) > 0 {
-			var old models.JSONMap
-			if err := json.Unmarshal(oldRaw, &old); err == nil {
-				headers.RestoreSecrets(old, *req.CustomHeaders, secrets)
+			// A stored map that cannot be decoded is treated as absent, so its
+			// sentinels are dropped rather than persisted literally.
+			var parsed models.JSONMap
+			if err := json.Unmarshal(oldRaw, &parsed); err == nil {
+				old = parsed
 			}
 		}
-		// A restored sentinel may have been dropped (no stored value), so keep
-		// the secrets list a subset of the names actually present.
-		secrets = headers.PresentSecrets(*req.CustomHeaders, secrets)
-		encrypted, encErr := headers.EncryptSecrets(*req.CustomHeaders, secrets, h.server.masterKey)
+		encrypted, kept, encErr := headers.EncryptUpdate(*req.CustomHeaders, secrets, old, h.server.masterKey)
 		if encErr != nil {
 			writeError(w, http.StatusInternalServerError, "failed to encrypt custom headers")
 			return
 		}
 		customHeadersJSON, _ = json.Marshal(encrypted)
-		customHeaderSecrets = secrets
+		customHeaderSecrets = kept
 	}
 
 	if req.APIKey != nil {

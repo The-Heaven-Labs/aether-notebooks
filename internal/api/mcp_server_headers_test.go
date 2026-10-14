@@ -1,12 +1,14 @@
 package api_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -216,6 +218,46 @@ func TestMCPServerCustomHeaders(t *testing.T) {
 		}
 	})
 
+	t.Run("update omitting headers preserves stored headers", func(t *testing.T) {
+		rec := do(t, "POST", "/api/v1/mcp-servers", map[string]any{
+			"name":           "Preserve MCP",
+			"type":           "http",
+			"command":        "https://preserve.example.com/mcp",
+			"headers":        map[string]string{"X-Env": "prod", "Authorization": "Bearer preserved-token"},
+			"header_secrets": []string{"Authorization"},
+		})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var created map[string]string
+		json.NewDecoder(rec.Body).Decode(&created)
+
+		var beforeHeaders []byte
+		var beforeSecrets []string
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT headers, header_secrets FROM mcp_servers WHERE id = $1`, created["id"]).Scan(&beforeHeaders, &beforeSecrets); err != nil {
+			t.Fatalf("read headers before: %v", err)
+		}
+
+		rec = do(t, "PUT", "/api/v1/mcp-servers/"+created["id"], map[string]any{"name": "Renamed"})
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+
+		var afterHeaders []byte
+		var afterSecrets []string
+		if err := srv.DB().Pool.QueryRow(context.Background(),
+			`SELECT headers, header_secrets FROM mcp_servers WHERE id = $1`, created["id"]).Scan(&afterHeaders, &afterSecrets); err != nil {
+			t.Fatalf("read headers after: %v", err)
+		}
+		if !bytes.Equal(beforeHeaders, afterHeaders) {
+			t.Fatalf("omitting headers must preserve stored headers: before %s, after %s", beforeHeaders, afterHeaders)
+		}
+		if !slices.Equal(beforeSecrets, afterSecrets) {
+			t.Fatalf("omitting headers must preserve header_secrets: before %v, after %v", beforeSecrets, afterSecrets)
+		}
+	})
+
 	t.Run("rejects reserved header", func(t *testing.T) {
 		rec := do(t, "POST", "/api/v1/mcp-servers", map[string]any{
 			"name":    "Bad Headers",
@@ -285,6 +327,42 @@ func TestMCPServerCustomHeaders(t *testing.T) {
 		}
 		if gotAuth != "Bearer probe-token" {
 			t.Fatalf("expected decrypted Authorization header on probe, got %q", gotAuth)
+		}
+	})
+
+	t.Run("probe reports decryption failure without leaking", func(t *testing.T) {
+		rec := do(t, "POST", "/api/v1/mcp-servers", map[string]any{
+			"name":    "Corrupt MCP",
+			"type":    "http",
+			"command": "https://corrupt.example.com/mcp",
+		})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("create: expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var created map[string]string
+		json.NewDecoder(rec.Body).Decode(&created)
+
+		if _, err := srv.DB().Pool.Exec(context.Background(),
+			`UPDATE mcp_servers SET headers = $2::jsonb, header_secrets = ARRAY['Authorization'] WHERE id = $1`,
+			created["id"], `{"Authorization":"enc:v1:!!!not-base64!!!"}`); err != nil {
+			t.Fatalf("seed corrupt headers: %v", err)
+		}
+
+		testRec := do(t, "POST", "/api/v1/mcp-servers/"+created["id"]+"/test", nil)
+		if testRec.Code != http.StatusOK {
+			t.Fatalf("test endpoint: expected 200, got %d: %s", testRec.Code, testRec.Body.String())
+		}
+		bodyText := testRec.Body.String()
+		var result map[string]any
+		json.Unmarshal([]byte(bodyText), &result)
+		if result["success"] != false {
+			t.Fatalf("expected success=false on decryption failure, got %v", result)
+		}
+		if strings.Contains(bodyText, "enc:v1:") {
+			t.Fatalf("ciphertext leaked in probe response: %s", bodyText)
+		}
+		if strings.Contains(bodyText, "not-base64") {
+			t.Fatalf("stored ciphertext leaked in probe response: %s", bodyText)
 		}
 	})
 }

@@ -257,6 +257,96 @@ func TestPresentSecrets(t *testing.T) {
 	})
 }
 
+func TestEncryptUpdate(t *testing.T) {
+	key := testKey()
+
+	t.Run("sentinel keeps the exact stored ciphertext", func(t *testing.T) {
+		stored := map[string]any{"X-Api-Key": "enc:v1:stored-ciphertext"}
+		incoming := map[string]any{"X-Api-Key": headers.RedactedSentinel}
+		out, kept, err := headers.EncryptUpdate(incoming, []string{"X-Api-Key"}, stored, key)
+		if err != nil {
+			t.Fatalf("encrypt update: %v", err)
+		}
+		if out["X-Api-Key"] != "enc:v1:stored-ciphertext" {
+			t.Fatalf("expected stored ciphertext preserved, got %v", out["X-Api-Key"])
+		}
+		if len(kept) != 1 || kept[0] != "X-Api-Key" {
+			t.Fatalf("expected kept secret X-Api-Key, got %v", kept)
+		}
+	})
+
+	t.Run("orphaned sentinel is dropped and pruned", func(t *testing.T) {
+		incoming := map[string]any{"X-Api-Key": headers.RedactedSentinel}
+		out, kept, err := headers.EncryptUpdate(incoming, []string{"X-Api-Key"}, map[string]any{}, key)
+		if err != nil {
+			t.Fatalf("encrypt update: %v", err)
+		}
+		if _, exists := out["X-Api-Key"]; exists {
+			t.Fatalf("expected orphaned sentinel dropped, got %v", out)
+		}
+		if len(kept) != 0 {
+			t.Fatalf("expected no kept secrets, got %v", kept)
+		}
+	})
+
+	t.Run("fresh sensitive value is tagged", func(t *testing.T) {
+		incoming := map[string]any{"X-Api-Key": "brand-new-secret"}
+		out, kept, err := headers.EncryptUpdate(incoming, []string{"X-Api-Key"}, nil, key)
+		if err != nil {
+			t.Fatalf("encrypt update: %v", err)
+		}
+		value, _ := out["X-Api-Key"].(string)
+		if !crypto.IsEncryptedString(value) {
+			t.Fatalf("expected tagged ciphertext, got %q", value)
+		}
+		if len(kept) != 1 || kept[0] != "X-Api-Key" {
+			t.Fatalf("expected kept secret X-Api-Key, got %v", kept)
+		}
+		dec, err := headers.DecryptSecrets(out, kept, key)
+		if err != nil {
+			t.Fatalf("decrypt: %v", err)
+		}
+		if dec["X-Api-Key"] != "brand-new-secret" {
+			t.Fatalf("expected round-trip to the original value, got %q", dec["X-Api-Key"])
+		}
+	})
+
+	t.Run("fresh non-sensitive value stays plaintext", func(t *testing.T) {
+		incoming := map[string]any{"X-Title": "Aether"}
+		out, kept, err := headers.EncryptUpdate(incoming, nil, nil, key)
+		if err != nil {
+			t.Fatalf("encrypt update: %v", err)
+		}
+		if out["X-Title"] != "Aether" {
+			t.Fatalf("expected plaintext passthrough, got %v", out["X-Title"])
+		}
+		if len(kept) != 0 {
+			t.Fatalf("expected no kept secrets, got %v", kept)
+		}
+	})
+
+	t.Run("pruned secrets exclude dropped names", func(t *testing.T) {
+		incoming := map[string]any{
+			"X-Api-Key": headers.RedactedSentinel, // no stored value: dropped
+			"X-Token":   "fresh-token",
+		}
+		out, kept, err := headers.EncryptUpdate(incoming, []string{"X-Api-Key", "X-Token"}, nil, key)
+		if err != nil {
+			t.Fatalf("encrypt update: %v", err)
+		}
+		if _, exists := out["X-Api-Key"]; exists {
+			t.Fatalf("expected dropped sentinel absent, got %v", out)
+		}
+		if len(kept) != 1 || kept[0] != "X-Token" {
+			t.Fatalf("expected only X-Token kept, got %v", kept)
+		}
+		value, _ := out["X-Token"].(string)
+		if !crypto.IsEncryptedString(value) {
+			t.Fatalf("expected tagged ciphertext, got %q", value)
+		}
+	})
+}
+
 func TestNamesFromJSON(t *testing.T) {
 	t.Run("passes through a string slice", func(t *testing.T) {
 		got := headers.NamesFromJSON([]string{"X-Api-Key"})
