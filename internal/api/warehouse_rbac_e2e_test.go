@@ -65,6 +65,9 @@ func setupWarehouseRBACE2EFixture(t *testing.T) *warehouseRBACE2EFixture {
 	require.NoError(t, conn.Exec(ctx, "CREATE DATABASE "+quotedDB))
 	require.NoError(t, conn.Exec(ctx, "CREATE TABLE "+quotedDB+".`t1` (id UInt8, label String) ENGINE = MergeTree ORDER BY id"))
 	require.NoError(t, conn.Exec(ctx, "CREATE TABLE "+quotedDB+".`t2` (id UInt8) ENGINE = MergeTree ORDER BY id"))
+	require.NoError(t, conn.Exec(ctx, "CREATE DICTIONARY "+quotedDB+".`d1` (id UInt8, label String) PRIMARY KEY id "+
+		"SOURCE(CLICKHOUSE(DB '"+database+"' TABLE 't1' USER '"+cfg.User+"' PASSWORD '"+cfg.Password+"')) "+
+		"LIFETIME(MIN 0 MAX 0) LAYOUT(FLAT())"))
 	require.NoError(t, conn.Exec(ctx, "INSERT INTO "+quotedDB+".`t1` VALUES (1, 'one'), (2, 'two')"))
 	require.NoError(t, conn.Exec(ctx, "INSERT INTO "+quotedDB+".`t2` VALUES (1), (2)"))
 
@@ -349,4 +352,124 @@ func TestWarehouseRBACE2E(t *testing.T) {
 	fx.runAs(t, fx.memberID, http.StatusForbidden,
 		"SELECT count() AS n FROM "+fx.table(t, "t2"))
 	require.Zero(t, s.connPool.Len())
+}
+
+// TestWarehouseDictionaryGrantsE2E proves the read bundle makes granted
+// dictionaries usable: direct SELECT, dictGet-family functions, and
+// SHOW CREATE DICTIONARY all work for the managed identity, and revocation
+// removes all of it. It skips when ClickHouse is unreachable or lacks
+// granular dictionary privileges.
+func TestWarehouseDictionaryGrantsE2E(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseRBACE2EFixture(t)
+
+	if mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn); err != nil || mode != chaccess.PrivilegeModeFull {
+		t.Skipf("server does not support granular dictionary privileges (mode=%q err=%v)", mode, err)
+	}
+
+	// Grant only the dictionary to the group; t1 stays ungranted.
+	rec := createGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID,
+		grantBody("group", fx.groupID.String(), fx.database, "d1"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	var createdGrant struct {
+		ID string `json:"id"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &createdGrant))
+	grantID, err := uuid.Parse(createdGrant.ID)
+	require.NoError(t, err)
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	groupRole := chaccess.RoleIdent(fx.warehouseID, fx.orgID, fx.groupID)
+	var n uint64
+	require.NoError(t, fx.conn.QueryRow(ctx, `
+		SELECT count() FROM system.grants
+		WHERE access_type = 'dictGet' AND database = ? AND table = 'd1'
+		  AND role_name = ?`, fx.database, groupRole).Scan(&n))
+	require.Equal(t, uint64(1), n, "the reconcile must grant dictGet on the dictionary")
+
+	// Direct read, dictGet-family call, and SHOW CREATE all work as the
+	// member's own identity.
+	rec = fx.runAs(t, fx.memberID, http.StatusOK,
+		"SELECT label FROM "+fx.table(t, "d1")+" WHERE id = 1")
+	out := decodeExecuteOutputs(t, rec)
+	require.Equal(t, "one", out.Outputs[0].Data.Rows[0][0])
+
+	rec = fx.runAs(t, fx.memberID, http.StatusOK,
+		"SELECT dictGet('"+fx.database+".d1', 'label', toUInt8(1)) AS label")
+	out = decodeExecuteOutputs(t, rec)
+	require.Equal(t, "one", out.Outputs[0].Data.Rows[0][0])
+
+	rec = fx.runAs(t, fx.memberID, http.StatusOK,
+		"SELECT dictHas('"+fx.database+".d1', toUInt8(1)) AS has_key")
+	decodeExecuteOutputs(t, rec)
+
+	fx.runAs(t, fx.memberID, http.StatusOK, "SHOW CREATE DICTIONARY "+fx.table(t, "d1"))
+
+	// The dictionary is a data grant of its own: the source table stays
+	// denied.
+	rec = fx.runAs(t, fx.memberID, http.StatusForbidden,
+		"SELECT count() FROM "+fx.table(t, "t1"))
+	requireClickHouseDenied(t, rec)
+
+	// Revocation through the API removes the dictionary's privileges again.
+	// d1 is the member's only granted object right now, and a reconcile that
+	// leaves a member with no effective grants also drops their ClickHouse
+	// identity (TestWarehouseRBACE2E pins that lifecycle), which would turn
+	// the run below into an authentication error instead of a denial. Grant
+	// the untouched t1 to the group first so the identity survives the
+	// revocation and the run proves dictionary privilege removal.
+	rec = createGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID,
+		grantBody("group", fx.groupID.String(), fx.database, "t1"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	rec = deleteGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID, grantID)
+	require.Equal(t, http.StatusNoContent, rec.Code, rec.Body.String())
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	rec = fx.runAs(t, fx.memberID, http.StatusForbidden,
+		"SELECT label FROM "+fx.table(t, "d1")+" WHERE id = 1")
+	requireClickHouseDenied(t, rec)
+}
+
+// TestWarehouseDictionaryGuardE2E proves the drift guard now manages
+// dictGet: an outside-of-Aether grant on an ungranted object is revoked, and
+// a wildcard dictionary grant still fails the warehouse closed.
+func TestWarehouseDictionaryGuardE2E(t *testing.T) {
+	ctx := context.Background()
+	fx := setupWarehouseRBACE2EFixture(t)
+	if mode, err := chaccess.DetectPrivilegeMode(ctx, fx.conn); err != nil || mode != chaccess.PrivilegeModeFull {
+		t.Skipf("server does not support granular dictionary privileges (mode=%q err=%v)", mode, err)
+	}
+
+	rec := createGrantViaAPI(t, fx.s, fx.adminToken, fx.warehouseID,
+		grantBody("group", fx.groupID.String(), fx.database, "t1"))
+	require.Equal(t, http.StatusCreated, rec.Code, rec.Body.String())
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+
+	groupRole := chaccess.RoleIdent(fx.warehouseID, fx.orgID, fx.groupID)
+	quotedRole, err := chaccess.QuoteIdent(groupRole)
+	require.NoError(t, err)
+
+	// An extra dictGet on the ungranted dictionary is managed drift: the
+	// next reconcile revokes it (same treatment as an extra SELECT).
+	require.NoError(t, fx.conn.Exec(ctx,
+		"GRANT dictGet ON "+fx.table(t, "d1")+" TO "+quotedRole))
+	require.NoError(t, fx.s.reconcileWarehouse(ctx, fx.warehouseID))
+	var n uint64
+	require.NoError(t, fx.conn.QueryRow(ctx, `
+		SELECT count() FROM system.grants
+		WHERE access_type = 'dictGet' AND database = ? AND table = 'd1'
+		  AND role_name = ?`, fx.database, groupRole).Scan(&n))
+	require.Equal(t, uint64(0), n, "extra dictGet on an ungranted object must be revoked")
+
+	// A wildcard dictGet is outside the model and fails closed.
+	require.NoError(t, fx.conn.Exec(ctx,
+		"GRANT dictGet ON "+fx.database+".* TO "+quotedRole))
+	err = fx.s.reconcileWarehouse(ctx, fx.warehouseID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "manual remediation")
+	var status string
+	require.NoError(t, fx.s.db.Pool.QueryRow(ctx,
+		"SELECT sync_status FROM warehouses WHERE id = $1", fx.warehouseID.String()).Scan(&status))
+	require.Equal(t, "error", status)
 }
