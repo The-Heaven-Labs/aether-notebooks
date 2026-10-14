@@ -15,6 +15,10 @@ import (
 )
 
 type fakeConn struct {
+	// driver.Conn is embedded (rather than hand-implemented) so the driver
+	// can add methods to the interface in minor releases without breaking
+	// this fake; only the methods the tests exercise are overridden below.
+	driver.Conn
 	closed bool
 	// lastCtx records the context of the most recent Query or Exec call so
 	// tests can inspect driver-level per-query options (settings) without a
