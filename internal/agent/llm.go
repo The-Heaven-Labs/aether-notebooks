@@ -8,6 +8,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/the-heaven-labs/aether/internal/crypto"
@@ -174,6 +175,32 @@ func NewLLMClient(baseURL, model string, apiKey []byte, defaultParams map[string
 // models, just against hung connections.
 const llmRequestTimeout = 10 * time.Minute
 
+// maskHeaderSecretValues replaces occurrences of sensitive custom header
+// values in an upstream response body so a provider that echoes request
+// headers cannot leak secrets through error messages.
+func maskHeaderSecretValues(body []byte, applied map[string]string, headerSecrets []string) string {
+	masked := string(body)
+	if masked == "" || len(applied) == 0 || len(headerSecrets) == 0 {
+		return masked
+	}
+	secretNames := make(map[string]struct{}, len(headerSecrets))
+	for _, name := range headerSecrets {
+		if name != "" {
+			secretNames[strings.ToLower(name)] = struct{}{}
+		}
+	}
+	for name, value := range applied {
+		if value == "" {
+			continue
+		}
+		if _, ok := secretNames[strings.ToLower(name)]; !ok {
+			continue
+		}
+		masked = strings.ReplaceAll(masked, value, headers.RedactedSentinel)
+	}
+	return masked
+}
+
 func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []OpenAITool, masterKey []byte) (*ChatResponse, error) {
 	extra := make(map[string]any)
 	for k, v := range c.defaultParams {
@@ -257,7 +284,7 @@ func (c *LLMClient) Chat(ctx context.Context, messages []ChatMessage, tools []Op
 
 		retryable := resp.StatusCode == 429 || resp.StatusCode == 503 || resp.StatusCode == 504 || resp.StatusCode == 529 || resp.StatusCode >= 500
 		if !retryable || attempt == maxRetries {
-			return nil, fmt.Errorf("llm error %d: %s", resp.StatusCode, string(errBody))
+			return nil, fmt.Errorf("llm error %d: %s", resp.StatusCode, maskHeaderSecretValues(errBody, customHeaders, c.headerSecrets))
 		}
 	}
 
@@ -325,7 +352,7 @@ func (c *LLMClient) ChatStream(ctx context.Context, messages []ChatMessage, tool
 
 	if resp.StatusCode != http.StatusOK {
 		errBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("llm error %d: %s", resp.StatusCode, string(errBody))
+		return fmt.Errorf("llm error %d: %s", resp.StatusCode, maskHeaderSecretValues(errBody, customHeaders, c.headerSecrets))
 	}
 
 	decoder := json.NewDecoder(resp.Body)

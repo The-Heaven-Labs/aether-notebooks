@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 
 	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/headers"
 )
 
 func testMasterKey() []byte {
@@ -180,5 +182,35 @@ func TestLLMClientChatStreamSendsCustomHeaders(t *testing.T) {
 	}
 	if got.Get("Authorization") != "Bearer sk-test" {
 		t.Fatalf("expected bearer auth, got %q", got.Get("Authorization"))
+	}
+}
+
+func TestLLMClientMasksHeaderSecretInErrorMessage(t *testing.T) {
+	masterKey := testMasterKey()
+	apiKey, _ := crypto.Encrypt([]byte("sk-test"), masterKey)
+	secret, _ := crypto.EncryptString("topsecret", masterKey)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		w.Write([]byte(`{"error":"invalid key topsecret","note":"Aether"}`))
+	}))
+	defer srv.Close()
+
+	client := NewLLMClient(srv.URL, "gpt-4", apiKey, nil,
+		map[string]any{"X-Title": "Aether", "X-Api-Key": secret}, []string{"X-Api-Key"})
+
+	_, err := client.Chat(context.Background(), []ChatMessage{{Role: "user", Content: "hi"}}, nil, masterKey)
+	if err == nil {
+		t.Fatal("expected error for 401 response")
+	}
+	msg := err.Error()
+	if strings.Contains(msg, "topsecret") {
+		t.Fatalf("secret leaked in error message: %s", msg)
+	}
+	if !strings.Contains(msg, headers.RedactedSentinel) {
+		t.Fatalf("expected masked sentinel in error message, got %s", msg)
+	}
+	if !strings.Contains(msg, "Aether") {
+		t.Fatalf("non-sensitive header value must not be masked, got %s", msg)
 	}
 }
