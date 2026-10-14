@@ -14,7 +14,7 @@ func TestParseGrantRows(t *testing.T) {
 		{UserName: "aether_u_x", Database: "db", Table: "t2", AccessType: "SELECT"},
 	}
 	users := map[string]UserActual{"aether_u_x": {}}
-	a := buildActualFromGrantRows(rows, nil, users, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, users, nil)
 	require.Contains(t, a.Users["aether_u_x"].DirectGrants, Grant{"db", "t1"},
 		"any managed privilege makes the object observed")
 	require.Contains(t, a.Users["aether_u_x"].DirectGrants, Grant{"db", "t2"},
@@ -24,22 +24,26 @@ func TestParseGrantRows(t *testing.T) {
 	require.NotContains(t, a.Users["aether_u_x"].Roles, "aether_g_y")
 }
 
-func TestParseFullBundleRoleIsObjectPresent(t *testing.T) {
+func TestParseFullBundleRolePopulatesObjectAndPrivileges(t *testing.T) {
 	rows := []GrantRow{
 		{RoleName: "aether_wh_g_x", Database: "db", Table: "d1", AccessType: "SELECT"},
 		{RoleName: "aether_wh_g_x", Database: "db", Table: "d1", AccessType: "dictGet"},
 		{RoleName: "aether_wh_g_x", Database: "db", Table: "d1", AccessType: "SHOW DICTIONARIES"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Contains(t, a.Roles["aether_wh_g_x"], Grant{"db", "d1"})
 	require.Len(t, a.RolePrivileges["aether_wh_g_x"], 3)
 }
 
-func TestParseLegacyModeRequiresSelectOnly(t *testing.T) {
+func TestParseSelectOnlyRoleIsObjectPresent(t *testing.T) {
+	// Mode does not reach the builder (LoadActual gates which rows are read
+	// before this point): a single managed privilege observes the object
+	// under union presence, and bundle coverage is the drift comparator's
+	// concern.
 	rows := []GrantRow{
 		{RoleName: "aether_wh_g_x", Database: "db", Table: "t1", AccessType: "SELECT"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeLegacy)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Contains(t, a.Roles["aether_wh_g_x"], Grant{"db", "t1"})
 }
 
@@ -47,7 +51,7 @@ func TestParseNonManagedAccessTypesAreSkipped(t *testing.T) {
 	rows := []GrantRow{
 		{UserName: "aether_wh_u_x", Database: "db", Table: "t1", AccessType: "INSERT"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Empty(t, a.Users["aether_wh_u_x"].DirectPrivileges)
 	require.Empty(t, a.Users["aether_wh_u_x"].DirectGrants)
 	require.Empty(t, a.Unexpected)
@@ -57,7 +61,7 @@ func TestParseDictGetWildcardFlagged(t *testing.T) {
 	rows := []GrantRow{
 		{UserName: "aether_wh_u_x", Database: "db", Table: "", AccessType: "dictGet"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Equal(t, []WildcardGrant{{Subject: "aether_wh_u_x", Scope: "db.*"}}, a.Wildcards)
 }
 
@@ -65,7 +69,7 @@ func TestParseWildcardRowsFlagged(t *testing.T) {
 	rows := []GrantRow{
 		{RoleName: "aether_wh_g_x", Database: "db", Table: "", AccessType: "SELECT"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.True(t, a.HasWildcard())
 	require.Equal(t, WildcardGrant{Subject: "aether_wh_g_x", Scope: "db.*"}, a.Wildcards[0])
 }
@@ -74,7 +78,7 @@ func TestParseGlobalWildcardRow(t *testing.T) {
 	rows := []GrantRow{
 		{UserName: "aether_wh_u_x", Database: "", Table: "", AccessType: "dictGet"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Equal(t, []WildcardGrant{{Subject: "aether_wh_u_x", Scope: "*.*"}}, a.Wildcards)
 }
 
@@ -83,7 +87,7 @@ func TestParsePartialRevokeAndTablePrefixWildcards(t *testing.T) {
 		{RoleName: "aether_wh_g_x", Database: "db", Table: "revoked", IsPartialRevoke: 1, AccessType: "SELECT"},
 		{RoleName: "aether_wh_g_x", Database: "db", Table: "events*", AccessType: "SELECT"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Empty(t, a.Roles["aether_wh_g_x"], "partial revokes and prefix wildcards are not table grants")
 	require.True(t, a.HasWildcard())
 	require.Equal(t, "db.events*", a.Wildcards[0].Scope)
@@ -94,43 +98,41 @@ func TestParseIsWildcardRowWithoutStar(t *testing.T) {
 	rows := []GrantRow{
 		{RoleName: "aether_wh_g_x", Database: "db", Table: "events", IsWildcard: 1, AccessType: "SELECT"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Equal(t, []WildcardGrant{{Subject: "aether_wh_g_x", Scope: "db.events*"}}, a.Wildcards)
 }
 
 func TestParseZeroGrantRolesAreLoaded(t *testing.T) {
 	roles := map[string]map[Grant]struct{}{"aether_wh_g_empty": {}}
-	a := buildActualFromGrantRows(nil, roles, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(nil, roles, nil, nil)
 	require.Contains(t, a.Roles, "aether_wh_g_empty")
 	require.Empty(t, a.Roles["aether_wh_g_empty"])
 }
 
 func TestParseGrantOptionIsUnexpectedDrift(t *testing.T) {
-	// Legacy mode keeps the "grant still applied" expectation literal: a
-	// SELECT-only row is the full bundle there, so the object is observed.
-	// The grant-option drift entry fails the reconcile closed in every mode.
+	// A grant option on a managed privilege is drift; the row still observes
+	// the object (union presence) and fails the reconcile closed.
 	rows := []GrantRow{
 		{UserName: "aether_wh_u_x", Database: "db", Table: "t1", GrantOption: 1, AccessType: "SELECT"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeLegacy)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Contains(t, a.Users["aether_wh_u_x"].DirectGrants, Grant{"db", "t1"}, "grant is still applied")
 	require.Equal(t, []string{"grant option on db.t1 for aether_wh_u_x"}, a.Unexpected)
 }
 
-func TestParseGrantOptionFullModeUnionPresence(t *testing.T) {
-	// In full mode a lone SELECT WITH GRANT OPTION row is a partial bundle,
-	// but union presence still observes the object — the drift report's
-	// surplus direction must flag it — while the privilege map keeps the
-	// SELECT privilege for bundle-coverage checks. The grant-option drift
-	// entry still fails the reconcile closed regardless of mode.
+func TestParseGrantOptionOnDictGetIsUnexpectedDrift(t *testing.T) {
+	// The grant-option check spans every managed privilege, not only SELECT:
+	// a dictGet row with a grant option observes the object (union presence),
+	// keeps its privilege detail for bundle-coverage checks, and fails the
+	// reconcile closed.
 	rows := []GrantRow{
-		{UserName: "aether_wh_u_x", Database: "db", Table: "t1", AccessType: "SELECT", GrantOption: 1},
+		{UserName: "aether_wh_u_x", Database: "db", Table: "d1", AccessType: "dictGet", GrantOption: 1},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
-	require.Contains(t, a.Users["aether_wh_u_x"].DirectGrants, Grant{"db", "t1"}, "union presence")
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
+	require.Contains(t, a.Users["aether_wh_u_x"].DirectGrants, Grant{"db", "d1"}, "union presence")
 	require.Contains(t, a.Users["aether_wh_u_x"].DirectPrivileges,
-		GrantPrivilege{Grant: Grant{"db", "t1"}, Access: AccessSelect})
-	require.Equal(t, []string{"grant option on db.t1 for aether_wh_u_x"}, a.Unexpected)
+		GrantPrivilege{Grant: Grant{"db", "d1"}, Access: AccessDictGet})
+	require.Equal(t, []string{"grant option on db.d1 for aether_wh_u_x"}, a.Unexpected)
 }
 
 func TestParseWildcardOrderingDeterministic(t *testing.T) {
@@ -140,7 +142,7 @@ func TestParseWildcardOrderingDeterministic(t *testing.T) {
 		{RoleName: "aether_wh_g_a", Database: "db1", Table: "", AccessType: "SELECT"},
 		{RoleName: "aether_wh_g_a", Database: "db2", Table: "events*", AccessType: "SELECT"},
 	}
-	a := buildActualFromGrantRows(rows, nil, nil, nil, PrivilegeModeFull)
+	a := buildActualFromGrantRows(rows, nil, nil, nil)
 	require.Equal(t, []WildcardGrant{
 		{Subject: "aether_wh_g_a", Scope: "db1.*"},
 		{Subject: "aether_wh_g_a", Scope: "db2.*"},
@@ -150,7 +152,7 @@ func TestParseWildcardOrderingDeterministic(t *testing.T) {
 }
 
 func TestParseUnexpectedSortedAndDeduped(t *testing.T) {
-	a := buildActualFromGrantRows(nil, nil, nil, []string{"b", "a", "b"}, PrivilegeModeFull)
+	a := buildActualFromGrantRows(nil, nil, nil, []string{"b", "a", "b"})
 	require.Equal(t, []string{"a", "b"}, a.Unexpected)
 }
 

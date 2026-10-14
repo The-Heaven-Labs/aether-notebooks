@@ -1,6 +1,9 @@
 package chaccess
 
-// Grant is a single table-level SELECT grant.
+// Grant identifies one granted object (database + name) in a warehouse. The
+// object kind is deliberately absent: tables, views, and dictionaries share
+// the name-based grant model, and the privileges granted for an object are
+// its mode's read bundle (see PrivilegeMode.Bundle).
 type Grant struct {
 	Database string
 	Table    string

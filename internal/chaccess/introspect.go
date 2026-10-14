@@ -85,7 +85,7 @@ func LoadActual(ctx context.Context, conn clickhouse.Conn, warehouseID uuid.UUID
 		return ActualState{}, err
 	}
 
-	a := buildActualFromGrantRows(grants, roles, users, unexpected, mode)
+	a := buildActualFromGrantRows(grants, roles, users, unexpected)
 	if hasIsWildcard {
 		return a, nil
 	}
@@ -435,7 +435,7 @@ func cleanGrantTarget(s string) string {
 // partial its bundle, so presence must not require the full bundle. Privilege
 // maps (RolePrivileges, DirectPrivileges) carry the raw (object, privilege)
 // detail the DDL diff and bundle-coverage checks consume.
-func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]struct{}, users map[string]UserActual, unexpected []string, mode PrivilegeMode) ActualState {
+func buildActualFromGrantRows(grants []GrantRow, roles map[string]map[Grant]struct{}, users map[string]UserActual, unexpected []string) ActualState {
 	a := ActualState{
 		Roles:          map[string]map[Grant]struct{}{},
 		RolePrivileges: map[string]map[GrantPrivilege]struct{}{},
