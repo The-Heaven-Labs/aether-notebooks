@@ -27,6 +27,7 @@ const docStore = vi.hoisted(() => {
     settings: Record<string, unknown>
     variables: unknown[]
     widgets: unknown[]
+    hasDocumentContent: boolean
   }
   const EMPTY: DocState = {
     synced: false,
@@ -35,6 +36,7 @@ const docStore = vi.hoisted(() => {
     settings: {},
     variables: [],
     widgets: [],
+    hasDocumentContent: false,
   }
   const state: DocState = { ...EMPTY }
   let snapshot: DocState = { ...state }
@@ -260,6 +262,7 @@ describe('DashboardEditorPage live document wiring', () => {
     act(() => {
       docStore.set({
         synced: true,
+        hasDocumentContent: true,
         connected: true,
         title: 'Ops board',
         widgets: [widget({ id: 'w2', config: { title: 'Doc widget' } })],
@@ -270,12 +273,35 @@ describe('DashboardEditorPage live document wiring', () => {
     expect(screen.queryByLabelText('Edit Rest widget')).not.toBeInTheDocument()
   })
 
+  test('a synced but zero-struct document keeps the REST widgets and pauses editing', async () => {
+    renderEditor()
+    expect(await screen.findByLabelText('Edit Rest widget')).toBeInTheDocument()
+
+    act(() => {
+      docStore.set({
+        synced: true,
+        // A stale relay synced an empty update: the document carries no
+        // structs, so it must never become the source of truth.
+        hasDocumentContent: false,
+        connected: true,
+        title: '',
+        widgets: [],
+      })
+    })
+
+    // The REST widget list stays and the structural controls stay paused.
+    expect(screen.getByLabelText('Edit Rest widget')).toBeInTheDocument()
+    expect(screen.getByText('Reconnecting — editing is paused')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '+ Add Widget' })).toBeDisabled()
+  })
+
   test('the Review button opens the App health panel', async () => {
     server.use(http.get('/api/v1/dashboards/d1/review', () => HttpResponse.json({
       dashboard_id: 'd1', count: 0, findings: [], view_url: '', preview_url: '',
     })))
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: true,
       title: 'Ops board',
       widgets: [widget()],
@@ -291,6 +317,7 @@ describe('DashboardEditorPage live document wiring', () => {
   test('the picker explains each source and widget type', async () => {
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: true,
       title: 'Ops board',
       widgets: [widget()],
@@ -320,6 +347,7 @@ describe('DashboardEditorPage live document wiring', () => {
     }))
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: true,
       title: 'Ops board',
       widgets: [widget({ layout: { row: 0, col: 0, width: 6, height: 8 } })],
@@ -359,6 +387,7 @@ describe('DashboardEditorPage live document wiring', () => {
     )
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: true,
       title: 'Ops board',
       widgets: [widget()],
@@ -396,6 +425,7 @@ describe('DashboardEditorPage live document wiring', () => {
     )
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: true,
       title: 'Ops board',
       widgets: [widget({ layout: { row: 0, col: 0, width: 6, height: 8, tab: 'overview' } })],
@@ -421,6 +451,7 @@ describe('DashboardEditorPage live document wiring', () => {
   test('disconnected: shows the paused banner and disables every mutation', async () => {
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: false,
       title: 'Ops board',
       widgets: [widget()],
@@ -463,6 +494,7 @@ describe('DashboardEditorPage live document wiring', () => {
     )
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: true,
       title: 'Live title',
       widgets: [widget()],
@@ -489,6 +521,7 @@ describe('DashboardEditorPage live document wiring', () => {
     )
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: true,
       title: 'Ops board',
       widgets: [widget()],
@@ -519,6 +552,7 @@ describe('DashboardEditorPage live document wiring', () => {
     )
     docStore.set({
       synced: true,
+      hasDocumentContent: true,
       connected: true,
       title: 'Ops board',
       widgets: [widget()],
@@ -544,6 +578,7 @@ function docWidget(id: string, tab: string, title: string): Widget {
 function syncedTabs(): void {
   docStore.set({
     synced: true,
+    hasDocumentContent: true,
     connected: true,
     title: 'Ops board',
     settings: { tabs: TABS },
@@ -575,7 +610,7 @@ function stubElementsFromPoint(stack: Element[]): { points: Array<[number, numbe
 
 describe('DashboardEditorPage tabs', () => {
   test('without tabs only the add shortcut shows; the filter stays hidden', async () => {
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
     await screen.findByTestId('grid')
 
@@ -589,7 +624,7 @@ describe('DashboardEditorPage tabs', () => {
     const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 500 })
     try {
-      docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+      docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
       renderEditor()
       await screen.findByLabelText('Edit Rest widget')
 
@@ -761,7 +796,7 @@ describe('DashboardEditorPage tabs', () => {
 
 describe('DashboardEditorPage publish controls', () => {
   test('reports Not published when there is no version', async () => {
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
 
     const chip = await screen.findByTestId('publish-status')
@@ -775,7 +810,7 @@ describe('DashboardEditorPage publish controls', () => {
         HttpResponse.json({ ...PUBLISHED_VERSIONS, has_unpublished_changes: true }),
       ),
     )
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
 
     const chip = await screen.findByTestId('publish-status')
@@ -790,7 +825,7 @@ describe('DashboardEditorPage publish controls', () => {
         HttpResponse.json({ ...NO_VERSIONS, warnings: ['widget w1: connector not found'] }),
       ),
     )
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
 
     const chip = await screen.findByTestId('publish-status')
@@ -824,7 +859,7 @@ describe('DashboardEditorPage publish controls', () => {
         return HttpResponse.json({ version: 1, content_hash: 'hash-1', created_at: '2026-01-01T00:00:00Z' })
       }),
     )
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
 
     expect(await screen.findByTestId('publish-status')).toHaveTextContent('Not published')
@@ -855,7 +890,7 @@ describe('DashboardEditorPage publish controls', () => {
         return HttpResponse.json({ version: 1, content_hash: 'hash-1', created_at: '2026-01-01T00:00:00Z' })
       }),
     )
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
 
     const publish = await screen.findByRole('button', { name: 'Publish' })
@@ -880,7 +915,7 @@ describe('DashboardEditorPage publish controls', () => {
         return HttpResponse.json({ version: 1, content_hash: 'hash-1', created_at: '2026-01-01T00:00:00Z' })
       }),
     )
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
@@ -899,7 +934,7 @@ describe('DashboardEditorPage publish controls', () => {
         ),
       ),
     )
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
 
     fireEvent.click(await screen.findByRole('button', { name: 'Publish' }))
@@ -910,7 +945,7 @@ describe('DashboardEditorPage publish controls', () => {
   })
 
   test('the status chip opens the version history panel', async () => {
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
     renderEditor()
 
     fireEvent.click(await screen.findByTestId('publish-status'))
@@ -921,7 +956,7 @@ describe('DashboardEditorPage publish controls', () => {
     const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth')
     Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 500 })
     try {
-      docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [widget()] })
+      docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
       renderEditor()
       await screen.findByLabelText('Edit Rest widget')
 
@@ -935,7 +970,7 @@ describe('DashboardEditorPage publish controls', () => {
 
   test('publish controls show on an empty dashboard at desktop width', async () => {
     server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({ ...DASHBOARD, widgets: [] })))
-    docStore.set({ synced: true, connected: true, title: 'Ops board', widgets: [] })
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [] })
     renderEditor()
 
     // An empty dashboard renders no grid to measure, so the width must come

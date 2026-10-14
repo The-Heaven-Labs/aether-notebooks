@@ -355,12 +355,20 @@ func projectionIsEmpty(proj *Projection) bool {
 }
 
 // NeedsReseed reports whether a stored dashboard state is unusable and must be
-// rebuilt from the derived rows: zero-length bytes, an undecodable update, or
-// an entirely empty projection over a dashboard that still has content (the
-// exact corruption Materialize's guards refuse to write, so rows and document
-// would otherwise stay diverged forever). A stored state whose projection
-// carries any content — or a genuinely empty dashboard whose rows are empty
-// too — is usable as-is.
+// rebuilt from the derived rows: zero-length bytes, a state with no structs at
+// all, an undecodable update, or an entirely empty projection over a dashboard
+// that still has content (the exact corruption Materialize's guards refuse to
+// write, so rows and document would otherwise stay diverged forever). A stored
+// state whose projection carries any content — or a genuinely empty dashboard
+// whose rows are empty too — is usable as-is.
+//
+// A state with no structs (an empty state vector) is always rebuilt even when
+// the rows are empty: Seed always writes the meta entries, so a healthy
+// dashboard document — including an empty dashboard — always carries at least
+// those structs. A zero-struct state can only be the residue of a relay that
+// loaded an empty document (the pre-guard bug), and serving it would blank
+// every draft surface (the relay applies it as a no-op and syncs nothing)
+// while REST reads stayed correct.
 //
 // A warning-tainted projection is deliberately NOT healed: skipped-but-valid
 // shapes (an unknown widget type from a newer client, a dangling reference)
@@ -369,6 +377,13 @@ func projectionIsEmpty(proj *Projection) bool {
 // rebuilt.
 func NeedsReseed(state []byte, currentTitle string, currentSettings []byte, currentWidgets int) bool {
 	if len(state) == 0 {
+		return true
+	}
+	doc, err := decodeDoc(state)
+	if err != nil {
+		return true
+	}
+	if len(doc.StateVector()) == 0 {
 		return true
 	}
 	proj, err := Project(state)

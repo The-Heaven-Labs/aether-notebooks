@@ -1,10 +1,12 @@
 import { test } from 'node:test'
 import * as assert from 'node:assert/strict'
+import * as Y from 'yjs'
 import {
   AuthorizeError,
   DASHBOARD_DOC_PREFIX,
   DASHBOARD_REVALIDATE_INTERVAL_MS,
   applyRevalidationDisposition,
+  documentHasStructs,
   extractToken,
   failedStateLoadDisposition,
   isDashboardDocument,
@@ -17,6 +19,7 @@ import {
   revalidationDisposition,
   revalidationKey,
   shouldRefreshResidentDocument,
+  stateHasStructs,
   storeResponseDisposition,
 } from './dashboardDocs.ts'
 
@@ -279,3 +282,37 @@ test('shouldRefreshResidentDocument only refreshes resident dashboards', () => {
   assert.equal(shouldRefreshResidentDocument('notebook', true), false)
   assert.equal(shouldRefreshResidentDocument('notebook', false), false)
 })
+
+test('stateHasStructs rejects zero-struct states and garbage', () => {
+  // The encodings a relay can receive that carry no Yjs structs at all: an
+  // empty update ([0,0]), no bytes, and undecodable garbage. Serving any of
+  // them as a dashboard document would sync an empty editor.
+  assert.equal(stateHasStructs(Y.encodeStateAsUpdate(new Y.Doc())), false)
+  assert.equal(stateHasStructs(new Uint8Array()), false)
+  assert.equal(stateHasStructs(new Uint8Array([1, 2, 3, 4])), false)
+})
+
+test('stateHasStructs accepts a seeded dashboard state', () => {
+  // Seed always writes the meta entries, so even a dashboard without widgets
+  // (the shape above) encodes a non-empty state vector.
+  const doc = new Y.Doc()
+  doc.transact(() => {
+    const meta = doc.getMap('meta')
+    meta.set('title', '')
+    meta.set('settings', new Y.Map())
+    meta.set('variables', new Y.Array())
+  })
+  assert.equal(stateHasStructs(Y.encodeStateAsUpdate(doc)), true)
+
+  const titled = new Y.Doc()
+  titled.getMap('meta').set('title', 'Ops')
+  assert.equal(stateHasStructs(Y.encodeStateAsUpdate(titled)), true)
+})
+
+test('documentHasStructs tracks the loaded document content', () => {
+  const doc = new Y.Doc()
+  assert.equal(documentHasStructs(doc), false)
+  doc.getMap('widgets').set('w-1', new Y.Map())
+  assert.equal(documentHasStructs(doc), true)
+})
+

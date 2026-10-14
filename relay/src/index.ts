@@ -9,6 +9,7 @@ import {
   DASHBOARD_DOC_UPDATE_PATTERN,
   DASHBOARD_REVALIDATE_INTERVAL_MS,
   applyRevalidationDisposition,
+  documentHasStructs,
   extractToken,
   failedStateLoadDisposition,
   loadResponseDisposition,
@@ -20,6 +21,7 @@ import {
   revalidationDisposition,
   revalidationKey,
   shouldRefreshResidentDocument,
+  stateHasStructs,
   storeResponseDisposition,
   type AuthorizeResult,
 } from './dashboardDocs'
@@ -43,6 +45,13 @@ interface RelayContext {
   canEdit?: boolean
   /** Dashboard id echoed by the authorize endpoint (dashboard documents only). */
   documentId?: string
+  /**
+   * Set when the resident dashboard document had no structs even after the
+   * onAuthenticate refresh: the connection is accepted but closed in
+   * `connected` so the provider reconnects and retries against the API
+   * instead of resting on an empty document.
+   */
+  dashboardDocEmpty?: boolean
 }
 
 /** Per-document session token, set on authenticate and cleared on unload. */
@@ -207,7 +216,17 @@ const server = new Server<RelayContext>({
       }
       return null
     }
-    return new Uint8Array(buf)
+    const state = new Uint8Array(buf)
+    if (route.kind === 'dashboard' && !stateHasStructs(state)) {
+      // The dashboard GET always seeds at least the meta entries, so a
+      // fetched state with no structs can only be corruption (a zero-struct
+      // stored state or an empty update). Returning it would let the client
+      // sync an empty document while REST reads stayed correct — the
+      // flash-then-empty editor. Throw so the provider retries; the API's
+      // read-side heal rebuilds the state.
+      throw new Error(`load dashboard document "${route.id}" carries no state`)
+    }
+    return state
   },
 
   async onStoreDocument({ documentName, document, lastContext }) {
@@ -271,12 +290,35 @@ const server = new Server<RelayContext>({
     documentTokens.set(documentName, token)
     // A resident dashboard document may be missing backend writes (skipped
     // fan-in or a failed store); refresh it before this client syncs it.
-    await refreshResidentDashboardDoc(documentName, token)
+    const hasStructs = await refreshResidentDashboardDoc(documentName, token)
+    // A resident dashboard document with no structs at all is never
+    // legitimate (the API's seed always writes the meta entries) and would
+    // sync an empty editor. It is kept for the moment — connected() closes
+    // the connection so the provider retries — because the refresh may also
+    // have failed transiently; the retry re-runs this path.
+    context.dashboardDocEmpty = route.kind === 'dashboard' && !hasStructs
   },
 
   async connected({ documentName, connection, context }) {
     const route = resolveDocumentRoute(documentName, API_URL)
     if (route.kind !== 'dashboard') return
+
+    if (context.dashboardDocEmpty) {
+      const document = server.hocuspocus.documents.get(documentName)
+      if (document && !documentHasStructs(document)) {
+        // Serving the empty document would blank every draft surface; close
+        // the connection (rather than throw) so the provider reconnects and
+        // re-runs onAuthenticate/refresh until the API state lands.
+        console.warn(
+          `[relay] dashboard document "${documentName}" is empty after refresh (socket ${connection.socketId}); closing so the client retries`,
+        )
+        closeConnection(connection, 'dashboard document has no content')
+        return
+      }
+      // The refresh raced with another connection healing the document;
+      // continue with the regular connected flow.
+      context.dashboardDocEmpty = false
+    }
 
     if (context.canEdit === false) {
       // Defense-in-depth: onAuthenticate already set connectionConfig.readOnly
@@ -354,11 +396,18 @@ async function handleDashboardDocUpdate(dashboardId: string, message: Buffer): P
  * and then empties out, while REST reads (published view, public page) stay
  * correct. Applying the API's stored state as a Yjs update is a union merge,
  * so edits the relay has not stored yet survive.
+ *
+ * Returns whether the resident document carries structs after the attempt.
+ * `true` when there was nothing to refresh (an unloaded document is fetched
+ * fresh by onLoadDocument, which fails closed on a zero-struct state, and
+ * notebooks are exempt). A `false` return marks the connection for the
+ * `connected` retry-close: a dashboard document with no structs is never
+ * legitimate, and serving it would sync an empty editor.
  */
-async function refreshResidentDashboardDoc(documentName: string, token: string): Promise<void> {
+async function refreshResidentDashboardDoc(documentName: string, token: string): Promise<boolean> {
   const route = resolveDocumentRoute(documentName, API_URL)
   const document = server.hocuspocus.documents.get(documentName)
-  if (!shouldRefreshResidentDocument(route.kind, document !== undefined) || !document) return
+  if (!shouldRefreshResidentDocument(route.kind, document !== undefined) || !document) return true
   try {
     const res = await fetch(route.loadUrl, {
       headers: { Authorization: `Bearer ${token}` },
@@ -366,14 +415,12 @@ async function refreshResidentDashboardDoc(documentName: string, token: string):
     })
     if (!res.ok) {
       console.warn(`[relay] refresh of resident document "${documentName}" failed with status ${res.status}`)
-      return
+      return documentHasStructs(document)
     }
     const buf = await res.arrayBuffer()
     if (buf.byteLength === 0) {
-      if (route.kind === 'dashboard') {
-        console.warn(`[relay] refresh of resident dashboard document "${documentName}" returned an empty body`)
-      }
-      return
+      console.warn(`[relay] refresh of resident dashboard document "${documentName}" returned an empty body`)
+      return documentHasStructs(document)
     }
     // Same application as the core's load path (applyUpdate on the resident
     // document), with an explicit local origin that skips store hooks: the
@@ -383,8 +430,10 @@ async function refreshResidentDashboardDoc(documentName: string, token: string):
     document.transact(() => {
       Y.applyUpdate(document, new Uint8Array(buf))
     }, { source: 'local', skipStoreHooks: true })
+    return documentHasStructs(document)
   } catch (err) {
     console.warn(`[relay] failed to refresh resident document "${documentName}":`, err)
+    return documentHasStructs(document)
   }
 }
 

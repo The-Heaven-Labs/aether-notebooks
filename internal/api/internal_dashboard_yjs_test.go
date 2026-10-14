@@ -608,6 +608,37 @@ func TestInternalDashboardYjsHealsEmptyAndCorruptState(t *testing.T) {
 		second := internalDashboardDocRequest(t, srv, token, "GET", emptyDash, nil).Body.Bytes()
 		require.Equal(t, first, second)
 	})
+
+	t.Run("a zero-struct state is rebuilt even for a dashboard with no content", func(t *testing.T) {
+		// Regression: the heal originally keyed on the derived rows, so a
+		// zero-struct stored state (the pre-guard relay bug's residue) on a
+		// dashboard with no title/settings/widgets was served as-is forever.
+		// Every client then applied an empty update and synced nothing, while
+		// REST reads stayed correct — the flash-then-empty editor.
+		emptyDash := createDashWithSettings(t, srv, token, nil)
+		_, err := srv.DB().Pool.Exec(context.Background(),
+			`UPDATE dashboards SET title = '', settings = '{}' WHERE id = $1`, emptyDash)
+		require.NoError(t, err)
+		_, err = srv.DB().Pool.Exec(context.Background(), `
+			INSERT INTO dashboard_yjs_documents (dashboard_id, state)
+			VALUES ($1, $2)
+			ON CONFLICT (dashboard_id) DO UPDATE SET state = EXCLUDED.state`,
+			emptyDash, []byte{0, 0})
+		require.NoError(t, err)
+
+		rec := internalDashboardDocRequest(t, srv, token, "GET", emptyDash, nil)
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		state := rec.Body.Bytes()
+		require.NotEmpty(t, state)
+
+		// Seed always writes the meta entries, so a served dashboard state
+		// must carry structs even when the dashboard itself is empty; that is
+		// what lets clients distinguish "empty dashboard" from "never loaded".
+		doc := crdt.New()
+		require.NoError(t, crdt.ApplyUpdateV1(doc, state, nil))
+		require.NotEmpty(t, doc.StateVector(),
+			"a served dashboard state must carry structs even when the dashboard is empty")
+	})
 }
 
 func TestInternalDashboardYjsMissingTrashedAndEmptyBody(t *testing.T) {
