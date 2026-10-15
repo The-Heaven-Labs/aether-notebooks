@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/favorites"
 	"github.com/the-heaven-labs/aether/internal/headers"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -323,13 +324,30 @@ func (h *mcpServerHandlers) handleDelete(w http.ResponseWriter, r *http.Request)
 	id := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
 
-	result, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM mcp_servers WHERE id = $1 AND org_id = $2`, id, claims.OrgID)
+	tx, err := h.server.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	result, err := tx.Exec(r.Context(), `DELETE FROM mcp_servers WHERE id = $1 AND org_id = $2`, id, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "mcp server not found")
+		return
+	}
+	// favorites.resource_id has no FK; clean the rows in the same transaction
+	// that removes the MCP server they point at.
+	if err := favorites.DeleteFor(r.Context(), tx, "mcp_server", []string{id}); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 

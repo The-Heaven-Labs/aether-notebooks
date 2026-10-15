@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/favorites"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -597,6 +598,12 @@ func (h *agentHandlers) handleDeleteAgent(w http.ResponseWriter, r *http.Request
 	}
 	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	// favorites.resource_id has no FK; clean the rows in the same transaction
+	// that removes the agent they point at.
+	if err := favorites.DeleteFor(r.Context(), tx, "agent", []string{agentID}); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

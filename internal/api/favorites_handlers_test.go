@@ -463,3 +463,69 @@ func TestFavoritesListCap500(t *testing.T) {
 	// newest surviving favorite comes first.
 	require.Equal(t, "cap-1", groups[0].Results[0].Title)
 }
+
+// TestFavoritesCleanedOnHardDeletes pins the cleanup for every catalog type
+// whose REST delete is a hard delete: the favorite row (resource_id has no
+// FK) must disappear with the resource. Notebooks are not hard-deleted over
+// REST (trash + purge, covered by the scheduler tests).
+func TestFavoritesCleanedOnHardDeletes(t *testing.T) {
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	email := fmt.Sprintf("fav-hard-delete-%d@test.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Fav Hard Delete Org")
+
+	modelConfigID := createModelConfig(t, srv, token)
+	agentID := createAgent(t, srv, token, modelConfigID)
+	toolID := func() string {
+		code, resp := doRequest(t, srv, token, "POST", "/api/v1/tools", map[string]any{
+			"name": "Hard Delete Tool",
+			"type": "webhook",
+			"config": map[string]any{
+				"url":    "https://example.com/hook",
+				"method": "POST",
+			},
+		})
+		return resourceID(t, code, resp)
+	}()
+	mcpID := createMCPServerResource(t, srv, token, "Hard Delete MCP")
+	skillID := createSkillResource(t, srv, token, "Hard Delete Skill")
+
+	// A favorite that must survive all of the deletes below.
+	controlCode, controlResp := doRequest(t, srv, token, "POST", "/api/v1/notebooks", map[string]any{"title": "Survivor"})
+	controlID := resourceID(t, controlCode, controlResp)
+	code, _ := doRequest(t, srv, token, "PUT", favoritePath("notebook", controlID), nil)
+	require.Equal(t, http.StatusNoContent, code)
+
+	cases := []struct {
+		resourceType string
+		id           string
+		deletePath   string
+	}{
+		{"agent", agentID, "/api/v1/agents/" + agentID},
+		{"model_config", modelConfigID, "/api/v1/model-configs/" + modelConfigID},
+		{"skill", skillID, "/api/v1/skills/" + skillID},
+		{"tool", toolID, "/api/v1/tools/" + toolID},
+		{"mcp_server", mcpID, "/api/v1/mcp-servers/" + mcpID},
+	}
+	for _, tc := range cases {
+		t.Run(tc.resourceType, func(t *testing.T) {
+			code, _ := doRequest(t, srv, token, "PUT", favoritePath(tc.resourceType, tc.id), nil)
+			require.Equal(t, http.StatusNoContent, code)
+
+			code, _ = doRequest(t, srv, token, "DELETE", tc.deletePath, nil)
+			require.Equal(t, http.StatusNoContent, code)
+
+			var count int
+			require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+				`SELECT COUNT(*) FROM favorites WHERE resource_type = $1 AND resource_id = $2::uuid`,
+				tc.resourceType, tc.id).Scan(&count))
+			require.Zero(t, count, "favorites must be cleaned up on hard delete")
+		})
+	}
+
+	var survivors int
+	require.NoError(t, srv.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM favorites WHERE resource_type = 'notebook' AND resource_id = $1::uuid`,
+		controlID).Scan(&survivors))
+	require.Equal(t, 1, survivors, "favorites for live resources must not be touched")
+}

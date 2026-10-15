@@ -11,6 +11,7 @@ package api
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -444,6 +445,50 @@ func TestResolveActionsSemantics(t *testing.T) {
 				require.Falsef(t, allowed, "stranger must not hold %s %s %s", matrix.resourceType, id, action)
 			}
 		}
+	}
+}
+
+// TestResolveActionsUppercaseUUIDDivergence pins the documented fail-closed
+// divergence between the two resolvers: checkPermission casts ids with ::uuid
+// and accepts a non-canonical uppercase spelling, while resolveActions matches
+// on id::text and resolves that same spelling all-false. Callers pass ids read
+// from org-scoped tables (always canonical), so the divergence is inert in
+// practice — but it is deliberate and must stay visible.
+func TestResolveActionsUppercaseUUIDDivergence(t *testing.T) {
+	fx := setupBatchResolverFixture(t)
+	ctx := context.Background()
+	ident, err := fx.srv.permIdentity(ctx, batchClaims(fx, fx.memberID, "editor"))
+	require.NoError(t, err)
+
+	cases := []struct {
+		name         string
+		resourceType string
+		id           uuid.UUID
+		action       string
+	}{
+		{"direct notebook grant", "notebook", fx.notebookDirectID, "view"},
+		{"folder grant on the folder itself", "folder", fx.childID, "view"},
+		{"direct connector use", "connector", fx.connectorID, "use"},
+		{"folder-inherited dashboard view", "dashboard", fx.dashboardID, "view"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			uppercase := strings.ToUpper(tc.id.String())
+			require.NotEqual(t, tc.id.String(), uppercase, "the fixture id must differ in case")
+
+			// The single check casts with ::uuid and allows the uppercase id.
+			allowed, err := fx.srv.checkPermission(ctx, fx.memberID.String(), fx.orgID.String(),
+				"editor", tc.resourceType, uppercase, tc.action)
+			require.NoError(t, err)
+			require.True(t, allowed, "checkPermission accepts the uppercase spelling via its uuid cast")
+
+			// The batch resolver matches on id::text: the same resource under
+			// the uppercase spelling resolves all-false.
+			got, err := fx.srv.resolveActions(ctx, ident, tc.resourceType, []string{uppercase}, []string{tc.action})
+			require.NoError(t, err)
+			require.False(t, actionAllowed(got, uppercase, tc.action),
+				"resolveActions denies the non-canonical uppercase spelling by design")
+		})
 	}
 }
 

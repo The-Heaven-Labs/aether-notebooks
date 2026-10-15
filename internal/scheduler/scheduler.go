@@ -11,6 +11,7 @@ import (
 	"github.com/robfig/cron/v3"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/database"
+	"github.com/the-heaven-labs/aether/internal/favorites"
 )
 
 type RunFunc func(ctx context.Context, notebookID string, params map[string]string) error
@@ -165,7 +166,11 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 	// data-modifying CTEs, they run first — preserving the codebase's
 	// pending → real lock order. Do not reorder without verifying that
 	// invariant.
-	if _, err := s.db.Pool.Exec(ctx, `
+	//
+	// favorites.resource_id carries no FK either, so every purge statement
+	// returns the ids it deleted and the shared favorites helper consumes them.
+	var purgedNotebooks []string
+	if err := s.db.Pool.QueryRow(ctx, `
 		WITH purged AS (
 			DELETE FROM notebooks
 			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
@@ -189,24 +194,33 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 			WHERE resource_type = 'notebook'
 			  AND resource_id IN (SELECT id FROM purged)
 		)
-		SELECT COUNT(*) FROM purged
-	`); err != nil {
+		SELECT COALESCE(array_agg(id::text), ARRAY[]::text[]) FROM purged
+	`).Scan(&purgedNotebooks); err != nil {
 		slog.Warn("scheduler: purge trash", "table", "notebooks", "error", err)
+	}
+	if err := favorites.DeleteFor(ctx, s.db.Pool, "notebook", purgedNotebooks); err != nil {
+		slog.Warn("scheduler: purge trash favorites", "table", "notebooks", "error", err)
 	}
 
 	// Each table purge also consumes the pending ACL rows staged for the
 	// deleted resources; pending_acl_entries has no FK to clean up via cascade.
 	// Connectors have no cascade children, so RETURNING id is the complete
 	// delete set.
-	if _, err := s.db.Pool.Exec(ctx, `
+	var purgedConnectors []string
+	if err := s.db.Pool.QueryRow(ctx, `
 		WITH purged AS (
 			DELETE FROM connectors
 			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
 			RETURNING id
+		), connector_pending_cleanup AS (
+			DELETE FROM pending_acl_entries
+			WHERE resource_type = 'connector' AND resource_id IN (SELECT id FROM purged)
 		)
-		DELETE FROM pending_acl_entries
-		WHERE resource_type = 'connector' AND resource_id IN (SELECT id FROM purged)`); err != nil {
+		SELECT COALESCE(array_agg(id::text), ARRAY[]::text[]) FROM purged`).Scan(&purgedConnectors); err != nil {
 		slog.Warn("scheduler: purge trash", "table", "connectors", "error", err)
+	}
+	if err := favorites.DeleteFor(ctx, s.db.Pool, "connector", purgedConnectors); err != nil {
+		slog.Warn("scheduler: purge trash favorites", "table", "connectors", "error", err)
 	}
 
 	// Dashboards take the same purge, but every purged id is also reported to
@@ -231,6 +245,9 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 	`).Scan(&purgedDashboards); err != nil {
 		slog.Warn("scheduler: purge trash", "table", "dashboards", "error", err)
 	}
+	if err := favorites.DeleteFor(ctx, s.db.Pool, "dashboard", purgedDashboards); err != nil {
+		slog.Warn("scheduler: purge trash favorites", "table", "dashboards", "error", err)
+	}
 	for _, id := range purgedDashboards {
 		if s.trashInvalidator != nil {
 			s.trashInvalidator(ctx, id)
@@ -242,7 +259,24 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 	// children, so a RETURNING id from the purge predicate alone would miss
 	// their pending rows. The recursive CTE collects every folder the cascade
 	// removes and the delete consumes pending rows for all of them.
-	if _, err := s.db.Pool.Exec(ctx, `
+	//
+	// The subtree's resources are collected in the same statement — the
+	// pre-delete snapshot still shows their folder chain — so favorites for
+	// the whole subtree (folders plus the resources that lived inside it) go
+	// with it. Resources themselves survive with folder_id NULL
+	// (ON DELETE SET NULL).
+	var (
+		purgedFolders       []string
+		subtreeNotebooks    []string
+		subtreeConnectors   []string
+		subtreeDashboards   []string
+		subtreeAgents       []string
+		subtreeModelConfigs []string
+		subtreeSkills       []string
+		subtreeMCPServers   []string
+		subtreeTools        []string
+	)
+	if err := s.db.Pool.QueryRow(ctx, `
 		WITH RECURSIVE subtree AS (
 			SELECT id FROM folders
 			WHERE deleted_at IS NOT NULL AND deleted_at < NOW() - INTERVAL '7 days'
@@ -250,11 +284,41 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 			SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
 		), purged AS (
 			DELETE FROM folders WHERE id IN (SELECT id FROM subtree) RETURNING id
+		), folder_pending_cleanup AS (
+			DELETE FROM pending_acl_entries
+			WHERE resource_type = 'folder' AND resource_id IN (SELECT id FROM purged)
 		)
-		DELETE FROM pending_acl_entries
-		WHERE resource_type = 'folder' AND resource_id IN (SELECT id FROM purged)
-	`); err != nil {
+		SELECT
+			COALESCE((SELECT array_agg(id::text) FROM subtree), ARRAY[]::text[]),
+			COALESCE((SELECT array_agg(id::text) FROM notebooks WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
+			COALESCE((SELECT array_agg(id::text) FROM connectors WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
+			COALESCE((SELECT array_agg(id::text) FROM dashboards WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
+			COALESCE((SELECT array_agg(id::text) FROM agents WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
+			COALESCE((SELECT array_agg(id::text) FROM model_configs WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
+			COALESCE((SELECT array_agg(id::text) FROM skills WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
+			COALESCE((SELECT array_agg(id::text) FROM mcp_servers WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
+			COALESCE((SELECT array_agg(id::text) FROM tools WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[])
+	`).Scan(&purgedFolders, &subtreeNotebooks, &subtreeConnectors, &subtreeDashboards,
+		&subtreeAgents, &subtreeModelConfigs, &subtreeSkills, &subtreeMCPServers, &subtreeTools); err != nil {
 		slog.Warn("scheduler: purge trash", "table", "folders", "error", err)
+	}
+	for _, cleanup := range []struct {
+		resourceType string
+		ids          []string
+	}{
+		{"folder", purgedFolders},
+		{"notebook", subtreeNotebooks},
+		{"connector", subtreeConnectors},
+		{"dashboard", subtreeDashboards},
+		{"agent", subtreeAgents},
+		{"model_config", subtreeModelConfigs},
+		{"skill", subtreeSkills},
+		{"mcp_server", subtreeMCPServers},
+		{"tool", subtreeTools},
+	} {
+		if err := favorites.DeleteFor(ctx, s.db.Pool, cleanup.resourceType, cleanup.ids); err != nil {
+			slog.Warn("scheduler: purge trash favorites", "table", "folders", "resource_type", cleanup.resourceType, "error", err)
+		}
 	}
 }
 

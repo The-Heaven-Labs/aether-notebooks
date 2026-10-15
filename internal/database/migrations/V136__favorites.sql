@@ -3,7 +3,8 @@
 -- resource_id is polymorphic (folder, notebook, dashboard, connector, agent,
 -- model_config, skill, mcp_server, tool) and deliberately carries no FK — the
 -- same convention as acl_entries — so cleanup is explicit in purge/hard-delete
--- paths (deleteFavoritesFor); user and org deletion cascade via the two FKs.
+-- paths (favorites.DeleteFor in internal/favorites); user and org deletion
+-- cascade via the two FKs.
 -- resource_type has no DB-level CHECK: the nine-type whitelist is enforced in
 -- the API layer so adding a resource type needs no migration rewrite.
 --

@@ -13,6 +13,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
 	"github.com/the-heaven-labs/aether/internal/crypto"
+	"github.com/the-heaven-labs/aether/internal/favorites"
 	"github.com/the-heaven-labs/aether/internal/headers"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
@@ -422,13 +423,30 @@ func (h *modelConfigHandlers) handleDelete(w http.ResponseWriter, r *http.Reques
 	cfgID := r.PathValue("id")
 	claims := ClaimsFromContext(r.Context())
 
-	result, err := h.server.db.Pool.Exec(r.Context(), `DELETE FROM model_configs WHERE id = $1 AND org_id = $2`, cfgID, claims.OrgID)
+	tx, err := h.server.db.Pool.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	defer tx.Rollback(r.Context())
+
+	result, err := tx.Exec(r.Context(), `DELETE FROM model_configs WHERE id = $1 AND org_id = $2`, cfgID, claims.OrgID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	if result.RowsAffected() == 0 {
 		writeError(w, http.StatusNotFound, "model config not found")
+		return
+	}
+	// favorites.resource_id has no FK; clean the rows in the same transaction
+	// that removes the model config they point at.
+	if err := favorites.DeleteFor(r.Context(), tx, "model_config", []string{cfgID}); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
