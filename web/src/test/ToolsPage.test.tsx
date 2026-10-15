@@ -186,4 +186,24 @@ describe('ToolsPage', () => {
     expect(within(dialog).queryByText('Current connector is unavailable')).not.toBeInTheDocument()
     expect(picker).not.toHaveAttribute('aria-describedby')
   })
+
+  test('a new sql_query tool with no connector shows no unavailable hint', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([
+        { id: 'conn-svc', name: 'Service CH', type: 'clickhouse', can_use: true, is_provisioner: false, created_at: '2026-01-01T00:00:00Z' },
+        { id: 'conn-prov', name: 'Blocked provisioner', type: 'clickhouse', can_use: false, is_provisioner: true, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+    )
+    renderWithProviders(<ToolsPage />)
+    await screen.findByText('No tools yet')
+
+    fireEvent.click(screen.getAllByText('+ New Tool')[0])
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Type'), { target: { value: 'sql_query' } })
+
+    // No stored reference yet — an empty value is never "unavailable".
+    const picker = within(dialog).getByLabelText('Connector') as HTMLSelectElement
+    expect(picker.value).toBe('')
+    expect(within(dialog).queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+  })
 })

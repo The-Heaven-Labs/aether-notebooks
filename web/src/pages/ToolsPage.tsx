@@ -15,7 +15,7 @@ import { PermissionsPanel } from '../components/PermissionsPanel'
 import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
 import type { HeaderRow } from '../components/HeadersEditor'
 import { ConnectorUnavailableHint } from '../components/ConnectorUnavailableHint'
-import { executableConnectorOptions } from '../utils/connectors'
+import { executableConnectorOptions, isHiddenSelection } from '../utils/connectors'
 import type { Connector } from '../types'
 
 interface ParamDef {
@@ -87,7 +87,7 @@ export function ToolsPage() {
     queryFn: () => api.get<Tool[]>('/api/v1/tools'),
   })
 
-  const { data: connectors = [] } = useQuery<Connector[]>({
+  const { data: connectors = [], isSuccess: connectorsReady } = useQuery<Connector[]>({
     queryKey: ['connectors'],
     queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
   })
@@ -234,7 +234,7 @@ export function ToolsPage() {
             submitTitle={!form.name ? 'Name is required' : undefined}
             onSubmit={() => createMutation.mutate()}
           >
-            <ToolFormFields form={form} setForm={setForm} connectors={connectors} editing={false} nameRef={nameRef} />
+            <ToolFormFields form={form} setForm={setForm} connectors={connectors} connectorsReady={connectorsReady} editing={false} nameRef={nameRef} />
           </FormModal>
         )}
 
@@ -251,7 +251,7 @@ export function ToolsPage() {
             submitTitle={!form.name ? 'Name is required' : undefined}
             onSubmit={() => updateMutation.mutate(editingId!)}
           >
-            <ToolFormFields form={form} setForm={setForm} connectors={connectors} editing nameRef={nameRef} />
+            <ToolFormFields form={form} setForm={setForm} connectors={connectors} connectorsReady={connectorsReady} editing nameRef={nameRef} />
           </FormModal>
         )}
 
@@ -352,10 +352,12 @@ export function ToolsPage() {
   )
 }
 
-function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
+function ToolFormFields({ form, setForm, connectors, connectorsReady, editing, nameRef }: {
   form: ToolForm
   setForm: React.Dispatch<React.SetStateAction<ToolForm>>
   connectors: Connector[]
+  /** True once the connectors query settled — an unloaded catalog must never read as "unavailable". */
+  connectorsReady: boolean
   editing: boolean
   nameRef: React.RefObject<HTMLInputElement | null>
 }) {
@@ -373,10 +375,12 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
   const connectorOptions = executableConnectorOptions(connectors)
   // A stored reference to a hidden connector must not blank or mismatch the
   // select: fall back to the placeholder (the reference stays in the form
-  // until the user picks another connector). The hint explains the fallback.
+  // until the user picks another connector). The hint explains the fallback,
+  // but only once the catalog is known — while the query is pending every
+  // value looks absent, and "can't tell" must never read as "unavailable".
   const selectedConnectorVisible = form.connector_id !== '' && connectorOptions.some(c => c.id === form.connector_id)
   const connectorHintId = useId()
-  const connectorHidden = form.connector_id !== '' && !selectedConnectorVisible
+  const connectorHidden = connectorsReady && isHiddenSelection(form.connector_id, connectorOptions)
 
   return (
     <>

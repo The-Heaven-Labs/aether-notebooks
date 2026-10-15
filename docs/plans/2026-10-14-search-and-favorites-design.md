@@ -401,8 +401,8 @@ never be chosen.
   "Current connector is unavailable" hint (`aria-describedby` wired to it) and the stored
   reference stays on the resource; a visible selection renders no hint; an allowed provisioner
   (`can_use === true`) stays with its label; non-provisioner "(view only)" options are unchanged.
-  The `Cell.test.tsx` and `ConnectorSelector.test.tsx` assertions (and the e2e spec's
-  stored-selection step, which asserts the hint) cover the selected case.
+  The `Cell.test.tsx`, `ConnectorSelector.test.tsx`, and `ToolsPage.test.tsx` assertions (and the
+  e2e spec's stored-selection step, which asserts the hint) cover the selected case.
 - **E2E** (Playwright): `e2e/search.spec.ts` (Ctrl+K palette flow, Ctrl+J still opens the
   agent, `/search` deep link, favorites chip), `e2e/favorites.spec.ts` (toggle on Files +
   Dashboards, filter chip, palette empty state, persists after reload),

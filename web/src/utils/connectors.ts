@@ -42,3 +42,18 @@ export function executableConnectorOptions<T extends PickerConnector>(
 ): T[] {
   return connectors.filter(c => !isBlockedProvisioner(c))
 }
+
+/**
+ * True when a stored connector reference points at something the picker's
+ * rendered options do not contain — the placeholder-plus-hint state.
+ *
+ * This only answers the id question. Callers must still gate on the connector
+ * catalog being known (query settled / non-empty prop): an empty or unloaded
+ * list hides every value, and "can't tell" must never render as "unavailable".
+ */
+export function isHiddenSelection(
+  value: string | null | undefined,
+  options: { id: string }[],
+): boolean {
+  return value != null && value !== '' && !options.some(o => o.id === value)
+}

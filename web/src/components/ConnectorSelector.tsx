@@ -2,7 +2,7 @@ import { useId } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import { ConnectorUnavailableHint } from './ConnectorUnavailableHint'
-import { executableConnectorOptions, connectorOptionLabel } from '../utils/connectors'
+import { executableConnectorOptions, connectorOptionLabel, isHiddenSelection } from '../utils/connectors'
 
 interface ConnectorItem {
   id: string
@@ -34,7 +34,7 @@ export function ConnectorSelector({
 }: ConnectorSelectorProps) {
   // Shares the ['connectors'] query with the sidebar and page queries so the
   // list is fetched once per cache window instead of once per consumer.
-  const { data: connectors = [] } = useQuery<ConnectorItem[]>({
+  const { data: connectors = [], isSuccess } = useQuery<ConnectorItem[]>({
     queryKey: ['connectors'],
     queryFn: () => api.get<ConnectorItem[]>('/api/v1/connectors'),
   })
@@ -45,8 +45,10 @@ export function ConnectorSelector({
   // resource until the user picks another connector). The hint explains it.
   const selectedVisible = value != null && options.some(c => c.id === value)
   const hintId = useId()
-  // The hint only speaks for a stored value that the list no longer contains.
-  const valueHidden = value !== null && value !== '' && !selectedVisible
+  // The hint only speaks for a stored value the settled catalog no longer
+  // contains: before the list loads, every value looks "hidden" and claiming
+  // "unavailable" would be wrong.
+  const valueHidden = isSuccess && isHiddenSelection(value, options)
 
   return (
     <span style={styles.wrap}>

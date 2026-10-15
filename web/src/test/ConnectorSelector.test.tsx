@@ -2,7 +2,7 @@ import type { ReactNode } from 'react'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, test, expect, vi } from 'vitest'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse, delay } from 'msw'
 import { server } from './server'
 import { ConnectorSelector } from '../components/ConnectorSelector'
 
@@ -42,6 +42,8 @@ describe('ConnectorSelector', () => {
     // The select element has value "" which shows the placeholder option
     const select = screen.getByRole('combobox')
     expect(select).toBeInTheDocument()
+    // An empty value is not a hidden selection — never claim "unavailable".
+    expect(screen.queryByText('Current connector is unavailable')).not.toBeInTheDocument()
   })
 
   test('calls onChange when selection changes', async () => {
@@ -131,5 +133,35 @@ describe('ConnectorSelector', () => {
     expect(screen.getByRole('combobox')).toHaveValue('conn-svc')
     expect(screen.queryByText('Current connector is unavailable')).not.toBeInTheDocument()
     expect(screen.getByRole('combobox')).not.toHaveAttribute('aria-describedby')
+  })
+
+  test('a selected view-only connector (not a provisioner) shows no unavailable hint', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([
+        { id: 'conn-view', name: 'Read replica', type: 'postgres', can_use: false, is_provisioner: false },
+      ]))
+    )
+    renderWithQuery(<ConnectorSelector value="conn-view" onChange={() => {}} />)
+    await screen.findByRole('option', { name: 'Read replica (view only)' })
+
+    // View-only connectors stay listed (disabled), so the selection is visible.
+    expect(screen.getByRole('combobox')).toHaveValue('conn-view')
+    expect(screen.queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+  })
+
+  test('a pending connectors query never shows the unavailable hint', async () => {
+    server.use(
+      http.get('/api/v1/connectors', async () => {
+        await delay(60)
+        return HttpResponse.json(provisionerConnectors)
+      })
+    )
+    renderWithQuery(<ConnectorSelector value="conn-prov-blocked" onChange={() => {}} />)
+    // While the catalog is in flight the value may well be present once it
+    // lands: "can't tell" must never render as "unavailable".
+    expect(screen.queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+    // Once settled, a genuinely hidden reference shows the hint.
+    await screen.findByRole('option', { name: 'Service CH' })
+    expect(screen.getByText('Current connector is unavailable')).toBeInTheDocument()
   })
 })

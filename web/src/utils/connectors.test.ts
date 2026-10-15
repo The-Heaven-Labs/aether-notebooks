@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { connectorOptionLabel, executableConnectorOptions, isBlockedProvisioner } from './connectors'
+import { connectorOptionLabel, executableConnectorOptions, isBlockedProvisioner, isHiddenSelection } from './connectors'
 
 interface TestConnector {
   id: string
@@ -110,5 +110,27 @@ describe('executableConnectorOptions', () => {
 
   test('returns an empty list unchanged', () => {
     expect(executableConnectorOptions([])).toEqual([])
+  })
+})
+
+describe('isHiddenSelection', () => {
+  test('is false for null, undefined, and the empty string', () => {
+    expect(isHiddenSelection(null, CONNECTORS)).toBe(false)
+    expect(isHiddenSelection(undefined, CONNECTORS)).toBe(false)
+    expect(isHiddenSelection('', CONNECTORS)).toBe(false)
+  })
+
+  test('is false when the value is present among the options', () => {
+    expect(isHiddenSelection('svc', CONNECTORS)).toBe(false)
+  })
+
+  test('is true when the value is absent from the options', () => {
+    expect(isHiddenSelection('gone', CONNECTORS)).toBe(true)
+  })
+
+  test('is true for any value when the options list is empty', () => {
+    // The caller must gate this with a known catalog: an empty list alone
+    // cannot distinguish "hidden" from "not loaded".
+    expect(isHiddenSelection('svc', [])).toBe(true)
   })
 })
