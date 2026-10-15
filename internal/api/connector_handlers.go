@@ -221,8 +221,16 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 		CanUse        bool `json:"can_use"`
 		IsProvisioner bool `json:"is_provisioner"`
 	}
-	var result []connectorWithPerms
+
+	type scannedConnector struct {
+		connector                 models.Connector
+		encryptedConfig           []byte
+		isProvisioner             bool
+		allowProvisionerExecution bool
+	}
+	var scanned []scannedConnector
 	for rows.Next() {
+		var sc scannedConnector
 		var c models.Connector
 		var encryptedConfig []byte
 		var isProvisioner, allowProvisionerExecution bool
@@ -233,18 +241,42 @@ func (s *Server) handleListConnectors(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
+		sc.connector = c
+		sc.encryptedConfig = encryptedConfig
+		sc.isProvisioner = isProvisioner
+		sc.allowProvisionerExecution = allowProvisionerExecution
+		scanned = append(scanned, sc)
+	}
+
+	ident, err := s.permIdentity(ctx, claims)
+	if err != nil {
+		// Deliberate fail-loud: the former per-item checks silently hid rows on error.
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	ids := make([]string, 0, len(scanned))
+	for _, sc := range scanned {
+		ids = append(ids, sc.connector.ID)
+	}
+	perms, err := s.resolveActions(ctx, ident, "connector", ids, []string{"view", "use"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+
+	var result []connectorWithPerms
+	for _, sc := range scanned {
 		// Filter by permission: only return connectors user can view
-		allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
-		if !allowed {
+		if !actionAllowed(perms, sc.connector.ID, "view") {
 			continue
 		}
-		canUse, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "use")
-		if isProvisioner && (!allowProvisionerExecution || !s.warehouseManagementEnabled()) {
+		canUse := actionAllowed(perms, sc.connector.ID, "use")
+		if sc.isProvisioner && (!sc.allowProvisionerExecution || !s.warehouseManagementEnabled()) {
 			canUse = false
 		}
 		// Decrypt and mask secret fields
-		c.Config = s.maskedConnectorConfig(c.Type, encryptedConfig)
-		result = append(result, connectorWithPerms{Connector: c, CanUse: canUse, IsProvisioner: isProvisioner})
+		sc.connector.Config = s.maskedConnectorConfig(sc.connector.Type, sc.encryptedConfig)
+		result = append(result, connectorWithPerms{Connector: sc.connector, CanUse: canUse, IsProvisioner: sc.isProvisioner})
 	}
 
 	if result == nil {

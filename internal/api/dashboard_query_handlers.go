@@ -82,6 +82,54 @@ func (s *Server) loadPublishedDashboardSnapshot(ctx context.Context, orgID, dash
 	}, nil
 }
 
+// loadLatestDashboardSnapshots is the batched sibling of
+// loadPublishedDashboardSnapshot for list reads: it loads the latest published
+// snapshot per dashboard id in one query. Ids without a published version are
+// absent from the map, which carries the same meaning as errNoPublishedVersion
+// (the caller keeps the draft). Snapshot widgets are deliberately not loaded —
+// the list substitution serves title and settings only — but the settings
+// decode mirrors the single-version loader, decode errors included.
+func (s *Server) loadLatestDashboardSnapshots(ctx context.Context, orgID string, ids []string) (map[string]publishedDashboardSnapshot, error) {
+	out := make(map[string]publishedDashboardSnapshot, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT ON (dashboard_id) dashboard_id::text, version, title, settings, created_at
+		FROM dashboard_versions
+		WHERE dashboard_id = ANY($1::uuid[]) AND org_id = $2
+		ORDER BY dashboard_id, version DESC
+	`, ids, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var dashID string
+		var snap publishedDashboardSnapshot
+		var settingsRaw []byte
+		if err := rows.Scan(&dashID, &snap.Version, &snap.Title, &settingsRaw, &snap.CreatedAt); err != nil {
+			return nil, err
+		}
+		settings := map[string]any{}
+		if len(settingsRaw) > 0 {
+			if err := json.Unmarshal(settingsRaw, &settings); err != nil {
+				return nil, fmt.Errorf("decode dashboard version settings: %w", err)
+			}
+		}
+		decoded, err := dashboardSnapshotSettings(settings)
+		if err != nil {
+			return nil, fmt.Errorf("decode dashboard version settings: %w", err)
+		}
+		snap.Settings = decoded
+		out[dashID] = snap
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 type dashboardExecuteRequest struct {
 	WidgetID    string         `json:"widget_id"`
 	ConnectorID string         `json:"connector_id,omitempty"` // viewer's dashboard selector

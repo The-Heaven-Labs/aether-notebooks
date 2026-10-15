@@ -51,10 +51,38 @@ func (s *Server) handleGetRecent(w http.ResponseWriter, r *http.Request) {
 		candidates = append(candidates, item)
 	}
 
+	// One batched view resolution per candidate type — instead of one check
+	// per candidate — resolved once from a single caller identity. A
+	// resolution failure is fail-loud (the former per-candidate checks
+	// silently hid items on error). Types are walked in the UNION's order so
+	// the queries stay deterministic.
+	ident, err := s.permIdentity(ctx, claims)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	permsByType := make(map[string]map[string]map[string]bool, 3)
+	for _, typ := range []string{"notebook", "dashboard", "connector"} {
+		var ids []string
+		for _, item := range candidates {
+			if item.Type == typ {
+				ids = append(ids, item.ID)
+			}
+		}
+		if len(ids) == 0 {
+			continue
+		}
+		perms, err := s.resolveActions(ctx, ident, typ, ids, []string{"view"})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		permsByType[typ] = perms
+	}
+
 	items := []recentItem{}
 	for _, item := range candidates {
-		allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, item.Type, item.ID, "view")
-		if !allowed {
+		if !actionAllowed(permsByType[item.Type], item.ID, "view") {
 			continue
 		}
 		items = append(items, item)
