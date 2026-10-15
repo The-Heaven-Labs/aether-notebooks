@@ -27,7 +27,9 @@ import {
 // raised (each test registers at least one account): docker-compose.dev.yml
 // sets AETHER_RATE_LIMIT_REGISTER/LOGIN=500/min, while the server defaults are
 // 5/min register and 10/min login. Target any stack via E2E_BASE_URL
-// (default http://localhost:5173).
+// (default http://localhost:5173). The fake LLM runs on the host: a native
+// API (task dev) uses the loopback default, while a dockerized API needs
+// E2E_LLM_HOST=host.docker.internal so the container can dial back out.
 
 let fakeLlm: FakeLlm
 

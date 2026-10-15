@@ -5,6 +5,14 @@ import type { AddressInfo } from 'node:net'
 export const BASE_URL = process.env.E2E_BASE_URL ?? 'http://localhost:5173'
 export const PASSWORD = 'testpass123'
 
+// Host the API server uses to reach this process. A native API (task dev) uses
+// the loopback default; a dockerized API needs a host alias that resolves from
+// inside its container (e.g. `E2E_LLM_HOST=host.docker.internal`, same
+// override pattern as E2E_PG_CONNECTOR_HOST). The listener binds all
+// interfaces so the alias can actually connect; the URL still carries the
+// host, not a wildcard.
+const LLM_HOST = process.env.E2E_LLM_HOST ?? '127.0.0.1'
+
 export interface FakeLlm {
   baseUrl: string
   close: () => Promise<void>
@@ -44,11 +52,11 @@ export async function startFakeLlm(): Promise<FakeLlm> {
   })
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(0, '127.0.0.1', resolve)
+    server.listen(0, '0.0.0.0', resolve)
   })
   const { port } = server.address() as AddressInfo
   fakeLlm = {
-    baseUrl: `http://127.0.0.1:${port}/v1`,
+    baseUrl: `http://${LLM_HOST}:${port}/v1`,
     close: () => new Promise<void>((resolve) => {
       server.close(() => resolve())
       // close() waits on connections with a request in flight (the agent's idle pool can hold one); force them closed so afterAll does not hang.
