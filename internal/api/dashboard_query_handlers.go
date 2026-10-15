@@ -43,14 +43,40 @@ var errNoPublishedVersion = errors.New("dashboard has no published version")
 // does not enable live queries.
 var errPublicLiveDisabled = errors.New("live queries are not enabled for this dashboard")
 
-// publishedDashboardSnapshot is a decoded latest-version read: the snapshot
-// identity plus the content the REST read paths serve.
+// publishedDashboardSnapshot is a decoded latest-version content read: the
+// snapshot identity plus the content the REST read paths serve.
 type publishedDashboardSnapshot struct {
 	Version   int
 	CreatedAt time.Time
 	Title     string
 	Widgets   []dashboarddoc.SnapshotWidget
 	Settings  models.DashboardSettings
+}
+
+// publishedDashboardMeta is the published-snapshot metadata list surfaces
+// serve: the version identity, title, and decoded settings. Widgets are
+// deliberately excluded — list reads never load them — so a caller cannot
+// mistake an unfetched widget set for an empty one; content reads use
+// publishedDashboardSnapshot.
+type publishedDashboardMeta struct {
+	Version   int
+	CreatedAt time.Time
+	Title     string
+	Settings  models.DashboardSettings
+}
+
+// decodeSnapshotSettings decodes a dashboard_versions settings column (the
+// raw JSONB bytes, variables folded in under settings["variables"]) into the
+// typed shape the REST read paths serve. A NULL/empty column decodes to zero
+// settings; callers wrap the returned error with their own context.
+func decodeSnapshotSettings(raw []byte) (models.DashboardSettings, error) {
+	var out models.DashboardSettings
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return out, err
+		}
+	}
+	return out, nil
 }
 
 // loadPublishedDashboardSnapshot loads and decodes the dashboard's latest
@@ -69,7 +95,7 @@ func (s *Server) loadPublishedDashboardSnapshot(ctx context.Context, orgID, dash
 	if err := json.Unmarshal(ver.Widgets, &widgets); err != nil {
 		return nil, fmt.Errorf("decode dashboard version widgets: %w", err)
 	}
-	settings, err := dashboardSnapshotSettings(ver.Settings)
+	settings, err := decodeSnapshotSettings(ver.SettingsRaw)
 	if err != nil {
 		return nil, fmt.Errorf("decode dashboard version settings: %w", err)
 	}
@@ -80,6 +106,48 @@ func (s *Server) loadPublishedDashboardSnapshot(ctx context.Context, orgID, dash
 		Widgets:   widgets,
 		Settings:  settings,
 	}, nil
+}
+
+// loadLatestDashboardSnapshots is the batched sibling of
+// loadPublishedDashboardSnapshot for list reads: it loads the latest published
+// snapshot metadata (see publishedDashboardMeta) per dashboard id in one
+// query. Ids without a published version are absent from the map, which
+// carries the same meaning as errNoPublishedVersion (the caller keeps the
+// draft). Settings decode through the shared decodeSnapshotSettings, decode
+// errors included.
+func (s *Server) loadLatestDashboardSnapshots(ctx context.Context, orgID string, ids []string) (map[string]publishedDashboardMeta, error) {
+	out := make(map[string]publishedDashboardMeta, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT ON (dashboard_id) dashboard_id::text, version, title, settings, created_at
+		FROM dashboard_versions
+		WHERE dashboard_id = ANY($1::uuid[]) AND org_id = $2
+		ORDER BY dashboard_id, version DESC
+	`, ids, orgID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var dashID string
+		var meta publishedDashboardMeta
+		var settingsRaw []byte
+		if err := rows.Scan(&dashID, &meta.Version, &meta.Title, &settingsRaw, &meta.CreatedAt); err != nil {
+			return nil, err
+		}
+		settings, err := decodeSnapshotSettings(settingsRaw)
+		if err != nil {
+			return nil, fmt.Errorf("decode dashboard version settings: %w", err)
+		}
+		meta.Settings = settings
+		out[dashID] = meta
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 type dashboardExecuteRequest struct {

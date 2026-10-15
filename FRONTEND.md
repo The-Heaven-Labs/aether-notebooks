@@ -382,6 +382,7 @@ This matches all existing charts — see the JSDoc on `ChartModule` in `web/src/
 **States**:
 - **Default**: Gray text if no connector selected (`var(--text-muted)`)
 - **Selected**: Primary text color (`var(--text-primary)`)
+- **Hidden stored reference**: The select falls back to its placeholder and a muted (11px `var(--text-muted)` DM Sans) "Current connector is unavailable" hint renders beside it (`ConnectorUnavailableHint.tsx`, referenced via `aria-describedby`); it appears whenever the current value is set but absent from the rendered options — e.g. a non-executable provisioner.
 
 **Component**: `web/src/components/ConnectorSelector.tsx`
 
@@ -444,6 +445,32 @@ manageBtn: { padding: '3px 8px', fontSize: 11, fontWeight: 600, background: 'var
 
 **Missing**: Search/filter input, loading/error states, TreeItem and PanelHeader subcomponents.
 
+### FavoriteButton (bookmark toggle)
+
+**Purpose**: Per-resource bookmark toggle, backed by the shared `['favorites']` cache (`useFavorites` / `useToggleFavorite`)
+
+**Visual**:
+- Built on the shared row-action metrics: 26×26px (36 on touch), 1px hairline border, 4px radius, 13px Lucide `Bookmark`
+- Unfavorited: secondary ink, outline glyph. Favorited: amethyst ink (`row-action--pinned`), `fill="currentColor"`; the accent survives the generic hover ink swap
+- `aria-pressed` carries the state; `aria-label`/`title` are "Add to favorites" / "Remove from favorites"; clicks `stopPropagation()` so row navigation never fires
+- Disabled while the favorites listing is still loading (state unknown); a listing *error* keeps the button live (add-only fallback), so a transient failure never bricks it
+
+**Reveal pattern (list rows)**: rows opt in with `.favorite-host`; the toggle wrapper carries `.favorite-reveal` and is hover/focus-revealed on fine pointers, always visible on coarse pointers and on grid cards. Hiding is opacity-only — never `display: none` — so the reserved space never shifts. The actions cell reserves the wider width with `.row-actions-cell--favorite`: 104px (75px grid + 26px bookmark + 3px gap) on fine pointers, 136px (96px grid + 36px bookmark + 4px gap) on coarse pointers. A pinned (`aria-pressed="true"`) toggle stays visible at rest.
+
+**CSS caveat**: `.row-action:disabled` sets `opacity: 0.45` and out-specifies the hidden default, which would flash an unpressed, still-disabled bookmark into view while the favorites listing settles. The overriding rule (`.favorite-reveal:disabled:not([aria-pressed="true"]) { opacity: 0 }` inside `@media (pointer: fine)`) must stay declared *before* the hover rules — both are specificity (0,3,0), so the later `.favorite-host:hover .favorite-reveal` has to win or a bookmark being removed blinks out from under the cursor.
+
+**Component**: `web/src/components/FavoriteButton.tsx`; shared state in `web/src/hooks/useFavorites.ts` (`useFavorites`, `useIsFavorite`, `useToggleFavorite`).
+
+### Kbd (keyboard chip)
+
+**Purpose**: The shared keyboard-hint chip — imported by the shortcuts modal, the search palette input/footer, and the top-bar search field
+
+**Visual**:
+- `<kbd>` in 11px JetBrains Mono, 3px radius, 2px 6px padding, secondary canvas fill with a hairline border, `nowrap`
+- `tone: 'chrome'` swaps to the translucent white-on-dark treatment (`rgba(255,255,255,0.08)` fill / `0.18` border, `--nav-text` ink) for the always-dark navigation band, where the body tokens nearly vanish; the default body tone is byte-identical for palette/modal callers
+
+**Component**: `web/src/components/Kbd.tsx`
+
 ## Page Components
 
 ### Resource catalog pages (shared pattern)
@@ -467,6 +494,10 @@ resource list with the same interaction pattern, extracted from ConnectorsPage:
   Status column with a `StatusBadge`: "Testing…" (neutral), "Connected" (check), "Failed" (X, with
   the full message in the tooltip), or an italic muted "Unknown — click Test". The Test row action
   spins while its request runs.
+- **Bookmark toggle** — every catalog row carries the `FavoriteButton` bookmark immediately left of
+  the icon-actions grid (hover-revealed on fine pointers, always visible on touch and on cards), in
+  a cell widened by `.row-actions-cell--favorite` so revealing it never shifts the row. See
+  FavoriteButton above.
 - **Delete** — the danger Delete row action opens the shared `ConfirmDialog`; only its confirm
   button is destructive-styled.
 - **Permissions** — the Permissions row action opens the `PermissionsPanel` overlay.
@@ -512,7 +543,24 @@ summary rail on the left, configuration fields on the right, and a full-screen t
 - Clicking "Permissions" in the `⋯` menu opens the `PermissionsPanel` dialog
 - `permissionsTarget` state `{ type, id, name }` controls which panel is open
 
+**Pagination**: each section shows a first page of 50 (server default) with an instrument-label counter (`50 of 1,247`) and a "Load more" button when `has_more`; load-more fetches `GET /folders/{id}/contents` (root: `GET /folders/contents`) and appends into local state — the first page wins after any invalidation, and appended ids are deduped
+
+**Favorites view (`?fav=1`)**: a bookmark chip beside the filter input swaps the folder listing for a flat cross-folder favorites listing from `['favorites']`, grouped by type with folder paths; the chip is URL-synced (refresh/back keep it) and the local name filter applies to the loaded rows. While the local filter is active and items remain unloaded, a muted hint points at the palette. Errors follow the shared favorites policy (see Error below): cached rows win, and the error panel shows only when nothing has ever loaded
+
 **Component**: `web/src/pages/HomePage.tsx`
+
+### SearchPage (`/search`)
+
+**Purpose**: Deep-linkable full search results — the palette's "View all results" destination
+
+**Visual**:
+- Standard `AppShell`; a large autofocused input when `q` is empty, then a filter chip row (All + the types present in results; the active chip takes the accent border + ink) and the Favorites chip
+- Groups per type at `limit=20` (the API cap) with instrument-label section headers, accent type icons, highlighted title/snippet spans, two-line mono snippets when content matched, folder path + subtitle meta, and a `FavoriteButton` per row
+- A muted "More matches — refine your search" line when the response's window-bounded `has_more` is set; nothing-found renders `No matches for “q”`; errors show a muted message plus Retry
+
+**URL contract**: the URL is the state — `?q=` (trimmed query), `?type=` (one type chip; absent = All), `?favorites=1`. Typing debounces `q` into the URL replace-style (a search session cannot bury the back button); chip clicks push history so back/forward restores the filtered view. The page does not render the palette; Ctrl/Cmd+K still opens it anywhere (see AppShell shortcuts).
+
+**Component**: `web/src/pages/SearchPage.tsx`; hook `web/src/hooks/useResourceSearch.ts` (debounce, abort, `keepPreviousData`).
 
 ### NotebookPage
 
@@ -553,8 +601,9 @@ summary rail on the left, configuration fields on the right, and a full-screen t
 - Similar to HomePage layout
 - Grid/list toggle (same pattern, persisted in localStorage)
 - "+ New Dashboard" opens a `FormModal` with a Title field
-- Each list row / grid card has a danger icon Delete action (shared `RowActions`) that opens a `ConfirmDialog`
+- Each list row / grid card has a danger icon Delete action (shared `RowActions`) that opens a `ConfirmDialog`; rows also carry the `FavoriteButton` (cards keep it always visible)
 - Dashboard cards show title, edit date, optional Public badge
+- A bookmark Favorites chip (URL-synced `?fav=1`, like the Files page) filters rows/cards client-side from `['favorites']`; filtering never runs against an unknown (still-loading) id set, and the count follows the filtered list
 
 **Component**: `web/src/pages/DashboardsPage.tsx`
 
@@ -774,6 +823,26 @@ interface PermissionsPanelProps {
 
 **Component**: `web/src/components/HelpTip.tsx`
 
+### SearchPalette
+
+**Purpose**: The Ctrl/Cmd+K command palette — debounced whole-catalog search over the search API
+
+**Trigger**: Ctrl/Cmd+K (AppShell), the top-bar search field, or any "search everything" affordance
+
+**Visual**:
+- Portal overlay at `z-index: 1700` over the `--bg-overlay` scrim (the shared `scrim-enter` fade); the panel is `min(640px, 92vw)`, max-height 68vh, 8px radius, hairline border, floating-large shadow, offset 15vh from the top (8vh on mobile)
+- A search-rows input with the magnifier, then grouped rows: instrument-label section headers with type icons, each row an accent icon + highlighted title + one-line highlighted snippet + `folder_path · subtitle` meta; a synthetic "View all results" row at the end; footer `Kbd` hints (`↑↓` navigate, `↵` open)
+- Empty query renders Favorites and Recents sections instead of results; loading renders skeleton rows; a failed search shows one muted line + Retry; nothing found renders `No matches for “q”` with a refine hint
+
+**Keyboard & a11y**:
+- The panel is `role="dialog"` + `aria-modal` (labelled "Search palette") with a focus trap; Escape closes
+- The input is the combobox: `role="combobox"`, `aria-expanded`, `aria-controls`, `aria-activedescendant` pointing at the active row, `aria-autocomplete="list"`; the results container is `role="listbox"` labelled "Search results" (the role is dropped when there are no rows) and every row is a `role="option"` with `aria-selected`
+- ↑/↓/Home/End move the active row across all groups; Enter activates it (navigating per resource type, or "View all results" → `/search?q=`); Enter before the 150ms debounce settles flushes the input instead of activating a stale row
+
+**Highlighting**: matches render as React `<mark class="search-hit">` nodes via `HighlightedText` (`web/src/utils/highlight.tsx`) — term-split (longest first), case-insensitive, never `dangerouslySetInnerHTML`
+
+**Component**: `web/src/components/SearchPalette.tsx`
+
 ## Common Visual States
 
 ### Loading
@@ -832,6 +901,8 @@ emptyText: { fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }
 - Cell output error: Red card with "Error" label + stack trace in monospace
 - Create notebook error: `<p style={{ color: '#c0392b', fontSize: 12 }}>` (note: should use `var(--error)`)
 - Save error: Status bar shows "Save failed: {error}" in red
+
+**Shared favorites error policy (Files, Dashboards, Search)**: cached rows win — the error panel shows only when nothing has ever loaded (`isError && !hasData`). A failed *refetch* keeps the cached listing (even a cached empty one) on screen, and clicking Retry holds the panel up with a busy state until the retry settles (React Query reports a data-less refetch as a fresh load and clears the error flag).
 
 **Styling**:
 ```javascript
@@ -1092,7 +1163,9 @@ card: {
 - **Enter/Space**: Activate buttons, submit forms
 - **Ctrl+Enter / Cmd+Enter**: Run cell (code cells)
 - **Ctrl+Shift+F / Cmd+Shift+F**: Format SQL
-- **Escape**: Cancel inline forms (create notebook)
+- **Ctrl/Cmd+K**: Open the global search palette (works everywhere, including `/chats`; skipped while typing in inputs)
+- **Ctrl/Cmd+J**: Toggle the agent panel (the FAB tooltip and ShortcutsModal list the same binding)
+- **Escape**: Cancel inline forms (create notebook); closes overlays through the shared stacked-escape handling
 - **Arrow keys**: Not implemented for cell reordering
 
 ### Focus States

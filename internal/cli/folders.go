@@ -6,20 +6,83 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// folderContentsPageSize is the CLI's page size while completing a listing
+// section: the server's maximum, so a fully loaded folder takes the fewest
+// requests.
+const folderContentsPageSize = 200
+
+// folderListingSections maps each paginated listing key to the singular type
+// the load-more endpoint expects.
+var folderListingSections = []struct{ key, resourceType string }{
+	{"notebooks", "notebook"},
+	{"connectors", "connector"},
+	{"dashboards", "dashboard"},
+}
+
+// ListRootContents returns the root listing with every paginated section
+// completed: the listing endpoint serves a first page per section, and any
+// section reporting has_more is walked through the load-more endpoint so the
+// CLI never silently truncates.
 func (c *Client) ListRootContents() (map[string]interface{}, error) {
+	return c.listFolderContents("/api/v1/folders", "/api/v1/folders/contents")
+}
+
+// GetFolderContents returns a folder listing with every paginated section
+// completed, mirroring ListRootContents.
+func (c *Client) GetFolderContents(id string) (map[string]interface{}, error) {
+	return c.listFolderContents("/api/v1/folders/"+id, "/api/v1/folders/"+id+"/contents")
+}
+
+// listFolderContents loads a folder listing and completes every section that
+// reports has_more, appending load-more pages until each is exhausted. The
+// returned map is the server's response (same keys): only the section arrays
+// grow and their has_more flags flip to false once complete.
+func (c *Client) listFolderContents(listPath, contentsPath string) (map[string]interface{}, error) {
 	var result map[string]interface{}
-	if err := c.GetJSON("/api/v1/folders", &result); err != nil {
+	if err := c.GetJSON(fmt.Sprintf("%s?limit=%d", listPath, folderContentsPageSize), &result); err != nil {
 		return nil, err
+	}
+	for _, section := range folderListingSections {
+		if err := c.paginateFolderSection(result, contentsPath, section.key, section.resourceType); err != nil {
+			return nil, err
+		}
 	}
 	return result, nil
 }
 
-func (c *Client) GetFolderContents(id string) (map[string]interface{}, error) {
-	var result map[string]interface{}
-	if err := c.GetJSON("/api/v1/folders/"+id, &result); err != nil {
-		return nil, err
+// paginateFolderSection appends every further page of one section to the base
+// listing. A response without has_more comes from a pre-pagination server (the
+// section is already complete). A server that keeps reporting has_more while
+// returning no items would otherwise loop forever, so that contract violation
+// fails instead of hanging.
+func (c *Client) paginateFolderSection(result map[string]interface{}, contentsPath, section, resourceType string) error {
+	hasMoreMap, ok := result["has_more"].(map[string]interface{})
+	if !ok {
+		return nil
 	}
-	return result, nil
+	more, _ := hasMoreMap[section].(bool)
+	if !more {
+		return nil
+	}
+	items, _ := result[section].([]interface{})
+	for more {
+		var page struct {
+			Items   []interface{} `json:"items"`
+			HasMore bool          `json:"has_more"`
+		}
+		path := fmt.Sprintf("%s?type=%s&offset=%d&limit=%d", contentsPath, resourceType, len(items), folderContentsPageSize)
+		if err := c.GetJSON(path, &page); err != nil {
+			return err
+		}
+		if len(page.Items) == 0 {
+			return fmt.Errorf("folder listing paging stalled for %s at offset %d", section, len(items))
+		}
+		items = append(items, page.Items...)
+		more = page.HasMore
+	}
+	result[section] = items
+	hasMoreMap[section] = false
+	return nil
 }
 
 func (c *Client) GetFolderAncestors(id string) ([]map[string]interface{}, error) {

@@ -100,6 +100,38 @@ func createTestNotebook(t *testing.T, pool *pgxpool.Pool, orgID, userID string) 
 	return nbID
 }
 
+// TestAgentDeleteNotebookRemovesFavorites pins the agent-tool hard delete:
+// the notebook's favorite rows carry no FK, so the delete handler must clear
+// them with the row.
+func TestAgentDeleteNotebookRemovesFavorites(t *testing.T) {
+	db := setupTestDB(t)
+	orgID, userID := createTestOrgAndUser(t, db.Pool)
+	nbID := createTestNotebook(t, db.Pool, orgID, userID)
+
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO favorites (user_id, org_id, resource_type, resource_id)
+		VALUES ($1, $2, 'notebook', $3)`, userID, orgID, nbID)
+	require.NoError(t, err)
+
+	reg := agent.NewToolRegistry()
+	agent.RegisterNotebookTools(reg, db.Pool)
+	def, ok := reg.Get("delete_notebook")
+	require.True(t, ok, "delete_notebook tool not found")
+
+	ctx := setupToolContext(t, db, orgID, userID, nbID)
+	args, err := json.Marshal(map[string]any{"notebook_id": nbID})
+	require.NoError(t, err)
+	out, err := def.Handler(args, ctx)
+	require.NoError(t, err)
+	require.Equal(t, "deleted", out.(map[string]any)["status"])
+
+	var favorites int
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM favorites WHERE resource_type = 'notebook' AND resource_id = $1::uuid`,
+		nbID).Scan(&favorites))
+	require.Zero(t, favorites, "the notebook's favorites must be cleaned on delete")
+}
+
 func TestAgentCreateCellWithPosition(t *testing.T) {
 	db := setupTestDB(t)
 	orgID, userID := createTestOrgAndUser(t, db.Pool)

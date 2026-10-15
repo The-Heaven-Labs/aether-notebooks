@@ -28,6 +28,10 @@ import (
 type dashboardVersionRow struct {
 	models.DashboardVersion
 	CreatedByEmail string
+	// SettingsRaw retains the raw settings column so typed snapshot reads
+	// (decodeSnapshotSettings) decode the JSONB bytes directly instead of
+	// round-tripping through the map envelope below.
+	SettingsRaw json.RawMessage
 }
 
 // dashboardVersionSelect reads one version scoped to its dashboard and org,
@@ -50,8 +54,12 @@ func scanDashboardVersion(row pgx.Row) (*dashboardVersionRow, error) {
 		&out.CreatedByEmail); err != nil {
 		return nil, err
 	}
+	out.SettingsRaw = settingsRaw
 	out.Settings = map[string]any{}
 	if len(settingsRaw) > 0 {
+		// This decodes the map envelope DashboardVersion exposes to the
+		// restore/version reads — a different target than
+		// decodeSnapshotSettings' typed shape — so it stays separate.
 		if err := json.Unmarshal(settingsRaw, &out.Settings); err != nil {
 			return nil, fmt.Errorf("decode dashboard version settings: %w", err)
 		}

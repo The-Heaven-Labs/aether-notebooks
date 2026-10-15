@@ -1,5 +1,8 @@
+import { useId } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { ConnectorUnavailableHint } from './ConnectorUnavailableHint'
+import { executableConnectorOptions, connectorOptionLabel, isHiddenSelection } from '../utils/connectors'
 
 interface ConnectorItem {
   id: string
@@ -31,16 +34,27 @@ export function ConnectorSelector({
 }: ConnectorSelectorProps) {
   // Shares the ['connectors'] query with the sidebar and page queries so the
   // list is fetched once per cache window instead of once per consumer.
-  const { data: connectors = [] } = useQuery<ConnectorItem[]>({
+  const { data: connectors = [], isSuccess } = useQuery<ConnectorItem[]>({
     queryKey: ['connectors'],
     queryFn: () => api.get<ConnectorItem[]>('/api/v1/connectors'),
   })
   const visible = types ? connectors.filter(c => types.includes(c.type)) : connectors
+  const options = executableConnectorOptions(visible)
+  // A stored reference to a hidden connector must not blank or mismatch the
+  // select: fall back to the placeholder (the reference itself stays on the
+  // resource until the user picks another connector). The hint explains it.
+  const selectedVisible = value != null && options.some(c => c.id === value)
+  const hintId = useId()
+  // The hint only speaks for a stored value the settled catalog no longer
+  // contains: before the list loads, every value looks "hidden" and claiming
+  // "unavailable" would be wrong.
+  const valueHidden = isSuccess && isHiddenSelection(value, options)
 
   return (
     <span style={styles.wrap}>
       <select
         aria-label={placeholder}
+        aria-describedby={valueHidden ? hintId : undefined}
         style={{
           border: '1px solid var(--border)',
           borderRadius: 4,
@@ -51,20 +65,18 @@ export function ConnectorSelector({
           color: 'var(--text-primary)',
           ...style,
         }}
-        value={value ?? ''}
+        value={selectedVisible ? value : ''}
         disabled={disabled}
         onChange={e => onChange(e.target.value || null)}
       >
-        <option value="" disabled={!allowClear || !value}>{allowClear && value ? 'Clear selection' : placeholder}</option>
-        {visible.map(c => (
+        <option value="" disabled={!allowClear || !selectedVisible}>{allowClear && selectedVisible ? 'Clear selection' : placeholder}</option>
+        {options.map(c => (
           <option key={c.id} value={c.id} disabled={c.can_use === false}>
-            {c.name}
-            {c.is_provisioner
-              ? (c.can_use === false ? ' (provisioner — no access)' : ' (provisioner)')
-              : (c.can_use === false ? ' (view only)' : '')}
+            {connectorOptionLabel(c)}
           </option>
         ))}
       </select>
+      {valueHidden && <ConnectorUnavailableHint id={hintId} />}
     </span>
   )
 }

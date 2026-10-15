@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/agent"
 	"github.com/the-heaven-labs/aether/internal/audit"
+	"github.com/the-heaven-labs/aether/internal/favorites"
 )
 
 // @Summary List all organizations
@@ -407,13 +408,29 @@ func (s *Server) handleAdminDeleteUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Delete the user's folders (home folders + any folders they own). Child
-	// folders are removed via parent_id ON DELETE CASCADE and resource
-	// folder_id references fall back to NULL.
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM folders WHERE owner_id = $1`, targetID,
-	); err != nil {
+	// Delete the user's folders (home folders + any folders they own). The
+	// recursive CTE collects every folder the parent_id cascade removes, so
+	// resource folder_id references fall back to NULL and the delete returns
+	// the full id set. Favorites rows carry no FK, so the deleted folders'
+	// favorites — other users' included — are cleaned in the same
+	// transaction. Resources detached by the cascade keep theirs: they still
+	// exist.
+	var purgedFolderIDs []string
+	if err := tx.QueryRow(ctx, `
+		WITH RECURSIVE subtree AS (
+			SELECT id FROM folders WHERE owner_id = $1
+			UNION ALL
+			SELECT f.id FROM folders f JOIN subtree s ON f.parent_id = s.id
+		), purged AS (
+			DELETE FROM folders WHERE id IN (SELECT id FROM subtree) RETURNING id
+		)
+		SELECT COALESCE(array_agg(id::text), ARRAY[]::text[]) FROM purged
+	`, targetID).Scan(&purgedFolderIDs); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete folders")
+		return
+	}
+	if err := favorites.DeleteFor(ctx, tx, "folder", purgedFolderIDs); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clean up favorites")
 		return
 	}
 

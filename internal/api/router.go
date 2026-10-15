@@ -23,6 +23,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/oauth"
+	"github.com/the-heaven-labs/aether/internal/search"
 	"github.com/the-heaven-labs/aether/internal/storage"
 	"golang.org/x/sync/singleflight"
 )
@@ -93,6 +94,11 @@ type Server struct {
 	// dashboardQueryCompute overrides the real query computation in tests
 	// (nil = production path). Guarded by the single flight when a cache key exists.
 	dashboardQueryCompute func(context.Context, dashboardQueryParams) (*dashboardQueryResponse, error)
+	// searcher backs GET /api/v1/search content matching (notebook cell SQL,
+	// dashboard widget SQL) and the search_resources agent tool. It is
+	// swappable behind internal/search.Searcher; NewServer always wires the
+	// PostgreSQL implementation.
+	searcher search.Searcher
 	// warehouseInvalidationLoop runs the Redis subscriber that applies other
 	// replicas' pooled-identity invalidations. It stops from Close; it is a
 	// no-op when no Redis client is configured.
@@ -124,6 +130,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		MaxPools: connPoolMaxPools,
 		IdleTTL:  connPoolIdleTTL,
 	})
+	s.searcher = search.NewPGSearcher(db.Pool)
 	s.agentEngine = agent.NewEngine(context.Background(), db.Pool, rdb)
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
@@ -134,6 +141,9 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.ResolveTarget = s.resolveExecutionTarget
 	s.agentEngine.ConnPool = s.connPool
 	s.agentEngine.CheckPermissionFunc = s.checkPermission
+	// search_resources runs the same leak-safe core as GET /api/v1/search, so
+	// agent searches see exactly what the session's user may see.
+	s.agentEngine.SearchResourcesFunc = s.searchResourcesForTool
 	s.agentEngine.RecordConnectorActivity = s.recordConnectorActivity
 	// Dashboard-mutating agent tools write through the dashboard Yjs document
 	// (the same seed/store path REST uses) so their edits are live and cannot
@@ -600,6 +610,14 @@ func (s *Server) routes() {
 	// Recent route
 	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))
 
+	// Search route
+	s.mux.Handle("GET /api/v1/search", authMW(http.HandlerFunc(s.handleSearch)))
+
+	// Favorite routes
+	s.mux.Handle("GET /api/v1/favorites", authMW(http.HandlerFunc(s.handleListFavorites)))
+	s.mux.Handle("PUT /api/v1/favorites/{resource_type}/{resource_id}", authMW(http.HandlerFunc(s.handlePutFavorite)))
+	s.mux.Handle("DELETE /api/v1/favorites/{resource_type}/{resource_id}", authMW(http.HandlerFunc(s.handleDeleteFavorite)))
+
 	// Trash routes
 	s.mux.Handle("GET /api/v1/trash", authMW(http.HandlerFunc(s.handleListTrash)))
 	s.mux.Handle("POST /api/v1/trash/restore", authMW(http.HandlerFunc(s.handleRestoreFromTrash)))
@@ -611,7 +629,9 @@ func (s *Server) routes() {
 
 	// Folder routes
 	s.mux.Handle("GET /api/v1/folders", authMW(http.HandlerFunc(s.handleListRootContents)))
+	s.mux.Handle("GET /api/v1/folders/contents", authMW(http.HandlerFunc(s.handleListRootContentsSection)))
 	s.mux.Handle("GET /api/v1/folders/{id}", authMW(http.HandlerFunc(s.handleGetFolderContents)))
+	s.mux.Handle("GET /api/v1/folders/{id}/contents", authMW(http.HandlerFunc(s.handleGetFolderContentsSection)))
 	s.mux.Handle("GET /api/v1/folders/{id}/ancestors", authMW(http.HandlerFunc(s.handleGetFolderAncestors)))
 	s.mux.Handle("POST /api/v1/folders", authMW(http.HandlerFunc(s.handleCreateFolder)))
 	s.mux.Handle("PUT /api/v1/folders/{id}", authMW(s.requirePermission("folder", "id", "edit")(http.HandlerFunc(s.handleUpdateFolder))))

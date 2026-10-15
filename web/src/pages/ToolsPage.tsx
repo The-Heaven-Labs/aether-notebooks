@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
@@ -14,6 +14,9 @@ import type { Tool, ToolType } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
 import type { HeaderRow } from '../components/HeadersEditor'
+import { ConnectorUnavailableHint } from '../components/ConnectorUnavailableHint'
+import { executableConnectorOptions, isHiddenSelection } from '../utils/connectors'
+import type { Connector } from '../types'
 
 interface ParamDef {
   name: string
@@ -34,12 +37,6 @@ interface ToolForm {
   sql: string
   parameters: ParamDef[]
   require_confirmation: boolean
-}
-
-interface Connector {
-  id: string
-  name: string
-  type: string
 }
 
 const emptyForm = (): ToolForm => ({
@@ -90,7 +87,7 @@ export function ToolsPage() {
     queryFn: () => api.get<Tool[]>('/api/v1/tools'),
   })
 
-  const { data: connectors = [] } = useQuery<Connector[]>({
+  const { data: connectors = [], isSuccess: connectorsReady } = useQuery<Connector[]>({
     queryKey: ['connectors'],
     queryFn: () => api.get<Connector[]>('/api/v1/connectors'),
   })
@@ -237,7 +234,7 @@ export function ToolsPage() {
             submitTitle={!form.name ? 'Name is required' : undefined}
             onSubmit={() => createMutation.mutate()}
           >
-            <ToolFormFields form={form} setForm={setForm} connectors={connectors} editing={false} nameRef={nameRef} />
+            <ToolFormFields form={form} setForm={setForm} connectors={connectors} connectorsReady={connectorsReady} editing={false} nameRef={nameRef} />
           </FormModal>
         )}
 
@@ -254,7 +251,7 @@ export function ToolsPage() {
             submitTitle={!form.name ? 'Name is required' : undefined}
             onSubmit={() => updateMutation.mutate(editingId!)}
           >
-            <ToolFormFields form={form} setForm={setForm} connectors={connectors} editing nameRef={nameRef} />
+            <ToolFormFields form={form} setForm={setForm} connectors={connectors} connectorsReady={connectorsReady} editing nameRef={nameRef} />
           </FormModal>
         )}
 
@@ -282,7 +279,7 @@ export function ToolsPage() {
               const testing = testMutation.isPending && testMutation.variables === t.id
               const test = testResult?.id === t.id ? testResult : null
               return (
-                <tr key={t.id} style={rowStyle}>
+                <tr key={t.id} style={rowStyle} className="favorite-host">
                   <td style={cellStyle}><strong>{t.name}</strong></td>
                   <td style={cellStyle}>
                     <span style={styles.typeBadge}>
@@ -309,7 +306,7 @@ export function ToolsPage() {
                       </span>
                     )}
                   </td>
-                  <RowActionsCell>
+                  <RowActionsCell favorite={{ resourceType: 'tool', resourceId: t.id }}>
                     {t.type !== 'builtin' && (
                       <>
                         <RowAction
@@ -355,10 +352,12 @@ export function ToolsPage() {
   )
 }
 
-function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
+function ToolFormFields({ form, setForm, connectors, connectorsReady, editing, nameRef }: {
   form: ToolForm
   setForm: React.Dispatch<React.SetStateAction<ToolForm>>
   connectors: Connector[]
+  /** True once the connectors query settled — an unloaded catalog must never read as "unavailable". */
+  connectorsReady: boolean
   editing: boolean
   nameRef: React.RefObject<HTMLInputElement | null>
 }) {
@@ -372,6 +371,16 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
   })
   const addParam = () => setForm(f => ({ ...f, parameters: [...f.parameters, { name: '', type: 'string', description: '', required: false }] }))
   const removeParam = (i: number) => setForm(f => ({ ...f, parameters: f.parameters.filter((_, idx) => idx !== i) }))
+
+  const connectorOptions = executableConnectorOptions(connectors)
+  // A stored reference to a hidden connector must not blank or mismatch the
+  // select: fall back to the placeholder (the reference stays in the form
+  // until the user picks another connector). The hint explains the fallback,
+  // but only once the catalog is known — while the query is pending every
+  // value looks absent, and "can't tell" must never read as "unavailable".
+  const selectedConnectorVisible = form.connector_id !== '' && connectorOptions.some(c => c.id === form.connector_id)
+  const connectorHintId = useId()
+  const connectorHidden = connectorsReady && isHiddenSelection(form.connector_id, connectorOptions)
 
   return (
     <>
@@ -418,12 +427,19 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
 
       {form.type === 'sql_query' && (
         <>
-          <label style={styles.label}>Connector
-            <select style={styles.input} value={form.connector_id} onChange={setField('connector_id')}>
-              <option value="">Select a connector…</option>
-              {connectors.map(c => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
-            </select>
-          </label>
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>Connector
+              <select style={styles.input} aria-describedby={connectorHidden ? connectorHintId : undefined} value={selectedConnectorVisible ? form.connector_id : ''} onChange={setField('connector_id')}>
+                <option value="">Select a connector…</option>
+                {connectorOptions.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.type})
+                  </option>
+                ))}
+              </select>
+            </label>
+            {connectorHidden && <ConnectorUnavailableHint id={connectorHintId} />}
+          </div>
           <label style={{ ...styles.label, gridColumn: '1 / -1' }}>SQL Query
             <textarea style={{ ...styles.input, minHeight: 120, resize: 'vertical', fontFamily: 'var(--font-mono)' }} value={form.sql} onChange={setField('sql')} placeholder="SELECT * FROM table LIMIT 10" />
           </label>
@@ -473,6 +489,7 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
 const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
+  fieldGroup: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
   secondaryBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   newBtn: { padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },

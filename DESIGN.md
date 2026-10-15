@@ -360,6 +360,11 @@ The notebook cell is the component the product is built around. It is a white 4p
 ### Empty States
 A centered 56px icon tile (amethyst-light fill, hairline border, 4px radius) over an 18px/700 title, a 14px secondary description, and at most one primary button. No illustration, no gradient — an unlit instrument waiting for data.
 
+### Search Overlay & Bookmark (approved 2026-10-15)
+The catalog search overlay and its bookmark control extend the established system; they add no new colors, fonts, or shadows.
+- **Search palette:** the standard overlay scrim with a floating panel — 8px radius, hairline border, floating shadow, width capped at 640px, offset from the top edge — an input row over grouped result rows. Group headers are Instrument Labels, type icons reuse the accent, rows take the standard hover wash, and match highlighting is a `<mark>` on a 24% amethyst wash with inherited ink: a mark, not a badge.
+- **Bookmark:** the shared row-action button — outline glyph while unfavorited (affordance), `fill` + amethyst ink while pinned (state, `row-action--pinned`), same 26/36px metrics as its neighbours. On rows it sits left of the action pair, hover-revealed on fine pointers and pinned visible when favorited; its cell reserves the extra width so the reveal never shifts the row. Cards and touch surfaces show it always.
+
 ## Do's and Don'ts
 
 ### Do:

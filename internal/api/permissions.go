@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/the-heaven-labs/aether/internal/auth"
 )
 
 var uuidRegexp = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -274,52 +275,259 @@ func checkPermissionQ(ctx context.Context, q permissionQuerier, userID, orgID, o
 		}
 	}
 
-	// 5. Sort: most specific first; within same specificity, user > group > org_role
+	// 5. Evaluate the candidates. The evaluation rules — most specific first,
+	//    the Everyone exception, view implication, and ancestor-folder action
+	//    expansion — live in evaluateCandidates so the batched resolver shares
+	//    them by construction.
+	return evaluateCandidates(candidates, userID, orgRole, groupIDs, resourceType, action), nil
+}
+
+// permIdentity is the caller-side of a permission evaluation, resolved once
+// per request instead of once per check.
+type permIdentity struct {
+	UserID    string
+	OrgID     string
+	OrgRole   string
+	GroupIDs  []string
+	AdminMode bool
+}
+
+// permIdentity resolves the caller's group memberships (explicit + Everyone)
+// and admin-mode flag once, so a batched resolution shares them across
+// resources.
+func (s *Server) permIdentity(ctx context.Context, claims *auth.Claims) (permIdentity, error) {
+	groups, err := s.callerGroupIDs(ctx, claims.UserID, claims.OrgID)
+	if err != nil {
+		return permIdentity{}, err
+	}
+	return permIdentity{
+		UserID:    claims.UserID,
+		OrgID:     claims.OrgID,
+		OrgRole:   claims.Role,
+		GroupIDs:  groups,
+		AdminMode: adminModeFromContext(ctx),
+	}, nil
+}
+
+// resolveActions resolves the requested actions for many resources of one type
+// in a constant number of queries: a resource→folder map query, one direct-ACL
+// query, and one recursive ancestry walk seeded with every distinct folder.
+// Evaluation goes through evaluateCandidates, so results match checkPermission
+// exactly, with two deliberate fail-closed divergences: ids that do not exist
+// in the caller's org resolve all-false even when orphaned acl_entries rows
+// exist for them, and only canonical lowercase UUID spellings resolve (the
+// queries match on id::text), so an uppercase-spelling input is denied where
+// checkPermission's uuid cast would allow it. Callers pass ids read from
+// org-scoped tables, so both divergences are inert in practice. The result
+// contains an entry for every requested id (deduped); ids that are not in the
+// org (or fail every rule) get all requested actions false. Unknown resource
+// types fail closed with an error.
+func (s *Server) resolveActions(ctx context.Context, ident permIdentity, resourceType string, ids []string, actions []string) (map[string]map[string]bool, error) {
+	table := ""
+	switch {
+	case resourceType == "folder":
+		table = "folders"
+	default:
+		t, ok := resourceTable[resourceType]
+		if !ok {
+			return nil, fmt.Errorf("unknown resource type %q", resourceType)
+		}
+		table = t
+	}
+
+	// Dedupe the requested ids: the result map keys dedupe anyway, but the
+	// queries should see each id once. Every requested id gets an all-false
+	// entry before any rule runs, so the caller always sees a uniform shape.
+	unique := make([]string, 0, len(ids))
+	seen := make(map[string]bool, len(ids))
+	result := make(map[string]map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		unique = append(unique, id)
+		entry := make(map[string]bool, len(actions))
+		for _, action := range actions {
+			entry[action] = false
+		}
+		result[id] = entry
+	}
+	if len(unique) == 0 {
+		return result, nil
+	}
+
+	// 1. Resource → folder map, also the org scoping for the admin bypass.
+	//    For a folder resource the ancestor walk starts at its parent; for
+	//    other types it starts at the resource's folder.
+	folderColumn := "folder_id"
+	if resourceType == "folder" {
+		folderColumn = "parent_id"
+	}
+	folderRows, err := s.db.Pool.Query(ctx,
+		fmt.Sprintf(`SELECT id::text, %s FROM %s WHERE id = ANY($1::uuid[]) AND org_id = $2`, folderColumn, table),
+		unique, ident.OrgID)
+	if err != nil {
+		return nil, fmt.Errorf("resolve %s folders: %w", resourceType, err)
+	}
+	seed := make(map[string]*string, len(unique))
+	for folderRows.Next() {
+		var id string
+		var folderID *string
+		if err := folderRows.Scan(&id, &folderID); err != nil {
+			folderRows.Close()
+			return nil, fmt.Errorf("scan %s folder: %w", resourceType, err)
+		}
+		seed[id] = folderID
+	}
+	folderRows.Close()
+	if err := folderRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s folders: %w", resourceType, err)
+	}
+
+	// 2. Org admins in admin mode bypass ACLs for every resource that exists
+	//    in their org (query 1 is the org scoping, mirroring the single
+	//    check's resourceOrgID comparison). Ids absent from the map keep their
+	//    all-false entries.
+	if ident.AdminMode && ident.OrgRole == "admin" {
+		for id := range seed {
+			for _, action := range actions {
+				result[id][action] = true
+			}
+		}
+		return result, nil
+	}
+
+	// 3. ACL entries directly on the resources (specificity -1).
+	direct := make(map[string][]aclCandidate)
+	aclRows, err := s.db.Pool.Query(ctx, `
+		SELECT resource_id::text, subject_type, subject_id, actions
+		FROM acl_entries
+		WHERE resource_type = $1 AND resource_id = ANY($2::uuid[]) AND org_id = $3
+	`, resourceType, unique, ident.OrgID)
+	if err != nil {
+		return nil, fmt.Errorf("load %s acls: %w", resourceType, err)
+	}
+	for aclRows.Next() {
+		var id string
+		var c aclCandidate
+		if err := aclRows.Scan(&id, &c.subjectType, &c.subjectID, &c.actions); err != nil {
+			aclRows.Close()
+			return nil, fmt.Errorf("scan %s acl: %w", resourceType, err)
+		}
+		c.specificity = -1
+		c.subjectRank = subjectRank(c.subjectType)
+		direct[id] = append(direct[id], c)
+	}
+	aclRows.Close()
+	if err := aclRows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s acls: %w", resourceType, err)
+	}
+
+	// 4. One recursive walk seeded with every distinct folder: depth 0 is the
+	//    resource's immediate folder, matching checkPermissionQ's walk.
+	seeds := make([]string, 0, len(seed))
+	seenSeed := make(map[string]bool, len(seed))
+	for _, folderID := range seed {
+		if folderID == nil || seenSeed[*folderID] {
+			continue
+		}
+		seenSeed[*folderID] = true
+		seeds = append(seeds, *folderID)
+	}
+	ancestors := make(map[string][]aclCandidate)
+	if len(seeds) > 0 {
+		ancRows, err := s.db.Pool.Query(ctx, `
+			WITH RECURSIVE ancestors(seed_id, id, parent_id, depth) AS (
+				SELECT id, id, parent_id, 0 FROM folders WHERE id = ANY($1::uuid[])
+				UNION ALL
+				SELECT a.seed_id, f.id, f.parent_id, a.depth + 1
+				FROM folders f JOIN ancestors a ON f.id = a.parent_id
+			)
+			SELECT a.seed_id::text, a.depth, ae.subject_type, ae.subject_id, ae.actions
+			FROM ancestors a
+			JOIN acl_entries ae ON ae.resource_type = 'folder' AND ae.resource_id = a.id AND ae.org_id = $2
+		`, seeds, ident.OrgID)
+		if err != nil {
+			return nil, fmt.Errorf("load %s ancestor acls: %w", resourceType, err)
+		}
+		for ancRows.Next() {
+			var seedID string
+			var c aclCandidate
+			if err := ancRows.Scan(&seedID, &c.specificity, &c.subjectType, &c.subjectID, &c.actions); err != nil {
+				ancRows.Close()
+				return nil, fmt.Errorf("scan %s ancestor acl: %w", resourceType, err)
+			}
+			c.subjectRank = subjectRank(c.subjectType)
+			ancestors[seedID] = append(ancestors[seedID], c)
+		}
+		ancRows.Close()
+		if err := ancRows.Err(); err != nil {
+			return nil, fmt.Errorf("iterate %s ancestor acls: %w", resourceType, err)
+		}
+	}
+
+	// 5. Evaluate each requested id through the shared core. Build a fresh
+	//    candidate slice per resource: evaluateCandidates sorts in place, so
+	//    one resource's sort must never reorder another's candidates.
+	for _, id := range unique {
+		folderID, inOrg := seed[id]
+		if !inOrg {
+			continue // not in the org: the all-false entry stands
+		}
+		candidates := make([]aclCandidate, 0, len(direct[id]))
+		candidates = append(candidates, direct[id]...)
+		if folderID != nil {
+			candidates = append(candidates, ancestors[*folderID]...)
+		}
+		for _, action := range actions {
+			if evaluateCandidates(candidates, ident.UserID, ident.OrgRole, ident.GroupIDs, resourceType, action) {
+				result[id][action] = true
+			}
+		}
+	}
+	return result, nil
+}
+
+// actionAllowed reports one action from a resolveActions result map; a missing
+// id or action is false.
+func actionAllowed(resolved map[string]map[string]bool, id, action string) bool {
+	return resolved[id][action]
+}
+
+// evaluateCandidates is the shared permission-evaluation core: most specific
+// first (resource before its parent folder before ancestors), user > group >
+// org_role within a depth, the Everyone exception, view implication, and
+// ancestor-folder action expansion. Grants are additive — any matching entry
+// that covers the action allows — so the ordering is retained for parity with
+// the documented resolution order and does not itself deny beyond the
+// Everyone-deferral rule. The candidates slice is sorted in place, so callers
+// sharing a backing array across resources must copy it first.
+// checkPermissionQ and the batched resolver must both evaluate through this
+// function so batch results equal single-check results by construction.
+func evaluateCandidates(candidates []aclCandidate, userID, orgRole string, groupIDs []string, resourceType, action string) bool {
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].specificity != candidates[j].specificity {
 			return candidates[i].specificity < candidates[j].specificity
 		}
 		return candidates[i].subjectRank < candidates[j].subjectRank
 	})
-
-	// 6. Evaluate candidates: if any matching entry grants the action → allow.
-	//    A matching org_role:everyone entry that grants the action is sufficient
-	//    even when a more-specific non-everyone entry lacks the action (restrictive).
-	//    view is implied by use/edit/share/delete/admin, and ancestor folder
-	//    grants expand onto the descendant actions the folder chip set cannot
-	//    name directly.
-	var (
-		everyoneGrants   bool
-		restrictiveMatch bool
-	)
+	everyoneGrants := false
 	for _, c := range candidates {
 		if !matchesUser(c, userID, orgRole, groupIDs) {
 			continue
 		}
-
 		if candidateGrants(c, resourceType, action) {
 			if c.subjectType == "org_role" && c.subjectID == "everyone" {
 				everyoneGrants = true
 			} else {
-				return true, nil
+				return true
 			}
-		} else if !(c.subjectType == "org_role" && c.subjectID == "everyone") {
-			restrictiveMatch = true
 		}
 	}
-
-	// 7. org_role:everyone grants the action → allow
-	if everyoneGrants {
-		return true, nil
-	}
-
-	// 8. Restrictive match without everyone grant → deny
-	if restrictiveMatch {
-		return false, nil
-	}
-
-	// 9. No matching entry → DENY (deny-by-default)
-	return false, nil
+	// Only an Everyone grant can allow past this point; a restrictive
+	// more-specific match and a no-match state both deny by default.
+	return everyoneGrants
 }
 
 func matchesUser(c aclCandidate, userID, orgRole string, groupIDs []string) bool {

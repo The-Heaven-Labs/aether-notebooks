@@ -17,6 +17,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/agent/guide"
 	"github.com/the-heaven-labs/aether/internal/dashboarddoc"
 	"github.com/the-heaven-labs/aether/internal/dashboardreview"
+	"github.com/the-heaven-labs/aether/internal/favorites"
 	"github.com/the-heaven-labs/aether/internal/models"
 	"github.com/the-heaven-labs/aether/internal/validate"
 )
@@ -1779,7 +1780,13 @@ func makeDeleteDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 		if err := ctx.CheckPermission("dashboard", req.DashboardID, "delete"); err != nil {
 			return nil, err
 		}
-		result, err := pool.Exec(ctx.Context,
+		tx, err := pool.Begin(ctx.Context)
+		if err != nil {
+			return nil, fmt.Errorf("delete dashboard: %w", err)
+		}
+		defer tx.Rollback(ctx.Context)
+
+		result, err := tx.Exec(ctx.Context,
 			`DELETE FROM dashboards WHERE id=$1 AND org_id=$2`,
 			req.DashboardID, ctx.OrgID)
 		if err != nil {
@@ -1787,6 +1794,14 @@ func makeDeleteDashboardHandler(pool *pgxpool.Pool) ToolHandler {
 		}
 		if result.RowsAffected() == 0 {
 			return nil, fmt.Errorf("dashboard not found")
+		}
+		// favorites.resource_id has no FK; clean the rows in the same
+		// transaction that removes the dashboard they point at.
+		if err := favorites.DeleteFor(ctx.Context, tx, "dashboard", []string{req.DashboardID}); err != nil {
+			return nil, fmt.Errorf("delete dashboard: %w", err)
+		}
+		if err := tx.Commit(ctx.Context); err != nil {
+			return nil, fmt.Errorf("delete dashboard: %w", err)
 		}
 		_ = ctx.AuditLog("dashboard.delete", "dashboard", req.DashboardID)
 

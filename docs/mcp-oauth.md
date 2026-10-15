@@ -115,7 +115,7 @@ URIs, so a harness on the same machine can complete the browser flow.
 
 ## 3. Scopes
 
-Aether's MCP endpoint exposes a fixed 45-tool allowlist. OAuth access tokens
+Aether's MCP endpoint exposes a fixed 46-tool allowlist. OAuth access tokens
 carry scopes (requested by the client at authorization time, shown on the
 consent page, and stored in the token) that **narrow** that allowlist — scopes
 can never unlock a tool outside it. `tools/list` only returns tools the token's
@@ -126,7 +126,7 @@ lets you allow or deny the request.
 | Scope | Consent description | Unlocks |
 |---|---|---|
 | `mcp:query` | Run read-only SQL queries against your connectors | The SQL data plane: `execute_sql`, `explore_schema`, `list_connectors`. |
-| `mcp:read` | View notebooks, dashboards and other resources | Read-only platform tools: `list_notebooks`, `list_cells`, `get_notebook_context`, `list_snapshots`, `list_notebook_parameters`, `list_dashboards`, `get_dashboard`, `list_skills` / `load_skill`, `list_agents`, `list_folders` / `get_folder_tree`, `read_permissions`, `list_connectors`. |
+| `mcp:read` | View notebooks, dashboards and other resources | Read-only platform tools: `list_notebooks`, `list_cells`, `get_notebook_context`, `list_snapshots`, `list_notebook_parameters`, `list_dashboards`, `get_dashboard`, `list_skills` / `load_skill`, `list_agents`, `list_folders` / `get_folder_tree`, `search_resources`, `read_permissions`, `list_connectors`. |
 | `mcp:write` | Create and modify notebooks and dashboards | Mutating platform tools: notebook/cell authoring and execution (`create_notebook`, `update_cell`, `run_cell`, `read_cell`, snapshots, parameters), dashboards and widgets, schedules, `share_dashboard` / `update_permissions`, `export_notebook` / `import_notebook`, skills, and charts. |
 
 Notes:

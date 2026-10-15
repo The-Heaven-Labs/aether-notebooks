@@ -27,7 +27,9 @@ import {
 // raised (each test registers at least one account): docker-compose.dev.yml
 // sets AETHER_RATE_LIMIT_REGISTER/LOGIN=500/min, while the server defaults are
 // 5/min register and 10/min login. Target any stack via E2E_BASE_URL
-// (default http://localhost:5173).
+// (default http://localhost:5173). The fake LLM runs on the host: a native
+// API (task dev) uses the loopback default, while a dockerized API needs
+// E2E_LLM_HOST=host.docker.internal so the container can dial back out.
 
 let fakeLlm: FakeLlm
 
@@ -65,7 +67,7 @@ function permissionsDialog(page: Page) {
 // openAgentHistory selects the agent in the global agent panel and switches to
 // the chat-history view, where "My sessions" and "Shared with me" live.
 async function openAgentHistory(page: Page, agentName: string): Promise<void> {
-  await page.getByTitle('Open AI Agent (Ctrl+K)').click()
+  await page.getByTitle('Open AI Agent (Ctrl+J)').click()
   const select = page.locator('select.agent-select').first()
   await expect(select.locator('option', { hasText: agentName })).toHaveCount(1, { timeout: 15_000 })
   await select.selectOption({ label: agentName })

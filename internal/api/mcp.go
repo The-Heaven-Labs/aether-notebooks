@@ -103,10 +103,11 @@ var (
 		"update_skill": {},
 		"list_agents":  {},
 		// Platform reads
-		"list_notebooks":  {},
-		"list_connectors": {},
-		"list_folders":    {},
-		"get_folder_tree": {},
+		"list_notebooks":   {},
+		"list_connectors":  {},
+		"list_folders":     {},
+		"get_folder_tree":  {},
+		"search_resources": {},
 		// Charts
 		"create_chart": {},
 		"update_chart": {},
@@ -402,6 +403,7 @@ func (s *Server) mcpToolContext(claims *auth.Claims, r *http.Request) *agent.Too
 		ResolveTarget:           s.resolveExecutionTarget,
 		ConnPool:                s.connPool,
 		CheckPermissionFunc:     s.checkPermission,
+		SearchResourcesFunc:     s.searchResourcesForTool,
 		RecordConnectorActivity: s.recordConnectorActivity,
 		DashboardDocStore:       agentDashboardDocStore{s: s},
 		QueryTimeoutCeiling:     s.mcpSQLTimeout,

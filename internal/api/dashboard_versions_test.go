@@ -939,32 +939,51 @@ func TestDashboardListServesPublishedContentToViewers(t *testing.T) {
 	grantACL(t, srv, orgID, "dashboard", dashID, "user", viewerID, "view")
 	viewerToken := issueToken(t, viewerID, orgID, "editor")
 
-	find := func(t *testing.T, asToken string) map[string]any {
+	// A second dashboard that is never published, with a draft-only title and
+	// settings and the same view-only grant: nothing can be substituted there,
+	// so the draft serves everyone (the read behavior).
+	unpublishedID := createDashWithSettings(t, srv, token, map[string]any{"auto_refresh_seconds": 45})
+	rec = versionsRequest(t, srv, token, "PUT", "/api/v1/dashboards/"+unpublishedID,
+		map[string]any{"title": "Unpublished Draft"})
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	grantACL(t, srv, orgID, "dashboard", unpublishedID, "user", viewerID, "view")
+
+	find := func(t *testing.T, asToken, wantID string) map[string]any {
 		t.Helper()
 		rec := versionsRequest(t, srv, asToken, "GET", "/api/v1/dashboards", nil)
 		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 		var list []map[string]any
 		require.NoError(t, json.NewDecoder(rec.Body).Decode(&list))
 		for _, d := range list {
-			if d["id"] == dashID {
+			if d["id"] == wantID {
 				return d
 			}
 		}
-		t.Fatalf("dashboard %s missing from the list", dashID)
+		t.Fatalf("dashboard %s missing from the list", wantID)
 		return nil
 	}
 
 	// The editor sees the draft title and draft settings.
-	editorEntry := find(t, token)
+	editorEntry := find(t, token, dashID)
 	require.Equal(t, "Draft Renamed", editorEntry["title"])
 	editorSettings, ok := editorEntry["settings"].(map[string]any)
 	require.True(t, ok)
 	require.EqualValues(t, 60, editorSettings["auto_refresh_seconds"])
 
 	// The viewer sees the published snapshot only.
-	viewerEntry := find(t, viewerToken)
+	viewerEntry := find(t, viewerToken, dashID)
 	require.Equal(t, "Query Dash", viewerEntry["title"], "the draft title must not leak")
 	viewerSettings, ok := viewerEntry["settings"].(map[string]any)
 	require.True(t, ok)
 	require.EqualValues(t, 30, viewerSettings["auto_refresh_seconds"], "the draft settings must not leak")
+
+	// A never-published dashboard has no snapshot to substitute: the viewer
+	// (and the editor) see the draft.
+	viewerUnpublished := find(t, viewerToken, unpublishedID)
+	require.Equal(t, "Unpublished Draft", viewerUnpublished["title"])
+	unpublishedSettings, ok := viewerUnpublished["settings"].(map[string]any)
+	require.True(t, ok)
+	require.EqualValues(t, 45, unpublishedSettings["auto_refresh_seconds"])
+	editorUnpublished := find(t, token, unpublishedID)
+	require.Equal(t, "Unpublished Draft", editorUnpublished["title"])
 }

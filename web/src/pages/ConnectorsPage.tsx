@@ -764,7 +764,7 @@ export function ConnectorsPage() {
             {connectors.map((c) => {
               const health = connectorHealth(c)
               return (
-                <tr key={c.id} style={rowStyle}>
+                <tr key={c.id} style={rowStyle} className="favorite-host">
                   <td style={cellStyle}>
                     <strong>{c.name}</strong>
                     {c.is_default && (
@@ -857,7 +857,7 @@ export function ConnectorsPage() {
                     )}
                     {c.type === 'clickhouse' && <ClickHouseCloudStatus connector={c} />}
                   </td>
-                  <RowActionsCell>
+                  <RowActionsCell favorite={{ resourceType: 'connector', resourceId: c.id }}>
                     <RowAction label="Test connection" icon={<Zap size={13} />} spinning={!!testingIds[c.id]} disabled={!!testingIds[c.id]} onClick={() => testConnector(c.id)} />
                     <RowAction label="Edit connector" icon={<Pencil size={13} />} accent onClick={() => openEdit(c)} />
                     <RowActionsBreak />

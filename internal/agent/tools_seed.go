@@ -25,7 +25,7 @@ type BuiltinToolDef struct {
 // builtinSeedRev is the current revision of the builtin catalog: every entry
 // below carries it. Builtin descriptions are platform-managed — a user edit
 // to a builtin's text is overwritten when the catalog revision advances.
-const builtinSeedRev = 3
+const builtinSeedRev = 4
 
 var BuiltinTools = []BuiltinToolDef{
 	{Name: "notebook_create_notebook", Description: "Create a new notebook", HandlerName: "create_notebook", Rev: builtinSeedRev},
@@ -76,6 +76,7 @@ var BuiltinTools = []BuiltinToolDef{
 	{Name: "list_connectors", Description: "List connectors", HandlerName: "list_connectors", Rev: builtinSeedRev},
 	{Name: "list_folders", Description: "List folders", HandlerName: "list_folders", Rev: builtinSeedRev},
 	{Name: "get_folder_tree", Description: "Get folder tree", HandlerName: "get_folder_tree", Rev: builtinSeedRev},
+	{Name: "search_resources", Description: "Search the org's resources (notebooks, dashboards, folders, connectors, agents, models, skills, tools, MCP servers) by title and content. Returns grouped results with snippets. Refine the query instead of paging.", HandlerName: "search_resources", Rev: builtinSeedRev},
 	{Name: "create_snapshot", Description: "Create a notebook snapshot", HandlerName: "create_snapshot", Rev: builtinSeedRev},
 	{Name: "list_snapshots", Description: "List notebook snapshots", HandlerName: "list_snapshots", Rev: builtinSeedRev},
 	{Name: "restore_snapshot", Description: "Restore a notebook snapshot", HandlerName: "restore_snapshot", Rev: builtinSeedRev},

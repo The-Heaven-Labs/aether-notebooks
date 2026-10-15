@@ -6,11 +6,25 @@ import { Sidebar } from './Sidebar'
 import { api } from '../api/client'
 
 // Heavy, interaction-gated pieces of the shell. Keeping them lazy means pages
-// don't pay for the agent chat UI, the shortcuts dialog, or the markdown
-// renderer until the user actually opens them.
+// don't pay for the agent chat UI, the shortcuts dialog, the search palette,
+// or the markdown renderer until the user actually opens them.
 const AgentPanel = lazy(() => import('./AgentPanel').then((m) => ({ default: m.AgentPanel })))
 const ShortcutsModal = lazy(() => import('./ShortcutsModal').then((m) => ({ default: m.ShortcutsModal })))
+const SearchPalette = lazy(() => import('./SearchPalette').then((m) => ({ default: m.SearchPalette })))
 const MotdMarkdown = lazy(() => import('./MotdMarkdown'))
+
+/**
+ * True when a key event originates in a text-entry control, where global
+ * chords (Ctrl/Cmd+K, Ctrl/Cmd+J) must not fire over the user's typing.
+ */
+function isTextEntryTarget(target: EventTarget | null): boolean {
+  const el = target as HTMLElement | null
+  if (!el) return false
+  return el.tagName === 'INPUT'
+    || el.tagName === 'TEXTAREA'
+    || el.tagName === 'SELECT'
+    || el.isContentEditable
+}
 
 interface Props {
   children: React.ReactNode
@@ -32,6 +46,7 @@ export function useAgentPanelLayoutVersion() {
 
 export function AppShell({ children, noPadding, bare }: Props) {
   const [showShortcuts, setShowShortcuts] = useState(false)
+  const [showSearch, setShowSearch] = useState(false)
   const [showGlobalAgent, setShowGlobalAgent] = useState(() => {
     try {
       return localStorage.getItem('aether:agentDocked:__global__') === 'true'
@@ -149,19 +164,40 @@ export function AppShell({ children, noPadding, bare }: Props) {
   }, [bare])
 
   useEffect(() => {
+    // Ctrl/Cmd+J toggles the global agent panel; it moved off Ctrl/Cmd+K when
+    // search took that chord. The agent keeps its /chats suppression (that
+    // page owns a full-page chat) and the typing guard.
+    //
+    // Deliberately no `showSearch` guard: an open palette doesn't own the
+    // agent chord, so the two handlers can't fight. In practice the palette's
+    // focus trap parks focus in its input, where the typing guard already
+    // swallows the chord.
     if (bare || isChatPage) return
     const handler = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement).tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA' || (e.target as HTMLElement).isContentEditable) return
-      if ((e.ctrlKey || e.metaKey) && e.key === 'k') {
-        e.preventDefault()
-        setShowGlobalAgent(v => !v)
-        setGlobalAgentMinimized(false)
-      }
+      if (!(e.ctrlKey || e.metaKey) || e.key !== 'j') return
+      if (isTextEntryTarget(e.target)) return
+      e.preventDefault()
+      setShowGlobalAgent(v => !v)
+      setGlobalAgentMinimized(false)
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
   }, [isChatPage, bare])
+
+  useEffect(() => {
+    // Ctrl/Cmd+K opens the search palette. Search is global — unlike the agent
+    // chord it stays enabled on /chats — and `bare` mode strips the palette
+    // along with the rest of the shell, so the chord stays unbound there.
+    if (bare) return
+    const handler = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== 'k') return
+      if (isTextEntryTarget(e.target)) return
+      e.preventDefault()
+      setShowSearch(true)
+    }
+    document.addEventListener('keydown', handler)
+    return () => document.removeEventListener('keydown', handler)
+  }, [bare])
 
   // The notebook Chats drawer's "New chat" action opens the panel; the panel
   // itself listens for the same event to reset the session (and start a fresh
@@ -193,7 +229,10 @@ export function AppShell({ children, noPadding, bare }: Props) {
     <AgentPanelLayoutContext.Provider value={layoutVersion}>
     <div className="app-shell" style={styles.root}>
       <a href="#main-content" className="skip-link">Skip to content</a>
-      <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
+      <TopBar
+        onShowShortcuts={() => setShowShortcuts(true)}
+        onOpenSearch={() => setShowSearch(true)}
+      />
       <div style={{
         ...styles.body,
         ...(showGlobalAgent && !globalAgentMinimized && globalAgentDocked && !isChatPage ? { paddingRight: globalAgentWidth } : {}),
@@ -220,12 +259,21 @@ export function AppShell({ children, noPadding, bare }: Props) {
         </Suspense>
       )}
 
+      {/* Search palette: mounted on first open so its chunk stays off the
+          shell's critical path, same as the shortcuts modal. The palette owns
+          its input, reset, and Escape; AppShell only holds the open bit. */}
+      {showSearch && (
+        <Suspense fallback={null}>
+          <SearchPalette open onClose={() => setShowSearch(false)} />
+        </Suspense>
+      )}
+
       {/* Global Agent FAB (floating action button) */}
       {!isChatPage && !showGlobalAgent && (
         <button
           style={fabStyles.fab}
           onClick={() => { setShowGlobalAgent(true); setGlobalAgentMinimized(false) }}
-          title="Open AI Agent (Ctrl+K)"
+          title="Open AI Agent (Ctrl+J)"
         >
           <Bot size={20} />
         </button>

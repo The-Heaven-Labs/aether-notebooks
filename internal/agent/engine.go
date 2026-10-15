@@ -45,6 +45,12 @@ type Engine struct {
 	ResolveTarget       func(ctx context.Context, userID, connectorID uuid.UUID, pinned bool) (*executor.ExecutionTarget, error)
 	ConnPool            *executor.ConnPool
 	CheckPermissionFunc func(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error)
+	// SearchResourcesFunc is the catalog search engine the search_resources
+	// tool delegates to (api.Server.searchResourcesForTool). Wired by the API
+	// server like CheckPermissionFunc so agent searches see exactly what the
+	// caller may see — the same ACL and dashboard leak rules as HTTP. Nil
+	// fails the tool closed.
+	SearchResourcesFunc func(ctx context.Context, userID, orgID, orgRole, query string, types []string, limit int) (any, error)
 	// RecordConnectorActivity reports per-connector health from agent-driven
 	// runs; wired by the API server like the resolvers above.
 	RecordConnectorActivity func(ctx context.Context, orgID, connectorID string, ok bool, errMsg string)
@@ -1256,6 +1262,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 				ResolveTarget:           e.ResolveTarget,
 				ConnPool:                e.ConnPool,
 				CheckPermissionFunc:     e.CheckPermissionFunc,
+				SearchResourcesFunc:     e.SearchResourcesFunc,
 				RecordConnectorActivity: e.RecordConnectorActivity,
 				QuestionFunc: func(question string, options any, allowCustom bool) (string, error) {
 					ch := make(chan string, 1)

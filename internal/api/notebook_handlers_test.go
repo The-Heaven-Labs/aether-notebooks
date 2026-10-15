@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestNotebookUpdate(t *testing.T) {
@@ -300,4 +303,58 @@ func TestNotebook_FolderID(t *testing.T) {
 	if updated["folder_id"] != nil {
 		t.Errorf("expected folder_id=nil after move to root, got %v", updated["folder_id"])
 	}
+}
+
+// TestListTrashBatchVisibility pins the batched view filtering and the merged
+// deleted_at DESC order of GET /trash after the A5 migration: per type, only
+// items the caller can view are listed, and the final order interleaves the
+// three types by deletion time.
+func TestListTrashBatchVisibility(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	visibleNotebook := f.insertNotebook(t, "trash visible notebook", nil, f.otherUserID)
+	f.grant(t, "notebook", visibleNotebook, []string{"view"})
+	hiddenNotebook := f.insertNotebook(t, "trash hidden notebook", nil, f.otherUserID)
+	visibleConnector := f.insertConnector(t, "trash visible connector", nil, f.otherUserID)
+	f.grant(t, "connector", visibleConnector, []string{"view"})
+	hiddenConnector := f.insertConnector(t, "trash hidden connector", nil, f.otherUserID)
+	visibleDashboard := f.insertDashboard(t, "trash visible dashboard", nil, f.otherUserID)
+	f.grant(t, "dashboard", visibleDashboard, []string{"view"})
+	hiddenDashboard := f.insertDashboard(t, "trash hidden dashboard", nil, f.otherUserID)
+
+	// Trash everything with distinct, deterministic deleted_at values so the
+	// response order is pinned: the visible notebook is the newest, the hidden
+	// dashboard the oldest.
+	for _, tc := range []struct {
+		table string
+		id    string
+		age   int
+	}{
+		{"notebooks", visibleNotebook, 1},
+		{"notebooks", hiddenNotebook, 2},
+		{"connectors", visibleConnector, 3},
+		{"connectors", hiddenConnector, 4},
+		{"dashboards", visibleDashboard, 5},
+		{"dashboards", hiddenDashboard, 6},
+	} {
+		_, err := f.srv.DB().Pool.Exec(context.Background(),
+			fmt.Sprintf(`UPDATE %s SET deleted_at = now() - ($1 * interval '1 minute') WHERE id = $2`, tc.table),
+			tc.age, tc.id)
+		require.NoError(t, err)
+	}
+
+	status, body := f.get(t, "/api/v1/trash")
+	require.Equal(t, http.StatusOK, status, string(body))
+	type trashRow struct {
+		ID   string `json:"id"`
+		Type string `json:"type"`
+	}
+	var items []trashRow
+	require.NoError(t, json.Unmarshal(body, &items))
+	require.Equal(t, []trashRow{
+		{ID: visibleNotebook, Type: "notebook"},
+		{ID: visibleConnector, Type: "connector"},
+		{ID: visibleDashboard, Type: "dashboard"},
+	}, items, "hidden rows must be absent and the visible ones must stay deleted_at DESC")
 }

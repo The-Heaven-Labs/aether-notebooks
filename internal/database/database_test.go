@@ -1377,3 +1377,375 @@ func TestMigration125DashboardCreatorViewWithData(t *testing.T) {
 		t.Fatalf("V125 not recorded (count=%d)", applied)
 	}
 }
+
+// TestMigration135ListAndSearchIndexes pins the five V135 indexes: three
+// partial btree listing indexes (org+folder+sort over alive rows only) and two
+// GIN expression indexes backing core-Postgres content FTS.
+func TestMigration135ListAndSearchIndexes(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Shapes are pinned exactly (normalizing the schema qualification): the
+	// column order decides whether each composite btree index serves the
+	// canonical org+folder+updated_at listing query, the partial predicate
+	// keeps the indexes to alive rows, and the GIN indexes must index exactly
+	// the to_tsvector('simple', …) expression the search implementation uses.
+	wants := []struct{ name, def string }{
+		{"idx_notebooks_org_folder_updated", "CREATE INDEX idx_notebooks_org_folder_updated ON public.notebooks USING btree (org_id, folder_id, updated_at DESC) WHERE (deleted_at IS NULL)"},
+		{"idx_dashboards_org_folder_updated", "CREATE INDEX idx_dashboards_org_folder_updated ON public.dashboards USING btree (org_id, folder_id, updated_at DESC) WHERE (deleted_at IS NULL)"},
+		{"idx_connectors_org_folder", "CREATE INDEX idx_connectors_org_folder ON public.connectors USING btree (org_id, folder_id) WHERE (deleted_at IS NULL)"},
+		{"idx_cells_source_fts", "CREATE INDEX idx_cells_source_fts ON public.cells USING gin (to_tsvector('simple'::regconfig, source))"},
+		{"idx_widgets_query_fts", "CREATE INDEX idx_widgets_query_fts ON public.widgets USING gin (to_tsvector('simple'::regconfig, query))"},
+	}
+	for _, want := range wants {
+		var got string
+		if err := db.Pool.QueryRow(ctx,
+			`SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = $1`, want.name).Scan(&got); err != nil {
+			t.Fatalf("%s missing after V135: %v", want.name, err)
+		}
+		if norm := strings.ReplaceAll(got, "public.", ""); norm != strings.ReplaceAll(want.def, "public.", "") {
+			t.Fatalf("%s = %q, want %q", want.name, got, want.def)
+		}
+	}
+
+	// No folders listing index: V009's UNIQUE (org_id, parent_id, name)
+	// already serves the folder-children scan, so a re-add would be redundant.
+	var redundant int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_folders_org_parent'`).Scan(&redundant); err != nil {
+		t.Fatalf("idx_folders_org_parent existence query: %v", err)
+	}
+	if redundant != 0 {
+		t.Fatal("idx_folders_org_parent should not exist (V009's UNIQUE covers the folder-children scan)")
+	}
+
+	var applied int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM schema_migrations WHERE version='135_list_and_search_indexes'`).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations query: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("V135 not recorded (count=%d)", applied)
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID, userID, notebookID, cellID, connectorID, dashboardID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO orgs (name, slug)
+		VALUES ('V135 Index Org', 'v135-index-' || substr(gen_random_uuid()::text, 1, 8))
+		RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (email, name)
+		VALUES ('v135-index-' || substr(gen_random_uuid()::text, 1, 8) || '@test.local', 'V135 Index')
+		RETURNING id::text`).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO notebooks (org_id, title, created_by)
+		VALUES ($1, 'V135 FTS Notebook', $2)
+		RETURNING id::text`, orgID, userID).Scan(&notebookID); err != nil {
+		t.Fatalf("seed notebook: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO cells (notebook_id, position, type, language, source)
+		VALUES ($1, 0, 'code', 'sql', 'SELECT revenue, order_items FROM orders')
+		RETURNING id::text`, notebookID).Scan(&cellID); err != nil {
+		t.Fatalf("seed cell: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO connectors (org_id, name, type, config_encrypted)
+		VALUES ($1, 'V135 FTS Connector', 'clickhouse', '\x'::bytea)
+		RETURNING id::text`, orgID).Scan(&connectorID); err != nil {
+		t.Fatalf("seed connector: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO dashboards (org_id, title, settings, created_by)
+		VALUES ($1, 'V135 FTS Dashboard', '{}', $2)
+		RETURNING id::text`, orgID, userID).Scan(&dashboardID); err != nil {
+		t.Fatalf("seed dashboard: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO widgets (dashboard_id, type, layout, config, connector_id, query)
+		VALUES ($1, 'table', '{}', '{}', $2, 'SELECT revenue, order_items FROM orders')`,
+		dashboardID, connectorID); err != nil {
+		t.Fatalf("seed widget: %v", err)
+	}
+
+	// Round-trip: the quoted prefix-tsquery form the search builder emits must
+	// match the seeded text through the indexed expression — including an
+	// underscored word. The simple parser splits "order_items" into the
+	// "order"/"items" lexemes on both the document and query sides, so the
+	// builder's literal 'order_items':* form must still match.
+	for _, q := range []string{"revenue:*", "'order_items':*"} {
+		var matched bool
+		if err := tx.QueryRow(ctx, `
+			SELECT to_tsvector('simple', source) @@ to_tsquery('simple', $1)
+			FROM cells WHERE id = $2`, q, cellID).Scan(&matched); err != nil {
+			t.Fatalf("fts round-trip %q: %v", q, err)
+		}
+		if !matched {
+			t.Fatalf("to_tsquery('simple', %q) did not match the seeded cell", q)
+		}
+	}
+
+	// With sequential scans discouraged, the planner must be able to match the
+	// predicate against each expression index (proves the indexes are usable,
+	// not just present).
+	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
+		t.Fatalf("disable seqscan: %v", err)
+	}
+	explainUsesIndex := func(index, explain string) {
+		t.Helper()
+		rows, err := tx.Query(ctx, explain)
+		if err != nil {
+			t.Fatalf("explain %s: %v", index, err)
+		}
+		defer rows.Close()
+		var plan strings.Builder
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err != nil {
+				t.Fatalf("scan explain %s: %v", index, err)
+			}
+			plan.WriteString(line)
+			plan.WriteString("\n")
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("explain rows %s: %v", index, err)
+		}
+		if !strings.Contains(plan.String(), index) {
+			t.Fatalf("EXPLAIN plan does not use %s:\n%s", index, plan.String())
+		}
+	}
+	explainUsesIndex("idx_cells_source_fts", `
+		EXPLAIN SELECT id FROM cells
+		WHERE to_tsvector('simple', source) @@ to_tsquery('simple', 'revenue:*')`)
+	explainUsesIndex("idx_widgets_query_fts", `
+		EXPLAIN SELECT id FROM widgets
+		WHERE to_tsvector('simple', query) @@ to_tsquery('simple', '''order_items'':*')`)
+}
+
+// TestMigration136Favorites pins the favorites table: exact columns/defaults,
+// the per-user unique key (idempotent PUTs), the listing index shape, the
+// ON DELETE CASCADE rules that clean rows up with their user/org, the fact
+// that no FK guards the polymorphic resource_id, and the user-delete cascade
+// end to end.
+func TestMigration136Favorites(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Columns are pinned exactly (name, type, nullability, default): the
+	// favorites listing and upsert depend on each one, and resource_type is
+	// deliberately plain TEXT (the type whitelist lives in the API layer).
+	wantCols := map[string]struct {
+		dataType string
+		nullable string
+		def      *string
+	}{
+		"id":            {"uuid", "NO", strPtr("gen_random_uuid()")},
+		"user_id":       {"uuid", "NO", nil},
+		"org_id":        {"uuid", "NO", nil},
+		"resource_type": {"text", "NO", nil},
+		"resource_id":   {"uuid", "NO", nil},
+		"created_at":    {"timestamp with time zone", "NO", strPtr("now()")},
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT column_name, data_type, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'favorites'`)
+	if err != nil {
+		t.Fatalf("favorites columns query: %v", err)
+	}
+	defer rows.Close()
+	seen := make(map[string]bool)
+	for rows.Next() {
+		var name, dataType, nullable string
+		var def *string
+		if err := rows.Scan(&name, &dataType, &nullable, &def); err != nil {
+			t.Fatalf("scan favorites column: %v", err)
+		}
+		seen[name] = true
+		want, ok := wantCols[name]
+		if !ok {
+			t.Fatalf("unexpected favorites column %q", name)
+		}
+		if dataType != want.dataType || nullable != want.nullable {
+			t.Fatalf("favorites.%s = (%s, nullable=%s), want (%s, %s)", name, dataType, nullable, want.dataType, want.nullable)
+		}
+		switch {
+		case want.def == nil && def != nil:
+			t.Fatalf("favorites.%s default = %q, want none", name, *def)
+		case want.def != nil && (def == nil || *def != *want.def):
+			t.Fatalf("favorites.%s default = %v, want %q", name, def, *want.def)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("favorites columns rows: %v", err)
+	}
+	for name := range wantCols {
+		if !seen[name] {
+			t.Fatalf("favorites.%s missing after V136", name)
+		}
+	}
+
+	// The unique key must cover exactly (user_id, org_id, resource_type,
+	// resource_id): PUT is an INSERT … ON CONFLICT DO NOTHING against it, so
+	// the column order and membership are load-bearing.
+	var uniqueCols string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT string_agg(a.attname, ',' ORDER BY k.ord)
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = 'favorites' AND c.contype = 'u'`).Scan(&uniqueCols); err != nil {
+		t.Fatalf("favorites unique constraint query: %v", err)
+	}
+	if uniqueCols != "user_id,org_id,resource_type,resource_id" {
+		t.Fatalf("favorites unique constraint covers %q, want \"user_id,org_id,resource_type,resource_id\"", uniqueCols)
+	}
+
+	// Both FKs (user, org) must cascade deletes.
+	for _, ref := range []string{"users", "orgs"} {
+		var delRule string
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT confdeltype
+			FROM pg_constraint
+			WHERE conrelid = 'favorites'::regclass AND contype = 'f' AND confrelid = $1::regclass`, ref).
+			Scan(&delRule); err != nil {
+			t.Fatalf("favorites -> %s FK missing: %v", ref, err)
+		}
+		if delRule != "c" {
+			t.Fatalf("favorites -> %s FK ON DELETE = %q, want CASCADE ('c')", ref, delRule)
+		}
+	}
+
+	// resource_id intentionally carries no FK (polymorphic, acl_entries
+	// convention): cleanup is explicit in purge/hard-delete paths.
+	var resourceFKs int
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM pg_constraint c
+		JOIN unnest(c.conkey) AS k(attnum) ON true
+		JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+		WHERE c.conrelid = 'favorites'::regclass AND c.contype = 'f' AND a.attname = 'resource_id'`).Scan(&resourceFKs); err != nil {
+		t.Fatalf("resource_id FK query: %v", err)
+	}
+	if resourceFKs != 0 {
+		t.Fatal("favorites.resource_id must carry no FK (cleanup is explicit)")
+	}
+
+	// The listing index shape is pinned (normalizing schema qualification).
+	var idxDef string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_favorites_user_org'`).
+		Scan(&idxDef); err != nil {
+		t.Fatalf("idx_favorites_user_org missing after V136: %v", err)
+	}
+	const wantIdxDef = "CREATE INDEX idx_favorites_user_org ON public.favorites USING btree (user_id, org_id, created_at DESC)"
+	if got := strings.ReplaceAll(idxDef, "public.", ""); got != strings.ReplaceAll(wantIdxDef, "public.", "") {
+		t.Fatalf("idx_favorites_user_org = %q, want %q", idxDef, wantIdxDef)
+	}
+
+	var applied int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM schema_migrations WHERE version='136_favorites'`).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations query: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("V136 not recorded (count=%d)", applied)
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID, userID, favoriteID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO orgs (name, slug)
+		VALUES ('V136 Favorites Org', 'v136-favorites-' || substr(gen_random_uuid()::text, 1, 8))
+		RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (email, name)
+		VALUES ('v136-favorites-' || substr(gen_random_uuid()::text, 1, 8) || '@test.local', 'V136 Favorites')
+		RETURNING id::text`).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO favorites (user_id, org_id, resource_type, resource_id)
+		VALUES ($1, $2, 'notebook', gen_random_uuid())
+		RETURNING id::text`, userID, orgID).Scan(&favoriteID); err != nil {
+		t.Fatalf("seed favorite: %v", err)
+	}
+
+	// A duplicate (user_id, org_id, resource_type, resource_id) must be
+	// rejected with SQLSTATE 23505 — the savepoint keeps the tx usable.
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatalf("savepoint: %v", err)
+	}
+	_, err = sp.Exec(ctx, `
+		INSERT INTO favorites (user_id, org_id, resource_type, resource_id)
+		SELECT user_id, org_id, resource_type, resource_id FROM favorites WHERE id = $1`, favoriteID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("duplicate favorite insert = %v, want SQLSTATE 23505", err)
+	}
+	if err := sp.Rollback(ctx); err != nil {
+		t.Fatalf("rollback savepoint: %v", err)
+	}
+
+	// Deleting the user cascades the favorite away.
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+	var remaining int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM favorites WHERE user_id=$1`, userID).Scan(&remaining); err != nil {
+		t.Fatalf("count favorites after user delete: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("%d favorites survived user delete, want 0", remaining)
+	}
+}
+
+func strPtr(s string) *string { return &s }

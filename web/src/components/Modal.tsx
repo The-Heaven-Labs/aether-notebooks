@@ -26,7 +26,9 @@ export function Modal({ title, onClose, children, minWidth, initialFocusRef }: P
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') { e.preventDefault(); onCloseRef.current() }
+      // Skip Escapes a nested layer already handled (defaultPrevented), so a
+      // palette sitting above this modal owns its own Escape.
+      if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onCloseRef.current() }
     }
     window.addEventListener('keydown', handler)
     return () => {

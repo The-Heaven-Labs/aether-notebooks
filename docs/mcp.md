@@ -85,14 +85,14 @@ curl -s https://aether.example.com/api/v1/mcp \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | jq '.result.tools[].name'
 ```
 
-This prints the 45 exposed tool names. To verify from a harness instead, run
+This prints the 46 exposed tool names. To verify from a harness instead, run
 `claude mcp list`.
 
 ## Exposed tools
 
 The endpoint exposes a fixed allowlist (new internal tools are not exposed
 automatically). The list is defined by `mcpToolAllowlist` in
-`internal/api/mcp.go`. The current catalog (45 tools):
+`internal/api/mcp.go`. The current catalog (46 tools):
 
 **Notebooks, cells & SQL** (19)
 
@@ -114,9 +114,9 @@ automatically). The list is defined by `mcpToolAllowlist` in
 
 - `list_skills`, `load_skill`, `create_skill`, `update_skill`, `list_agents`
 
-**Platform reads** (4)
+**Platform reads** (5)
 
-- `list_notebooks`, `list_connectors`, `list_folders`, `get_folder_tree`
+- `list_notebooks`, `list_connectors`, `list_folders`, `get_folder_tree`, `search_resources`
 
 **Charts** (2)
 

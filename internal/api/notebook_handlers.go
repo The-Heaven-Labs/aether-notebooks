@@ -328,18 +328,32 @@ func (s *Server) handleListNotebooks(w http.ResponseWriter, r *http.Request) {
 		}
 		nb.FolderID = folderID
 		json.Unmarshal(params, &nb.Parameters)
-		allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
-		if !allowed {
-			continue
-		}
 		notebooks = append(notebooks, nb)
 	}
 
-	if notebooks == nil {
-		notebooks = []models.Notebook{}
+	ident, err := s.permIdentity(ctx, claims)
+	if err != nil {
+		// Deliberate fail-loud: the former per-item checks silently hid rows on error.
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	ids := make([]string, 0, len(notebooks))
+	for _, nb := range notebooks {
+		ids = append(ids, nb.ID)
+	}
+	perms, err := s.resolveActions(ctx, ident, "notebook", ids, []string{"view"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
 	}
 
-	writeJSON(w, http.StatusOK, notebooks)
+	out := make([]models.Notebook, 0, len(notebooks))
+	for _, nb := range notebooks {
+		if actionAllowed(perms, nb.ID, "view") {
+			out = append(out, nb)
+		}
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // @Summary Get a notebook
@@ -586,7 +600,11 @@ func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 		DeletedAt time.Time `json:"deleted_at"`
 	}
 
-	var items []trashItem
+	var (
+		notebookItems  []trashItem
+		connectorItems []trashItem
+		dashboardItems []trashItem
+	)
 
 	nRows, err := s.db.Pool.Query(ctx, `SELECT id, title, deleted_at FROM notebooks WHERE org_id = $1 AND deleted_at IS NOT NULL ORDER BY deleted_at DESC`, claims.OrgID)
 	if err == nil {
@@ -594,10 +612,7 @@ func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 			var item trashItem
 			if err := nRows.Scan(&item.ID, &item.Name, &item.DeletedAt); err == nil {
 				item.Type = "notebook"
-				allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", item.ID, "view")
-				if allowed {
-					items = append(items, item)
-				}
+				notebookItems = append(notebookItems, item)
 			}
 		}
 		nRows.Close()
@@ -609,10 +624,7 @@ func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 			var item trashItem
 			if err := cRows.Scan(&item.ID, &item.Name, &item.DeletedAt); err == nil {
 				item.Type = "connector"
-				allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", item.ID, "view")
-				if allowed {
-					items = append(items, item)
-				}
+				connectorItems = append(connectorItems, item)
 			}
 		}
 		cRows.Close()
@@ -624,13 +636,46 @@ func (s *Server) handleListTrash(w http.ResponseWriter, r *http.Request) {
 			var item trashItem
 			if err := dRows.Scan(&item.ID, &item.Name, &item.DeletedAt); err == nil {
 				item.Type = "dashboard"
-				allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", item.ID, "view")
-				if allowed {
-					items = append(items, item)
-				}
+				dashboardItems = append(dashboardItems, item)
 			}
 		}
 		dRows.Close()
+	}
+
+	// One batched view resolution per trashed type, instead of one check per
+	// item. A resolution failure is fail-loud (the former per-item checks
+	// silently hid items on error); the per-query error guards above keep
+	// their own skip-the-section semantics.
+	ident, err := s.permIdentity(ctx, claims)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	type section struct {
+		resourceType string
+		items        []trashItem
+	}
+	sections := []section{
+		{resourceType: "notebook", items: notebookItems},
+		{resourceType: "connector", items: connectorItems},
+		{resourceType: "dashboard", items: dashboardItems},
+	}
+	var items []trashItem
+	for _, sec := range sections {
+		ids := make([]string, 0, len(sec.items))
+		for _, item := range sec.items {
+			ids = append(ids, item.ID)
+		}
+		perms, err := s.resolveActions(ctx, ident, sec.resourceType, ids, []string{"view"})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "permission check failed")
+			return
+		}
+		for _, item := range sec.items {
+			if actionAllowed(perms, item.ID, "view") {
+				items = append(items, item)
+			}
+		}
 	}
 
 	sort.Slice(items, func(i, j int) bool { return items[i].DeletedAt.After(items[j].DeletedAt) })

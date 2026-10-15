@@ -1,9 +1,17 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { screen, fireEvent, waitFor, within, act } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { server } from './server'
 import { ConnectorsPage } from '../pages/ConnectorsPage'
 import { renderWithProviders } from './utils'
+import { favoritesFixture } from './handlers'
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
 
 vi.mock('../components/AppShell', () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -712,5 +720,89 @@ describe('ConnectorsPage', () => {
     // Give a buggy enabled query a beat to fire before asserting.
     await new Promise((resolve) => setTimeout(resolve, 100))
     expect(cloudStateSpy).not.toHaveBeenCalled()
+  })
+
+  // ── Favorites toggles (F2) ────────────────────────────────────────────────
+
+  test('each row carries a hover-revealed bookmark outside the wrapping action grid (F2)', async () => {
+    renderWithProviders(<ConnectorsPage />)
+    const row = (await screen.findByText('Prod DB')).closest('tr') as HTMLElement
+    expect(row.className).toContain('favorite-host')
+
+    const favorite = within(row).getByRole('button', { name: 'Add to favorites' })
+    // Hidden by opacity (theme.css), never display: none — the 26px is reserved.
+    expect(favorite.className).toContain('favorite-reveal')
+    // Outside the two-per-line action grid: a third control inside it would
+    // wrap; the wider cell reserves the bookmark's column instead.
+    expect(favorite.closest('.row-actions-grid')).toBeNull()
+    const cell = favorite.closest('td') as HTMLElement
+    expect(cell.className).toContain('row-actions-cell--favorite')
+    expect(cell.querySelector('.row-actions-cluster')).not.toBeNull()
+
+    // The existing RowActions cluster still renders beside it.
+    expect(within(row).getByLabelText('Edit connector')).toBeInTheDocument()
+    expect(within(row).getByLabelText('Permissions')).toBeInTheDocument()
+    expect(within(row).getByLabelText('Delete connector')).toBeInTheDocument()
+  })
+
+  test('connector bookmark state comes from the shared favorites listing (one fetch)', async () => {
+    const { handlers, counts } = favoritesFixture([{ type: 'connector', id: 'c-2' }])
+    server.use(...handlers)
+    renderWithProviders(<ConnectorsPage />)
+
+    const row = (await screen.findByText('Staging DB')).closest('tr') as HTMLElement
+    expect(await within(row).findByRole('button', { name: 'Remove from favorites' })).toHaveAttribute('aria-pressed', 'true')
+    await waitFor(() => expect(counts.gets).toBe(1))
+  })
+
+  test('toggling a connector row flips optimistically and refetches the listing', async () => {
+    const { handlers, counts } = favoritesFixture()
+    server.use(...handlers)
+    renderWithProviders(<ConnectorsPage />)
+
+    const row = (await screen.findByText('Prod DB')).closest('tr') as HTMLElement
+    await waitFor(() => expect(counts.gets).toBe(1))
+
+    await userEvent.click(within(row).getByRole('button', { name: 'Add to favorites' }))
+    await waitFor(() =>
+      expect(within(row).getByRole('button', { name: 'Remove from favorites' })).toHaveAttribute('aria-pressed', 'true'),
+    )
+    // The success invalidation refreshes the shared listing exactly once.
+    await waitFor(() => expect(counts.gets).toBe(2))
+  })
+
+  test('a pending toggle disables only its own row', async () => {
+    const put = deferred<void>()
+    const { handlers, hold } = favoritesFixture()
+    server.use(...handlers)
+    server.use(
+      http.put('/api/v1/favorites/connector/c-1', async () => {
+        await put.promise
+        hold('connector', 'c-1')
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithProviders(<ConnectorsPage />)
+
+    const rowA = (await screen.findByText('Prod DB')).closest('tr') as HTMLElement
+    const rowB = (await screen.findByText('Staging DB')).closest('tr') as HTMLElement
+    const favA = within(rowA).getByRole('button', { name: 'Add to favorites' })
+    const favB = within(rowB).getByRole('button', { name: 'Add to favorites' })
+    await waitFor(() => expect(favA).toBeEnabled())
+
+    await userEvent.click(favA)
+    // The clicked row's toggle is briefly disabled; its neighbor is untouched.
+    await waitFor(() =>
+      expect(within(rowA).getByRole('button', { name: 'Remove from favorites' })).toBeDisabled(),
+    )
+    expect(favB).toBeEnabled()
+
+    await act(async () => {
+      put.resolve()
+      await put.promise
+    })
+    await waitFor(() =>
+      expect(within(rowA).getByRole('button', { name: 'Remove from favorites' })).toBeEnabled(),
+    )
   })
 })

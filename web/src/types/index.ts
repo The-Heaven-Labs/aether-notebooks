@@ -435,6 +435,20 @@ export interface Folder {
   updated_at: string
 }
 
+/** Names of the paginated sections of a folder listing. */
+export type FolderSectionName = 'notebooks' | 'connectors' | 'dashboards'
+
+/**
+ * Load-more envelope for one folder section
+ * (`GET /folders/contents` / `GET /folders/{id}/contents`).
+ */
+export interface FolderSection<T> {
+  items: T[]
+  total: number
+  has_more: boolean
+  offset: number
+}
+
 export interface FolderContents {
   folder?: Folder
   folders: (Folder & { can_edit?: boolean; can_delete?: boolean; can_share?: boolean })[]
@@ -453,6 +467,84 @@ export interface FolderContents {
     can_share?: boolean
   }>
   dashboards: (Dashboard & { can_edit?: boolean; can_delete?: boolean; can_share?: boolean })[]
+  /** Exact visible totals per paginated section. Absent on older servers. */
+  totals?: Partial<Record<FolderSectionName, number>>
+  /** Whether the first page left visible rows behind. Absent on older servers. */
+  has_more?: Partial<Record<FolderSectionName, boolean>>
+}
+
+/**
+ * Catalog resource types that can be favorited, in the API's canonical group
+ * order (folder → … → tool). Mirrors the backend's `favoriteResourceTypes`;
+ * `FavoriteResourceType` derives from this tuple so the two cannot drift.
+ */
+export const FAVORITE_RESOURCE_TYPES = [
+  'folder',
+  'notebook',
+  'dashboard',
+  'connector',
+  'agent',
+  'model_config',
+  'skill',
+  'mcp_server',
+  'tool',
+] as const
+
+export type FavoriteResourceType = (typeof FAVORITE_RESOURCE_TYPES)[number]
+
+/**
+ * One catalog resource summary row (mirrors the API's `resourceSummary`).
+ * Favorites listings and search results share this shape.
+ */
+export interface ResourceSummary {
+  id: string
+  resource_type: FavoriteResourceType
+  title: string
+  subtitle: string
+  /** Content-search context; favorites listings omit it. */
+  snippet?: string
+  folder_id?: string
+  /** Resolved folder path; absent for root-level resources. */
+  folder_path?: string
+  updated_at: string
+  is_favorite: boolean
+  can_edit: boolean
+}
+
+/** The favorites-era name for {@link ResourceSummary}; kept for its call sites. */
+export type FavoriteResult = ResourceSummary
+
+/** Favorites grouped by resource type; the API omits empty groups. */
+export interface FavoriteGroup {
+  resource_type: FavoriteResourceType
+  results: ResourceSummary[]
+}
+
+/** `GET /api/v1/favorites` payload, newest first within each group. */
+export interface FavoritesResponse {
+  groups: FavoriteGroup[]
+}
+
+/** Search results grouped by resource type; the API omits empty groups. */
+export interface SearchGroup {
+  resource_type: FavoriteResourceType
+  /** The per-type candidate window held more results back than `results` shows. */
+  has_more: boolean
+  results: ResourceSummary[]
+}
+
+/** `GET /api/v1/search` payload, groups in the API's fixed type order. */
+export interface SearchResponse {
+  query: string
+  groups: SearchGroup[]
+}
+
+/** One row of `GET /api/v1/recent` (a notebook, dashboard, or connector). */
+export interface RecentItem {
+  id: string
+  type: string
+  name: string
+  updated_at: string
 }
 
 export interface Group {

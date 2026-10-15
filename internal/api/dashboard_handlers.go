@@ -309,31 +309,59 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		json.Unmarshal(settingsOut, &d.Settings)
-		allowed, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
-		if !allowed {
-			continue
-		}
-		// Viewers of a published dashboard must not see draft-only content in
-		// the list: substitute the latest snapshot's title and settings like
-		// GET /dashboards/{id} does. A never-published dashboard has nothing
-		// to substitute, so the draft serves everyone (the read behavior).
-		editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "edit")
-		if !editOK {
-			snapshot, snapErr := s.loadPublishedDashboardSnapshot(ctx, claims.OrgID, d.ID)
-			if snapErr == nil {
-				d.Title = snapshot.Title
-				d.Settings = snapshot.Settings
-			} else if !errors.Is(snapErr, errNoPublishedVersion) {
-				writeError(w, http.StatusInternalServerError, "query failed")
-				return
-			}
-		}
 		dashboards = append(dashboards, d)
 	}
-	if dashboards == nil {
-		dashboards = []models.Dashboard{}
+
+	ident, err := s.permIdentity(ctx, claims)
+	if err != nil {
+		// Deliberate fail-loud: the former per-item checks silently hid rows on error.
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
 	}
-	writeJSON(w, http.StatusOK, dashboards)
+	ids := make([]string, 0, len(dashboards))
+	for _, d := range dashboards {
+		ids = append(ids, d.ID)
+	}
+	perms, err := s.resolveActions(ctx, ident, "dashboard", ids, []string{"view", "edit"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+
+	// Viewers of a published dashboard must not see draft-only content in
+	// the list: substitute the latest snapshot's title and settings like
+	// GET /dashboards/{id} does. A never-published dashboard has nothing
+	// to substitute, so the draft serves everyone (the read behavior). One
+	// batched snapshot load covers every non-editor row.
+	var nonEditorIDs []string
+	for _, d := range dashboards {
+		if actionAllowed(perms, d.ID, "view") && !actionAllowed(perms, d.ID, "edit") {
+			nonEditorIDs = append(nonEditorIDs, d.ID)
+		}
+	}
+	snapshots := map[string]publishedDashboardMeta{}
+	if len(nonEditorIDs) > 0 {
+		snapshots, err = s.loadLatestDashboardSnapshots(ctx, claims.OrgID, nonEditorIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+	}
+
+	out := make([]models.Dashboard, 0, len(dashboards))
+	for _, d := range dashboards {
+		if !actionAllowed(perms, d.ID, "view") {
+			continue
+		}
+		if !actionAllowed(perms, d.ID, "edit") {
+			if snapshot, ok := snapshots[d.ID]; ok {
+				d.Title = snapshot.Title
+				d.Settings = snapshot.Settings
+			}
+		}
+		out = append(out, d)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // dashboardPublishedVersion identifies the published snapshot a read served,
@@ -341,21 +369,6 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 type dashboardPublishedVersion struct {
 	Version   int       `json:"version"`
 	CreatedAt time.Time `json:"created_at"`
-}
-
-// dashboardSnapshotSettings decodes a published snapshot's settings map
-// (variables folded in under settings["variables"]) into the typed settings
-// shape the REST read paths serve.
-func dashboardSnapshotSettings(settings map[string]any) (models.DashboardSettings, error) {
-	var out models.DashboardSettings
-	raw, err := json.Marshal(settings)
-	if err != nil {
-		return out, err
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return out, err
-	}
-	return out, nil
 }
 
 // snapshotWidgetToModel converts one published snapshot widget into the REST

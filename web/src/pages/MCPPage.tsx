@@ -208,7 +208,7 @@ export function MCPPage() {
               const testing = testingIds.has(s.id)
               const test = testResults[s.id]
               return (
-                <tr key={s.id} style={rowStyle}>
+                <tr key={s.id} style={rowStyle} className="favorite-host">
                   <td style={cellStyle}><strong>{s.name}</strong></td>
                   <td style={cellStyle}><code style={styles.badge}>{s.type}</code></td>
                   <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12 }}>{s.command}</td>
@@ -229,7 +229,7 @@ export function MCPPage() {
                       </span>
                     )}
                   </td>
-                  <RowActionsCell>
+                  <RowActionsCell favorite={{ resourceType: 'mcp_server', resourceId: s.id }}>
                     <RowAction label="Test MCP server" icon={<Zap size={13} />} spinning={testing} disabled={testing} onClick={() => testServer(s.id)} />
                     <RowAction label="Edit MCP server" icon={<Pencil size={13} />} accent onClick={() => startEdit(s)} />
                     <RowActionsBreak />

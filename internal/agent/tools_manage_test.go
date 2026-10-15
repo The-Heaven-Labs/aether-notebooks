@@ -786,6 +786,11 @@ func TestAgentDeleteDashboardWithoutDocStore(t *testing.T) {
 	orgID, userID := createTestOrgAndUser(t, db.Pool)
 	dashID := createTestDashboard(t, db.Pool, orgID, userID, "No Store Delete")
 
+	_, err := db.Pool.Exec(context.Background(), `
+		INSERT INTO favorites (user_id, org_id, resource_type, resource_id)
+		VALUES ($1, $2, 'dashboard', $3)`, userID, orgID, dashID)
+	require.NoError(t, err)
+
 	reg := agent.NewToolRegistry()
 	agent.RegisterManageTools(reg, db.Pool)
 	// setupToolContext deliberately leaves DashboardDocStore nil.
@@ -801,6 +806,12 @@ func TestAgentDeleteDashboardWithoutDocStore(t *testing.T) {
 	require.NoError(t, db.Pool.QueryRow(context.Background(),
 		`SELECT COUNT(*) FROM dashboards WHERE id = $1`, dashID).Scan(&count))
 	require.Zero(t, count)
+
+	var favorites int
+	require.NoError(t, db.Pool.QueryRow(context.Background(),
+		`SELECT COUNT(*) FROM favorites WHERE resource_type = 'dashboard' AND resource_id = $1::uuid`,
+		dashID).Scan(&favorites))
+	require.Zero(t, favorites, "the dashboard's favorites must be cleaned on delete")
 }
 
 // TestDashboardUpdateSettingsMaterializes pins the settings tool: app.title +

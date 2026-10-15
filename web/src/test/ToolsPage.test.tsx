@@ -94,4 +94,116 @@ describe('ToolsPage', () => {
       },
     })
   })
+
+  test('hides a blocked provisioner from the sql_query connector picker', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([
+        { id: 'conn-svc', name: 'Service CH', type: 'clickhouse', can_use: true, is_provisioner: false, created_at: '2026-01-01T00:00:00Z' },
+        { id: 'conn-prov', name: 'Blocked provisioner', type: 'clickhouse', can_use: false, is_provisioner: true, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+    )
+    renderWithProviders(<ToolsPage />)
+    await screen.findByText('No tools yet')
+
+    fireEvent.click(screen.getAllByText('+ New Tool')[0])
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Type'), { target: { value: 'sql_query' } })
+
+    expect(within(dialog).queryByRole('option', { name: /Blocked provisioner/ })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('option', { name: 'Service CH (clickhouse)' })).toBeInTheDocument()
+  })
+
+  test('a tool configured with a blocked provisioner is not listed and shows the placeholder', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([
+        { id: 'conn-svc', name: 'Service CH', type: 'clickhouse', can_use: true, is_provisioner: false, created_at: '2026-01-01T00:00:00Z' },
+        { id: 'conn-prov', name: 'Blocked provisioner', type: 'clickhouse', can_use: false, is_provisioner: true, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+      http.get('/api/v1/tools', () => HttpResponse.json([
+        {
+          id: 't-sql',
+          org_id: 'org-1',
+          name: 'Provisioned Query',
+          description: '',
+          type: 'sql_query',
+          schema: { type: 'object', properties: {} },
+          config: { connector_id: 'conn-prov', query: 'SELECT 1' },
+          require_confirmation: false,
+          created_by: 'user-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ])),
+    )
+    renderWithProviders(<ToolsPage />)
+    await screen.findByText('Provisioned Query')
+
+    fireEvent.click(screen.getByLabelText('Edit tool'))
+    const dialog = await screen.findByRole('dialog')
+
+    const picker = within(dialog).getByLabelText('Connector') as HTMLSelectElement
+    // The stored reference is hidden, so the select falls back to the
+    // placeholder instead of a disabled option.
+    expect(picker.value).toBe('')
+    expect(within(dialog).queryByRole('option', { name: /Blocked provisioner/ })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('option', { name: 'Service CH (clickhouse)' })).toBeInTheDocument()
+
+    // The muted hint explains the placeholder and the select points at it.
+    const hint = within(dialog).getByText('Current connector is unavailable')
+    expect(hint).toBeInTheDocument()
+    expect(picker).toHaveAttribute('aria-describedby', hint.id)
+  })
+
+  test('a tool with a visible connector shows no unavailable hint', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([
+        { id: 'conn-svc', name: 'Service CH', type: 'clickhouse', can_use: true, is_provisioner: false, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+      http.get('/api/v1/tools', () => HttpResponse.json([
+        {
+          id: 't-sql',
+          org_id: 'org-1',
+          name: 'Service Query',
+          description: '',
+          type: 'sql_query',
+          schema: { type: 'object', properties: {} },
+          config: { connector_id: 'conn-svc', query: 'SELECT 1' },
+          require_confirmation: false,
+          created_by: 'user-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ])),
+    )
+    renderWithProviders(<ToolsPage />)
+    await screen.findByText('Service Query')
+
+    fireEvent.click(screen.getByLabelText('Edit tool'))
+    const dialog = await screen.findByRole('dialog')
+
+    const picker = within(dialog).getByLabelText('Connector') as HTMLSelectElement
+    expect(picker.value).toBe('conn-svc')
+    expect(within(dialog).queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+    expect(picker).not.toHaveAttribute('aria-describedby')
+  })
+
+  test('a new sql_query tool with no connector shows no unavailable hint', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([
+        { id: 'conn-svc', name: 'Service CH', type: 'clickhouse', can_use: true, is_provisioner: false, created_at: '2026-01-01T00:00:00Z' },
+        { id: 'conn-prov', name: 'Blocked provisioner', type: 'clickhouse', can_use: false, is_provisioner: true, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+    )
+    renderWithProviders(<ToolsPage />)
+    await screen.findByText('No tools yet')
+
+    fireEvent.click(screen.getAllByText('+ New Tool')[0])
+    const dialog = await screen.findByRole('dialog')
+    fireEvent.change(within(dialog).getByLabelText('Type'), { target: { value: 'sql_query' } })
+
+    // No stored reference yet — an empty value is never "unavailable".
+    const picker = within(dialog).getByLabelText('Connector') as HTMLSelectElement
+    expect(picker.value).toBe('')
+    expect(within(dialog).queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+  })
 })

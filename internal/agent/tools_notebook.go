@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/the-heaven-labs/aether/internal/executor"
+	"github.com/the-heaven-labs/aether/internal/favorites"
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
@@ -1707,6 +1708,11 @@ func makeDeleteNotebookHandler(db *pgxpool.Pool) ToolHandler {
 		}
 		if result.RowsAffected() == 0 {
 			return nil, fmt.Errorf("notebook not found")
+		}
+		// favorites.resource_id has no FK; clean the rows in the same
+		// transaction that removes the notebook they point at.
+		if err := favorites.DeleteFor(ctx.Context, tx, "notebook", []string{req.NotebookID}); err != nil {
+			return nil, fmt.Errorf("delete notebook: %w", err)
 		}
 		if err := tx.Commit(ctx.Context); err != nil {
 			return nil, fmt.Errorf("delete notebook: %w", err)

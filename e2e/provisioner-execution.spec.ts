@@ -3,12 +3,14 @@ import { registerAndOnboard } from './helpers'
 
 /**
  * End-to-end coverage for the provisioner connector execution block:
- * the block is on by default, the notebook picker offers the provisioner only
- * as a disabled target, the connectors page badges it, the warehouse settings
- * toggle persists, and enabling the override turns the provisioner into a
- * normal managed service (per-user ClickHouse identity, never the stored
- * credential). Because per-user identities are provisioned only for subjects
- * with at least one table grant, the test grants a table before running.
+ * the block is on by default, the notebook picker never lists the
+ * non-executable provisioner — not even when it is the stored selection, in
+ * which case the picker shows its placeholder — the connectors page badges
+ * it, the warehouse settings toggle persists, and enabling the override turns
+ * the provisioner into a normal managed service (per-user ClickHouse identity,
+ * never the stored credential). Because per-user identities are provisioned
+ * only for subjects with at least one table grant, the test grants a table
+ * before running.
  *
  * Requires a dev stack whose API runs with AETHER_CH_TABLE_PERMISSIONS=true
  * and a reachable ClickHouse. The API-side connector host defaults to
@@ -107,12 +109,27 @@ test.describe('Provisioner connector execution block', () => {
       expect(nbResp.ok()).toBeTruthy()
       notebookId = (await nbResp.json()).id
 
-      // With the override off, the notebook connector picker offers the
-      // provisioner only as a disabled, clearly-labelled target.
+      // With the override off, the notebook connector picker hides the
+      // non-executable provisioner from execution pickers entirely.
       await page.goto(`/notebooks/${notebookId}`)
       const blockedOption = page.getByLabel('Select a connector').locator(`option[value="${connectorId}"]`)
-      await expect(blockedOption).toContainText('(provisioner — no access)')
-      await expect(blockedOption).toBeDisabled()
+      await expect(blockedOption).toHaveCount(0)
+
+      // Even a pre-existing selection (assigned here through the API) is not
+      // listed: the stored reference falls back to the placeholder, and the
+      // select itself never shows a blank/mismatched value.
+      const assignResp = await request.put(`/api/v1/notebooks/${notebookId}`, {
+        headers,
+        data: { connector_id: connectorId },
+      })
+      expect(assignResp.ok()).toBeTruthy()
+      await page.reload()
+      const picker = page.getByLabel('Select a connector')
+      await expect(picker.locator(`option[value="${connectorId}"]`)).toHaveCount(0)
+      await expect(picker).toHaveValue('')
+      // The placeholder state is legible: a muted hint says the stored
+      // connector is unavailable until another one is picked.
+      await expect(page.getByText('Current connector is unavailable')).toBeVisible()
 
       // The connectors page badges it as a provisioner.
       await page.goto('/connectors')
