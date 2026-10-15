@@ -102,6 +102,18 @@ export interface WarehouseValidation {
   service_access_without_tables: WarehouseValidationSubject[]
 }
 
+export interface WarehouseProvisionerTestStep {
+  name: string
+  ok: boolean
+  error?: string
+}
+
+export interface WarehouseProvisionerTestResult {
+  ok: boolean
+  error?: string
+  steps?: WarehouseProvisionerTestStep[]
+}
+
 export function listWarehouses(): Promise<Warehouse[]> {
   return api.get<Warehouse[]>('/api/v1/warehouses')
 }
@@ -203,4 +215,10 @@ export function listNewTables(warehouseId: string, since?: string): Promise<Ware
 
 export function getWarehouseValidation(warehouseId: string): Promise<WarehouseValidation> {
   return api.get<WarehouseValidation>(`/api/v1/warehouses/${warehouseId}/validation`)
+}
+
+export function testWarehouseProvisioner(
+  warehouseId: string,
+): Promise<WarehouseProvisionerTestResult> {
+  return api.post<WarehouseProvisionerTestResult>(`/api/v1/warehouses/${warehouseId}/test`)
 }
