@@ -247,8 +247,8 @@ func TestRootAndHomeListQueryCount(t *testing.T) {
 	srv, counter := setupTestServerWithQueryCounter(t)
 	f := setupFolderBatchFixture(t, srv)
 
-	// 30 root folders the caller can see, plus 30 root notebooks: the root
-	// listing previously ran three to four checks per row.
+	// Root half: 30 root folders the caller can see, plus 30 root notebooks:
+	// the root listing previously ran three to four checks per row.
 	for i := 0; i < 30; i++ {
 		folderID := f.insertFolder(t, fmt.Sprintf("root-count-folder-%02d", i), nil, f.otherUserID)
 		f.grant(t, "folder", folderID, []string{"view", "edit"})
@@ -256,19 +256,7 @@ func TestRootAndHomeListQueryCount(t *testing.T) {
 		f.grant(t, "notebook", nb, []string{"view"})
 	}
 
-	// 29 other users' home folders, each with a subfolder holding a notebook
-	// the caller can see: the /home listing previously ran two queries per home
-	// folder plus one subfolder query each.
-	for i := 0; i < 29; i++ {
-		ownerID := insertUser(t, srv, fmt.Sprintf("home-count-owner-%02d-%d@test.com", i, time.Now().UnixNano()), "Home Owner")
-		addOrgMember(t, srv, f.orgID, ownerID, "editor")
-		homeID := f.insertHomeFolder(t, fmt.Sprintf("home-count-%02d", i), ownerID)
-		childID := f.insertFolder(t, fmt.Sprintf("home-count-child-%02d", i), &homeID, ownerID)
-		nb := f.insertNotebook(t, fmt.Sprintf("home-count-notebook-%02d", i), &childID, ownerID)
-		f.grant(t, "notebook", nb, []string{"view"})
-	}
-
-	countGet := func(path string) int64 {
+	countGet := func(f *folderBatchFixture, path string) int64 {
 		t.Helper()
 		counter.n.Store(0)
 		status, body := f.get(t, path)
@@ -276,14 +264,43 @@ func TestRootAndHomeListQueryCount(t *testing.T) {
 		return counter.n.Load()
 	}
 
-	countRoot := countGet("/api/v1/folders")
-	countHome := countGet("/api/v1/home")
-	t.Logf("query counts: root listing=%d, home listing=%d", countRoot, countHome)
-
+	countRoot := countGet(f, "/api/v1/folders")
 	require.Lessf(t, countRoot, int64(40),
 		"the root listing must resolve in a bounded number of queries (got %d)", countRoot)
-	require.Lessf(t, countHome, int64(40),
-		"the home listing must resolve in a bounded number of queries (got %d)", countHome)
+
+	// Home half: differential across two fresh orgs (5 vs 50 other homes), so
+	// a one-query-per-home regression cannot hide under an absolute bound.
+	// Each org's caller owns one home, so the listing sees 6 and 51 homes.
+	small := seedHomeCountOrg(t, srv, 5)
+	large := seedHomeCountOrg(t, srv, 50)
+	countHomeSmall := countGet(small, "/api/v1/home")
+	countHomeLarge := countGet(large, "/api/v1/home")
+	t.Logf("query counts: root listing=%d, home listing (5 homes)=%d, home listing (50 homes)=%d",
+		countRoot, countHomeSmall, countHomeLarge)
+
+	require.Lessf(t, countHomeSmall, int64(40),
+		"the home listing must resolve in a bounded number of queries (got %d)", countHomeSmall)
+	require.LessOrEqualf(t, countHomeLarge, countHomeSmall+4,
+		"query count must not grow with the home-folder count (5 homes: %d, 50 homes: %d)",
+		countHomeSmall, countHomeLarge)
+}
+
+// seedHomeCountOrg creates a fresh org whose caller sees `homes` other home
+// folders, each with a subfolder holding a notebook the caller can view, so
+// the /home visibility, ACL, and subfolder probes all do real work. It returns
+// the fixture for that org's caller.
+func seedHomeCountOrg(t *testing.T, srv *api.Server, homes int) *folderBatchFixture {
+	t.Helper()
+	f := setupFolderBatchFixture(t, srv)
+	for i := 0; i < homes; i++ {
+		ownerID := insertUser(t, srv, fmt.Sprintf("home-count-owner-%02d-%d@test.com", i, time.Now().UnixNano()), "Home Owner")
+		addOrgMember(t, srv, f.orgID, ownerID, "editor")
+		homeID := f.insertHomeFolder(t, fmt.Sprintf("home-count-%02d", i), ownerID)
+		childID := f.insertFolder(t, fmt.Sprintf("home-count-child-%02d", i), &homeID, ownerID)
+		nb := f.insertNotebook(t, fmt.Sprintf("home-count-notebook-%02d", i), &childID, ownerID)
+		f.grant(t, "notebook", nb, []string{"view"})
+	}
+	return f
 }
 
 // TestFolderContentsBatchListing pins the GET /folders/{id} semantics after the

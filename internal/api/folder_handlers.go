@@ -12,92 +12,6 @@ import (
 	"github.com/the-heaven-labs/aether/internal/models"
 )
 
-// permissionCheckSQL returns a SQL fragment that checks if the user has access to a resource.
-// The resource is referenced by the alias in resourceAlias (e.g., 'f' for folders).
-func permissionCheckSQL(resourceType, resourceAlias, userIDVar string, groupIDsVar string) string {
-	return fmt.Sprintf(`(
-		%s.owner_id = %s
-		OR EXISTS (
-			SELECT 1 FROM acl_entries 
-			WHERE resource_type = '%s' AND resource_id = %s.id 
-			AND subject_type = 'user' AND subject_id = %s::text
-		)
-		OR EXISTS (
-			SELECT 1 FROM acl_entries ae 
-			WHERE resource_type = '%s' AND resource_id = %s.id 
-			AND ae.subject_type = 'group' AND ae.subject_id = ANY(%s::text[])
-		)
-		OR EXISTS (
-			SELECT 1 FROM acl_entries 
-			WHERE resource_type = '%s' AND resource_id = %s.id 
-			AND subject_type = 'org_role' AND subject_id = 'everyone'
-		)
-	)`, resourceType, userIDVar, resourceType, resourceAlias, userIDVar, resourceType, resourceAlias, groupIDsVar, resourceType, resourceAlias)
-}
-
-// hasAccessibleContentSQL returns a SQL fragment that checks if a folder has any accessible content
-// directly inside it or at any depth in the descendant hierarchy (using a recursive CTE).
-func hasAccessibleContentSQL(folderAlias, userIDVar string, groupIDsVar string) string {
-	return fmt.Sprintf(`(
-		-- Direct accessible content in this folder
-		EXISTS (SELECT 1 FROM notebooks nb WHERE nb.folder_id = %[1]s.id AND nb.org_id = %[1]s.org_id AND (
-			EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = %[2]s::text)
-			OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%[3]s::text[]))
-			OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-		) LIMIT 1)
-		OR EXISTS (SELECT 1 FROM connectors c WHERE c.folder_id = %[1]s.id AND c.org_id = %[1]s.org_id AND (
-			EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = %[2]s::text)
-			OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%[3]s::text[]))
-			OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-		) LIMIT 1)
-		OR EXISTS (SELECT 1 FROM dashboards d WHERE d.folder_id = %[1]s.id AND d.org_id = %[1]s.org_id AND (
-			EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'user' AND subject_id = %[2]s::text)
-			OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%[3]s::text[]))
-			OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-		) LIMIT 1)
-		OR EXISTS (
-			WITH RECURSIVE desc_ids AS (
-				SELECT id FROM folders WHERE parent_id = %[1]s.id AND org_id = %[1]s.org_id
-				UNION ALL
-				SELECT f.id FROM folders f
-				JOIN desc_ids d ON f.parent_id = d.id
-				WHERE f.org_id = %[1]s.org_id
-			)
-			SELECT 1 FROM desc_ids d
-			WHERE (
-				EXISTS (
-					SELECT 1 FROM notebooks nb
-					WHERE nb.folder_id = d.id AND nb.org_id = %[1]s.org_id
-					AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = %[2]s::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%[3]s::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					)
-				)
-				OR EXISTS (
-					SELECT 1 FROM connectors c
-					WHERE c.folder_id = d.id AND c.org_id = %[1]s.org_id
-					AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = %[2]s::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%[3]s::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					)
-				)
-				OR EXISTS (
-					SELECT 1 FROM dashboards d2
-					WHERE d2.folder_id = d.id AND d2.org_id = %[1]s.org_id
-					AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = %[2]s::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY(%[3]s::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					)
-				)
-			)
-			LIMIT 1
-		)
-	)`, folderAlias, userIDVar, groupIDsVar)
-}
-
 // filterFoldersWithVisibleDescendantContent answers folderHasDescendantContent
 // for many folders in one query: one recursive walk seeded with all requested
 // folder ids, aggregated per seed. Callers use it for child folders that fail
@@ -105,6 +19,12 @@ func hasAccessibleContentSQL(folderAlias, userIDVar string, groupIDsVar string) 
 // because something inside it is visible. Admin mode is deliberately not
 // considered: callers only probe folders that failed resolution, which cannot
 // include an admin-mode-visible folder.
+//
+// Keep in sync with filterFoldersWithVisibleDescendantContentOrFolders: they
+// deliberately differ (this one is content-only and seed-inclusive; the other
+// is folder-aware and strictly-descendant), but they share the three content
+// EXISTS branches (notebooks/connectors/dashboards), which must change in
+// lockstep.
 //
 // The content predicates are lifted verbatim from folderHasDescendantContent:
 // every seed's descendants (the seed itself included) are probed for
@@ -284,6 +204,12 @@ func (s *Server) filterFoldersWithACLSubjectMatch(ctx context.Context, folderIDs
 // listing checks a direct ACL subject match separately). Admin mode is
 // deliberately not considered: callers only probe folders that failed
 // resolution, which cannot include an admin-mode-visible folder.
+//
+// Keep in sync with filterFoldersWithVisibleDescendantContent: they
+// deliberately differ (this one is folder-aware and strictly-descendant; the
+// other is content-only and seed-inclusive), but they share the three content
+// EXISTS branches (notebooks/connectors/dashboards), which must change in
+// lockstep.
 func (s *Server) filterFoldersWithVisibleDescendantContentOrFolders(ctx context.Context, ident permIdentity, folderIDs []string) (map[string]bool, error) {
 	unique := make([]string, 0, len(folderIDs))
 	byLower := make(map[string][]string, len(folderIDs))
@@ -497,6 +423,7 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 		}
 		aclMatch, err := s.filterFoldersWithACLSubjectMatch(ctx, candidates, ident.UserID, ident.GroupIDs)
 		if err != nil {
+			// Deliberate fail-loud: a resolution error must not read as "no access".
 			writeError(w, http.StatusInternalServerError, "query failed")
 			return
 		}
@@ -508,6 +435,7 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 		}
 		descendantMatch, err := s.filterFoldersWithVisibleDescendantContentOrFolders(ctx, ident, remaining)
 		if err != nil {
+			// Deliberate fail-loud: same policy for the descendant probe.
 			writeError(w, http.StatusInternalServerError, "query failed")
 			return
 		}
@@ -768,6 +696,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	}
 	folderPerms, err := s.resolveActions(ctx, ident, "folder", rootFolderIDs, []string{"edit", "delete", "manage"})
 	if err != nil {
+		// Deliberate fail-loud: the former per-item checks silently hid rows/flags on error.
 		writeError(w, http.StatusInternalServerError, "permission check failed")
 		return
 	}
@@ -1003,6 +932,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	}
 	folderPerms, err := s.resolveActions(ctx, ident, "folder", childFolderIDs, []string{"view", "edit", "delete", "manage"})
 	if err != nil {
+		// Deliberate fail-loud: the former per-item checks silently hid rows on error.
 		writeError(w, http.StatusInternalServerError, "permission check failed")
 		return
 	}
