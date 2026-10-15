@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/require"
 )
 
@@ -855,13 +856,15 @@ func TestFolderContentsSectionValidation(t *testing.T) {
 	require.False(t, page.HasMore)
 	require.Equal(t, 199, page.Offset)
 
-	// An offset at or past the visible total is a legitimate empty page; a
-	// positively overflowed offset degrades the same way instead of a 500.
+	// An offset at or past the visible total is a legitimate empty page, and
+	// the envelope echoes the effective offset — clamped to the total, so a
+	// positively overflowed request value never leaks into the response.
 	for _, offset := range []string{"205", "99999999999999999999"} {
 		page = f.getSectionPage(t, folderPath+"?type=notebook&limit=10&offset="+offset)
 		require.Equal(t, 205, page.Total, "offset=%s", offset)
 		require.Empty(t, page.Items, "offset=%s is at or past the end", offset)
 		require.False(t, page.HasMore, "offset=%s", offset)
+		require.Equal(t, 205, page.Offset, "offset=%s must echo the effective (clamped) offset", offset)
 	}
 }
 
@@ -974,4 +977,40 @@ func TestFolderContentsSectionRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &raw))
 	require.Contains(t, raw, "notebooks")
 	require.NotContains(t, raw, "items")
+}
+
+// TestFolderContentsSectionAccessGate pins the folder variant's read gate —
+// the one piece of logic this endpoint does not inherit from the full
+// listing: a folder unknown in the caller's org is 404 (a random UUID and
+// another org's folder alike, proving existence is checked before access),
+// and an existing folder with neither a grant nor visible descendant content
+// is 403, while the same folder becomes reachable once content inside is
+// visible (the deep-sharing branch), mirroring handleGetFolderContents.
+func TestFolderContentsSectionAccessGate(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	// Unknown folder in the org: a valid UUID with no row behind it → 404.
+	status, body := f.get(t, "/api/v1/folders/"+uuid.New().String()+"/contents?type=notebook")
+	require.Equal(t, http.StatusNotFound, status, string(body))
+
+	// Cross-org: another org's folder is unknown here, so it is 404 (never
+	// 403) even though the caller also holds no grant on it.
+	other := setupFolderBatchFixture(t, srv)
+	foreignFolder := other.insertFolder(t, "section gate foreign", nil, other.otherUserID)
+	status, body = f.get(t, "/api/v1/folders/"+foreignFolder+"/contents?type=notebook")
+	require.Equal(t, http.StatusNotFound, status, string(body))
+
+	// Existing folder, no grant, nothing visible inside → 403.
+	closedFolder := f.insertFolder(t, "section gate closed", nil, f.otherUserID)
+	status, body = f.get(t, "/api/v1/folders/"+closedFolder+"/contents?type=notebook")
+	require.Equal(t, http.StatusForbidden, status, string(body))
+
+	// The deep-sharing branch of the gate: a visible descendant unlocks the
+	// same folder without any grant on the folder itself.
+	shared := f.insertNotebook(t, "section gate shared notebook", &closedFolder, f.otherUserID)
+	f.grant(t, "notebook", shared, []string{"view"})
+	page := f.getSectionPage(t, "/api/v1/folders/"+closedFolder+"/contents?type=notebook")
+	require.Equal(t, 1, page.Total)
+	require.Equal(t, []string{shared}, rowIDs(page.Items))
 }

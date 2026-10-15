@@ -84,4 +84,15 @@ func TestFolderSectionOffsetHydratesPage(t *testing.T) {
 		require.Empty(t, page)
 		require.NotNil(t, page, "an empty page must still be a non-nil empty slice")
 	}
+
+	// A negative offset is defensively clamped to 0 (the load-more handlers
+	// reject it before calling): it must return the full first page — never a
+	// panic, and never a silently empty page.
+	page, total, hasMore, err = srv.folderNotebookSection(ctx, ident, &folder, -1, 2)
+	require.NoError(t, err)
+	require.Equal(t, 5, total)
+	require.True(t, hasMore)
+	require.Len(t, page, 2)
+	require.Equal(t, want[0], page[0].ID, "a negative offset clamps to the first page")
+	require.Equal(t, want[1], page[1].ID)
 }

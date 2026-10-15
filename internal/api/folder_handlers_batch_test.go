@@ -253,6 +253,26 @@ func TestFolderContentsQueryCount(t *testing.T) {
 	require.LessOrEqualf(t, countHidden, countSmall+8,
 		"100 hidden children must not add per-child probes (baseline: %d, hidden: %d)", countSmall, countHidden)
 
+	// The load-more path must share the bounded shape: one section page of the
+	// large folder may not hydrate per row (hydration stays one ANY($1)
+	// query), so its query count must not grow with the section size either.
+	countSectionPage := func(folderID string) int64 {
+		t.Helper()
+		counter.n.Store(0)
+		status, body := f.get(t, "/api/v1/folders/"+folderID+"/contents?type=notebook&limit=50")
+		require.Equal(t, http.StatusOK, status, string(body))
+		return counter.n.Load()
+	}
+	countSectionSmall := countSectionPage(smallFolder)
+	countSectionLarge := countSectionPage(largeFolder)
+	t.Logf("query counts: section page 12 notebooks=%d, section page 120 notebooks=%d",
+		countSectionSmall, countSectionLarge)
+	require.Lessf(t, countSectionSmall, int64(40),
+		"a load-more section page must resolve in a bounded number of queries (got %d)", countSectionSmall)
+	require.LessOrEqualf(t, countSectionLarge, countSectionSmall+8,
+		"the section page's query count must not grow with the item count (12 items: %d, 120 items: %d)",
+		countSectionSmall, countSectionLarge)
+
 	contents := f.listFolder(t, hiddenParent)
 	require.Empty(t, contents.Folders, "children with no visible content must stay hidden")
 }

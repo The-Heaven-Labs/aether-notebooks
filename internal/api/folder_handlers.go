@@ -435,6 +435,11 @@ func (s *Server) folderSectionIDs(ctx context.Context, table, orderBy, orgID str
 // Precondition: offset must be >= 0; the load-more handlers parse and reject
 // negative offsets before calling. A negative offset is clamped to 0
 // defensively anyway so a future caller cannot panic the slice below.
+//
+// Offset paging has one inherent race: a row that vanishes between this id
+// phase and hydration makes the returned page shorter than limit while
+// has_more stays computed from this phase, so clients must advance by
+// len(items) — not the requested limit — and dedupe appended ids.
 func folderSectionPageIDs(perms map[string]map[string]bool, orderedIDs []string, offset, limit int) (pageIDs []string, total int, hasMore bool) {
 	if offset < 0 {
 		offset = 0
@@ -1062,6 +1067,24 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, contents)
 }
 
+// loadFolderForRead loads one org-scoped folder for a read handler. A missing
+// row comes back as pgx.ErrNoRows (callers map it to 404), any other error as
+// itself (500), so existence-before-access ordering is structural and every
+// read path answers a cross-org folder identically to an unknown one.
+func (s *Server) loadFolderForRead(ctx context.Context, orgID, folderID string) (models.Folder, error) {
+	var folder models.Folder
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, org_id, parent_id, name, is_home, owner_id, created_by, created_at, updated_at
+		 FROM folders WHERE id = $1 AND org_id = $2`,
+		folderID, orgID,
+	).Scan(&folder.ID, &folder.OrgID, &folder.ParentID, &folder.Name, &folder.IsHome,
+		&folder.OwnerID, &folder.CreatedBy, &folder.CreatedAt, &folder.UpdatedAt)
+	if err != nil {
+		return models.Folder{}, err
+	}
+	return folder, nil
+}
+
 // @Summary Get folder contents
 // @Description Get all items in a folder (subfolders, notebooks, connectors, dashboards)
 // @Tags folders
@@ -1076,14 +1099,8 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	folderID := r.PathValue("id")
 	ctx := r.Context()
 
-	var folder models.Folder
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, parent_id, name, is_home, owner_id, created_by, created_at, updated_at
-		 FROM folders WHERE id = $1 AND org_id = $2`,
-		folderID, claims.OrgID,
-	).Scan(&folder.ID, &folder.OrgID, &folder.ParentID, &folder.Name, &folder.IsHome,
-		&folder.OwnerID, &folder.CreatedBy, &folder.CreatedAt, &folder.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	folder, err := s.loadFolderForRead(ctx, claims.OrgID, folderID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "folder not found")
 		return
 	}
@@ -1231,7 +1248,9 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 
 // folderSectionResponse is the load-more envelope: one section page, the exact
 // visible total of the whole section, whether more visible rows follow the
-// page, and the requested offset echoed back.
+// page, and the effective offset — the requested offset, clamped to the
+// visible total so a past-the-end ask echoes the total instead of a raw
+// request value (e.g. an overflowed MaxInt64).
 type folderSectionResponse struct {
 	Items   any  `json:"items"`
 	Total   int  `json:"total"`
@@ -1306,11 +1325,17 @@ func (s *Server) writeFolderSection(w http.ResponseWriter, ctx context.Context, 
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
+	// Echo the effective offset: an ask at or past the visible total reads
+	// back as the total, so the envelope never carries a past-the-end value.
+	effectiveOffset := offset
+	if effectiveOffset > total {
+		effectiveOffset = total
+	}
 	writeJSON(w, http.StatusOK, folderSectionResponse{
 		Items:   items,
 		Total:   total,
 		HasMore: hasMore,
-		Offset:  offset,
+		Offset:  effectiveOffset,
 	})
 }
 
@@ -1324,8 +1349,10 @@ func (s *Server) writeFolderSection(w http.ResponseWriter, ctx context.Context, 
 // @Param limit query int false "Page size (default 50, max 200)"
 // @Success 200 {object} object
 // @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
 // @Failure 403 {object} map[string]string
 // @Failure 404 {object} map[string]string
+// @Failure 500 {object} map[string]string
 // @Security BearerAuth
 // @Router /folders/{id}/contents [get]
 func (s *Server) handleGetFolderContentsSection(w http.ResponseWriter, r *http.Request) {
@@ -1338,16 +1365,11 @@ func (s *Server) handleGetFolderContentsSection(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// The folder must exist in the org, exactly like the full listing.
+	// The folder must exist in the org, exactly like the full listing; the
+	// shared loader keeps both read paths' 404/500 mapping identical.
 	folderID := r.PathValue("id")
-	var folder models.Folder
-	err := s.db.Pool.QueryRow(ctx,
-		`SELECT id, org_id, parent_id, name, is_home, owner_id, created_by, created_at, updated_at
-		 FROM folders WHERE id = $1 AND org_id = $2`,
-		folderID, claims.OrgID,
-	).Scan(&folder.ID, &folder.OrgID, &folder.ParentID, &folder.Name, &folder.IsHome,
-		&folder.OwnerID, &folder.CreatedBy, &folder.CreatedAt, &folder.UpdatedAt)
-	if err == pgx.ErrNoRows {
+	folder, err := s.loadFolderForRead(ctx, claims.OrgID, folderID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "folder not found")
 		return
 	}
@@ -1393,6 +1415,7 @@ func (s *Server) handleGetFolderContentsSection(w http.ResponseWriter, r *http.R
 // @Success 200 {object} object
 // @Failure 400 {object} map[string]string
 // @Failure 401 {object} map[string]string
+// @Failure 500 {object} map[string]string
 // @Security BearerAuth
 // @Router /folders/contents [get]
 func (s *Server) handleListRootContentsSection(w http.ResponseWriter, r *http.Request) {
