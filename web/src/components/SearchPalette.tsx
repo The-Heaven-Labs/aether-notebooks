@@ -185,7 +185,11 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
       sections.push({ key: group.resource_type, label: TYPE_LABELS[group.resource_type], rows })
     }
   } else {
-    const favorites = favoriteGroups.flatMap((group) => group.results).slice(0, 5)
+    const favorites = favoriteGroups
+      .flatMap((group) => group.results)
+      // Same guard as search rows: an unknown type has no icon and no route.
+      .filter((result) => isKnownType(result.resource_type))
+      .slice(0, 5)
     if (favorites.length) {
       sections.push({ key: 'favorites', label: 'Favorites', rows: favorites.map(summaryRow) })
     }
@@ -224,7 +228,6 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
   rows.forEach((row, index) => rowIndex.set(row, index))
 
   const listboxId = `${idPrefix}-listbox`
-  const inputId = `${idPrefix}-input`
   const optionId = (index: number) => `${idPrefix}-opt-${index}`
 
   // Keep the active row in view while arrowing through the list.
@@ -268,6 +271,9 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
         setActiveIndex(0)
         return
       }
+      // Rows may still be the previous query's kept placeholder while the
+      // flushed query loads; opening one would navigate to a stale match.
+      if (search.isPlaceholderData) return
       const row = rows[active < 0 ? 0 : active]
       if (!row) return
       e.preventDefault()
@@ -387,7 +393,6 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
           <Search size={16} style={styles.searchIcon} aria-hidden="true" />
           <input
             ref={inputRef}
-            id={inputId}
             type="text"
             role="combobox"
             aria-expanded={rows.length > 0}
@@ -407,7 +412,7 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
         <div
           id={listboxId}
           role={rows.length ? 'listbox' : undefined}
-          aria-labelledby={rows.length ? inputId : undefined}
+          aria-label={rows.length ? 'Search results' : undefined}
           style={styles.results}
         >
           {renderBody()}

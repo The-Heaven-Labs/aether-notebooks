@@ -58,6 +58,12 @@ function typeQuery(value: string) {
   fireEvent.change(screen.getByLabelText('Search'), { target: { value } })
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
+
 beforeEach(() => {
   searchRequests.length = 0
   navigateMock.mockClear()
@@ -108,6 +114,43 @@ describe('SearchPalette', () => {
     await screen.findByRole('option', { name: /Revenue by region/ })
     fireEvent.keyDown(input, { key: 'Enter' })
     expect(navigateMock).toHaveBeenCalledWith('/notebooks/nb-1')
+  })
+
+  test('a second Enter cannot open kept placeholder rows while the flush query loads', async () => {
+    const two = deferred<void>()
+    server.use(
+      http.get('/api/v1/search', async ({ request }) => {
+        const q = new URL(request.url).searchParams.get('q') ?? ''
+        if (q === 'two') await two.promise
+        return HttpResponse.json({
+          query: q,
+          groups: [group('notebook', [
+            q === 'two' ? summary('notebook', 'nb-two', 'Second result') : summary('notebook', 'nb-one', 'First result'),
+          ])],
+        })
+      }),
+    )
+    renderPalette()
+    const input = screen.getByLabelText('Search')
+    typeQuery('one')
+    await screen.findByRole('option', { name: /First result/ })
+
+    // Flush "two"; its fetch is held open, so "one" stays as placeholder data.
+    fireEvent.change(input, { target: { value: 'two' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(screen.getByRole('option', { name: /First result/ })).toBeInTheDocument()
+
+    // A second Enter must not open the kept, stale "one" row.
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(navigateMock).not.toHaveBeenCalled()
+
+    await act(async () => {
+      two.resolve()
+      await two.promise
+    })
+    await screen.findByRole('option', { name: /Second result/ })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(navigateMock).toHaveBeenCalledWith('/notebooks/nb-two')
   })
 
   test('renders groups in API order with highlighted matches and meta', async () => {
@@ -162,7 +205,9 @@ describe('SearchPalette', () => {
     await screen.findByRole('option', { name: /Notebook hit/ })
 
     const input = screen.getByLabelText('Search')
-    const listbox = screen.getByRole('listbox')
+    // The listbox carries its own accessible name (the combobox input's label
+    // does not carry through aria-labelledby in Chromium's AX tree).
+    const listbox = screen.getByRole('listbox', { name: 'Search results' })
     const options = screen.getAllByRole('option')
     expect(options).toHaveLength(3) // two results + View all results
     expect(options[2].textContent).toContain('View all results')
