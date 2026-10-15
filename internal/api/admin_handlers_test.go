@@ -203,6 +203,22 @@ func TestAdminDeleteUser(t *testing.T) {
 	).Scan(&folderID)
 	require.NoError(t, err)
 
+	// A child folder not owned by the target: it only goes away through the
+	// parent_id cascade. Both folders are favorited by another user (the
+	// platform admin), so the delete must clean those favorites rows too —
+	// favorites carry no FK.
+	var childFolderID string
+	err = s.DB().Pool.QueryRow(ctx,
+		`INSERT INTO folders (org_id, parent_id, name, created_by)
+		 VALUES ($1, $2, 'Child Folder', $3) RETURNING id`, testOrgID, folderID, testUserID,
+	).Scan(&childFolderID)
+	require.NoError(t, err)
+	_, err = s.DB().Pool.Exec(ctx, `
+		INSERT INTO favorites (user_id, org_id, resource_type, resource_id)
+		VALUES ($1, $2, 'folder', $3), ($1, $2, 'folder', $4)`,
+		testUserID, testOrgID, folderID, childFolderID)
+	require.NoError(t, err)
+
 	_, err = s.DB().Pool.Exec(ctx,
 		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 		 VALUES ($1, 'folder', $2, 'user', $3, ARRAY['view','create','edit','manage','delete'])`,
@@ -265,6 +281,14 @@ func TestAdminDeleteUser(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 	err = s.DB().Pool.QueryRow(ctx, `SELECT COUNT(*) FROM folders WHERE owner_id = $1`, targetID).Scan(&count)
+	require.NoError(t, err)
+	assert.Equal(t, 0, count)
+	// Other users' favorites on the deleted folders (including the one only
+	// reachable through the cascade) are cleaned in the same transaction.
+	err = s.DB().Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM favorites WHERE user_id = $1 AND org_id = $2 AND resource_type = 'folder'
+		   AND resource_id IN ($3::uuid, $4::uuid)`,
+		testUserID, testOrgID, folderID, childFolderID).Scan(&count)
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
 	err = s.DB().Pool.QueryRow(ctx,

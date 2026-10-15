@@ -99,13 +99,15 @@ func TestPurgeTrashRemovesFavoritesOfPurgedResources(t *testing.T) {
 	}
 }
 
-// TestPurgeTrashRemovesFavoritesOfPurgedFolderSubtrees pins the recursive
-// cleanup: purging a past-retention folder removes favorites for every folder
-// the cascade deletes AND for the resources that lived inside the subtree.
-// The resources themselves survive with folder_id NULL (ON DELETE SET NULL),
-// but the folder that held them is gone, so their favorites are cleaned in
-// the same purge.
-func TestPurgeTrashRemovesFavoritesOfPurgedFolderSubtrees(t *testing.T) {
+// TestPurgeTrashRemovesFolderFavoritesInPurgedSubtree pins the recursive
+// cleanup's boundary: purging a past-retention folder removes the favorites
+// for every folder the cascade deletes, and ONLY for folders. The resources
+// that lived inside the subtree are not deleted — their folder_id falls back
+// to NULL (ON DELETE SET NULL) and they survive at the root — so their
+// favorites stay: the invariant is "favorites exist only for resources that
+// still exist", and a detached resource still does. Deleting their favorites
+// would be user-data loss for live resources.
+func TestPurgeTrashRemovesFolderFavoritesInPurgedSubtree(t *testing.T) {
 	db := setupPurgeTestDB(t)
 	ctx := context.Background()
 	f := seedPurgeTestOrg(t, db)
@@ -191,8 +193,9 @@ func TestPurgeTrashRemovesFavoritesOfPurgedFolderSubtrees(t *testing.T) {
 	grandchildID := seedFolder("Live Grandchild", &childID, nil)
 	unrelatedID := seedFolder("Live Unrelated", nil, nil)
 
-	// Resources inside the subtree across every folder-aware type, plus
-	// controls outside it.
+	// Resources inside the subtree across every folder-aware type (their
+	// favorites must survive: the purge only detaches them), plus controls
+	// outside it.
 	insideNotebook := seedNotebook("Inside Notebook", &childID)
 	insideConnector := seedConnector(&childID)
 	insideDashboard := seedDashboard(&grandchildID)
@@ -222,18 +225,19 @@ func TestPurgeTrashRemovesFavoritesOfPurgedFolderSubtrees(t *testing.T) {
 		want         int
 	}{
 		{"folder", parentID, 0}, {"folder", childID, 0}, {"folder", grandchildID, 0},
-		{"notebook", insideNotebook, 0}, {"connector", insideConnector, 0},
-		{"dashboard", insideDashboard, 0}, {"agent", insideAgent, 0},
-		{"model_config", insideModelConfig, 0}, {"skill", insideSkill, 0},
-		{"mcp_server", insideMCPServer, 0}, {"tool", insideTool, 0},
+		// Detached resources keep their favorites: they still exist.
+		{"notebook", insideNotebook, 1}, {"connector", insideConnector, 1},
+		{"dashboard", insideDashboard, 1}, {"agent", insideAgent, 1},
+		{"model_config", insideModelConfig, 1}, {"skill", insideSkill, 1},
+		{"mcp_server", insideMCPServer, 1}, {"tool", insideTool, 1},
 		{"notebook", outsideNotebook, 1}, {"folder", unrelatedID, 1},
 	} {
 		require.Equal(t, r.want, countFavoritesFor(t, db, r.resourceType, r.id),
 			"favorites for %s %s", r.resourceType, r.id)
 	}
 
-	// The subtree resources survive (folder_id falls back to NULL); only
-	// their favorites were cleaned.
+	// The subtree resources survive the folder purge with folder_id NULL;
+	// their favorites stay because the resource still exists (at the root).
 	var folderID *string
 	require.NoError(t, db.Pool.QueryRow(ctx,
 		`SELECT folder_id FROM notebooks WHERE id = $1`, insideNotebook).Scan(&folderID))

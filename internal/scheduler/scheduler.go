@@ -257,25 +257,15 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 	// Folders are the exception: deleting a past-retention folder cascades to
 	// its whole subtree (folders.parent_id ON DELETE CASCADE), including live
 	// children, so a RETURNING id from the purge predicate alone would miss
-	// their pending rows. The recursive CTE collects every folder the cascade
-	// removes and the delete consumes pending rows for all of them.
+	// their pending rows and favorites. The recursive CTE collects every
+	// folder the cascade removes; the delete consumes pending rows for all of
+	// them and returns the ids whose favorites the helper then cleans.
 	//
-	// The subtree's resources are collected in the same statement — the
-	// pre-delete snapshot still shows their folder chain — so favorites for
-	// the whole subtree (folders plus the resources that lived inside it) go
-	// with it. Resources themselves survive with folder_id NULL
-	// (ON DELETE SET NULL).
-	var (
-		purgedFolders       []string
-		subtreeNotebooks    []string
-		subtreeConnectors   []string
-		subtreeDashboards   []string
-		subtreeAgents       []string
-		subtreeModelConfigs []string
-		subtreeSkills       []string
-		subtreeMCPServers   []string
-		subtreeTools        []string
-	)
+	// Resources inside the subtree are NOT deleted — their folder_id falls
+	// back to NULL (ON DELETE SET NULL) and they survive at the root — so their
+	// favorites stay: the invariant is "favorites exist only for resources
+	// that still exist", and a detached resource still does.
+	var purgedFolders []string
 	if err := s.db.Pool.QueryRow(ctx, `
 		WITH RECURSIVE subtree AS (
 			SELECT id FROM folders
@@ -288,37 +278,12 @@ func (s *Scheduler) purgeTrash(ctx context.Context) {
 			DELETE FROM pending_acl_entries
 			WHERE resource_type = 'folder' AND resource_id IN (SELECT id FROM purged)
 		)
-		SELECT
-			COALESCE((SELECT array_agg(id::text) FROM subtree), ARRAY[]::text[]),
-			COALESCE((SELECT array_agg(id::text) FROM notebooks WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
-			COALESCE((SELECT array_agg(id::text) FROM connectors WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
-			COALESCE((SELECT array_agg(id::text) FROM dashboards WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
-			COALESCE((SELECT array_agg(id::text) FROM agents WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
-			COALESCE((SELECT array_agg(id::text) FROM model_configs WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
-			COALESCE((SELECT array_agg(id::text) FROM skills WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
-			COALESCE((SELECT array_agg(id::text) FROM mcp_servers WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[]),
-			COALESCE((SELECT array_agg(id::text) FROM tools WHERE folder_id IN (SELECT id FROM subtree)), ARRAY[]::text[])
-	`).Scan(&purgedFolders, &subtreeNotebooks, &subtreeConnectors, &subtreeDashboards,
-		&subtreeAgents, &subtreeModelConfigs, &subtreeSkills, &subtreeMCPServers, &subtreeTools); err != nil {
+		SELECT COALESCE(array_agg(id::text), ARRAY[]::text[]) FROM purged
+	`).Scan(&purgedFolders); err != nil {
 		slog.Warn("scheduler: purge trash", "table", "folders", "error", err)
 	}
-	for _, cleanup := range []struct {
-		resourceType string
-		ids          []string
-	}{
-		{"folder", purgedFolders},
-		{"notebook", subtreeNotebooks},
-		{"connector", subtreeConnectors},
-		{"dashboard", subtreeDashboards},
-		{"agent", subtreeAgents},
-		{"model_config", subtreeModelConfigs},
-		{"skill", subtreeSkills},
-		{"mcp_server", subtreeMCPServers},
-		{"tool", subtreeTools},
-	} {
-		if err := favorites.DeleteFor(ctx, s.db.Pool, cleanup.resourceType, cleanup.ids); err != nil {
-			slog.Warn("scheduler: purge trash favorites", "table", "folders", "resource_type", cleanup.resourceType, "error", err)
-		}
+	if err := favorites.DeleteFor(ctx, s.db.Pool, "folder", purgedFolders); err != nil {
+		slog.Warn("scheduler: purge trash favorites", "table", "folders", "error", err)
 	}
 }
 
