@@ -5,7 +5,8 @@ import { http, HttpResponse } from 'msw'
 import type { ReactNode } from 'react'
 import { server } from '../test/server'
 import { favoritesFixture, favoriteSummary } from '../test/handlers'
-import { FAVORITE_RESOURCE_TYPES, useFavorites, useToggleFavorite } from './useFavorites'
+import { FAVORITE_RESOURCE_TYPES } from '../types'
+import { useFavorites, useToggleFavorite } from './useFavorites'
 
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -186,5 +187,104 @@ describe('useToggleFavorite', () => {
     })
     await waitFor(() => expect(result.current.first.isPending).toBe(false))
     expect(putCalls).toBe(1)
+  })
+
+  test('a failed toggle does not drop a concurrent success on another resource', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const failA = deferred<void>()
+      const { handlers, counts, hold } = favoritesFixture()
+      server.use(...handlers)
+      server.use(
+        http.put('/api/v1/favorites/notebook/nb-a', async () => {
+          await failA.promise
+          return HttpResponse.json({ error: 'boom' }, { status: 500 })
+        }),
+        http.put('/api/v1/favorites/notebook/nb-b', async () => {
+          hold('notebook', 'nb-b')
+          return new HttpResponse(null, { status: 204 })
+        }),
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(
+        () => ({
+          favorites: useFavorites(),
+          a: useToggleFavorite('notebook', 'nb-a'),
+          b: useToggleFavorite('notebook', 'nb-b'),
+        }),
+        { wrapper: Wrapper },
+      )
+      await waitFor(() => expect(result.current.favorites.isLoading).toBe(false))
+      expect(counts.gets).toBe(1)
+
+      act(() => { result.current.a.toggle() })
+      act(() => { result.current.b.toggle() })
+      // B succeeds; wait until its post-success refetch has landed, so A's
+      // rollback runs strictly after B is reconciled with the server.
+      await waitFor(() => expect(counts.gets).toBe(2))
+      await waitFor(() => expect(result.current.b.isPending).toBe(false))
+
+      await act(async () => {
+        failA.resolve()
+        await failA.promise
+      })
+      await waitFor(() => expect(result.current.a.isPending).toBe(false))
+
+      expect(result.current.favorites.ids.notebook.has('nb-a')).toBe(false)
+      expect(result.current.favorites.ids.notebook.has('nb-b')).toBe(true)
+    } finally {
+      consoleError.mockRestore()
+    }
+  })
+
+  test('two concurrent failures leave neither resource favorited', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      const failA = deferred<void>()
+      const failB = deferred<void>()
+      server.use(...favoritesFixture().handlers)
+      server.use(
+        http.put('/api/v1/favorites/notebook/nb-a', async () => {
+          await failA.promise
+          return HttpResponse.json({ error: 'boom' }, { status: 500 })
+        }),
+        http.put('/api/v1/favorites/notebook/nb-b', async () => {
+          await failB.promise
+          return HttpResponse.json({ error: 'boom' }, { status: 500 })
+        }),
+      )
+      const { Wrapper } = createWrapper()
+      const { result } = renderHook(
+        () => ({
+          favorites: useFavorites(),
+          a: useToggleFavorite('notebook', 'nb-a'),
+          b: useToggleFavorite('notebook', 'nb-b'),
+        }),
+        { wrapper: Wrapper },
+      )
+      await waitFor(() => expect(result.current.favorites.isLoading).toBe(false))
+
+      act(() => { result.current.a.toggle() })
+      act(() => { result.current.b.toggle() })
+      await waitFor(() => expect(result.current.favorites.ids.notebook.has('nb-a')).toBe(true))
+      await waitFor(() => expect(result.current.favorites.ids.notebook.has('nb-b')).toBe(true))
+
+      // A fails first, then B: B's rollback must not resurrect A.
+      await act(async () => {
+        failA.resolve()
+        await failA.promise
+      })
+      await waitFor(() => expect(result.current.a.isPending).toBe(false))
+      await act(async () => {
+        failB.resolve()
+        await failB.promise
+      })
+      await waitFor(() => expect(result.current.b.isPending).toBe(false))
+
+      expect(result.current.favorites.ids.notebook.has('nb-a')).toBe(false)
+      expect(result.current.favorites.ids.notebook.has('nb-b')).toBe(false)
+    } finally {
+      consoleError.mockRestore()
+    }
   })
 })

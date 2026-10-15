@@ -681,6 +681,14 @@ input[type="color"] {
   color: var(--accent);
 }
 
+/* Active state that must survive the generic hover swap to primary ink
+   (FavoriteButton's filled bookmark): accent ink stays, hover background
+   wash unchanged. */
+.row-action--pinned,
+.row-action--pinned:hover:not(:disabled) {
+  color: var(--accent);
+}
+
 .row-action--danger:hover:not(:disabled) {
   background: var(--error-light);
   border-color: var(--error-border);

@@ -1,23 +1,8 @@
 import { useCallback } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { FAVORITE_RESOURCE_TYPES } from '../types'
 import type { FavoriteGroup, FavoriteResourceType, FavoritesResponse } from '../types'
-
-/**
- * Canonical favorites group order, mirroring the API's `favoriteResourceTypes`
- * (folder → … → tool). Every id map built here carries all nine keys.
- */
-export const FAVORITE_RESOURCE_TYPES = [
-  'folder',
-  'notebook',
-  'dashboard',
-  'connector',
-  'agent',
-  'model_config',
-  'skill',
-  'mcp_server',
-  'tool',
-] as const satisfies readonly FavoriteResourceType[]
 
 /** React Query key for the caller's favorites listing. */
 export const favoritesQueryKey = ['favorites'] as const
@@ -49,7 +34,12 @@ export interface FavoritesData {
 }
 
 const EMPTY_GROUPS: FavoriteGroup[] = []
-const EMPTY_IDS: FavoriteIDs = favoriteIDs(EMPTY_GROUPS)
+/**
+ * Shared empty stand-in returned while the listing loads. The record is
+ * frozen and its Sets are read-only by convention: internal writes always
+ * replace a clone of the toggled type's Set and never mutate these.
+ */
+const EMPTY_IDS: FavoriteIDs = Object.freeze(favoriteIDs(EMPTY_GROUPS))
 
 export interface FavoritesState {
   groups: FavoriteGroup[]
@@ -135,19 +125,21 @@ export function useToggleFavorite(resourceType: FavoriteResourceType, resourceId
         : api.put<void>(favoriteURL(resourceType, resourceId)),
     onMutate: async (isFavorite) => {
       await queryClient.cancelQueries({ queryKey: favoritesQueryKey })
-      const previous = queryClient.getQueryData<FavoritesData>(favoritesQueryKey)
       queryClient.setQueryData<FavoritesData>(favoritesQueryKey, (data) =>
         data
           ? { groups: data.groups, ids: withFavorite(data.ids, resourceType, resourceId, !isFavorite) }
           : data,
       )
-      return { previous }
     },
-    onError: (err, isFavorite, context) => {
-      // A first toggle against an unloaded cache has nothing to restore.
-      if (context?.previous !== undefined) {
-        queryClient.setQueryData(favoritesQueryKey, context.previous)
-      }
+    onError: (err, isFavorite) => {
+      // Id-local functional rollback: restore only this resource, so a
+      // concurrent toggle on another resource keeps its optimistic or
+      // server-confirmed entry (a whole-cache snapshot would drop it).
+      queryClient.setQueryData<FavoritesData>(favoritesQueryKey, (data) =>
+        data
+          ? { groups: data.groups, ids: withFavorite(data.ids, resourceType, resourceId, isFavorite) }
+          : data,
+      )
       console.error(isFavorite ? 'Failed to remove favorite:' : 'Failed to add favorite:', err)
     },
     onSuccess: () => {

@@ -24,10 +24,7 @@ export function FavoriteButton({ resourceType, resourceId, className }: Favorite
   return (
     <button
       type="button"
-      className={['row-action', className].filter(Boolean).join(' ')}
-      // Pin the active ink inline: the generic row-action hover swap to
-      // primary ink would read as "about to remove" the bookmark.
-      style={isFavorite ? { color: 'var(--accent)' } : undefined}
+      className={['row-action', isFavorite ? 'row-action--pinned' : '', className].filter(Boolean).join(' ')}
       aria-pressed={isFavorite}
       aria-label={label}
       title={label}

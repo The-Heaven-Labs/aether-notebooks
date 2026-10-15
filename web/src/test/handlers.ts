@@ -1,5 +1,5 @@
 import { http, HttpResponse } from 'msw'
-import { FAVORITE_RESOURCE_TYPES } from '../hooks/useFavorites'
+import { FAVORITE_RESOURCE_TYPES } from '../types'
 import type { FavoriteResourceType, FavoriteResult, Folder, FolderContents } from '../types'
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────

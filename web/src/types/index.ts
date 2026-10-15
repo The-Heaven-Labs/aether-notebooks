@@ -475,18 +475,22 @@ export interface FolderContents {
 
 /**
  * Catalog resource types that can be favorited, in the API's canonical group
- * order (folder → … → tool). Mirrors the backend's `favoriteResourceTypes`.
+ * order (folder → … → tool). Mirrors the backend's `favoriteResourceTypes`;
+ * `FavoriteResourceType` derives from this tuple so the two cannot drift.
  */
-export type FavoriteResourceType =
-  | 'folder'
-  | 'notebook'
-  | 'dashboard'
-  | 'connector'
-  | 'agent'
-  | 'model_config'
-  | 'skill'
-  | 'mcp_server'
-  | 'tool'
+export const FAVORITE_RESOURCE_TYPES = [
+  'folder',
+  'notebook',
+  'dashboard',
+  'connector',
+  'agent',
+  'model_config',
+  'skill',
+  'mcp_server',
+  'tool',
+] as const
+
+export type FavoriteResourceType = (typeof FAVORITE_RESOURCE_TYPES)[number]
 
 /** One favorites-listing row (mirrors the API's `resourceSummary`). */
 export interface FavoriteResult {
