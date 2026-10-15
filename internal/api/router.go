@@ -600,6 +600,11 @@ func (s *Server) routes() {
 	// Recent route
 	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))
 
+	// Favorite routes
+	s.mux.Handle("GET /api/v1/favorites", authMW(http.HandlerFunc(s.handleListFavorites)))
+	s.mux.Handle("PUT /api/v1/favorites/{resource_type}/{resource_id}", authMW(http.HandlerFunc(s.handlePutFavorite)))
+	s.mux.Handle("DELETE /api/v1/favorites/{resource_type}/{resource_id}", authMW(http.HandlerFunc(s.handleDeleteFavorite)))
+
 	// Trash routes
 	s.mux.Handle("GET /api/v1/trash", authMW(http.HandlerFunc(s.handleListTrash)))
 	s.mux.Handle("POST /api/v1/trash/restore", authMW(http.HandlerFunc(s.handleRestoreFromTrash)))
