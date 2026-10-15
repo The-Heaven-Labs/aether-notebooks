@@ -550,3 +550,200 @@ func TestResolveActionsContract(t *testing.T) {
 		}
 	})
 }
+
+// TestFilterFoldersWithVisibleDescendantContent covers the set-based sibling
+// of folderHasDescendantContent: one recursive walk seeded with many folder
+// ids, aggregated per seed. The single-folder function stays the source of
+// truth, so every scenario asserts both directions of parity.
+func TestFilterFoldersWithVisibleDescendantContent(t *testing.T) {
+	ctx := context.Background()
+	s, orgID, owner, member := setupFolderInheritance(t, "descendant-content")
+	ident, err := s.permIdentity(ctx, &auth.Claims{UserID: member.String(), OrgID: orgID.String(), Role: "editor"})
+	require.NoError(t, err)
+
+	parentID := insertInheritanceFolder(t, s, orgID, owner, nil, "Descendant Content Parent")
+	child1 := insertInheritanceFolder(t, s, orgID, owner, &parentID, "Descendant Content Child 1")
+	child2 := insertInheritanceFolder(t, s, orgID, owner, &parentID, "Descendant Content Child 2")
+	child3 := insertInheritanceFolder(t, s, orgID, owner, &parentID, "Descendant Content Child 3")
+
+	// child1 holds content, but nothing the member can see: the folder must
+	// stay hidden. The check deliberately ignores owner_id and deleted_at, so
+	// an un-ACL'd live notebook is exactly the "content exists, no access"
+	// shape.
+	insertInheritanceNotebook(t, s, orgID, owner, child1)
+
+	// child2 holds a notebook with a direct user view grant.
+	notebookID := insertInheritanceNotebook(t, s, orgID, owner, child2)
+	grantBatchACL(t, s, orgID, "notebook", notebookID, "user", member.String(), []string{"view"})
+
+	// child3 is empty itself; its grandchild holds a connector the member can
+	// use, proving the walk goes past one level.
+	grandchild3 := insertInheritanceFolder(t, s, orgID, owner, &child3, "Descendant Content Grandchild 3")
+	connectorID := insertInheritanceConnector(t, s, orgID, owner, grandchild3)
+	grantBatchACL(t, s, orgID, "connector", connectorID, "user", member.String(), []string{"use"})
+
+	ids := []string{parentID.String(), child1.String(), child2.String(), child3.String()}
+	got, err := s.filterFoldersWithVisibleDescendantContent(ctx, ident, ids)
+	require.NoError(t, err)
+	require.Len(t, got, len(ids), "every requested id must have an entry")
+	require.False(t, got[child1.String()], "child1's only notebook is not visible")
+	require.True(t, got[child2.String()], "child2 holds a directly granted notebook")
+	require.True(t, got[child3.String()], "child3 reaches the grant on its grandchild's connector")
+	require.True(t, got[parentID.String()], "the parent reaches both visible children")
+
+	// Parity with the single-folder function: identical verdicts for every id.
+	for _, id := range ids {
+		want, err := s.folderHasDescendantContent(ctx, id, ident.OrgID, ident.UserID, ident.GroupIDs)
+		require.NoError(t, err)
+		require.Equalf(t, want, got[id], "folder %s: batch=%v single=%v", id, got[id], want)
+	}
+}
+
+// TestFilterFoldersWithVisibleDescendantContentContract pins the batch
+// function's contract: empty input, unknown / cross-org / duplicate ids, and
+// group + Everyone grants (including a non-member's view of them).
+func TestFilterFoldersWithVisibleDescendantContentContract(t *testing.T) {
+	ctx := context.Background()
+	s, orgID, owner, member := setupFolderInheritance(t, "descendant-content-contract")
+	ident, err := s.permIdentity(ctx, &auth.Claims{UserID: member.String(), OrgID: orgID.String(), Role: "editor"})
+	require.NoError(t, err)
+
+	t.Run("empty input returns an empty map", func(t *testing.T) {
+		got, err := s.filterFoldersWithVisibleDescendantContent(ctx, ident, nil)
+		require.NoError(t, err)
+		require.Empty(t, got)
+
+		got, err = s.filterFoldersWithVisibleDescendantContent(ctx, ident, []string{})
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
+
+	t.Run("unknown and cross-org ids fail closed", func(t *testing.T) {
+		otherOrgID := insertSessionPermOrg(t, s, "descendant-content-cross")
+		otherOwner := insertSessionPermUser(t, s, "descendant-content-cross-owner")
+		addSessionPermMember(t, s, otherOrgID, otherOwner, "editor")
+		crossFolder := insertInheritanceFolder(t, s, otherOrgID, otherOwner, nil, "Descendant Content Cross")
+		crossNotebook := insertInheritanceNotebook(t, s, otherOrgID, otherOwner, crossFolder)
+		grantBatchACL(t, s, otherOrgID, "notebook", crossNotebook, "user", member.String(), []string{"view"})
+
+		unknownID := uuid.New().String()
+		got, err := s.filterFoldersWithVisibleDescendantContent(ctx, ident, []string{unknownID, crossFolder.String()})
+		require.NoError(t, err)
+		require.Len(t, got, 2)
+		require.False(t, got[unknownID])
+		require.False(t, got[crossFolder.String()], "another org's visible content must not leak")
+
+		for _, id := range []string{unknownID, crossFolder.String()} {
+			want, err := s.folderHasDescendantContent(ctx, id, ident.OrgID, ident.UserID, ident.GroupIDs)
+			require.NoError(t, err)
+			require.Equal(t, want, got[id], "folder %s", id)
+		}
+	})
+
+	t.Run("requested ids appear once even when duplicated", func(t *testing.T) {
+		visibleChild := insertInheritanceFolder(t, s, orgID, owner, nil, "Descendant Content Duplicate")
+		notebookID := insertInheritanceNotebook(t, s, orgID, owner, visibleChild)
+		grantBatchACL(t, s, orgID, "notebook", notebookID, "user", member.String(), []string{"view"})
+
+		got, err := s.filterFoldersWithVisibleDescendantContent(ctx, ident,
+			[]string{visibleChild.String(), visibleChild.String(), visibleChild.String()})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.True(t, got[visibleChild.String()])
+	})
+
+	t.Run("nil group list stays a valid subject set", func(t *testing.T) {
+		// Real callers build their group slice with a loop and therefore pass
+		// nil when the caller has no groups; that must mean "no groups", not a
+		// failed query.
+		child := insertInheritanceFolder(t, s, orgID, owner, nil, "Descendant Content Nil Groups")
+		notebookID := insertInheritanceNotebook(t, s, orgID, owner, child)
+		grantBatchACL(t, s, orgID, "notebook", notebookID, "user", member.String(), []string{"view"})
+
+		want, err := s.folderHasDescendantContent(ctx, child.String(), orgID.String(), member.String(), nil)
+		require.NoError(t, err)
+		require.True(t, want)
+
+		got, err := s.filterFoldersWithVisibleDescendantContent(ctx,
+			permIdentity{UserID: member.String(), OrgID: orgID.String()}, []string{child.String()})
+		require.NoError(t, err)
+		require.Equal(t, want, got[child.String()])
+	})
+
+	t.Run("soft-deleted folders and content keep their former verdict", func(t *testing.T) {
+		// The single-folder query has no deleted_at filters anywhere: a trashed
+		// descendant folder, or a trashed notebook with a live ACL row, still
+		// counts. The batch version deliberately preserves that; if trashed
+		// content should stop counting, both functions change together.
+		trashedFolder := insertInheritanceFolder(t, s, orgID, owner, nil, "Descendant Content Trashed Folder")
+		folderNotebook := insertInheritanceNotebook(t, s, orgID, owner, trashedFolder)
+		grantBatchACL(t, s, orgID, "notebook", folderNotebook, "user", member.String(), []string{"view"})
+		_, err := s.db.Pool.Exec(ctx, `UPDATE folders SET deleted_at = now() WHERE id = $1`, trashedFolder.String())
+		require.NoError(t, err)
+
+		liveFolder := insertInheritanceFolder(t, s, orgID, owner, nil, "Descendant Content Trashed Notebook")
+		trashedNotebook := insertInheritanceNotebook(t, s, orgID, owner, liveFolder)
+		grantBatchACL(t, s, orgID, "notebook", trashedNotebook, "user", member.String(), []string{"view"})
+		_, err = s.db.Pool.Exec(ctx, `UPDATE notebooks SET deleted_at = now() WHERE id = $1`, trashedNotebook.String())
+		require.NoError(t, err)
+
+		ids := []string{trashedFolder.String(), liveFolder.String()}
+		got, err := s.filterFoldersWithVisibleDescendantContent(ctx, ident, ids)
+		require.NoError(t, err)
+		require.True(t, got[trashedFolder.String()], "the former query never filters deleted folders")
+		require.True(t, got[liveFolder.String()], "the former query never filters deleted content")
+
+		for _, id := range ids {
+			want, err := s.folderHasDescendantContent(ctx, id, ident.OrgID, ident.UserID, ident.GroupIDs)
+			require.NoError(t, err)
+			require.Equal(t, want, got[id], "folder %s", id)
+		}
+	})
+
+	t.Run("group and Everyone grants resolve true and honor membership", func(t *testing.T) {
+		groupID := uuid.New()
+		_, err := s.db.Pool.Exec(ctx,
+			`INSERT INTO groups (id, org_id, name) VALUES ($1, $2, $3)`,
+			groupID.String(), orgID.String(), "Descendant Content Group")
+		require.NoError(t, err)
+		_, err = s.db.Pool.Exec(ctx,
+			`INSERT INTO group_members (group_id, user_id) VALUES ($1, $2)`,
+			groupID.String(), member.String())
+		require.NoError(t, err)
+
+		groupChild := insertInheritanceFolder(t, s, orgID, owner, nil, "Descendant Content Group Child")
+		groupNotebook := insertInheritanceNotebook(t, s, orgID, owner, groupChild)
+		grantBatchACL(t, s, orgID, "notebook", groupNotebook, "group", groupID.String(), []string{"view"})
+
+		everyoneChild := insertInheritanceFolder(t, s, orgID, owner, nil, "Descendant Content Everyone Child")
+		everyoneDashboard := insertInheritanceDashboard(t, s, orgID, owner, everyoneChild)
+		grantBatchACL(t, s, orgID, "dashboard", everyoneDashboard, "org_role", "everyone", []string{"view"})
+
+		groupIdent, err := s.permIdentity(ctx, &auth.Claims{UserID: member.String(), OrgID: orgID.String(), Role: "editor"})
+		require.NoError(t, err)
+		require.Contains(t, groupIdent.GroupIDs, groupID.String())
+
+		ids := []string{groupChild.String(), everyoneChild.String()}
+		got, err := s.filterFoldersWithVisibleDescendantContent(ctx, groupIdent, ids)
+		require.NoError(t, err)
+		require.True(t, got[groupChild.String()], "the member belongs to the granted group")
+		require.True(t, got[everyoneChild.String()])
+
+		// A stranger sees the Everyone grant but not the group grant.
+		strangerID := insertSessionPermUser(t, s, "descendant-content-stranger")
+		addSessionPermMember(t, s, orgID, strangerID, "editor")
+		strangerIdent, err := s.permIdentity(ctx, &auth.Claims{UserID: strangerID.String(), OrgID: orgID.String(), Role: "editor"})
+		require.NoError(t, err)
+
+		strangerGot, err := s.filterFoldersWithVisibleDescendantContent(ctx, strangerIdent, ids)
+		require.NoError(t, err)
+		require.False(t, strangerGot[groupChild.String()])
+		require.True(t, strangerGot[everyoneChild.String()])
+
+		for _, id := range ids {
+			want, err := s.folderHasDescendantContent(ctx, id, strangerIdent.OrgID, strangerIdent.UserID, strangerIdent.GroupIDs)
+			require.NoError(t, err)
+			require.Equal(t, want, strangerGot[id], "folder %s for the stranger", id)
+		}
+	})
+}

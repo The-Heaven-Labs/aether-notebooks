@@ -98,81 +98,120 @@ func hasAccessibleContentSQL(folderAlias, userIDVar string, groupIDsVar string) 
 	)`, folderAlias, userIDVar, groupIDsVar)
 }
 
-// folderHasDescendantContent checks if any notebook, connector, or dashboard
-// directly in folderID or in any descendant folder has an ACL entry granting access to the user.
-func (s *Server) folderHasDescendantContent(ctx context.Context, folderID, orgID, userID string, groupIDs []string) (bool, error) {
-	var has bool
-	err := s.db.Pool.QueryRow(ctx, `
-		SELECT EXISTS (
+// filterFoldersWithVisibleDescendantContent answers folderHasDescendantContent
+// for many folders in one query: one recursive walk seeded with all requested
+// folder ids, aggregated per seed. Callers use it for child folders that fail
+// their own view check, to decide whether the folder is still worth showing
+// because something inside it is visible. Admin mode is deliberately not
+// considered: callers only probe folders that failed resolution, which cannot
+// include an admin-mode-visible folder.
+//
+// The content predicates are lifted verbatim from folderHasDescendantContent:
+// every seed's descendants (the seed itself included) are probed for
+// notebooks, connectors, and dashboards whose folder_id matches and that carry
+// an ACL entry for the caller's user id, one of their groups, or Everyone. As
+// in the single-folder query, owner_id, deleted_at, and the granted actions
+// are deliberately not consulted — an ACL row's subject match alone counts.
+func (s *Server) filterFoldersWithVisibleDescendantContent(ctx context.Context, ident permIdentity, folderIDs []string) (map[string]bool, error) {
+	// Dedupe the requested seeds: the result map keys dedupe anyway, but the
+	// query should see each id once. Every requested id gets a false entry
+	// before any probe runs, so the caller always sees a uniform shape.
+	unique := make([]string, 0, len(folderIDs))
+	byLower := make(map[string][]string, len(folderIDs))
+	result := make(map[string]bool, len(folderIDs))
+	for _, id := range folderIDs {
+		if _, seen := result[id]; seen {
+			continue
+		}
+		unique = append(unique, id)
+		result[id] = false
+		lower := strings.ToLower(id)
+		byLower[lower] = append(byLower[lower], id)
+	}
+	if len(unique) == 0 {
+		return result, nil
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		WITH RECURSIVE descendants(seed_id, id, parent_id) AS (
+			SELECT id, id, parent_id FROM folders WHERE id = ANY($1::uuid[])
+			UNION ALL
+			SELECT d.seed_id, f.id, f.parent_id
+			FROM folders f
+			JOIN descendants d ON f.parent_id = d.id
+			WHERE f.org_id = $2
+		)
+		SELECT DISTINCT d.seed_id::text
+		FROM descendants d
+		WHERE
+		EXISTS (
 			SELECT 1 FROM notebooks nb
-			WHERE nb.folder_id = $1 AND nb.org_id = $2
+			WHERE nb.folder_id = d.id AND nb.org_id = $2
 			AND (
 				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
 				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
 				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
 			)
 			LIMIT 1
-		) OR EXISTS (
+		)
+		OR EXISTS (
 			SELECT 1 FROM connectors c
-			WHERE c.folder_id = $1 AND c.org_id = $2
+			WHERE c.folder_id = d.id AND c.org_id = $2
 			AND (
 				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
 				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
 				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
 			)
 			LIMIT 1
-		) OR EXISTS (
+		)
+		OR EXISTS (
 			SELECT 1 FROM dashboards d2
-			WHERE d2.folder_id = $1 AND d2.org_id = $2
+			WHERE d2.folder_id = d.id AND d2.org_id = $2
 			AND (
 				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
 				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
 				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
 			)
 			LIMIT 1
-		) OR EXISTS (
-			WITH RECURSIVE desc_ids AS (
-				SELECT id FROM folders WHERE parent_id = $1 AND org_id = $2
-				UNION ALL
-				SELECT f.id FROM folders f
-				JOIN desc_ids d ON f.parent_id = d.id
-				WHERE f.org_id = $2
-			)
-			SELECT 1 FROM desc_ids d
-			WHERE (
-				EXISTS (
-					SELECT 1 FROM notebooks nb
-					WHERE nb.folder_id = d.id AND nb.org_id = $2
-					AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					)
-				)
-				OR EXISTS (
-					SELECT 1 FROM connectors c
-					WHERE c.folder_id = d.id AND c.org_id = $2
-					AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					)
-				)
-				OR EXISTS (
-					SELECT 1 FROM dashboards d2
-					WHERE d2.folder_id = d.id AND d2.org_id = $2
-					AND (
-						EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
-						OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-						OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-					)
-				)
-			)
-			LIMIT 1
-		)`,
-		folderID, orgID, userID, groupIDs,
-	).Scan(&has)
-	return has, err
+		)
+	`, unique, ident.OrgID, ident.UserID, ident.GroupIDs)
+	if err != nil {
+		return nil, fmt.Errorf("descendant content query: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var seedID string
+		if err := rows.Scan(&seedID); err != nil {
+			return nil, fmt.Errorf("scan descendant content seed: %w", err)
+		}
+		// The query returns canonical lowercase uuid text while a requested id
+		// may carry an uppercase spelling (path parameters); Postgres parses
+		// both to the same uuid, so match case-insensitively to keep the
+		// single-folder wrapper equivalent to its former query.
+		for _, id := range byLower[strings.ToLower(seedID)] {
+			result[id] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("descendant content rows: %w", err)
+	}
+	return result, nil
+}
+
+// folderHasDescendantContent checks if any notebook, connector, or dashboard
+// directly in folderID or in any descendant folder has an ACL entry granting access to the user.
+// It is a thin wrapper over filterFoldersWithVisibleDescendantContent so the
+// single-folder and batched answers can never drift.
+func (s *Server) folderHasDescendantContent(ctx context.Context, folderID, orgID, userID string, groupIDs []string) (bool, error) {
+	got, err := s.filterFoldersWithVisibleDescendantContent(ctx, permIdentity{
+		UserID:   userID,
+		OrgID:    orgID,
+		GroupIDs: groupIDs,
+	}, []string{folderID})
+	if err != nil {
+		return false, err
+	}
+	return got[folderID], nil
 }
 
 type folderNotebook struct {
