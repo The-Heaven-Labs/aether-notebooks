@@ -5,8 +5,10 @@ import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
 import { Search } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
-import { api } from '../api/client'
-import { useResourceSearch } from '../hooks/useResourceSearch'
+import { api, ApiError } from '../api/client'
+import {
+  MAX_SEARCH_QUERY_LENGTH, SEARCH_QUERY_TOO_LONG_MESSAGE, useResourceSearch,
+} from '../hooks/useResourceSearch'
 import { useFavorites } from '../hooks/useFavorites'
 import { useFocusTrap } from '../hooks/useFocusTrap'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
@@ -255,9 +257,12 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
   const renderBody = () => {
     if (searching) {
       if (search.isError) {
+        const message = search.error instanceof ApiError && search.error.status === 400
+          ? SEARCH_QUERY_TOO_LONG_MESSAGE
+          : 'Search failed'
         return (
           <div style={styles.noticeLine}>
-            <span>Search failed</span>
+            <span>{message}</span>
             <button type="button" style={styles.retry} onClick={() => { void search.refetch() }}>
               Retry
             </button>
@@ -341,6 +346,7 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
             aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
+            maxLength={MAX_SEARCH_QUERY_LENGTH}
             style={styles.input}
           />
           <Kbd>Esc</Kbd>
@@ -400,7 +406,8 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     background: 'none',
     border: 'none',
-    outline: 'none',
+    // No `outline: none`: the global `input:focus-visible` ring is the input's
+    // focus affordance.
     color: 'var(--text-primary)',
     fontSize: 14,
     fontFamily: 'var(--font-sans)',

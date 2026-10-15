@@ -1,12 +1,16 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { Link, useSearchParams } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { Bookmark, Search } from 'lucide-react'
+import { ApiError } from '../api/client'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { FavoriteButton } from '../components/FavoriteButton'
 import { SectionHeader } from '../components/SectionHeader'
 import { Skeleton } from '../components/Skeleton'
-import { useResourceSearch } from '../hooks/useResourceSearch'
+import { useFavorites } from '../hooks/useFavorites'
+import {
+  MAX_SEARCH_QUERY_LENGTH, SEARCH_QUERY_TOO_LONG_MESSAGE, useResourceSearch,
+} from '../hooks/useResourceSearch'
 import { HighlightedText } from '../utils/highlight'
 import { isKnownType, resourceHref, TYPE_ICONS, TYPE_LABELS } from '../utils/resources'
 import type { FavoriteResourceType, ResourceSummary } from '../types'
@@ -15,6 +19,16 @@ import type { FavoriteResourceType, ResourceSummary } from '../types'
 const PAGE_LIMIT = 20
 /** Keystroke settle time before the URL's `q` (and the request) updates. */
 const TYPING_DEBOUNCE_MS = 200
+
+/**
+ * A debounce write's marker in the router location state. Read back
+ * shape-checked: the state slot is shared with every other navigator.
+ */
+function ownWriteToken(state: unknown): number | null {
+  if (typeof state !== 'object' || state === null) return null
+  const value = (state as { searchWrite?: unknown }).searchWrite
+  return typeof value === 'number' ? value : null
+}
 
 /**
  * `/search` results page. The URL is the state: `q` (the query), `type` (one
@@ -26,6 +40,7 @@ export function SearchPage() {
   useEffect(() => { document.title = 'Search — Aether Notebooks' }, [])
 
   const [searchParams, setSearchParams] = useSearchParams()
+  const { key: locationKey, state: locationState } = useLocation()
   const urlQuery = searchParams.get('q') ?? ''
   const typeParam = searchParams.get('type') ?? ''
   const activeType: FavoriteResourceType | null = isKnownType(typeParam) ? typeParam : null
@@ -33,10 +48,16 @@ export function SearchPage() {
 
   const [inputValue, setInputValue] = useState(urlQuery)
   // Mirrors the sync effects read: the import effect reacts to location changes
-  // only (a keystroke must never re-trigger it), and the debounce timer checks
+  // only (a keystroke must never re-trigger it) and the debounce timer checks
   // the settled URL at fire time.
   const inputValueRef = useRef(inputValue)
   const urlQueryRef = useRef(urlQuery)
+  // Monotonic token stamped on every debounce write's navigation state. The
+  // router commits navigations inside `startTransition`, so our own write's
+  // commit can land after a newer keystroke; the import effect must recognize
+  // that commit as ours and never import it over the keystroke.
+  const writeTokenSeq = useRef(0)
+  const lastWriteToken = useRef<number | null>(null)
 
   // Declared before both sync effects so they read fresh mirrors in the commit
   // that changed them.
@@ -46,18 +67,25 @@ export function SearchPage() {
   }, [inputValue, urlQuery])
 
   // The URL is the source of truth. Any location change — a chip push, a
-  // back/forward, a deep link, the palette's "View all results" — wins over an
-  // un-debounced draft; importing also cancels the pending debounce timer via
-  // the input state change. This must fire on *every* location change, not just
-  // on `q` changes: backing to an entry whose `q` matches the last committed
-  // value leaves `urlQuery` identical, and a value-only gate would let the
-  // pending timer overwrite that entry (cancelling Back). Typing cannot
-  // re-trigger it — its own replace write lands with `q` already equal to the
-  // input — so the two can never loop.
+  // back/forward, a deep link, the palette's "View all results", a pop between
+  // two entries with an identical search string — wins over an un-debounced
+  // draft; importing also cancels the pending debounce timer via the input
+  // state change. The location *entry* (`key`) is the dep, not just the search
+  // string: `useSearchParams` memoizes on `location.search`, so an
+  // identical-URL pop changes neither `urlQuery` nor `searchParams` identity
+  // and a string-gated effect would let the pending timer rewrite that entry,
+  // cancelling Back. Our own writes are recognized by their navigation-state
+  // token and skipped (consumed once, so a later pop to that entry imports
+  // normally); typing cannot re-trigger anything, so the two can never loop.
   useEffect(() => {
+    const token = ownWriteToken(locationState)
+    if (token !== null && token === lastWriteToken.current) {
+      lastWriteToken.current = null
+      return
+    }
     if (urlQuery === inputValueRef.current.trim()) return
     setInputValue(urlQuery)
-  }, [urlQuery, searchParams])
+  }, [urlQuery, searchParams, locationKey, locationState])
 
   // 200ms debounce: the input stays instant, the URL (and the request keyed by
   // it) follows the settled value, replace-style. Skipping when the URL has
@@ -67,12 +95,14 @@ export function SearchPage() {
     const next = inputValue.trim()
     const timer = window.setTimeout(() => {
       if (next === urlQueryRef.current) return
+      const token = ++writeTokenSeq.current
+      lastWriteToken.current = token
       setSearchParams((current) => {
         const params = new URLSearchParams(current)
         if (next) params.set('q', next)
         else params.delete('q')
         return params
-      }, { replace: true })
+      }, { replace: true, state: { searchWrite: token } })
     }, TYPING_DEBOUNCE_MS)
     return () => window.clearTimeout(timer)
   }, [inputValue, setSearchParams])
@@ -83,18 +113,32 @@ export function SearchPage() {
     favorites: favoritesOnly,
     limit: PAGE_LIMIT,
   })
+  const { ids: favoriteIds, isLoading: favoritesLoading, isError: favoritesError } = useFavorites()
 
-  const searching = urlQuery.length > 0
+  const searching = urlQuery.trim().length > 0
   const filtersActive = activeType !== null || favoritesOnly
   // Defensive type guards, same as the palette: a retired type would have no
   // icon and no route, so it is skipped rather than rendered broken.
-  const groups = (search.data?.groups ?? [])
+  const serverGroups = (search.data?.groups ?? [])
     .filter((group) => isKnownType(group.resource_type))
     .map((group) => ({
       ...group,
       results: group.results.filter((result) => isKnownType(result.resource_type)),
     }))
     .filter((group) => group.results.length > 0)
+  // Under favorites=1 the server already restricts the response, but a toggle
+  // flipped in this session must drop the row (and the count) immediately:
+  // filter through the shared favorites cache. While that cache loads or
+  // errors, the server's response is trusted as-is — a missing listing must
+  // never blank results that are demonstrably there.
+  const groups = favoritesOnly && !favoritesLoading && !favoritesError
+    ? serverGroups
+        .map((group) => ({
+          ...group,
+          results: group.results.filter((result) => favoriteIds[result.resource_type].has(result.id)),
+        }))
+        .filter((group) => group.results.length > 0)
+    : serverGroups
   const resultCount = groups.reduce((count, group) => count + group.results.length, 0)
   const hasMore = groups.some((group) => group.has_more)
   // Keep the highlight terms in step with the rendered rows while a debounced
@@ -108,6 +152,9 @@ export function SearchPage() {
   if (activeType && !chipTypes.includes(activeType)) chipTypes.unshift(activeType)
 
   const setType = (type: FavoriteResourceType | null) => {
+    // Clicking the active chip is a no-op: never push a duplicate history entry
+    // (it would also be indistinguishable from the current one).
+    if (type === activeType) return
     setSearchParams((current) => {
       const params = new URLSearchParams(current)
       if (type) params.set('type', type)
@@ -151,9 +198,13 @@ export function SearchPage() {
       )
     }
     if (search.isError) {
+      // The API's only user-correctable rejection here is an over-long query.
+      const message = search.error instanceof ApiError && search.error.status === 400
+        ? SEARCH_QUERY_TOO_LONG_MESSAGE
+        : 'Search failed.'
       return (
-        <div style={styles.errorCard}>
-          <span>Search failed.</span>
+        <div role="alert" style={styles.errorCard}>
+          <span>{message}</span>
           <button type="button" style={styles.retryBtn} onClick={() => { void search.refetch() }}>
             Retry
           </button>
@@ -169,10 +220,12 @@ export function SearchPage() {
     }
     if (!groups.length) {
       return (
-        <EmptyState
-          title={`No matches for “${urlQuery}”`}
-          text="Try a different word or a shorter query."
-        />
+        <div style={styles.noticeWrap}>
+          <EmptyState
+            title={`No matches for “${urlQuery}”`}
+            text="Try a different word or a shorter query."
+          />
+        </div>
       )
     }
     return (
@@ -199,6 +252,13 @@ export function SearchPage() {
   }
 
   const showChrome = searching || filtersActive
+  // The live region announces outcomes; an idle, loading, or failed search has
+  // none, so it renders empty (the element stays mounted to keep announcing).
+  const statusText = !searching || search.isError || (search.isLoading && !search.data)
+    ? ''
+    : resultCount === 0
+      ? 'No results'
+      : `${resultCount}${hasMore ? '+' : ''} result${resultCount === 1 && !hasMore ? '' : 's'}`
 
   return (
     <AppShell>
@@ -216,52 +276,47 @@ export function SearchPage() {
             autoFocus={!searching}
             autoComplete="off"
             spellCheck={false}
+            maxLength={MAX_SEARCH_QUERY_LENGTH}
             style={styles.input}
           />
         </div>
 
         {showChrome && (
-          <>
-            <div style={styles.chips} role="group" aria-label="Filter results">
+          <div style={styles.chips} role="group" aria-label="Filter results">
+            <button
+              type="button"
+              style={{ ...styles.chip, ...(activeType === null ? styles.chipActive : {}) }}
+              aria-pressed={activeType === null}
+              onClick={() => setType(null)}
+            >
+              All
+            </button>
+            {chipTypes.map((type) => (
               <button
+                key={type}
                 type="button"
-                style={{ ...styles.chip, ...(activeType === null ? styles.chipActive : {}) }}
-                aria-pressed={activeType === null}
-                onClick={() => setType(null)}
+                style={{ ...styles.chip, ...(activeType === type ? styles.chipActive : {}) }}
+                aria-pressed={activeType === type}
+                onClick={() => setType(type)}
               >
-                All
+                {TYPE_LABELS[type]}
               </button>
-              {chipTypes.map((type) => (
-                <button
-                  key={type}
-                  type="button"
-                  style={{ ...styles.chip, ...(activeType === type ? styles.chipActive : {}) }}
-                  aria-pressed={activeType === type}
-                  onClick={() => setType(type)}
-                >
-                  {TYPE_LABELS[type]}
-                </button>
-              ))}
-              <button
-                type="button"
-                style={{ ...styles.chip, ...(favoritesOnly ? styles.chipActive : {}) }}
-                aria-pressed={favoritesOnly}
-                onClick={toggleFavorites}
-              >
-                <Bookmark size={12} fill={favoritesOnly ? 'currentColor' : 'none'} aria-hidden="true" />
-                Favorites
-              </button>
-            </div>
-
-            {/* AT announcement of result changes; also the visible count.
-                Only a ran query has an outcome to announce. */}
-            {searching && !search.isError && !(search.isLoading && !search.data) && (
-              <p style={styles.status} role="status" aria-live="polite">
-                {resultCount === 0 ? 'No results' : `${resultCount} result${resultCount === 1 ? '' : 's'}`}
-              </p>
-            )}
-          </>
+            ))}
+            <button
+              type="button"
+              style={{ ...styles.chip, ...(favoritesOnly ? styles.chipActive : {}) }}
+              aria-pressed={favoritesOnly}
+              onClick={toggleFavorites}
+            >
+              <Bookmark size={12} fill={favoritesOnly ? 'currentColor' : 'none'} aria-hidden="true" />
+              Favorites
+            </button>
+          </div>
         )}
+
+        {/* Always mounted: AT hears every count change (and the empty→filled
+            transitions), not just the first result set. */}
+        <p style={styles.status} role="status" aria-live="polite">{statusText}</p>
 
         {renderBody()}
       </div>
@@ -327,7 +382,8 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     background: 'none',
     border: 'none',
-    outline: 'none',
+    // No `outline: none` here: the global `input:focus-visible` ring is the
+    // primary control's focus affordance.
     color: 'var(--text-primary)',
     fontSize: 16,
     fontFamily: 'var(--font-sans)',
@@ -423,6 +479,9 @@ const styles: Record<string, React.CSSProperties> = {
   rowFavorite: { flexShrink: 0, display: 'inline-flex' },
   more: { margin: '4px 0 0', fontSize: 12, color: 'var(--text-muted)' },
   hint: { margin: 0, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' },
+  // The no-results title names the query, which can be one long unbroken token
+  // (a pasted SQL line): let it break anywhere instead of overflowing the page.
+  noticeWrap: { overflowWrap: 'anywhere' },
   skeletonWrap: { display: 'flex', flexDirection: 'column', gap: 8 },
   errorCard: {
     display: 'flex',

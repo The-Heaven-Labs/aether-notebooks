@@ -46,18 +46,26 @@ function useSearchGroups(groups: SearchGroup[]) {
 
 /** Renders the search URL state so tests can assert on it. */
 function LocationProbe() {
-  const { pathname, search } = useLocation()
-  return <div data-testid="location">{pathname}{search}</div>
+  const { pathname, search, key } = useLocation()
+  return (
+    <>
+      <div data-testid="location">{pathname}{search}</div>
+      <div data-testid="location-key">{key}</div>
+    </>
+  )
 }
 
 /** Pushes/restores history entries the way the browser back button would. */
 function HistoryProbe() {
   const navigate = useNavigate()
+  const { pathname, search } = useLocation()
   return (
     <>
       <button type="button" onClick={() => navigate(-1)}>probe back</button>
       <button type="button" onClick={() => navigate(1)}>probe forward</button>
       <button type="button" onClick={() => navigate('/search?q=other')}>probe other</button>
+      {/* Pushes a duplicate of the current URL, like a repeated navigation. */}
+      <button type="button" onClick={() => navigate(pathname + search)}>probe same</button>
     </>
   )
 }
@@ -75,6 +83,10 @@ function renderSearch(initialPath = '/search') {
 
 function locationSearch(): string {
   return screen.getByTestId('location').textContent ?? ''
+}
+
+function locationKey(): string {
+  return screen.getByTestId('location-key').textContent ?? ''
 }
 
 function searchInput(): HTMLInputElement {
@@ -204,6 +216,8 @@ describe('SearchPage', () => {
     await screen.findByRole('link', { name: /Revenue by region/ })
 
     expect(screen.getByText('More matches — refine your search')).toBeInTheDocument()
+    // The count carries the truncation: at least one more match exists.
+    expect(screen.getByRole('status')).toHaveTextContent('1+ results')
   })
 
   test('no results names the query', async () => {
@@ -261,6 +275,7 @@ describe('SearchPage', () => {
   })
 
   test('deep-linked filter params seed the chips and the request', async () => {
+    server.use(...favoritesFixture([{ type: 'notebook', id: 'nb-1' }]).handlers)
     useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')])])
     renderSearch('/search?q=rev&type=notebook&favorites=1')
     await screen.findByRole('link', { name: /Revenue by region/ })
@@ -373,9 +388,114 @@ describe('SearchPage', () => {
     expect(await screen.findByText('No results')).toBeInTheDocument()
     expect(screen.getByText('Type a query to search, or clear the filters above.')).toBeInTheDocument()
     expect(screen.queryByText('Search the workspace')).toBeNull()
-    // Nothing ran, so there is no outcome to announce.
-    expect(screen.queryByRole('status')).toBeNull()
+    // Nothing ran, so the live region is mounted but silent.
+    expect(screen.getByRole('status').textContent).toBe('')
     expect(screen.getByRole('button', { name: 'Notebooks' })).toHaveAttribute('aria-pressed', 'true')
     expect(searchRequests).toHaveLength(0)
+  })
+
+  test('a same-URL pop restores the destination and discards the draft', async () => {
+    useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')])])
+    renderSearch('/search?q=revenue')
+    await screen.findByRole('link', { name: /Revenue by region/ })
+    const originalKey = locationKey()
+
+    // A duplicate entry for the identical URL: the search string never
+    // changes, so only the location entry distinguishes the two.
+    fireEvent.click(screen.getByRole('button', { name: 'probe same' }))
+    await waitFor(() => expect(locationKey()).not.toBe(originalKey))
+    expect(locationSearch()).toBe('/search?q=revenue')
+
+    // Same race as the chip-entry test, but with an identical search string:
+    // a search-string-gated import cannot see this navigation at all.
+    typeQuery('raced2')
+    fireEvent.click(screen.getByRole('button', { name: 'probe back' }))
+    await waitFor(() => expect(locationKey()).toBe(originalKey))
+    expect(searchInput()).toHaveValue('revenue')
+
+    // Well past the debounce: the pending timer was cancelled with the import,
+    // so Back is not cancelled by a late `?q=raced2` write.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    })
+    expect(locationSearch()).toBe('/search?q=revenue')
+    expect(searchInput()).toHaveValue('revenue')
+  })
+
+  test('clicking the active chip never pushes a duplicate history entry', async () => {
+    useSearchGroups([
+      group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')]),
+      group('dashboard', [summary('dashboard', 'd-1', 'Revenue dashboard')]),
+    ])
+    renderSearch('/search?q=revenue')
+    await screen.findByRole('link', { name: /Revenue by region/ })
+
+    // Already active: "All" is a no-op, not a same-URL push.
+    const pristineKey = locationKey()
+    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(locationKey()).toBe(pristineKey)
+
+    // A real filter changes the entry; re-clicking the active chip is a no-op.
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboards' }))
+    await waitFor(() => expect(locationKey()).not.toBe(pristineKey))
+    const filteredKey = locationKey()
+    fireEvent.click(screen.getByRole('button', { name: 'Dashboards' }))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(locationKey()).toBe(filteredKey)
+    expect(locationSearch()).toBe('/search?q=revenue&type=dashboard')
+  })
+
+  test('unmounting before the debounce settles leaves no stray navigation', async () => {
+    useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')])])
+    const { rerender } = renderWithProviders(
+      <>
+        <SearchPage />
+        <LocationProbe />
+      </>,
+      { initialPath: '/search' },
+    )
+    typeQuery('rev')
+    rerender(<LocationProbe />)
+
+    // The timer's cleanup runs on unmount: nothing may navigate after it.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    })
+    expect(locationSearch()).toBe('/search')
+    expect(searchRequests).toHaveLength(0)
+  })
+
+  test('an over-long query renders the specific error and the input caps its length', async () => {
+    server.use(
+      http.get('/api/v1/search', () => HttpResponse.json({ error: 'query too long' }, { status: 400 })),
+    )
+    renderSearch(`/search?q=${'x'.repeat(210)}`)
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Query is too long — 200 characters max.')
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+    expect(searchInput()).toHaveAttribute('maxlength', '200')
+  })
+
+  test('un-favoriting under the Favorites filter hides the row and count immediately', async () => {
+    server.use(...favoritesFixture([{ type: 'notebook', id: 'nb-1' }]).handlers)
+    useSearchGroups([
+      group('notebook', [summary('notebook', 'nb-1', 'Revenue by region', { is_favorite: true })]),
+    ])
+    renderSearch('/search?q=rev&favorites=1')
+
+    expect(await screen.findByRole('link', { name: /Revenue by region/ })).toBeInTheDocument()
+    await screen.findByRole('button', { name: 'Remove from favorites' })
+    expect(screen.getByRole('status')).toHaveTextContent('1 result')
+
+    // The optimistic id-set flip drops the row and the count, before the
+    // search response itself has refreshed.
+    await userEvent.click(screen.getByRole('button', { name: 'Remove from favorites' }))
+    await waitFor(() => expect(screen.queryByRole('link', { name: /Revenue by region/ })).toBeNull())
+    expect(screen.getByRole('status')).toHaveTextContent('No results')
   })
 })

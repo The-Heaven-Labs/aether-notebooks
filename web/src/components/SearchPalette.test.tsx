@@ -355,6 +355,18 @@ describe('SearchPalette', () => {
     expect(calls).toBe(2)
   })
 
+  test('caps the input length and names an over-long query rejection', async () => {
+    server.use(
+      http.get('/api/v1/search', () => HttpResponse.json({ error: 'query too long' }, { status: 400 })),
+    )
+    renderPalette()
+    expect(screen.getByLabelText('Search')).toHaveAttribute('maxlength', '200')
+
+    typeQuery('zzz')
+    expect(await screen.findByText('Query is too long — 200 characters max.')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
+  })
+
   test('closes when the scrim is clicked', () => {
     const { onClose } = renderPalette()
     fireEvent.click(screen.getByRole('dialog', { name: 'Search palette' }).parentElement!)

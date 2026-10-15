@@ -2,6 +2,14 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { FavoriteResourceType, SearchResponse } from '../types'
 
+/**
+ * The API's maximum `q` length, in runes. Every search input caps at the same
+ * bound so an over-long paste cannot dead-end on a 400.
+ */
+export const MAX_SEARCH_QUERY_LENGTH = 200
+/** Copy for the over-long-query rejection (HTTP 400), shared by both inputs. */
+export const SEARCH_QUERY_TOO_LONG_MESSAGE = 'Query is too long — 200 characters max.'
+
 export interface ResourceSearchParams {
   query: string
   /** Resource types to search; omit for every searchable type. */
