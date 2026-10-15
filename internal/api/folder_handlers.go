@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -329,6 +330,291 @@ type folderContents struct {
 	Notebooks  []folderNotebook   `json:"notebooks"`
 	Connectors []folderConnector  `json:"connectors"`
 	Dashboards []folderDashboard  `json:"dashboards"`
+	// Totals and HasMore always carry the notebooks/connectors/dashboards
+	// keys: Totals is the exact number of visible rows in the section (not
+	// just the page), HasMore says whether the first page left rows behind.
+	Totals  map[string]int  `json:"totals"`
+	HasMore map[string]bool `json:"has_more"`
+}
+
+// newFolderContents seeds a listing response with the always-present shape:
+// empty arrays for every section and zeroed Totals/HasMore maps, so an empty
+// folder still reports the full pagination contract.
+func newFolderContents(folder *models.Folder) folderContents {
+	return folderContents{
+		Folder:     folder,
+		Folders:    []folderItemFolder{},
+		Notebooks:  []folderNotebook{},
+		Connectors: []folderConnector{},
+		Dashboards: []folderDashboard{},
+		Totals:     map[string]int{"notebooks": 0, "connectors": 0, "dashboards": 0},
+		HasMore:    map[string]bool{"notebooks": false, "connectors": false, "dashboards": false},
+	}
+}
+
+const (
+	// folderSectionDefaultLimit is the first-page size of a paginated folder
+	// listing section when the request carries no limit.
+	folderSectionDefaultLimit = 50
+	// folderSectionMaxLimit caps a requested page size. Larger values clamp
+	// instead of failing, so "give me everything" stays expressible.
+	folderSectionMaxLimit = 200
+)
+
+// folderSectionLimit parses the listing's `limit` query parameter: absent is
+// the 50-row default, values above the 200 maximum clamp, and a non-numeric
+// value or one below 1 is rejected (ok=false).
+func folderSectionLimit(r *http.Request) (int, bool) {
+	raw := r.URL.Query().Get("limit")
+	if raw == "" {
+		return folderSectionDefaultLimit, true
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		return 0, false
+	}
+	if n > folderSectionMaxLimit {
+		n = folderSectionMaxLimit
+	}
+	return n, true
+}
+
+// folderSectionIDs loads the org- and folder-scoped ids of one listing section
+// in display order. folderID nil selects the root section. Only ids are read —
+// the full rows stay in the database until the page is known. orderBy must end
+// in a unique tiebreaker (`, id`) so equal sort keys keep a stable order for
+// offset paging. table/orderBy are compile-time constants at every call site.
+func (s *Server) folderSectionIDs(ctx context.Context, table, orderBy, orgID string, folderID *string) ([]string, error) {
+	query := fmt.Sprintf(`SELECT id::text FROM %s
+		 WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL
+		 ORDER BY %s`, table, orderBy)
+	args := []any{orgID}
+	if folderID != nil {
+		query = fmt.Sprintf(`SELECT id::text FROM %s
+		 WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL
+		 ORDER BY %s`, table, orderBy)
+		args = append(args, *folderID)
+	}
+	rows, err := s.db.Pool.Query(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list %s ids: %w", table, err)
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan %s id: %w", table, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate %s ids: %w", table, err)
+	}
+	return ids, nil
+}
+
+// folderSectionPageIDs filters an ordered section id list down to the visible
+// rows (view action) and slices the first page, returning the page ids, the
+// exact visible total, and whether more visible rows exist beyond the page.
+// Hidden items are filtered before the totals are computed, so totals and
+// has_more describe what the caller can actually see.
+func folderSectionPageIDs(perms map[string]map[string]bool, orderedIDs []string, limit int) (pageIDs []string, total int, hasMore bool) {
+	visible := make([]string, 0, len(orderedIDs))
+	for _, id := range orderedIDs {
+		if actionAllowed(perms, id, "view") {
+			visible = append(visible, id)
+		}
+	}
+	total = len(visible)
+	hasMore = total > limit
+	if len(visible) > limit {
+		visible = visible[:limit]
+	}
+	return visible, total, hasMore
+}
+
+// folderNotebookSection is the notebooks section of a folder listing, resolved
+// in two phases: phase 1 fetches only the section's ids (org- and
+// folder-scoped, in stable display order) and the batched permissions, so the
+// exact visible total is known without touching full rows; phase 2 hydrates
+// the first page's full rows and attaches the can_* flags from the already
+// resolved action map. folderID nil selects the root section.
+func (s *Server) folderNotebookSection(ctx context.Context, ident permIdentity, folderID *string, limit int) ([]folderNotebook, int, bool, error) {
+	orderedIDs, err := s.folderSectionIDs(ctx, "notebooks", "updated_at DESC, id", ident.OrgID, folderID)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	perms, err := s.resolveActions(ctx, ident, "notebook", orderedIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		return nil, 0, false, err
+	}
+	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, limit)
+	page := make([]folderNotebook, 0, len(pageIDs))
+	if len(pageIDs) == 0 {
+		return page, total, hasMore, nil
+	}
+
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
+		 FROM notebooks WHERE id = ANY($1::uuid[])`,
+		pageIDs,
+	)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("hydrate notebooks: %w", err)
+	}
+	defer rows.Close()
+	hydrated := make(map[string]folderNotebook, len(pageIDs))
+	for rows.Next() {
+		nb, err := scanNotebook(rows)
+		if err != nil {
+			return nil, 0, false, fmt.Errorf("scan notebook: %w", err)
+		}
+		hydrated[nb.ID] = folderNotebook{Notebook: nb}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, fmt.Errorf("iterate notebooks: %w", err)
+	}
+	for _, id := range pageIDs {
+		nb, ok := hydrated[id]
+		if !ok {
+			// The row vanished between resolve and hydrate; holding the rest
+			// of the page order is more useful than failing the listing.
+			continue
+		}
+		nb.CanEdit = actionAllowed(perms, id, "edit")
+		nb.CanDelete = actionAllowed(perms, id, "delete")
+		nb.CanShare = actionAllowed(perms, id, "share")
+		page = append(page, nb)
+	}
+	return page, total, hasMore, nil
+}
+
+// folderConnectorSection is the connectors section, following the same
+// two-phase pattern as folderNotebookSection (ordered by name, then id).
+func (s *Server) folderConnectorSection(ctx context.Context, ident permIdentity, folderID *string, limit int) ([]folderConnector, int, bool, error) {
+	orderedIDs, err := s.folderSectionIDs(ctx, "connectors", "name, id", ident.OrgID, folderID)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	perms, err := s.resolveActions(ctx, ident, "connector", orderedIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		return nil, 0, false, err
+	}
+	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, limit)
+	page := make([]folderConnector, 0, len(pageIDs))
+	if len(pageIDs) == 0 {
+		return page, total, hasMore, nil
+	}
+
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text, COALESCE(updated_at::text, '')
+		 FROM connectors WHERE id = ANY($1::uuid[])`,
+		pageIDs,
+	)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("hydrate connectors: %w", err)
+	}
+	defer rows.Close()
+	hydrated := make(map[string]folderConnector, len(pageIDs))
+	for rows.Next() {
+		var c folderConnector
+		if err := rows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			return nil, 0, false, fmt.Errorf("scan connector: %w", err)
+		}
+		hydrated[c.ID] = c
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, fmt.Errorf("iterate connectors: %w", err)
+	}
+	for _, id := range pageIDs {
+		c, ok := hydrated[id]
+		if !ok {
+			continue
+		}
+		c.CanEdit = actionAllowed(perms, id, "edit")
+		c.CanDelete = actionAllowed(perms, id, "delete")
+		c.CanShare = actionAllowed(perms, id, "share")
+		page = append(page, c)
+	}
+	return page, total, hasMore, nil
+}
+
+// folderDashboardSection is the dashboards section, following the same
+// two-phase pattern (ordered by updated_at, then id). The page's non-editor
+// rows additionally receive the published-snapshot substitution
+// (loadLatestDashboardSnapshots) so the listing matches GET /dashboards and
+// GET /dashboards/{id}: viewers see the latest snapshot's title/settings,
+// editors always see the draft, and a never-published dashboard keeps its
+// draft for everyone.
+func (s *Server) folderDashboardSection(ctx context.Context, ident permIdentity, folderID *string, limit int) ([]folderDashboard, int, bool, error) {
+	orderedIDs, err := s.folderSectionIDs(ctx, "dashboards", "updated_at DESC, id", ident.OrgID, folderID)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	perms, err := s.resolveActions(ctx, ident, "dashboard", orderedIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		return nil, 0, false, err
+	}
+	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, limit)
+	page := make([]folderDashboard, 0, len(pageIDs))
+	if len(pageIDs) == 0 {
+		return page, total, hasMore, nil
+	}
+
+	rows, err := s.db.Pool.Query(ctx,
+		`SELECT id, org_id, title, settings, created_by, created_at, updated_at
+		 FROM dashboards WHERE id = ANY($1::uuid[])`,
+		pageIDs,
+	)
+	if err != nil {
+		return nil, 0, false, fmt.Errorf("hydrate dashboards: %w", err)
+	}
+	defer rows.Close()
+	hydrated := make(map[string]folderDashboard, len(pageIDs))
+	for rows.Next() {
+		d, err := scanDashboard(rows)
+		if err != nil {
+			return nil, 0, false, fmt.Errorf("scan dashboard: %w", err)
+		}
+		hydrated[d.ID] = folderDashboard{Dashboard: d}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, false, fmt.Errorf("iterate dashboards: %w", err)
+	}
+
+	// One batched snapshot load covers the page's non-editor rows only; a
+	// missing id means never published, so the draft stands.
+	var nonEditorIDs []string
+	for _, id := range pageIDs {
+		if !actionAllowed(perms, id, "edit") {
+			nonEditorIDs = append(nonEditorIDs, id)
+		}
+	}
+	snapshots := map[string]publishedDashboardMeta{}
+	if len(nonEditorIDs) > 0 {
+		snapshots, err = s.loadLatestDashboardSnapshots(ctx, ident.OrgID, nonEditorIDs)
+		if err != nil {
+			return nil, 0, false, fmt.Errorf("load dashboard snapshots: %w", err)
+		}
+	}
+	for _, id := range pageIDs {
+		d, ok := hydrated[id]
+		if !ok {
+			continue
+		}
+		if !actionAllowed(perms, id, "edit") {
+			if snapshot, ok := snapshots[id]; ok {
+				d.Title = snapshot.Title
+				d.Settings = snapshot.Settings
+			}
+		}
+		d.CanEdit = actionAllowed(perms, id, "edit")
+		d.CanDelete = actionAllowed(perms, id, "delete")
+		d.CanShare = actionAllowed(perms, id, "share")
+		page = append(page, d)
+	}
+	return page, total, hasMore, nil
 }
 
 // folderConnector is a lightweight connector listing (no encrypted credentials).
@@ -563,12 +849,15 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	contents := folderContents{
-		Folders:    []folderItemFolder{},
-		Notebooks:  []folderNotebook{},
-		Connectors: []folderConnector{},
-		Dashboards: []folderDashboard{},
+	// The paginated sections' page size: default 50, clamped to 200, invalid
+	// values rejected before any work runs.
+	limit, ok := folderSectionLimit(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid limit")
+		return
 	}
+
+	contents := newFolderContents(nil)
 
 	isOrgAdmin := ident.AdminMode && ident.OrgRole == "admin"
 
@@ -709,141 +998,36 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		})
 	}
 
-	// Notebooks at root (no folder) - filter by permission
-	nbRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
-		 FROM notebooks WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL
-		 ORDER BY updated_at DESC`,
-		claims.OrgID,
-	)
+	// Notebooks at root (no folder): the first page plus exact visible totals.
+	notebooks, notebookTotal, notebooksHasMore, err := s.folderNotebookSection(ctx, ident, nil, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	var rootNotebooks []models.Notebook
-	for nbRows.Next() {
-		nb, err := scanNotebook(nbRows)
-		if err != nil {
-			nbRows.Close()
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		rootNotebooks = append(rootNotebooks, nb)
-	}
-	nbRows.Close()
-	if err := nbRows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
-	}
+	contents.Notebooks = notebooks
+	contents.Totals["notebooks"] = notebookTotal
+	contents.HasMore["notebooks"] = notebooksHasMore
 
-	rootNotebookIDs := make([]string, 0, len(rootNotebooks))
-	for _, nb := range rootNotebooks {
-		rootNotebookIDs = append(rootNotebookIDs, nb.ID)
-	}
-	notebookPerms, err := s.resolveActions(ctx, ident, "notebook", rootNotebookIDs, []string{"view", "edit", "delete", "share"})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	for _, nb := range rootNotebooks {
-		if actionAllowed(notebookPerms, nb.ID, "view") {
-			contents.Notebooks = append(contents.Notebooks, folderNotebook{
-				Notebook:  nb,
-				CanEdit:   actionAllowed(notebookPerms, nb.ID, "edit"),
-				CanDelete: actionAllowed(notebookPerms, nb.ID, "delete"),
-				CanShare:  actionAllowed(notebookPerms, nb.ID, "share"),
-			})
-		}
-	}
-
-	// Connectors at root (no folder) - filter by permission
-	cRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text, COALESCE(updated_at::text, '') FROM connectors WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL`,
-		claims.OrgID,
-	)
+	// Connectors at root (no folder): the first page plus exact visible totals.
+	connectors, connectorTotal, connectorsHasMore, err := s.folderConnectorSection(ctx, ident, nil, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	var rootConnectors []folderConnector
-	for cRows.Next() {
-		var c folderConnector
-		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			cRows.Close()
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		rootConnectors = append(rootConnectors, c)
-	}
-	cRows.Close()
-	if err := cRows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
-	}
+	contents.Connectors = connectors
+	contents.Totals["connectors"] = connectorTotal
+	contents.HasMore["connectors"] = connectorsHasMore
 
-	rootConnectorIDs := make([]string, 0, len(rootConnectors))
-	for _, c := range rootConnectors {
-		rootConnectorIDs = append(rootConnectorIDs, c.ID)
-	}
-	connectorPerms, err := s.resolveActions(ctx, ident, "connector", rootConnectorIDs, []string{"view", "edit", "delete", "share"})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	for _, c := range rootConnectors {
-		if actionAllowed(connectorPerms, c.ID, "view") {
-			c.CanEdit = actionAllowed(connectorPerms, c.ID, "edit")
-			c.CanDelete = actionAllowed(connectorPerms, c.ID, "delete")
-			c.CanShare = actionAllowed(connectorPerms, c.ID, "share")
-			contents.Connectors = append(contents.Connectors, c)
-		}
-	}
-
-	// Dashboards at root (no folder) - filter by permission
-	dRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, settings, created_by, created_at, updated_at
-		 FROM dashboards WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL`,
-		claims.OrgID,
-	)
+	// Dashboards at root (no folder): the first page plus exact visible
+	// totals, with the published-snapshot substitution for non-editors.
+	dashboards, dashboardTotal, dashboardsHasMore, err := s.folderDashboardSection(ctx, ident, nil, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	var rootDashboards []models.Dashboard
-	for dRows.Next() {
-		d, err := scanDashboard(dRows)
-		if err != nil {
-			dRows.Close()
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		rootDashboards = append(rootDashboards, d)
-	}
-	dRows.Close()
-	if err := dRows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
-	}
-
-	rootDashboardIDs := make([]string, 0, len(rootDashboards))
-	for _, d := range rootDashboards {
-		rootDashboardIDs = append(rootDashboardIDs, d.ID)
-	}
-	dashboardPerms, err := s.resolveActions(ctx, ident, "dashboard", rootDashboardIDs, []string{"view", "edit", "delete", "share"})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	for _, d := range rootDashboards {
-		if actionAllowed(dashboardPerms, d.ID, "view") {
-			contents.Dashboards = append(contents.Dashboards, folderDashboard{
-				Dashboard: d,
-				CanEdit:   actionAllowed(dashboardPerms, d.ID, "edit"),
-				CanDelete: actionAllowed(dashboardPerms, d.ID, "delete"),
-				CanShare:  actionAllowed(dashboardPerms, d.ID, "share"),
-			})
-		}
-	}
+	contents.Dashboards = dashboards
+	contents.Totals["dashboards"] = dashboardTotal
+	contents.HasMore["dashboards"] = dashboardsHasMore
 
 	writeJSON(w, http.StatusOK, contents)
 }
@@ -878,13 +1062,15 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	contents := folderContents{
-		Folder:     &folder,
-		Folders:    []folderItemFolder{},
-		Notebooks:  []folderNotebook{},
-		Connectors: []folderConnector{},
-		Dashboards: []folderDashboard{},
+	// The paginated sections' page size: default 50, clamped to 200, invalid
+	// values rejected before any work runs.
+	limit, ok := folderSectionLimit(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid limit")
+		return
 	}
+
+	contents := newFolderContents(&folder)
 
 	// One identity per request: group memberships (including the implicit
 	// Everyone group) and admin mode are resolved once and shared by the
@@ -979,130 +1165,36 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		}
 	}
 
-	// Notebooks in folder
-	nbRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
-		 FROM notebooks WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL
-		 ORDER BY updated_at DESC`,
-		claims.OrgID, folderID,
-	)
+	// Notebooks in the folder: the first page plus exact visible totals.
+	notebooks, notebookTotal, notebooksHasMore, err := s.folderNotebookSection(ctx, ident, &folderID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer nbRows.Close()
-	var subNotebooks []models.Notebook
-	for nbRows.Next() {
-		nb, err := scanNotebook(nbRows)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		subNotebooks = append(subNotebooks, nb)
-	}
-	nbRows.Close()
-	subNotebookIDs := make([]string, 0, len(subNotebooks))
-	for _, nb := range subNotebooks {
-		subNotebookIDs = append(subNotebookIDs, nb.ID)
-	}
-	notebookPerms, err := s.resolveActions(ctx, ident, "notebook", subNotebookIDs, []string{"view", "edit", "delete", "share"})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	for _, nb := range subNotebooks {
-		if actionAllowed(notebookPerms, nb.ID, "view") {
-			contents.Notebooks = append(contents.Notebooks, folderNotebook{
-				Notebook:  nb,
-				CanEdit:   actionAllowed(notebookPerms, nb.ID, "edit"),
-				CanDelete: actionAllowed(notebookPerms, nb.ID, "delete"),
-				CanShare:  actionAllowed(notebookPerms, nb.ID, "share"),
-			})
-		}
-	}
+	contents.Notebooks = notebooks
+	contents.Totals["notebooks"] = notebookTotal
+	contents.HasMore["notebooks"] = notebooksHasMore
 
-	// Connectors in folder
-	cRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text, COALESCE(updated_at::text, '') FROM connectors WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL`,
-		claims.OrgID, folderID,
-	)
+	// Connectors in the folder: the first page plus exact visible totals.
+	connectors, connectorTotal, connectorsHasMore, err := s.folderConnectorSection(ctx, ident, &folderID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer cRows.Close()
-	var subConnectors []folderConnector
-	for cRows.Next() {
-		var c folderConnector
-		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		subConnectors = append(subConnectors, c)
-	}
-	cRows.Close()
-	subConnectorIDs := make([]string, 0, len(subConnectors))
-	for _, c := range subConnectors {
-		subConnectorIDs = append(subConnectorIDs, c.ID)
-	}
-	connectorPerms, err := s.resolveActions(ctx, ident, "connector", subConnectorIDs, []string{"view", "edit", "delete", "share"})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	for _, c := range subConnectors {
-		if actionAllowed(connectorPerms, c.ID, "view") {
-			c.CanEdit = actionAllowed(connectorPerms, c.ID, "edit")
-			c.CanDelete = actionAllowed(connectorPerms, c.ID, "delete")
-			c.CanShare = actionAllowed(connectorPerms, c.ID, "share")
-			contents.Connectors = append(contents.Connectors, c)
-		}
-	}
+	contents.Connectors = connectors
+	contents.Totals["connectors"] = connectorTotal
+	contents.HasMore["connectors"] = connectorsHasMore
 
-	// Dashboards in folder
-	dRows, err := s.db.Pool.Query(ctx,
-		`SELECT id, org_id, title, settings, created_by, created_at, updated_at
-		 FROM dashboards WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL`,
-		claims.OrgID, folderID,
-	)
+	// Dashboards in the folder: the first page plus exact visible totals, with
+	// the published-snapshot substitution for non-editors.
+	dashboards, dashboardTotal, dashboardsHasMore, err := s.folderDashboardSection(ctx, ident, &folderID, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer dRows.Close()
-	var subDashboards []models.Dashboard
-	for dRows.Next() {
-		d, err := scanDashboard(dRows)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		subDashboards = append(subDashboards, d)
-	}
-	dRows.Close()
-	if err := dRows.Err(); err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
-	}
-	subDashboardIDs := make([]string, 0, len(subDashboards))
-	for _, d := range subDashboards {
-		subDashboardIDs = append(subDashboardIDs, d.ID)
-	}
-	dashboardPerms, err := s.resolveActions(ctx, ident, "dashboard", subDashboardIDs, []string{"view", "edit", "delete", "share"})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	for _, d := range subDashboards {
-		if actionAllowed(dashboardPerms, d.ID, "view") {
-			contents.Dashboards = append(contents.Dashboards, folderDashboard{
-				Dashboard: d,
-				CanEdit:   actionAllowed(dashboardPerms, d.ID, "edit"),
-				CanDelete: actionAllowed(dashboardPerms, d.ID, "delete"),
-				CanShare:  actionAllowed(dashboardPerms, d.ID, "share"),
-			})
-		}
-	}
+	contents.Dashboards = dashboards
+	contents.Totals["dashboards"] = dashboardTotal
+	contents.HasMore["dashboards"] = dashboardsHasMore
 
 	writeJSON(w, http.StatusOK, contents)
 }

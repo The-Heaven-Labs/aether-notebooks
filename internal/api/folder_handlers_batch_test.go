@@ -109,18 +109,30 @@ func (f *folderBatchFixture) insertDashboard(t *testing.T, title string, folderI
 // grant writes one user ACL entry for the caller.
 func (f *folderBatchFixture) grant(t *testing.T, resourceType, resourceID string, actions []string) {
 	t.Helper()
+	f.grantFor(t, resourceType, resourceID, f.userID, actions)
+}
+
+// grantFor writes one user ACL entry for an arbitrary org member.
+func (f *folderBatchFixture) grantFor(t *testing.T, resourceType, resourceID, userID string, actions []string) {
+	t.Helper()
 	_, err := f.srv.DB().Pool.Exec(context.Background(),
 		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
 		 VALUES ($1, $2, $3::uuid, 'user', $4, $5)`,
-		f.orgID, resourceType, resourceID, f.userID, actions)
+		f.orgID, resourceType, resourceID, userID, actions)
 	require.NoError(t, err)
 }
 
 // get performs an authenticated GET and returns the status and raw body.
 func (f *folderBatchFixture) get(t *testing.T, path string) (int, []byte) {
 	t.Helper()
+	return f.getAs(t, f.token, path)
+}
+
+// getAs performs an authenticated GET as an explicit token holder.
+func (f *folderBatchFixture) getAs(t *testing.T, token, path string) (int, []byte) {
+	t.Helper()
 	req := httptest.NewRequest("GET", path, nil)
-	req.Header.Set("Authorization", "Bearer "+f.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	rec := httptest.NewRecorder()
 	f.srv.ServeHTTP(rec, req)
 	return rec.Code, rec.Body.Bytes()
@@ -141,24 +153,30 @@ type folderListResponse struct {
 	Notebooks  []folderRow `json:"notebooks"`
 	Connectors []folderRow `json:"connectors"`
 	Dashboards []folderRow `json:"dashboards"`
+	// Totals/HasMore are the pagination contract (Task B1): exact visible
+	// counts per section and whether the first page left rows behind.
+	Totals  map[string]int  `json:"totals"`
+	HasMore map[string]bool `json:"has_more"`
+}
+
+// listPath fetches a listing endpoint and decodes the shared response shape.
+func (f *folderBatchFixture) listPath(t *testing.T, path string) folderListResponse {
+	t.Helper()
+	status, body := f.get(t, path)
+	require.Equal(t, http.StatusOK, status, string(body))
+	var contents folderListResponse
+	require.NoError(t, json.Unmarshal(body, &contents))
+	return contents
 }
 
 func (f *folderBatchFixture) listFolder(t *testing.T, folderID string) folderListResponse {
 	t.Helper()
-	status, body := f.get(t, "/api/v1/folders/"+folderID)
-	require.Equal(t, http.StatusOK, status, string(body))
-	var contents folderListResponse
-	require.NoError(t, json.Unmarshal(body, &contents))
-	return contents
+	return f.listPath(t, "/api/v1/folders/"+folderID)
 }
 
 func (f *folderBatchFixture) listRoot(t *testing.T) folderListResponse {
 	t.Helper()
-	status, body := f.get(t, "/api/v1/folders")
-	require.Equal(t, http.StatusOK, status, string(body))
-	var contents folderListResponse
-	require.NoError(t, json.Unmarshal(body, &contents))
-	return contents
+	return f.listPath(t, "/api/v1/folders")
 }
 
 func requireRow(t *testing.T, rows []folderRow, id string) folderRow {

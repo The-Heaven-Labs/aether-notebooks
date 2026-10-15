@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sort"
 	"testing"
 	"time"
 
@@ -301,4 +302,279 @@ func TestListRootContentsExcludesDeletedFolders(t *testing.T) {
 	require.Contains(t, listRoot(true), keepID)
 	require.NotContains(t, listRoot(true), trashID)
 	require.NotContains(t, listRoot(false), trashID)
+}
+
+// ——— Task B1: two-phase pagination of folder listing sections ———
+
+// TestFolderContentsPaginationSmallFolder pins the always-present pagination
+// shape: a folder whose section fits on one page reports exact totals, no
+// has_more, every section key (including the empty ones), and an empty folder
+// still carries the full shape.
+func TestFolderContentsPaginationSmallFolder(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	folderID := f.insertFolder(t, "pagination small", nil, f.otherUserID)
+	f.grant(t, "folder", folderID, []string{"view"})
+
+	var want []string
+	for i := 0; i < 3; i++ {
+		id := f.insertNotebook(t, fmt.Sprintf("pagination small notebook %d", i), &folderID, f.otherUserID)
+		f.grant(t, "notebook", id, []string{"view"})
+		want = append(want, id)
+	}
+
+	contents := f.listFolder(t, folderID)
+	require.Len(t, contents.Notebooks, 3)
+	require.ElementsMatch(t, want, rowIDs(contents.Notebooks))
+	require.Equal(t, map[string]int{"notebooks": 3, "connectors": 0, "dashboards": 0}, contents.Totals)
+	require.Equal(t, map[string]bool{"notebooks": false, "connectors": false, "dashboards": false}, contents.HasMore)
+
+	// An empty folder still carries the full shape: empty arrays, zero totals,
+	// false flags — never missing keys.
+	emptyFolder := f.insertFolder(t, "pagination small empty", nil, f.otherUserID)
+	f.grant(t, "folder", emptyFolder, []string{"view"})
+	empty := f.listFolder(t, emptyFolder)
+	require.Empty(t, empty.Notebooks)
+	require.Empty(t, empty.Connectors)
+	require.Empty(t, empty.Dashboards)
+	require.Equal(t, map[string]int{"notebooks": 0, "connectors": 0, "dashboards": 0}, empty.Totals)
+	require.Equal(t, map[string]bool{"notebooks": false, "connectors": false, "dashboards": false}, empty.HasMore)
+}
+
+// TestFolderContentsPaginationHiddenItems pins that totals count only visible
+// rows: hidden notebooks interleaved between visible ones neither inflate the
+// total nor reserve page slots.
+func TestFolderContentsPaginationHiddenItems(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	folderID := f.insertFolder(t, "pagination hidden", nil, f.otherUserID)
+	// No folder ACL on purpose: a folder grant is inherited by every notebook
+	// inside, which would make the un-ACLed ones visible. The folder is
+	// reached through its visible descendant content instead.
+
+	var visible []string
+	for i := 0; i < 12; i++ {
+		id := f.insertNotebook(t, fmt.Sprintf("pagination hidden notebook %02d", i), &folderID, f.otherUserID)
+		if i%3 == 0 {
+			continue // every third notebook carries no ACL for the caller
+		}
+		f.grant(t, "notebook", id, []string{"view"})
+		visible = append(visible, id)
+	}
+
+	contents := f.listFolder(t, folderID)
+	require.Equal(t, 8, contents.Totals["notebooks"])
+	require.Len(t, contents.Notebooks, 8, "the page holds only visible rows")
+	require.ElementsMatch(t, visible, rowIDs(contents.Notebooks))
+	require.False(t, contents.HasMore["notebooks"])
+}
+
+// TestFolderContentsPaginationLimit pins the limit contract: 50 default, 200
+// clamp for larger asks, 400 for non-numeric or below-1 values.
+func TestFolderContentsPaginationLimit(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	folderID := f.insertFolder(t, "pagination limit", nil, f.otherUserID)
+	f.grant(t, "folder", folderID, []string{"view"})
+	for i := 0; i < 55; i++ {
+		id := f.insertNotebook(t, fmt.Sprintf("pagination limit notebook %02d", i), &folderID, f.otherUserID)
+		f.grant(t, "notebook", id, []string{"view"})
+	}
+
+	// Default: a 50-row first page of 55 visible rows.
+	contents := f.listFolder(t, folderID)
+	require.Equal(t, 55, contents.Totals["notebooks"])
+	require.Len(t, contents.Notebooks, 50)
+	require.True(t, contents.HasMore["notebooks"])
+
+	// An explicit smaller page.
+	contents = f.listPath(t, "/api/v1/folders/"+folderID+"?limit=10")
+	require.Equal(t, 55, contents.Totals["notebooks"])
+	require.Len(t, contents.Notebooks, 10)
+	require.True(t, contents.HasMore["notebooks"])
+
+	// A page larger than the section returns everything.
+	contents = f.listPath(t, "/api/v1/folders/"+folderID+"?limit=200")
+	require.Equal(t, 55, contents.Totals["notebooks"])
+	require.Len(t, contents.Notebooks, 55)
+	require.False(t, contents.HasMore["notebooks"])
+
+	// Above the maximum clamps instead of failing.
+	contents = f.listPath(t, "/api/v1/folders/"+folderID+"?limit=201")
+	require.Equal(t, 55, contents.Totals["notebooks"])
+	require.Len(t, contents.Notebooks, 55)
+	require.False(t, contents.HasMore["notebooks"])
+
+	// Invalid values are rejected.
+	status, body := f.get(t, "/api/v1/folders/"+folderID+"?limit=0")
+	require.Equal(t, http.StatusBadRequest, status, string(body))
+	status, body = f.get(t, "/api/v1/folders/"+folderID+"?limit=abc")
+	require.Equal(t, http.StatusBadRequest, status, string(body))
+}
+
+// TestFolderContentsPaginationStableOrder pins the ordering tiebreaker: two
+// notebooks sharing updated_at keep a deterministic (id-ascending) relative
+// order across listings, so offset paging can never skip or duplicate them.
+func TestFolderContentsPaginationStableOrder(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	folderID := f.insertFolder(t, "pagination order", nil, f.otherUserID)
+	f.grant(t, "folder", folderID, []string{"view"})
+
+	tieA := f.insertNotebook(t, "pagination order tie a", &folderID, f.otherUserID)
+	tieB := f.insertNotebook(t, "pagination order tie b", &folderID, f.otherUserID)
+	newer := f.insertNotebook(t, "pagination order newer", &folderID, f.otherUserID)
+	for _, id := range []string{tieA, tieB, newer} {
+		f.grant(t, "notebook", id, []string{"view"})
+	}
+	shared := time.Now().Add(-2 * time.Hour)
+	for _, id := range []string{tieA, tieB} {
+		_, err := f.srv.DB().Pool.Exec(context.Background(),
+			`UPDATE notebooks SET updated_at = $2 WHERE id = $1`, id, shared)
+		require.NoError(t, err)
+	}
+
+	ties := []string{tieA, tieB}
+	sort.Strings(ties) // ids ascend within one updated_at
+	want := append([]string{newer}, ties...)
+
+	contents := f.listFolder(t, folderID)
+	require.Equal(t, want, rowIDs(contents.Notebooks))
+	contents = f.listFolder(t, folderID)
+	require.Equal(t, want, rowIDs(contents.Notebooks), "repeated listings must return the same order")
+}
+
+// dashboardListingRow is the dashboard section row shape with the fields the
+// snapshot-substitution test asserts.
+type dashboardListingRow struct {
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	CanEdit  bool   `json:"can_edit"`
+	Settings struct {
+		AutoRefreshSeconds int `json:"auto_refresh_seconds"`
+	} `json:"settings"`
+}
+
+func decodeDashboardListing(t *testing.T, body []byte) []dashboardListingRow {
+	t.Helper()
+	var contents struct {
+		Dashboards []dashboardListingRow `json:"dashboards"`
+	}
+	require.NoError(t, json.Unmarshal(body, &contents))
+	return contents.Dashboards
+}
+
+func requireDashboardListingRow(t *testing.T, rows []dashboardListingRow, id string) dashboardListingRow {
+	t.Helper()
+	for _, row := range rows {
+		if row.ID == id {
+			return row
+		}
+	}
+	require.Failf(t, "dashboard row missing", "expected dashboard %s in %v", id, rows)
+	return dashboardListingRow{}
+}
+
+// TestFolderContentsDashboardSnapshotSubstitution pins the viewer-safety rule
+// in folder listings: a published dashboard serves its latest snapshot's
+// title/settings to non-editors, editors always see the draft, and a
+// never-published dashboard keeps its draft for everyone — matching
+// GET /dashboards and GET /dashboards/{id}.
+func TestFolderContentsDashboardSnapshotSubstitution(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	folderID := f.insertFolder(t, "pagination dashboards", nil, f.otherUserID)
+	f.grant(t, "folder", folderID, []string{"view"})
+	editorToken := issueToken(t, f.otherUserID, f.orgID, "editor")
+
+	published := f.insertDashboard(t, "draft title of published", &folderID, f.otherUserID)
+	f.grant(t, "dashboard", published, []string{"view"})
+	f.grantFor(t, "dashboard", published, f.otherUserID, []string{"view", "edit"})
+	_, err := f.srv.DB().Pool.Exec(context.Background(),
+		`INSERT INTO dashboard_versions (dashboard_id, org_id, version, title, settings, widgets, content_hash, created_by)
+		 VALUES ($1, $2, 1, 'snapshot title', '{"auto_refresh_seconds": 5}', '[]', 'pagination-hash', $3)`,
+		published, f.orgID, f.otherUserID)
+	require.NoError(t, err)
+
+	neverPublished := f.insertDashboard(t, "never published draft", &folderID, f.otherUserID)
+	f.grant(t, "dashboard", neverPublished, []string{"view"})
+	f.grantFor(t, "dashboard", neverPublished, f.otherUserID, []string{"view", "edit"})
+
+	// Viewer: the published dashboard serves the snapshot on the page.
+	status, body := f.get(t, "/api/v1/folders/"+folderID)
+	require.Equal(t, http.StatusOK, status, string(body))
+	viewerRows := decodeDashboardListing(t, body)
+	viewerPublished := requireDashboardListingRow(t, viewerRows, published)
+	require.Equal(t, "snapshot title", viewerPublished.Title)
+	require.Equal(t, 5, viewerPublished.Settings.AutoRefreshSeconds)
+	require.False(t, viewerPublished.CanEdit)
+	require.Equal(t, "never published draft", requireDashboardListingRow(t, viewerRows, neverPublished).Title)
+
+	// Editor: both keep the draft.
+	status, body = f.getAs(t, editorToken, "/api/v1/folders/"+folderID)
+	require.Equal(t, http.StatusOK, status, string(body))
+	editorRows := decodeDashboardListing(t, body)
+	editorPublished := requireDashboardListingRow(t, editorRows, published)
+	require.Equal(t, "draft title of published", editorPublished.Title)
+	require.True(t, editorPublished.CanEdit)
+	require.Zero(t, editorPublished.Settings.AutoRefreshSeconds)
+	require.Equal(t, "never published draft", requireDashboardListingRow(t, editorRows, neverPublished).Title)
+}
+
+// TestFolderRootContentsPagination pins the root variant (GET /folders): the
+// same totals/has_more/limit contract, with in-folder and hidden rows excluded
+// from root section counts.
+func TestFolderRootContentsPagination(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	// 55 visible root notebooks, one hidden root notebook, and one notebook
+	// inside a folder: only the visible root rows may count.
+	for i := 0; i < 55; i++ {
+		id := f.insertNotebook(t, fmt.Sprintf("root pagination notebook %02d", i), nil, f.otherUserID)
+		f.grant(t, "notebook", id, []string{"view"})
+	}
+	f.insertNotebook(t, "root pagination hidden notebook", nil, f.otherUserID)
+	folderID := f.insertFolder(t, "root pagination folder", nil, f.otherUserID)
+	inFolder := f.insertNotebook(t, "root pagination in-folder notebook", &folderID, f.otherUserID)
+	f.grant(t, "notebook", inFolder, []string{"view"})
+
+	// Root connectors and dashboards exercise the other two sections.
+	for i := 0; i < 3; i++ {
+		c := f.insertConnector(t, fmt.Sprintf("root pagination connector %d", i), nil, f.otherUserID)
+		f.grant(t, "connector", c, []string{"view"})
+		d := f.insertDashboard(t, fmt.Sprintf("root pagination dashboard %d", i), nil, f.otherUserID)
+		f.grant(t, "dashboard", d, []string{"view"})
+	}
+
+	root := f.listRoot(t)
+	require.Equal(t, 55, root.Totals["notebooks"])
+	require.Len(t, root.Notebooks, 50)
+	require.True(t, root.HasMore["notebooks"])
+	require.Equal(t, 3, root.Totals["connectors"])
+	require.Len(t, root.Connectors, 3)
+	require.False(t, root.HasMore["connectors"])
+	require.Equal(t, 3, root.Totals["dashboards"])
+	require.Len(t, root.Dashboards, 3)
+	require.False(t, root.HasMore["dashboards"])
+
+	// Explicit limits apply to the root variant too.
+	root = f.listPath(t, "/api/v1/folders?limit=10")
+	require.Equal(t, 55, root.Totals["notebooks"])
+	require.Len(t, root.Notebooks, 10)
+	require.True(t, root.HasMore["notebooks"])
+
+	root = f.listPath(t, "/api/v1/folders?limit=201")
+	require.Len(t, root.Notebooks, 55)
+	require.False(t, root.HasMore["notebooks"])
+
+	status, body := f.get(t, "/api/v1/folders?limit=0")
+	require.Equal(t, http.StatusBadRequest, status, string(body))
+	status, body = f.get(t, "/api/v1/folders?limit=abc")
+	require.Equal(t, http.StatusBadRequest, status, string(body))
 }
