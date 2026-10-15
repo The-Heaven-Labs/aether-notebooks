@@ -214,6 +214,168 @@ func (s *Server) folderHasDescendantContent(ctx context.Context, folderID, orgID
 	return got[folderID], nil
 }
 
+// filterFoldersWithACLSubjectMatch answers, for many folders in one query,
+// whether the caller is named by any ACL entry on the folder itself. It exists
+// for the /home listing, whose former inline EXISTS matched ACL subjects
+// without evaluating the entry's actions, the resolution order, or the folder
+// ancestry — semantics deliberately wider than a view check — so this helper
+// reproduces that predicate instead of calling resolveActions. The result
+// carries an entry for every requested id (deduped); ids without a matching
+// entry are false.
+func (s *Server) filterFoldersWithACLSubjectMatch(ctx context.Context, folderIDs []string, userID string, groupIDs []string) (map[string]bool, error) {
+	unique := make([]string, 0, len(folderIDs))
+	byLower := make(map[string][]string, len(folderIDs))
+	result := make(map[string]bool, len(folderIDs))
+	for _, id := range folderIDs {
+		if _, seen := result[id]; seen {
+			continue
+		}
+		unique = append(unique, id)
+		result[id] = false
+		lower := strings.ToLower(id)
+		byLower[lower] = append(byLower[lower], id)
+	}
+	if len(unique) == 0 {
+		return result, nil
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		SELECT DISTINCT resource_id::text
+		FROM acl_entries
+		WHERE resource_type = 'folder'
+		  AND resource_id = ANY($1::uuid[])
+		  AND (
+			(subject_type = 'user' AND subject_id = $2::text)
+			OR (subject_type = 'group' AND subject_id = ANY($3::text[]))
+			OR (subject_type = 'org_role' AND subject_id = 'everyone')
+		  )
+	`, unique, userID, groupIDs)
+	if err != nil {
+		return nil, fmt.Errorf("folder acl subject query: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, fmt.Errorf("scan folder acl subject: %w", err)
+		}
+		// The query returns canonical lowercase uuid text; match
+		// case-insensitively so an uppercase requested spelling still lands.
+		for _, requested := range byLower[strings.ToLower(id)] {
+			result[requested] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("folder acl subject rows: %w", err)
+	}
+	return result, nil
+}
+
+// filterFoldersWithVisibleDescendantContentOrFolders is the folder-aware
+// descendant probe used by the /home listing. For every requested seed it
+// answers whether any STRICTLY DESCENDANT folder is visible to the caller: as a
+// folder the caller owns or holds a folder ACL entry on (any actions), or as
+// the home of a notebook, connector, or dashboard carrying a matching ACL
+// entry. It reproduces the listing's former inline predicate exactly and is
+// deliberately WIDER than filterFoldersWithVisibleDescendantContent, which is
+// content-only and seed-inclusive: here a descendant folder counts even when
+// nothing inside it is visible, so a folder whose only reachable descendant is
+// a folder stem stays listed. The seed itself is never probed (the /home
+// listing checks a direct ACL subject match separately). Admin mode is
+// deliberately not considered: callers only probe folders that failed
+// resolution, which cannot include an admin-mode-visible folder.
+func (s *Server) filterFoldersWithVisibleDescendantContentOrFolders(ctx context.Context, ident permIdentity, folderIDs []string) (map[string]bool, error) {
+	unique := make([]string, 0, len(folderIDs))
+	byLower := make(map[string][]string, len(folderIDs))
+	result := make(map[string]bool, len(folderIDs))
+	for _, id := range folderIDs {
+		if _, seen := result[id]; seen {
+			continue
+		}
+		unique = append(unique, id)
+		result[id] = false
+		lower := strings.ToLower(id)
+		byLower[lower] = append(byLower[lower], id)
+	}
+	if len(unique) == 0 {
+		return result, nil
+	}
+
+	rows, err := s.db.Pool.Query(ctx, `
+		WITH RECURSIVE descendants(seed_id, id) AS (
+			SELECT p.id, c.id
+			FROM folders p
+			JOIN folders c ON c.parent_id = p.id AND c.org_id = p.org_id
+			WHERE p.id = ANY($1::uuid[]) AND p.org_id = $2
+			UNION ALL
+			SELECT d.seed_id, f.id
+			FROM folders f
+			JOIN descendants d ON f.parent_id = d.id
+			WHERE f.org_id = $2
+		)
+		SELECT DISTINCT d.seed_id::text
+		FROM descendants d
+		WHERE
+		EXISTS (
+			SELECT 1 FROM folders f2
+			WHERE f2.id = d.id
+			AND (
+				f2.owner_id = $3
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f2.id AND subject_type = 'user' AND subject_id = $3::text)
+				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+		)
+		OR EXISTS (
+			SELECT 1 FROM notebooks nb
+			WHERE nb.folder_id = d.id AND nb.org_id = $2
+			AND (
+				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
+				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+			LIMIT 1
+		)
+		OR EXISTS (
+			SELECT 1 FROM connectors c
+			WHERE c.folder_id = d.id AND c.org_id = $2
+			AND (
+				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
+				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+			LIMIT 1
+		)
+		OR EXISTS (
+			SELECT 1 FROM dashboards d2
+			WHERE d2.folder_id = d.id AND d2.org_id = $2
+			AND (
+				EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
+				OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
+				OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
+			)
+			LIMIT 1
+		)
+	`, unique, ident.OrgID, ident.UserID, ident.GroupIDs)
+	if err != nil {
+		return nil, fmt.Errorf("folder-aware descendant query: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var seedID string
+		if err := rows.Scan(&seedID); err != nil {
+			return nil, fmt.Errorf("scan folder-aware descendant seed: %w", err)
+		}
+		for _, id := range byLower[strings.ToLower(seedID)] {
+			result[id] = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("folder-aware descendant rows: %w", err)
+	}
+	return result, nil
+}
+
 type folderNotebook struct {
 	models.Notebook
 	CanEdit   bool `json:"can_edit"`
@@ -278,23 +440,13 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 		SubFolders []models.Folder `json:"sub_folders"`
 	}
 
-	// Collect user's group memberships
-	groupRows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, claims.UserID)
+	// One identity per request: group memberships (including the implicit
+	// Everyone group) are resolved once and shared by every batched probe.
+	ident, err := s.permIdentity(ctx, claims)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	var groupIDs []string
-	for groupRows.Next() {
-		var gid string
-		if err := groupRows.Scan(&gid); err != nil {
-			groupRows.Close()
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		groupIDs = append(groupIDs, gid)
-	}
-	groupRows.Close()
 
 	// Get all home folders for the org with owner names
 	rows, err := s.db.Pool.Query(ctx,
@@ -326,182 +478,67 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 	// Filter home folders: show if user owns it OR has ACL access OR has access to any content inside
 	var filteredEntries []homeFolderEntry
 	// Org admins bypass ACLs only when admin mode is enabled — they see all home folders
-	isOrgAdmin := claims.Role == "admin" && adminModeFromContext(r.Context())
+	isOrgAdmin := ident.AdminMode && ident.OrgRole == "admin"
 	if isOrgAdmin {
 		filteredEntries = entries
 	} else {
+		// Batched visibility resolution, replacing the former per-folder
+		// queries: ownership is decided in Go, the direct ACL subject match
+		// runs once over every candidate, and the folder-aware descendant
+		// walk runs once over the remaining candidates.
+		candidates := make([]string, 0, len(entries))
+		owned := make(map[string]bool, len(entries))
 		for _, entry := range entries {
-			// Check if user owns this home folder
-			if entry.OwnerID != nil && *entry.OwnerID == claims.UserID {
-				filteredEntries = append(filteredEntries, entry)
+			if entry.OwnerID != nil && *entry.OwnerID == ident.UserID {
+				owned[entry.ID] = true
 				continue
 			}
-
-			// Check if user has direct ACL access on this home folder (explicit entries only)
-			var hasACL bool
-			s.db.Pool.QueryRow(ctx,
-				`SELECT EXISTS (
-				SELECT 1 FROM acl_entries
-				WHERE resource_type = 'folder' AND resource_id = $1
-				AND (
-					(subject_type = 'user' AND subject_id = $2::text)
-					OR (subject_type = 'group' AND subject_id = ANY($3::text[]))
-					OR (subject_type = 'org_role' AND subject_id = 'everyone')
-				)
-				LIMIT 1
-			)`,
-				entry.ID, claims.UserID, groupIDs,
-			).Scan(&hasACL)
-			if hasACL {
-				filteredEntries = append(filteredEntries, entry)
-				continue
+			candidates = append(candidates, entry.ID)
+		}
+		aclMatch, err := s.filterFoldersWithACLSubjectMatch(ctx, candidates, ident.UserID, ident.GroupIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		remaining := make([]string, 0, len(candidates))
+		for _, id := range candidates {
+			if !aclMatch[id] {
+				remaining = append(remaining, id)
 			}
-
-			// Check if user has access to any content inside this home folder (direct or descendant)
-			var hasAccess bool
-			err = s.db.Pool.QueryRow(ctx,
-				`SELECT EXISTS (
-				WITH RECURSIVE desc_ids AS (
-					SELECT id FROM folders WHERE parent_id = $1 AND org_id = $2
-					UNION ALL
-					SELECT f.id FROM folders f
-					JOIN desc_ids d ON f.parent_id = d.id
-					WHERE f.org_id = $2
-				)
-				SELECT 1 FROM desc_ids d
-				WHERE (
-					EXISTS (
-						SELECT 1 FROM folders f2
-						WHERE f2.id = d.id
-						AND (
-							f2.owner_id = $3
-							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f2.id AND subject_type = 'user' AND subject_id = $3::text)
-							OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-						)
-					)
-					OR EXISTS (
-						SELECT 1 FROM notebooks nb
-						WHERE nb.folder_id = d.id AND nb.org_id = $2
-						AND (
-							EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
-							OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-						)
-					)
-					OR EXISTS (
-						SELECT 1 FROM connectors c
-						WHERE c.folder_id = d.id AND c.org_id = $2
-						AND (
-							EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
-							OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-						)
-					)
-					OR EXISTS (
-						SELECT 1 FROM dashboards d2
-						WHERE d2.folder_id = d.id AND d2.org_id = $2
-						AND (
-							EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
-							OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-							OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-						)
-					)
-				)
-				LIMIT 1
-			)`,
-				entry.ID, claims.OrgID, claims.UserID, groupIDs,
-			).Scan(&hasAccess)
-			if err != nil {
-				continue
-			}
-			if hasAccess {
+		}
+		descendantMatch, err := s.filterFoldersWithVisibleDescendantContentOrFolders(ctx, ident, remaining)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+		for _, entry := range entries {
+			if owned[entry.ID] || aclMatch[entry.ID] || descendantMatch[entry.ID] {
 				filteredEntries = append(filteredEntries, entry)
 			}
 		}
 	}
 
-	// For each filtered home folder, get sub-folders the user can access
-	for i := range filteredEntries {
-		subQuery := `SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
-			 FROM folders f
-			 WHERE f.parent_id = $1 AND f.org_id = $2`
-		var subArgs []any
-		if isOrgAdmin {
-			subArgs = []any{filteredEntries[i].ID, claims.OrgID}
-		} else {
-			subQuery += ` AND (
-			   f.owner_id = $3
-			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'user' AND subject_id = $3::text)
-			   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'folder' AND resource_id = f.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-			   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'folder' AND resource_id = f.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-		   OR (
-			   -- Direct accessible content in this folder
-			   EXISTS (SELECT 1 FROM notebooks nb WHERE nb.folder_id = f.id AND nb.org_id = f.org_id AND (
-				   EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
-				   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-				   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-			   ) LIMIT 1)
-			   OR EXISTS (SELECT 1 FROM connectors c WHERE c.folder_id = f.id AND c.org_id = f.org_id AND (
-				   EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
-				   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-				   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-			   ) LIMIT 1)
-			   OR EXISTS (SELECT 1 FROM dashboards d2 WHERE d2.folder_id = f.id AND d2.org_id = f.org_id AND (
-				   EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
-				   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-				   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-			   ) LIMIT 1)
-			   OR EXISTS (
-				   WITH RECURSIVE desc_ids AS (
-					   SELECT id FROM folders WHERE parent_id = f.id AND org_id = f.org_id
-					   UNION ALL
-					   SELECT c.id FROM folders c
-					   JOIN desc_ids d ON c.parent_id = d.id
-					   WHERE c.org_id = f.org_id
-				   )
-				   SELECT 1 FROM desc_ids d
-				   WHERE (
-					   EXISTS (
-						   SELECT 1 FROM notebooks nb
-						   WHERE nb.folder_id = d.id AND nb.org_id = f.org_id
-						   AND (
-							   EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'user' AND subject_id = $3::text)
-							   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'notebook' AND resource_id = nb.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-							   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'notebook' AND resource_id = nb.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-						   )
-					   )
-					   OR EXISTS (
-						   SELECT 1 FROM connectors c
-						   WHERE c.folder_id = d.id AND c.org_id = f.org_id
-						   AND (
-							   EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'user' AND subject_id = $3::text)
-							   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'connector' AND resource_id = c.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-							   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'connector' AND resource_id = c.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-						   )
-					   )
-					   OR EXISTS (
-						   SELECT 1 FROM dashboards d2
-						   WHERE d2.folder_id = d.id AND d2.org_id = f.org_id
-						   AND (
-							   EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'user' AND subject_id = $3::text)
-							   OR EXISTS (SELECT 1 FROM acl_entries ae WHERE resource_type = 'dashboard' AND resource_id = d2.id AND ae.subject_type = 'group' AND ae.subject_id = ANY($4::text[]))
-							   OR EXISTS (SELECT 1 FROM acl_entries WHERE resource_type = 'dashboard' AND resource_id = d2.id AND subject_type = 'org_role' AND subject_id = 'everyone')
-						   )
-					   )
-				   )
-				   LIMIT 1
-			   )
-		   )
-			 )`
-			subArgs = []any{filteredEntries[i].ID, claims.OrgID, claims.UserID, groupIDs}
+	// For every filtered home folder, list the sub-folders the user can
+	// access. The predicates are resolved in batch: one query loads all direct
+	// sub-folders, then a batched ACL subject match plus the content-only
+	// descendant filter decide visibility (admins skip both).
+	if len(filteredEntries) > 0 {
+		homeIDs := make([]string, 0, len(filteredEntries))
+		for i := range filteredEntries {
+			homeIDs = append(homeIDs, filteredEntries[i].ID)
 		}
-		subQuery += ` ORDER BY f.name`
-		subRows, err := s.db.Pool.Query(ctx, subQuery, subArgs...)
+		subRows, err := s.db.Pool.Query(ctx,
+			`SELECT f.id, f.org_id, f.parent_id, f.name, f.is_home, f.owner_id, f.created_by, f.created_at, f.updated_at
+			 FROM folders f
+			 WHERE f.parent_id = ANY($1::uuid[]) AND f.org_id = $2
+			 ORDER BY f.name`,
+			homeIDs, claims.OrgID,
+		)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "query failed")
 			return
 		}
+		var subs []models.Folder
 		for subRows.Next() {
 			var sub models.Folder
 			if err := subRows.Scan(&sub.ID, &sub.OrgID, &sub.ParentID, &sub.Name, &sub.IsHome,
@@ -510,9 +547,60 @@ func (s *Server) handleListHomeFolders(w http.ResponseWriter, r *http.Request) {
 				writeError(w, http.StatusInternalServerError, "scan failed")
 				return
 			}
-			filteredEntries[i].SubFolders = append(filteredEntries[i].SubFolders, sub)
+			subs = append(subs, sub)
 		}
 		subRows.Close()
+		if err := subRows.Err(); err != nil {
+			writeError(w, http.StatusInternalServerError, "query failed")
+			return
+		}
+
+		visible := make(map[string]bool, len(subs))
+		if isOrgAdmin {
+			for _, sub := range subs {
+				visible[sub.ID] = true
+			}
+		} else {
+			candidates := make([]string, 0, len(subs))
+			for _, sub := range subs {
+				candidates = append(candidates, sub.ID)
+			}
+			aclMatch, err := s.filterFoldersWithACLSubjectMatch(ctx, candidates, ident.UserID, ident.GroupIDs)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "query failed")
+				return
+			}
+			// Only folders that are neither owned nor ACL-matched need the
+			// content probe.
+			remaining := make([]string, 0, len(candidates))
+			for _, sub := range subs {
+				ownedByCaller := sub.OwnerID != nil && *sub.OwnerID == ident.UserID
+				if !ownedByCaller && !aclMatch[sub.ID] {
+					remaining = append(remaining, sub.ID)
+				}
+			}
+			contentMatch, err := s.filterFoldersWithVisibleDescendantContent(ctx, ident, remaining)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "query failed")
+				return
+			}
+			for _, sub := range subs {
+				ownedByCaller := sub.OwnerID != nil && *sub.OwnerID == ident.UserID
+				visible[sub.ID] = ownedByCaller || aclMatch[sub.ID] || contentMatch[sub.ID]
+			}
+		}
+
+		// Append in scan (name) order per parent so each entry keeps the
+		// single-query ORDER BY f.name it had before batching.
+		byParent := make(map[string][]models.Folder, len(filteredEntries))
+		for _, sub := range subs {
+			if visible[sub.ID] && sub.ParentID != nil {
+				byParent[*sub.ParentID] = append(byParent[*sub.ParentID], sub)
+			}
+		}
+		for i := range filteredEntries {
+			filteredEntries[i].SubFolders = byParent[filteredEntries[i].ID]
+		}
 	}
 
 	if filteredEntries == nil {
@@ -538,6 +626,15 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	}
 	ctx := r.Context()
 
+	// One identity per request: group memberships (including the implicit
+	// Everyone group) and admin mode are resolved once and shared by the batch
+	// resolver calls below.
+	ident, err := s.permIdentity(ctx, claims)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
 	contents := folderContents{
 		Folders:    []folderItemFolder{},
 		Notebooks:  []folderNotebook{},
@@ -545,25 +642,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		Dashboards: []folderDashboard{},
 	}
 
-	// Collect user's group memberships for permission checks
-	groupRows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, claims.UserID)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "query failed")
-		return
-	}
-	var groupIDs []string
-	for groupRows.Next() {
-		var gid string
-		if err := groupRows.Scan(&gid); err != nil {
-			groupRows.Close()
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		groupIDs = append(groupIDs, gid)
-	}
-	groupRows.Close()
-
-	isOrgAdmin := claims.Role == "admin" && adminModeFromContext(r.Context())
+	isOrgAdmin := ident.AdminMode && ident.OrgRole == "admin"
 
 	// Folders at root: include folders user can access AND has content inside, EXCLUDE is_home folders
 	var folderQuery string
@@ -656,29 +735,49 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		   )
 		 )
 		 ORDER BY f.name`
-		folderArgs = []any{claims.OrgID, claims.UserID, groupIDs}
+		folderArgs = []any{claims.OrgID, ident.UserID, ident.GroupIDs}
 	}
 	rows, err := s.db.Pool.Query(ctx, folderQuery, folderArgs...)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer rows.Close()
+	var rootFolders []models.Folder
 	for rows.Next() {
 		var f models.Folder
 		if err := rows.Scan(&f.ID, &f.OrgID, &f.ParentID, &f.Name, &f.IsHome,
 			&f.OwnerID, &f.CreatedBy, &f.CreatedAt, &f.UpdatedAt); err != nil {
+			rows.Close()
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "edit")
-		deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "delete")
-		shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "manage")
-		contents.Folders = append(contents.Folders, folderItemFolder{Folder: f, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
+		rootFolders = append(rootFolders, f)
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
+	}
+
+	// Batched edit/delete/manage flags for every listed folder. Visibility
+	// itself stays decided by the query above (owner / ACL-subject predicates
+	// are deliberately wider than a resolved view).
+	rootFolderIDs := make([]string, 0, len(rootFolders))
+	for _, f := range rootFolders {
+		rootFolderIDs = append(rootFolderIDs, f.ID)
+	}
+	folderPerms, err := s.resolveActions(ctx, ident, "folder", rootFolderIDs, []string{"edit", "delete", "manage"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	for _, f := range rootFolders {
+		contents.Folders = append(contents.Folders, folderItemFolder{
+			Folder:    f,
+			CanEdit:   actionAllowed(folderPerms, f.ID, "edit"),
+			CanDelete: actionAllowed(folderPerms, f.ID, "delete"),
+			CanShare:  actionAllowed(folderPerms, f.ID, "manage"),
+		})
 	}
 
 	// Notebooks at root (no folder) - filter by permission
@@ -692,24 +791,40 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer nbRows.Close()
+	var rootNotebooks []models.Notebook
 	for nbRows.Next() {
 		nb, err := scanNotebook(nbRows)
 		if err != nil {
+			nbRows.Close()
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
-		if err == nil && ok {
-			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "edit")
-			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "delete")
-			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "share")
-			contents.Notebooks = append(contents.Notebooks, folderNotebook{Notebook: nb, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
-		}
+		rootNotebooks = append(rootNotebooks, nb)
 	}
+	nbRows.Close()
 	if err := nbRows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
+	}
+
+	rootNotebookIDs := make([]string, 0, len(rootNotebooks))
+	for _, nb := range rootNotebooks {
+		rootNotebookIDs = append(rootNotebookIDs, nb.ID)
+	}
+	notebookPerms, err := s.resolveActions(ctx, ident, "notebook", rootNotebookIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	for _, nb := range rootNotebooks {
+		if actionAllowed(notebookPerms, nb.ID, "view") {
+			contents.Notebooks = append(contents.Notebooks, folderNotebook{
+				Notebook:  nb,
+				CanEdit:   actionAllowed(notebookPerms, nb.ID, "edit"),
+				CanDelete: actionAllowed(notebookPerms, nb.ID, "delete"),
+				CanShare:  actionAllowed(notebookPerms, nb.ID, "share"),
+			})
+		}
 	}
 
 	// Connectors at root (no folder) - filter by permission
@@ -721,24 +836,38 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer cRows.Close()
+	var rootConnectors []folderConnector
 	for cRows.Next() {
 		var c folderConnector
 		if err := cRows.Scan(&c.ID, &c.Name, &c.Type, &c.IsDefault, &c.FolderID, &c.CreatedBy, &c.CreatedAt, &c.UpdatedAt); err != nil {
+			cRows.Close()
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
-		if err == nil && ok {
-			c.CanEdit, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "edit")
-			c.CanDelete, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "delete")
-			c.CanShare, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "share")
-			contents.Connectors = append(contents.Connectors, c)
-		}
+		rootConnectors = append(rootConnectors, c)
 	}
+	cRows.Close()
 	if err := cRows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
+	}
+
+	rootConnectorIDs := make([]string, 0, len(rootConnectors))
+	for _, c := range rootConnectors {
+		rootConnectorIDs = append(rootConnectorIDs, c.ID)
+	}
+	connectorPerms, err := s.resolveActions(ctx, ident, "connector", rootConnectorIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	for _, c := range rootConnectors {
+		if actionAllowed(connectorPerms, c.ID, "view") {
+			c.CanEdit = actionAllowed(connectorPerms, c.ID, "edit")
+			c.CanDelete = actionAllowed(connectorPerms, c.ID, "delete")
+			c.CanShare = actionAllowed(connectorPerms, c.ID, "share")
+			contents.Connectors = append(contents.Connectors, c)
+		}
 	}
 
 	// Dashboards at root (no folder) - filter by permission
@@ -751,24 +880,40 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
-	defer dRows.Close()
+	var rootDashboards []models.Dashboard
 	for dRows.Next() {
 		d, err := scanDashboard(dRows)
 		if err != nil {
+			dRows.Close()
 			writeError(w, http.StatusInternalServerError, "scan failed")
 			return
 		}
-		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
-		if err == nil && ok {
-			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "edit")
-			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "delete")
-			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "share")
-			contents.Dashboards = append(contents.Dashboards, folderDashboard{Dashboard: d, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
-		}
+		rootDashboards = append(rootDashboards, d)
 	}
+	dRows.Close()
 	if err := dRows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
+	}
+
+	rootDashboardIDs := make([]string, 0, len(rootDashboards))
+	for _, d := range rootDashboards {
+		rootDashboardIDs = append(rootDashboardIDs, d.ID)
+	}
+	dashboardPerms, err := s.resolveActions(ctx, ident, "dashboard", rootDashboardIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	for _, d := range rootDashboards {
+		if actionAllowed(dashboardPerms, d.ID, "view") {
+			contents.Dashboards = append(contents.Dashboards, folderDashboard{
+				Dashboard: d,
+				CanEdit:   actionAllowed(dashboardPerms, d.ID, "edit"),
+				CanDelete: actionAllowed(dashboardPerms, d.ID, "delete"),
+				CanShare:  actionAllowed(dashboardPerms, d.ID, "share"),
+			})
+		}
 	}
 
 	writeJSON(w, http.StatusOK, contents)
@@ -812,36 +957,13 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		Dashboards: []folderDashboard{},
 	}
 
-	// Collect user's group memberships for descendant content checks
-	groupRows, err := s.db.Pool.Query(ctx, `SELECT group_id FROM group_members WHERE user_id = $1`, claims.UserID)
+	// One identity per request: group memberships (including the implicit
+	// Everyone group) and admin mode are resolved once and shared by the
+	// batched resolution below.
+	ident, err := s.permIdentity(ctx, claims)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
-	}
-	var groupIDs []string
-	for groupRows.Next() {
-		var gid string
-		if err := groupRows.Scan(&gid); err != nil {
-			groupRows.Close()
-			writeError(w, http.StatusInternalServerError, "scan failed")
-			return
-		}
-		groupIDs = append(groupIDs, gid)
-	}
-	groupRows.Close()
-
-	// Permission check: user must have view on the folder OR have access to content inside
-	pOK, pErr := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", folderID, "view")
-	if pErr != nil {
-		writeError(w, http.StatusInternalServerError, "permission check failed")
-		return
-	}
-	if !pOK {
-		hasContent, cErr := s.folderHasDescendantContent(ctx, folderID, claims.OrgID, claims.UserID, groupIDs)
-		if cErr != nil || !hasContent {
-			writeError(w, http.StatusForbidden, "insufficient permissions")
-			return
-		}
 	}
 
 	// Sub-folders
@@ -866,19 +988,64 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		subFolders = append(subFolders, f)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	// Batched view/edit/delete/manage for the requested folder and every
+	// child. folder.ID (the canonical scan result) is the resolution key, so
+	// an uppercase path spelling still resolves like the uuid cast did.
+	childFolderIDs := make([]string, 0, len(subFolders)+1)
+	childFolderIDs = append(childFolderIDs, folder.ID)
 	for _, f := range subFolders {
-		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "view")
-		if err == nil && ok {
-			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "edit")
-			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "delete")
-			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "folder", f.ID, "manage")
-			contents.Folders = append(contents.Folders, folderItemFolder{Folder: f, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
-		} else {
-			// Check if the folder has accessible descendant content (deep sharing)
-			hasDescendant, dErr := s.folderHasDescendantContent(ctx, f.ID, claims.OrgID, claims.UserID, groupIDs)
-			if dErr == nil && hasDescendant {
-				contents.Folders = append(contents.Folders, folderItemFolder{Folder: f, CanEdit: false, CanDelete: false, CanShare: false})
-			}
+		childFolderIDs = append(childFolderIDs, f.ID)
+	}
+	folderPerms, err := s.resolveActions(ctx, ident, "folder", childFolderIDs, []string{"view", "edit", "delete", "manage"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+
+	// Permission check: user must have view on the folder OR have access to
+	// content inside (the single-folder content probe, as before). A folder
+	// resolved visible is never probed.
+	if !actionAllowed(folderPerms, folder.ID, "view") {
+		hasContent, cErr := s.folderHasDescendantContent(ctx, folder.ID, ident.OrgID, ident.UserID, ident.GroupIDs)
+		if cErr != nil || !hasContent {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+	}
+
+	// Children that fail their own view check are probed in one batch for
+	// visible descendant content (content-only, matching the former per-child
+	// probe). A probe error keeps them hidden, exactly as the per-child error
+	// path did.
+	var hiddenChildIDs []string
+	for _, f := range subFolders {
+		if !actionAllowed(folderPerms, f.ID, "view") {
+			hiddenChildIDs = append(hiddenChildIDs, f.ID)
+		}
+	}
+	var descendantVisible map[string]bool
+	if len(hiddenChildIDs) > 0 {
+		descendantVisible, err = s.filterFoldersWithVisibleDescendantContent(ctx, ident, hiddenChildIDs)
+		if err != nil {
+			descendantVisible = nil
+		}
+	}
+	for _, f := range subFolders {
+		if actionAllowed(folderPerms, f.ID, "view") {
+			contents.Folders = append(contents.Folders, folderItemFolder{
+				Folder:    f,
+				CanEdit:   actionAllowed(folderPerms, f.ID, "edit"),
+				CanDelete: actionAllowed(folderPerms, f.ID, "delete"),
+				CanShare:  actionAllowed(folderPerms, f.ID, "manage"),
+			})
+		} else if descendantVisible[f.ID] {
+			// Hidden folder with accessible descendant content (deep sharing).
+			contents.Folders = append(contents.Folders, folderItemFolder{Folder: f, CanEdit: false, CanDelete: false, CanShare: false})
 		}
 	}
 
@@ -904,13 +1071,23 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		subNotebooks = append(subNotebooks, nb)
 	}
 	nbRows.Close()
+	subNotebookIDs := make([]string, 0, len(subNotebooks))
 	for _, nb := range subNotebooks {
-		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "view")
-		if err == nil && ok {
-			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "edit")
-			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "delete")
-			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "notebook", nb.ID, "share")
-			contents.Notebooks = append(contents.Notebooks, folderNotebook{Notebook: nb, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
+		subNotebookIDs = append(subNotebookIDs, nb.ID)
+	}
+	notebookPerms, err := s.resolveActions(ctx, ident, "notebook", subNotebookIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	for _, nb := range subNotebooks {
+		if actionAllowed(notebookPerms, nb.ID, "view") {
+			contents.Notebooks = append(contents.Notebooks, folderNotebook{
+				Notebook:  nb,
+				CanEdit:   actionAllowed(notebookPerms, nb.ID, "edit"),
+				CanDelete: actionAllowed(notebookPerms, nb.ID, "delete"),
+				CanShare:  actionAllowed(notebookPerms, nb.ID, "share"),
+			})
 		}
 	}
 
@@ -934,12 +1111,20 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		subConnectors = append(subConnectors, c)
 	}
 	cRows.Close()
+	subConnectorIDs := make([]string, 0, len(subConnectors))
 	for _, c := range subConnectors {
-		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "view")
-		if err == nil && ok {
-			c.CanEdit, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "edit")
-			c.CanDelete, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "delete")
-			c.CanShare, _ = s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "connector", c.ID, "share")
+		subConnectorIDs = append(subConnectorIDs, c.ID)
+	}
+	connectorPerms, err := s.resolveActions(ctx, ident, "connector", subConnectorIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	for _, c := range subConnectors {
+		if actionAllowed(connectorPerms, c.ID, "view") {
+			c.CanEdit = actionAllowed(connectorPerms, c.ID, "edit")
+			c.CanDelete = actionAllowed(connectorPerms, c.ID, "delete")
+			c.CanShare = actionAllowed(connectorPerms, c.ID, "share")
 			contents.Connectors = append(contents.Connectors, c)
 		}
 	}
@@ -964,13 +1149,28 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 		}
 		subDashboards = append(subDashboards, d)
 	}
+	dRows.Close()
+	if err := dRows.Err(); err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	subDashboardIDs := make([]string, 0, len(subDashboards))
 	for _, d := range subDashboards {
-		ok, err := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "view")
-		if err == nil && ok {
-			editOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "edit")
-			deleteOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "delete")
-			shareOK, _ := s.checkPermission(ctx, claims.UserID, claims.OrgID, claims.Role, "dashboard", d.ID, "share")
-			contents.Dashboards = append(contents.Dashboards, folderDashboard{Dashboard: d, CanEdit: editOK, CanDelete: deleteOK, CanShare: shareOK})
+		subDashboardIDs = append(subDashboardIDs, d.ID)
+	}
+	dashboardPerms, err := s.resolveActions(ctx, ident, "dashboard", subDashboardIDs, []string{"view", "edit", "delete", "share"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	for _, d := range subDashboards {
+		if actionAllowed(dashboardPerms, d.ID, "view") {
+			contents.Dashboards = append(contents.Dashboards, folderDashboard{
+				Dashboard: d,
+				CanEdit:   actionAllowed(dashboardPerms, d.ID, "edit"),
+				CanDelete: actionAllowed(dashboardPerms, d.ID, "delete"),
+				CanShare:  actionAllowed(dashboardPerms, d.ID, "share"),
+			})
 		}
 	}
 

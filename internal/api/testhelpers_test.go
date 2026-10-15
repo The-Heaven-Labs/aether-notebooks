@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/the-heaven-labs/aether/internal/api"
 	"github.com/the-heaven-labs/aether/internal/audit"
@@ -96,6 +99,54 @@ func setupTestServer(t *testing.T) *api.Server {
 	// the sync worker drains while the database is still available.
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// queryCounter is a pgx.QueryTracer that counts every query issued through a
+// pool, so tests can pin that list endpoints resolve permissions in a bounded,
+// item-count-independent number of queries.
+type queryCounter struct{ n atomic.Int64 }
+
+// TraceQueryStart implements pgx.QueryTracer.
+func (q *queryCounter) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	q.n.Add(1)
+	return ctx
+}
+
+// TraceQueryEnd implements pgx.QueryTracer.
+func (q *queryCounter) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+
+// setupTestServerWithQueryCounter is setupTestServer with a pool that counts
+// queries. The pool is built through pgxpool.ParseConfig so the tracer can be
+// attached before pgxpool.NewWithConfig; everything else mirrors
+// setupTestServer (same DSN env, migrations, JWT issuer, audit logger, Redis
+// cache, and cleanup ordering).
+func setupTestServerWithQueryCounter(t *testing.T) (*api.Server, *queryCounter) {
+	t.Helper()
+	counter := &queryCounter{}
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+	cfg, err := pgxpool.ParseConfig(dsn)
+	require.NoError(t, err)
+	cfg.ConnConfig.Tracer = counter
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	require.NoError(t, pool.Ping(context.Background()))
+	db := &database.DB{Pool: pool}
+	t.Cleanup(func() { db.Close() })
+	require.NoError(t, db.Migrate(context.Background()))
+
+	jwt := auth.NewJWTIssuer("test-secret", 15*time.Minute)
+	auditLogger := audit.NewLogger(db)
+	key := crypto.DeriveKey("test-master-key-for-tests-only!")
+	redisCache := setupTestCache(t)
+	srv := api.NewServer(db, jwt, auditLogger, key, redisCache)
+	srv.SetMaxAttachmentBytes(10 << 20)
+	// Registered after the db cleanup, so it runs before db.Close (LIFO):
+	// background workers drain while the database is still available.
+	t.Cleanup(srv.Close)
+	return srv, counter
 }
 
 func registerAndGetToken(t *testing.T, srv *api.Server, email, orgName string) string {
