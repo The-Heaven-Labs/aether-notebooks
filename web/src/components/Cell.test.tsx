@@ -777,8 +777,13 @@ describe('run endpoint footer', () => {
 })
 
 describe('connector picker provisioner handling', () => {
-  it('labels and disables a blocked provisioner connector', async () => {
-    const cell: CellType = {
+  const provisionerConnectors = [
+    { id: 'conn-prov', name: 'Provisioner', type: 'clickhouse', created_at: '', can_use: false, is_provisioner: true },
+    { id: 'conn-svc', name: 'Service', type: 'clickhouse', created_at: '', can_use: true, is_provisioner: false },
+  ]
+
+  function codeCell(overrides: Partial<CellType> = {}): CellType {
+    return {
       id: 'cell-prov',
       notebook_id: 'nb-1',
       type: 'code',
@@ -790,16 +795,16 @@ describe('connector picker provisioner handling', () => {
       updated_at: '',
       source_visible: true,
       cell_collapsed: false,
-      connector_id: 'conn-prov',
+      ...overrides,
     }
+  }
+
+  function renderCodeCell(cell: CellType) {
     render(
       <Suspense fallback={null}>
         <Cell
           cell={cell}
-          connectors={[
-            { id: 'conn-prov', name: 'Provisioner', type: 'clickhouse', created_at: '', can_use: false, is_provisioner: true },
-            { id: 'conn-svc', name: 'Service', type: 'clickhouse', created_at: '', can_use: true, is_provisioner: false },
-          ]}
+          connectors={provisionerConnectors}
           notebookId="nb-1"
           onRun={vi.fn()}
           onDelete={vi.fn()}
@@ -808,9 +813,26 @@ describe('connector picker provisioner handling', () => {
         />
       </Suspense>
     )
+  }
+
+  it('keeps a selected blocked provisioner as a disabled option', async () => {
+    renderCodeCell(codeCell({ connector_id: 'conn-prov' }))
 
     fireEvent.click(await screen.findByTitle('Click to change connector'))
     const option = await screen.findByRole('option', { name: 'Provisioner (provisioner — no access)' })
     expect(option).toBeDisabled()
+    // The connector select (first combobox, ahead of the row-limit one) still
+    // displays the kept option instead of blanking out.
+    expect(screen.getAllByRole('combobox')[0]).toHaveValue('conn-prov')
+    // Usable connectors stay pickable next to it.
+    expect(screen.getByRole('option', { name: 'Service' })).toBeEnabled()
+  })
+
+  it('hides a blocked provisioner when it is not the current selection', async () => {
+    renderCodeCell(codeCell())
+
+    fireEvent.click(await screen.findByTitle('Click to change connector'))
+    expect(await screen.findByRole('option', { name: 'Service' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /Provisioner/ })).not.toBeInTheDocument()
   })
 })

@@ -18,6 +18,12 @@ const mockConnectors = [
   { id: 'conn-2', name: 'Analytics CH', type: 'clickhouse' },
 ]
 
+const provisionerConnectors = [
+  { id: 'conn-svc', name: 'Service CH', type: 'clickhouse', can_use: true, is_provisioner: false },
+  { id: 'conn-prov-allowed', name: 'Allowed provisioner', type: 'clickhouse', can_use: true, is_provisioner: true },
+  { id: 'conn-prov-blocked', name: 'Blocked provisioner', type: 'clickhouse', can_use: false, is_provisioner: true },
+]
+
 describe('ConnectorSelector', () => {
   test('renders connector options', async () => {
     server.use(
@@ -68,5 +74,34 @@ describe('ConnectorSelector', () => {
     renderWithQuery(<ConnectorSelector value={null} onChange={() => {}} types={['clickhouse']} />)
     expect(await screen.findByText('Analytics CH')).toBeInTheDocument()
     expect(screen.queryByText('Production DB')).not.toBeInTheDocument()
+  })
+
+  test('hides a non-executable provisioner from the options', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(provisionerConnectors))
+    )
+    renderWithQuery(<ConnectorSelector value={null} onChange={() => {}} />)
+    expect(await screen.findByRole('option', { name: 'Service CH' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /Blocked provisioner/ })).not.toBeInTheDocument()
+  })
+
+  test('keeps an executable provisioner with its label', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(provisionerConnectors))
+    )
+    renderWithQuery(<ConnectorSelector value={null} onChange={() => {}} />)
+    const option = await screen.findByRole('option', { name: 'Allowed provisioner (provisioner)' })
+    expect(option).toBeEnabled()
+  })
+
+  test('keeps a selected non-executable provisioner as a disabled option', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(provisionerConnectors))
+    )
+    renderWithQuery(<ConnectorSelector value="conn-prov-blocked" onChange={() => {}} />)
+    const option = await screen.findByRole('option', { name: 'Blocked provisioner (provisioner — no access)' })
+    expect(option).toBeDisabled()
+    // The kept option is what the select displays; it never blanks out.
+    expect(screen.getByRole('combobox')).toHaveValue('conn-prov-blocked')
   })
 })

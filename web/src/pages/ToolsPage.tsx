@@ -14,6 +14,7 @@ import type { Tool, ToolType } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
 import type { HeaderRow } from '../components/HeadersEditor'
+import { executableConnectorOptions } from '../utils/connectors'
 
 interface ParamDef {
   name: string
@@ -40,6 +41,8 @@ interface Connector {
   id: string
   name: string
   type: string
+  can_use?: boolean
+  is_provisioner?: boolean
 }
 
 const emptyForm = (): ToolForm => ({
@@ -421,7 +424,13 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
           <label style={styles.label}>Connector
             <select style={styles.input} value={form.connector_id} onChange={setField('connector_id')}>
               <option value="">Select a connector…</option>
-              {connectors.map(c => <option key={c.id} value={c.id}>{c.name} ({c.type})</option>)}
+              {executableConnectorOptions(connectors, form.connector_id).map(c => (
+                // The current-selection exception can surface one non-executable
+                // provisioner; it stays visible but unpickable so the value shows.
+                <option key={c.id} value={c.id} disabled={c.is_provisioner === true && c.can_use === false}>
+                  {c.name} ({c.type})
+                </option>
+              ))}
             </select>
           </label>
           <label style={{ ...styles.label, gridColumn: '1 / -1' }}>SQL Query

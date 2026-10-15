@@ -13,6 +13,7 @@ const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m
 import type { Cell as APICell, Connector, ExecuteRouting } from '../types'
 import type { ChartConfig } from '../charts'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
+import { executableConnectorOptions } from '../utils/connectors'
 import type { NotebookCollab } from './collabRuntime'
 
 // ── Yjs collaboration cache (shared across all cells in a notebook) ───────────
@@ -547,7 +548,7 @@ export const Cell = memo(function Cell({
                 autoFocus
               >
                 <option value="">Inherit from notebook</option>
-                {connectors.map((c) => (
+                {executableConnectorOptions(connectors, cell.connector_id).map((c) => (
                   <option key={c.id} value={c.id} disabled={c.can_use === false}>
                     {c.name}
                     {c.is_provisioner

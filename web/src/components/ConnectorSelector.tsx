@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { executableConnectorOptions } from '../utils/connectors'
 
 interface ConnectorItem {
   id: string
@@ -36,6 +37,7 @@ export function ConnectorSelector({
     queryFn: () => api.get<ConnectorItem[]>('/api/v1/connectors'),
   })
   const visible = types ? connectors.filter(c => types.includes(c.type)) : connectors
+  const options = executableConnectorOptions(visible, value)
 
   return (
     <span style={styles.wrap}>
@@ -56,7 +58,7 @@ export function ConnectorSelector({
         onChange={e => onChange(e.target.value || null)}
       >
         <option value="" disabled={!allowClear || !value}>{allowClear && value ? 'Clear selection' : placeholder}</option>
-        {visible.map(c => (
+        {options.map(c => (
           <option key={c.id} value={c.id} disabled={c.can_use === false}>
             {c.name}
             {c.is_provisioner
