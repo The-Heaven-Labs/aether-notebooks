@@ -274,52 +274,42 @@ func checkPermissionQ(ctx context.Context, q permissionQuerier, userID, orgID, o
 		}
 	}
 
-	// 5. Sort: most specific first; within same specificity, user > group > org_role
+	// 5. Evaluate the candidates. The evaluation rules — most specific first,
+	//    the Everyone exception, view implication, and ancestor-folder action
+	//    expansion — live in evaluateCandidates so the batched resolver shares
+	//    them by construction.
+	return evaluateCandidates(candidates, userID, orgRole, groupIDs, resourceType, action), nil
+}
+
+// evaluateCandidates is the shared permission-evaluation core: most specific
+// first (resource before its parent folder before ancestors), user > group >
+// org_role within a depth, the Everyone exception, view implication, and
+// ancestor-folder action expansion. checkPermissionQ and the batched resolver
+// must both evaluate through this function so batch results equal single-check
+// results by construction.
+func evaluateCandidates(candidates []aclCandidate, userID, orgRole string, groupIDs []string, resourceType, action string) bool {
 	sort.SliceStable(candidates, func(i, j int) bool {
 		if candidates[i].specificity != candidates[j].specificity {
 			return candidates[i].specificity < candidates[j].specificity
 		}
 		return candidates[i].subjectRank < candidates[j].subjectRank
 	})
-
-	// 6. Evaluate candidates: if any matching entry grants the action → allow.
-	//    A matching org_role:everyone entry that grants the action is sufficient
-	//    even when a more-specific non-everyone entry lacks the action (restrictive).
-	//    view is implied by use/edit/share/delete/admin, and ancestor folder
-	//    grants expand onto the descendant actions the folder chip set cannot
-	//    name directly.
-	var (
-		everyoneGrants   bool
-		restrictiveMatch bool
-	)
+	everyoneGrants := false
 	for _, c := range candidates {
 		if !matchesUser(c, userID, orgRole, groupIDs) {
 			continue
 		}
-
 		if candidateGrants(c, resourceType, action) {
 			if c.subjectType == "org_role" && c.subjectID == "everyone" {
 				everyoneGrants = true
 			} else {
-				return true, nil
+				return true
 			}
-		} else if !(c.subjectType == "org_role" && c.subjectID == "everyone") {
-			restrictiveMatch = true
 		}
 	}
-
-	// 7. org_role:everyone grants the action → allow
-	if everyoneGrants {
-		return true, nil
-	}
-
-	// 8. Restrictive match without everyone grant → deny
-	if restrictiveMatch {
-		return false, nil
-	}
-
-	// 9. No matching entry → DENY (deny-by-default)
-	return false, nil
+	// Only an Everyone grant can allow past this point; a restrictive
+	// more-specific match and a no-match state both deny by default.
+	return everyoneGrants
 }
 
 func matchesUser(c aclCandidate, userID, orgRole string, groupIDs []string) bool {
