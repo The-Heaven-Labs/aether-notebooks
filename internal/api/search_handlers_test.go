@@ -515,6 +515,48 @@ func TestSearchDashboardContentEditorsOnly(t *testing.T) {
 	require.Len(t, requireSearchGroup(t, resp, "dashboard").Results, 1)
 }
 
+// TestSearchDashboardDraftSnippetOnTitleMatch pins the snippet leg of Leak 2:
+// when one query matches both the viewer's effective (published) title and a
+// draft widget's SQL, the view-only caller gets the title hit with no snippet
+// — the draft content hit reached the searcher but must be intersected away
+// before it can merge — and no content-only hit either. The editor gets the
+// same single hit with the draft snippet.
+func TestSearchDashboardDraftSnippetOnTitleMatch(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupSearchTestFixture(t, srv)
+
+	dashboardID := f.seedDashboard(t, "Published alpha draft", nil, f.userID)
+	connectorID := f.seedConnector(t, "Alpha connector", nil, f.userID)
+	f.seedWidget(t, dashboardID, connectorID, "SELECT alpha_secret FROM ledger")
+	f.grant(t, "dashboard", dashboardID, f.viewerID, []string{"view"})
+	f.grant(t, "dashboard", dashboardID, f.userID, []string{"view", "edit"})
+	f.publishDashboard(t, dashboardID, "Published alpha", 1, f.userID)
+
+	// Viewer: "alpha" matches the published title AND the draft widget SQL.
+	// The title match must survive, alone and snippet-free.
+	status, resp := f.search(t, f.viewerToken, "alpha")
+	require.Equal(t, http.StatusOK, status)
+	dashboards := requireSearchGroup(t, resp, "dashboard")
+	require.Len(t, dashboards.Results, 1, "only the published-title hit, never a content-only one")
+	require.Equal(t, dashboardID, dashboards.Results[0].ID)
+	require.Equal(t, "Published alpha", dashboards.Results[0].Title, "viewers see the snapshot title")
+	require.False(t, dashboards.Results[0].CanEdit)
+	require.Nil(t, dashboards.Results[0].Snippet,
+		"a viewer must never receive a draft widget SQL snippet, even on a title hit")
+
+	// Editor: the same query merges the draft title and the widget hit into
+	// one result and the snippet rides along.
+	status, resp = f.search(t, f.token, "alpha")
+	require.Equal(t, http.StatusOK, status)
+	dashboards = requireSearchGroup(t, resp, "dashboard")
+	require.Len(t, dashboards.Results, 1)
+	require.Equal(t, dashboardID, dashboards.Results[0].ID)
+	require.Equal(t, "Published alpha draft", dashboards.Results[0].Title, "editors see the draft title")
+	require.True(t, dashboards.Results[0].CanEdit)
+	require.NotNil(t, dashboards.Results[0].Snippet, "the editor's title+content hit keeps the snippet")
+	require.Contains(t, strings.ToLower(*dashboards.Results[0].Snippet), "alpha_secret")
+}
+
 // TestSearchVisibility covers stranger, revoked, group-granted,
 // folder-inherited, and content-visibility filtering.
 func TestSearchVisibility(t *testing.T) {
@@ -633,6 +675,25 @@ func TestSearchFavoritesFilterAndFlags(t *testing.T) {
 	status, resp = f.search(t, f.token, "alpha")
 	require.Equal(t, http.StatusOK, status)
 	require.True(t, requireSearchGroup(t, resp, "notebook").Results[0].CanEdit)
+
+	// favorites=1 intersects before the limit: a favorite that ranks last
+	// must still win with limit=1. A post-limit filter would let the newest
+	// non-favorite consume the only slot and return nothing.
+	for _, id := range []string{second, unrelated} {
+		code, _ := doRequest(t, srv, f.viewerToken, "DELETE", favoritePath("notebook", id), nil)
+		require.Equal(t, http.StatusNoContent, code)
+	}
+	f.setNotebookUpdatedAt(t, first, time.Now().Add(-2*time.Hour))
+	f.setNotebookUpdatedAt(t, second, time.Now().Add(-1*time.Hour))
+	f.setNotebookUpdatedAt(t, third, time.Now())
+	code, _ := doRequest(t, srv, f.viewerToken, "PUT", favoritePath("notebook", first), nil)
+	require.Equal(t, http.StatusNoContent, code)
+	status, limited := f.searchRaw(t, f.viewerToken, "q=alpha&favorites=1&limit=1")
+	require.Equal(t, http.StatusOK, status)
+	limitedNotebooks := requireSearchGroup(t, limited, "notebook")
+	require.Equal(t, []string{first}, searchResultIDs(limitedNotebooks.Results),
+		"the last-ranked favorite must survive the limit when the intersection precedes it")
+	require.False(t, limitedNotebooks.HasMore)
 }
 
 func TestSearchValidation(t *testing.T) {

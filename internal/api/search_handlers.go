@@ -272,7 +272,9 @@ type searchTypePage struct {
 // ACL-filtered, favorites-filtered, ranked, and sliced. The frame is
 // deliberately permission- and visibility-first: every drop happens before
 // ranking and the limit, so has_more never counts a resource the caller
-// cannot see.
+// cannot see. Dashboard content hits are intersected with the caller's
+// edit-holding id set before they merge, so a viewer can never receive a
+// draft-SQL snippet and draft SQL can never keep or rank a candidate for one.
 func (s *Server) searchTypePage(
 	ctx context.Context,
 	ident permIdentity,
@@ -287,8 +289,59 @@ func (s *Server) searchTypePage(
 		return searchTypePage{}, err
 	}
 
-	// Candidate ids: title candidates first (deterministic SQL order), then
-	// content-only ids. One entry per resource.
+	// Candidate ids for the metadata fetch and the permission resolution:
+	// title candidates first (deterministic SQL order), then content-only
+	// ids. One entry per resource. This superset is only probed; the ranked
+	// list is rebuilt from the surviving hits below.
+	candidates := make([]string, 0, len(titleHits)+len(contentHits))
+	candidateSeen := make(map[string]bool, len(titleHits)+len(contentHits))
+	for _, hit := range titleHits {
+		if !candidateSeen[hit.ID] {
+			candidateSeen[hit.ID] = true
+			candidates = append(candidates, hit.ID)
+		}
+	}
+	for _, hit := range contentHits {
+		if !candidateSeen[hit.ResourceID] {
+			candidateSeen[hit.ResourceID] = true
+			candidates = append(candidates, hit.ResourceID)
+		}
+	}
+
+	// One metadata fetch and one batched permission resolution per type, over
+	// every candidate id.
+	meta, err := s.fetchResourceSummaryMeta(ctx, ident.OrgID, resourceType, candidates)
+	if err != nil {
+		return searchTypePage{}, err
+	}
+	actions := []string{"view"}
+	if resourceType == "dashboard" {
+		actions = append(actions, "edit")
+	}
+	perms, err := s.resolveActions(ctx, ident, resourceType, candidates, actions)
+	if err != nil {
+		return searchTypePage{}, err
+	}
+
+	// Dashboard widget SQL is editor-only, so intersect the content hits with
+	// the caller's edit-holding ids BEFORE they merge into the candidate,
+	// snippet, and has-content maps: a viewer whose query also matches the
+	// published title must not receive the draft-SQL snippet, and draft SQL
+	// must never keep or rank a candidate the caller cannot edit. Notebook
+	// content stays view-gated by the keep rules below.
+	if resourceType == "dashboard" {
+		editableHits := make([]search.ContentHit, 0, len(contentHits))
+		for _, hit := range contentHits {
+			if actionAllowed(perms, hit.ResourceID, "edit") {
+				editableHits = append(editableHits, hit)
+			}
+		}
+		contentHits = editableHits
+	}
+
+	// The merged candidate list: title candidates first, then the surviving
+	// content-only ids; the snippet and has-content maps cover surviving
+	// content hits only.
 	ids := make([]string, 0, len(titleHits)+len(contentHits))
 	seen := make(map[string]bool, len(titleHits)+len(contentHits))
 	for _, hit := range titleHits {
@@ -308,21 +361,6 @@ func (s *Server) searchTypePage(
 			seen[hit.ResourceID] = true
 			ids = append(ids, hit.ResourceID)
 		}
-	}
-
-	// One metadata fetch and one batched permission resolution per type, over
-	// every candidate id.
-	meta, err := s.fetchResourceSummaryMeta(ctx, ident.OrgID, resourceType, ids)
-	if err != nil {
-		return searchTypePage{}, err
-	}
-	actions := []string{"view"}
-	if resourceType == "dashboard" {
-		actions = append(actions, "edit")
-	}
-	perms, err := s.resolveActions(ctx, ident, resourceType, ids, actions)
-	if err != nil {
-		return searchTypePage{}, err
 	}
 
 	titleHitByID := make(map[string]searchTitleHit, len(titleHits))
