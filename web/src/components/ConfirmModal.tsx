@@ -1,5 +1,5 @@
-import { useEffect } from 'react'
 import { AlertTriangle } from 'lucide-react'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 interface ConfirmModalProps {
   title: string
@@ -12,15 +12,10 @@ interface ConfirmModalProps {
 }
 
 export function ConfirmModal({ title, message, confirmLabel = 'Discard', cancelLabel = 'Cancel', onConfirm, onCancel, destructive }: ConfirmModalProps) {
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      // Skip Escapes a nested layer already handled (defaultPrevented), so a
-      // palette sitting above this modal owns its own Escape.
-      if (e.key === 'Escape' && !e.defaultPrevented) onCancel()
-    }
-    document.addEventListener('keydown', onKeyDown)
-    return () => document.removeEventListener('keydown', onKeyDown)
-  }, [onCancel])
+  // Escape goes through the shared stack so an overlay opened above this modal
+  // (e.g. the search palette) owns the press; a plain document listener would
+  // run in registration order and close both layers on one Escape.
+  useEscapeToClose(onCancel)
 
   return (
     <div style={styles.overlay} onClick={onCancel}>

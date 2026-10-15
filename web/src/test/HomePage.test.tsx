@@ -741,6 +741,115 @@ describe('Folder section pagination (B3)', () => {
   })
 })
 
+// ── Filter + pagination (final review fix) ────────────────────────────────────
+
+describe('Folder sections under the local name filter', () => {
+  test('a filter hiding every loaded row keeps the counter, the no-match line, and Load more', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage(pageNotebooks(50, 0), 120, true))),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    expect(await screen.findByText('50 of 120')).toBeInTheDocument()
+    expect(screen.getByText('Paged Notebook 1')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'zzz-no-match' } })
+
+    // The section is a loaded-items-only filter over a paginated listing: its
+    // chrome (and the pager) must survive rows being hidden.
+    expect(screen.getByText('Notebooks')).toBeInTheDocument()
+    expect(screen.getByText('50 of 120')).toBeInTheDocument()
+    expect(screen.getByText('No loaded items match')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Load more notebooks' })).toBeInTheDocument()
+    expect(screen.queryByText('Paged Notebook 1')).not.toBeInTheDocument()
+    expect(screen.queryByText('This folder is empty')).not.toBeInTheDocument()
+  })
+
+  test('loading a page can satisfy the filter and clears the no-match line', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage(pageNotebooks(50, 0), 120, true))),
+      http.get('/api/v1/folders/f-page/contents', ({ request }) => {
+        const offset = Number(new URL(request.url).searchParams.get('offset'))
+        const items = pageNotebooks(Math.min(50, 120 - offset), offset)
+        return HttpResponse.json({ items, total: 120, has_more: offset + items.length < 120, offset })
+      }),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    expect(await screen.findByText('50 of 120')).toBeInTheDocument()
+
+    // Only a row on the unloaded second page matches the filter.
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'Paged Notebook 51' } })
+    expect(screen.getByText('No loaded items match')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
+    expect(await screen.findByText('100 of 120')).toBeInTheDocument()
+    expect(await screen.findByText('Paged Notebook 51')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('No loaded items match')).not.toBeInTheDocument())
+  })
+
+  test('a filter with no more shows the no-match line and no Load more', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-full3', () => HttpResponse.json({
+        ...folderPage([nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo')], 2, false),
+        folder: { id: 'f-full3', org_id: 'org-1', name: 'Full', is_home: false, created_by: 'user-1', created_at: '', updated_at: '' },
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-full3' })
+
+    expect(await screen.findByText('Alpha')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'zzz' } })
+
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(screen.getByText('No loaded items match')).toBeInTheDocument()
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument()
+    expect(screen.queryByText('This folder is empty')).not.toBeInTheDocument()
+  })
+
+  test('a filter hiding every folder keeps the Folders section instead of the empty state', async () => {
+    server.use(
+      http.get('/api/v1/home', () => HttpResponse.json([])),
+      http.get('/api/v1/folders', () => HttpResponse.json({
+        folders: [{
+          id: 'f-1', org_id: 'org-1', name: 'Alpha Folder', is_home: false,
+          created_by: 'user-1', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        }],
+        notebooks: [], connectors: [], dashboards: [],
+        totals: { notebooks: 0, connectors: 0, dashboards: 0 },
+        has_more: { notebooks: false, connectors: false, dashboards: false },
+      })),
+    )
+    renderWithProviders(<HomePage />)
+
+    // The sidebar tree shows the folder too; only the main section is filtered.
+    expect((await screen.findAllByText('Alpha Folder')).length).toBeGreaterThan(0)
+
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'zzz' } })
+
+    expect(screen.getByText('No folders match')).toBeInTheDocument()
+    expect(screen.queryByText('This folder is empty')).not.toBeInTheDocument()
+  })
+
+  test('an actually empty folder still shows the empty state while a filter is active', async () => {
+    server.use(
+      http.get('/api/v1/folders/:id', () => HttpResponse.json({
+        folder: { id: 'f-empty', org_id: 'org-1', name: 'Empty Folder', is_home: false, created_by: 'user-1', created_at: '', updated_at: '' },
+        folders: [], notebooks: [], connectors: [], dashboards: [],
+        totals: { notebooks: 0, connectors: 0, dashboards: 0 },
+        has_more: { notebooks: false, connectors: false, dashboards: false },
+      })),
+      http.get('/api/v1/folders/:id/ancestors', () => HttpResponse.json([])),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-empty' })
+
+    fireEvent.change(await screen.findByLabelText('Search files'), { target: { value: 'zzz' } })
+    expect(await screen.findByText('This folder is empty')).toBeInTheDocument()
+    expect(screen.queryByText('No loaded items match')).not.toBeInTheDocument()
+  })
+})
+
 // ── Favorites toggles (F2) ────────────────────────────────────────────────────
 
 describe('Favorites toggles (F2)', () => {

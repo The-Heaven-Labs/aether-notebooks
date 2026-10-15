@@ -55,6 +55,10 @@ export function useNotebookKeyboardShortcuts(
 
       const actions = actionsRef.current
       const inDetailPanel = isAnyDetailActive()
+      // Modifier chords are reserved for the app: Ctrl/Cmd+K opens the search
+      // palette, Ctrl/Cmd+J the agent panel, Ctrl/Cmd+Arrow moves cells below.
+      // Vim-style letter navigation must not also fire under them.
+      const noModifiers = !e.ctrlKey && !e.metaKey && !e.altKey
 
       // Enter → enter edit mode
       if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey) {
@@ -82,13 +86,13 @@ export function useNotebookKeyboardShortcuts(
       }
 
       // J/ArrowDown → move focus down (skip if detail panel is open)
-      if (!inDetailPanel && (e.key === 'j' || e.key === 'ArrowDown')) {
+      if (!inDetailPanel && noModifiers && (e.key === 'j' || e.key === 'ArrowDown')) {
         e.preventDefault()
         actions.moveFocusDown()
         return
       }
       // K/ArrowUp → move focus up (skip if detail panel is open)
-      if (!inDetailPanel && (e.key === 'k' || e.key === 'ArrowUp')) {
+      if (!inDetailPanel && noModifiers && (e.key === 'k' || e.key === 'ArrowUp')) {
         e.preventDefault()
         actions.moveFocusUp()
         return

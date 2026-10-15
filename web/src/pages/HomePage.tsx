@@ -807,11 +807,23 @@ export function HomePage() {
     notebooksPager.hasMore || connectorsPager.hasMore || dashboardsPager.hasMore)
   const searchShortcutHint = isApplePlatform() ? '⌘K' : 'Ctrl K'
 
+  // Unfiltered content signals. A section must stay on screen — header,
+  // counter, and Load-more included — whenever the folder still holds rows the
+  // local name filter has not loaded or is hiding; hiding the section would
+  // strand the pager and flip the page to a false "empty" state.
+  const foldersHaveContent = (data?.folders ?? []).length > 0
+  const notebooksHaveContent =
+    notebooksPager.items.length > 0 || (notebooksPager.total ?? 0) > 0 || notebooksPager.hasMore
+  const connectorsHaveContent =
+    connectorsPager.items.length > 0 || (connectorsPager.total ?? 0) > 0 || connectorsPager.hasMore
+  const dashboardsHaveContent =
+    dashboardsPager.items.length > 0 || (dashboardsPager.total ?? 0) > 0 || dashboardsPager.hasMore
+
   const isEmpty = data &&
-    searchFolders.length === 0 &&
-    searchNotebooks.length === 0 &&
-    searchConnectors.length === 0 &&
-    searchDashboards.length === 0
+    !foldersHaveContent &&
+    !notebooksHaveContent &&
+    !connectorsHaveContent &&
+    !dashboardsHaveContent
 
   // The chip toggles the view in place: every other param (notably `folder`)
   // rides along, so leaving the view lands back where the user was.
@@ -1304,10 +1316,13 @@ export function HomePage() {
               />
             )}
 
-            {/* Folders */}
-            {data && searchFolders.length > 0 && (
+            {/* Folders — unpaginated, so the section renders whenever the
+                folder listing has rows; a filter that hides them all gets a
+                no-match line instead of silently dropping the section. */}
+            {data && foldersHaveContent && (
               <section style={s.section}>
                 <div style={s.sectionLabel}>Folders</div>
+                {searchFolders.length > 0 ? (
                 <div style={s.folderGrid}>
                   {searchFolders.map((f) => (
                     <div key={f.id} style={{
@@ -1369,16 +1384,20 @@ export function HomePage() {
                     </div>
                   ))}
                 </div>
+                ) : (
+                  q !== '' && <div style={s.noMatch}>No folders match</div>
+                )}
               </section>
             )}
 
             {/* Notebooks */}
-            {data && searchNotebooks.length > 0 && (
+            {data && notebooksHaveContent && (
               <section style={s.section}>
                 <div style={s.sectionHeader}>
                   <span style={{ ...s.sectionLabel, marginBottom: 0 }}>Notebooks</span>
                   {notebookCounter !== null && <span style={s.sectionCount}>{notebookCounter}</span>}
                 </div>
+                {searchNotebooks.length > 0 ? (
                 <div style={s.list}>
                   {searchNotebooks.map((nb) => (
                     <div key={nb.id} style={{
@@ -1439,6 +1458,9 @@ export function HomePage() {
                     </div>
                   ))}
                 </div>
+                ) : (
+                  q !== '' && <div style={s.noMatch}>No loaded items match</div>
+                )}
                 {notebooksPager.hasMore && !notebooksPager.stopped && (
                   <button
                     type="button"
@@ -1455,12 +1477,13 @@ export function HomePage() {
             )}
 
             {/* Connectors */}
-            {data && searchConnectors.length > 0 && (
+            {data && connectorsHaveContent && (
               <section style={s.section}>
                 <div style={s.sectionHeader}>
                   <span style={{ ...s.sectionLabel, marginBottom: 0 }}>Connectors</span>
                   {connectorCounter !== null && <span style={s.sectionCount}>{connectorCounter}</span>}
                 </div>
+                {searchConnectors.length > 0 ? (
                 <div style={s.list}>
                   {searchConnectors.map((c) => (
                     <div key={c.id} style={{
@@ -1514,6 +1537,9 @@ export function HomePage() {
                     </div>
                   ))}
                 </div>
+                ) : (
+                  q !== '' && <div style={s.noMatch}>No loaded items match</div>
+                )}
                 {connectorsPager.hasMore && !connectorsPager.stopped && (
                   <button
                     type="button"
@@ -1530,12 +1556,13 @@ export function HomePage() {
             )}
 
             {/* Dashboards */}
-            {data && searchDashboards.length > 0 && (
+            {data && dashboardsHaveContent && (
               <section style={s.section}>
                 <div style={s.sectionHeader}>
                   <span style={{ ...s.sectionLabel, marginBottom: 0 }}>Dashboards</span>
                   {dashboardCounter !== null && <span style={s.sectionCount}>{dashboardCounter}</span>}
                 </div>
+                {searchDashboards.length > 0 ? (
                 <div style={s.list}>
                   {searchDashboards.map((d) => (
                     <div key={d.id} style={{
@@ -1586,6 +1613,9 @@ export function HomePage() {
                     </div>
                   ))}
                 </div>
+                ) : (
+                  q !== '' && <div style={s.noMatch}>No loaded items match</div>
+                )}
                 {dashboardsPager.hasMore && !dashboardsPager.stopped && (
                   <button
                     type="button"
@@ -1709,6 +1739,7 @@ const s: Record<string, React.CSSProperties> = {
   sectionHeader: { display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 },
   sectionCount: { fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 500, letterSpacing: '0.04em', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' },
   loadMoreBtn: { marginTop: 10, padding: '7px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, transition: 'opacity 0.15s' },
+  noMatch: { fontSize: 13, color: 'var(--text-muted)', padding: '2px 2px 4px' },
   filterHint: { marginTop: 6, fontSize: 12, color: 'var(--text-muted)' },
   hintKbd: { fontFamily: 'var(--font-mono)', fontSize: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 4px', color: 'var(--text-primary)' },
   folderGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 },

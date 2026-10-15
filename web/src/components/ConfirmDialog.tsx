@@ -1,5 +1,6 @@
 import type React from 'react'
 import { useEffect, useId, useRef } from 'react'
+import { useEscapeToClose } from '../hooks/useEscapeToClose'
 
 export interface ConfirmDialogProps {
   open: boolean
@@ -32,18 +33,18 @@ export function ConfirmDialog({
   const confirmRef = useRef<HTMLButtonElement>(null)
   const titleId = useId()
 
+  // Escape ownership lives in the shared stack so stacked overlays close
+  // topmost-first: a palette opened above this dialog consumes the press and
+  // the dialog stays open until its own turn. A local listener would fire in
+  // registration order (before the palette's) and close both layers at once.
+  useEscapeToClose(onCancel, open)
+
   useEffect(() => {
     if (open) {
       // Default focus on Cancel (safer — prevents accidental destructive actions),
       // unless a custom focus target is provided (e.g. a confirmation input).
       ;(defaultFocusRef?.current ?? cancelRef.current)?.focus()
       const handleKey = (e: KeyboardEvent) => {
-        if (e.key === 'Escape') {
-          // A nested layer that already handled this Escape keeps it
-          // (defaultPrevented), matching the PermissionsPanel convention.
-          if (!e.defaultPrevented) onCancel()
-          return
-        }
         // Left/Right arrows to switch between buttons (only while a button is focused,
         // so inputs keep their natural arrow-key behavior)
         if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
