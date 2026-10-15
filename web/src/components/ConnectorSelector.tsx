@@ -1,5 +1,7 @@
+import { useId } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { ConnectorUnavailableHint } from './ConnectorUnavailableHint'
 import { executableConnectorOptions, connectorOptionLabel } from '../utils/connectors'
 
 interface ConnectorItem {
@@ -40,13 +42,17 @@ export function ConnectorSelector({
   const options = executableConnectorOptions(visible)
   // A stored reference to a hidden connector must not blank or mismatch the
   // select: fall back to the placeholder (the reference itself stays on the
-  // resource until the user picks another connector).
+  // resource until the user picks another connector). The hint explains it.
   const selectedVisible = value != null && options.some(c => c.id === value)
+  const hintId = useId()
+  // The hint only speaks for a stored value that the list no longer contains.
+  const valueHidden = value !== null && value !== '' && !selectedVisible
 
   return (
     <span style={styles.wrap}>
       <select
         aria-label={placeholder}
+        aria-describedby={valueHidden ? hintId : undefined}
         style={{
           border: '1px solid var(--border)',
           borderRadius: 4,
@@ -68,6 +74,7 @@ export function ConnectorSelector({
           </option>
         ))}
       </select>
+      {valueHidden && <ConnectorUnavailableHint id={hintId} />}
     </span>
   )
 }

@@ -105,4 +105,31 @@ describe('ConnectorSelector', () => {
     // placeholder instead of blanking or mismatching.
     expect(screen.getByRole('combobox')).toHaveValue('')
   })
+
+  test('a hidden stored reference shows the unavailable hint and wires aria-describedby to it', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(provisionerConnectors))
+    )
+    renderWithQuery(<ConnectorSelector value="conn-prov-blocked" onChange={() => {}} />)
+    await screen.findByRole('option', { name: 'Service CH' })
+
+    const hint = screen.getByText('Current connector is unavailable')
+    expect(hint).toBeInTheDocument()
+    expect(hint).toHaveAttribute('title', "The stored connector can't be used for execution — pick another")
+    // The select announces why its placeholder is showing.
+    const select = screen.getByRole('combobox')
+    expect(select).toHaveAttribute('aria-describedby', hint.id)
+  })
+
+  test('a visible selection shows no unavailable hint', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json(provisionerConnectors))
+    )
+    renderWithQuery(<ConnectorSelector value="conn-svc" onChange={() => {}} />)
+    await screen.findByRole('option', { name: 'Service CH' })
+
+    expect(screen.getByRole('combobox')).toHaveValue('conn-svc')
+    expect(screen.queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+    expect(screen.getByRole('combobox')).not.toHaveAttribute('aria-describedby')
+  })
 })

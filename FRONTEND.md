@@ -382,6 +382,7 @@ This matches all existing charts — see the JSDoc on `ChartModule` in `web/src/
 **States**:
 - **Default**: Gray text if no connector selected (`var(--text-muted)`)
 - **Selected**: Primary text color (`var(--text-primary)`)
+- **Hidden stored reference**: The select falls back to its placeholder and a muted (11px `var(--text-muted)` DM Sans) "Current connector is unavailable" hint renders beside it (`ConnectorUnavailableHint.tsx`, referenced via `aria-describedby`); it appears whenever the current value is set but absent from the rendered options — e.g. a non-executable provisioner.
 
 **Component**: `web/src/components/ConnectorSelector.tsx`
 

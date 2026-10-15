@@ -826,6 +826,35 @@ describe('connector picker provisioner handling', () => {
     expect(screen.getByRole('combobox', { name: 'Connector' })).toHaveValue('')
   })
 
+  it('shows the unavailable hint when the stored connector is hidden', async () => {
+    renderCodeCell(codeCell({ connector_id: 'conn-prov' }))
+
+    fireEvent.click(await screen.findByTitle('Click to change connector'))
+    const select = await screen.findByRole('combobox', { name: 'Connector' })
+    const hint = screen.getByText('Current connector is unavailable')
+    expect(hint).toBeInTheDocument()
+    // The inline select announces why it sits on "Inherit from notebook".
+    expect(select).toHaveAttribute('aria-describedby', hint.id)
+  })
+
+  it('shows no unavailable hint for a visible connector', async () => {
+    renderCodeCell(codeCell({ connector_id: 'conn-svc' }))
+
+    fireEvent.click(await screen.findByTitle('Click to change connector'))
+    const select = await screen.findByRole('combobox', { name: 'Connector' })
+    expect(select).toHaveValue('conn-svc')
+    expect(screen.queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+    expect(select).not.toHaveAttribute('aria-describedby')
+  })
+
+  it('shows no unavailable hint when the cell has no connector', async () => {
+    renderCodeCell(codeCell())
+
+    fireEvent.click(await screen.findByTitle('Click to change connector'))
+    expect(await screen.findByRole('combobox', { name: 'Connector' })).toHaveValue('')
+    expect(screen.queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+  })
+
   it('hides a blocked provisioner when the cell has no connector', async () => {
     renderCodeCell(codeCell())
 

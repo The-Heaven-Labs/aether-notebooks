@@ -62,7 +62,7 @@ Three production reports, all in the "finding things in a big workspace" family:
 | Shortcuts | `Ctrl/Cmd+K` = search palette; agent panel rebinds to `Ctrl/Cmd+J` | Palette on Ctrl+P (search loses the universal chord); dropping the agent chord (loses a habit) |
 | Search affordance | Persistent top-bar search field that opens the overlay (one implementation), `Ctrl/Cmd+K` anywhere | Inline top-bar typing with dropdown (more states, duplicate implementation) |
 | Agent access | In scope: `search_resources` builtin + MCP allowlist entry | Follow-up (user explicitly pulled it into scope) |
-| Provisioner connectors in execution pickers | Hidden when not executable (`is_provisioner && can_use === false`) — never listed, not even for the current selection: the picker falls back to its placeholder and the stored reference stays until the user picks another connector. *(Amended 2026-10-15 per product owner; previously a selected hidden connector stayed as one disabled option so nothing blanked.)* | Status quo disabled option "(provisioner — no access)" (the report: why show an unusable choice); hiding every provisioner even when `allow_provisioner_execution` is on (hides a legitimately allowed target); hiding non-provisioner "view only" connectors (their disabled + reason treatment stays) |
+| Provisioner connectors in execution pickers | Hidden when not executable (`is_provisioner && can_use === false`) — never listed, not even for the current selection: the picker falls back to its placeholder, a muted "Current connector is unavailable" hint explains it, and the stored reference stays until the user picks another connector. *(Amended 2026-10-15 per product owner; previously a selected hidden connector stayed as one disabled option so nothing blanked, and the placeholder fallback was silent.)* | Status quo disabled option "(provisioner — no access)" (the report: why show an unusable choice); hiding every provisioner even when `allow_provisioner_execution` is on (hides a legitimately allowed target); hiding non-provisioner "view only" connectors (their disabled + reason treatment stays) |
 
 ## Design
 
@@ -354,7 +354,9 @@ never be chosen.
   listed — not even as one disabled option for the current selection. The picker falls back to
   its placeholder ("Select a connector" / "Inherit from notebook" / "Select a connector…") while
   the stored reference (cell, tool, widget, or variable) remains until the user picks another
-  connector; running still requires picking another connector. The helper takes no selection
+  connector; a stored reference that is hidden shows the placeholder plus a muted "Current
+  connector is unavailable" hint (11px `--text-muted` DM Sans, `aria-describedby` on the select);
+  running still requires picking another connector. The helper takes no selection
   argument, and `connectorOptionLabel` keeps "(provisioner — no access)" only as a defensive
   fallback for non-picker callers.
 - **Shared helper** (`web/src/utils/connectors.ts`, `executableConnectorOptions(connectors)`)
@@ -395,11 +397,12 @@ never be chosen.
   (optimistic toggle, aria), TopBar field, Files pagination (append + counters), shortcuts
   rebind, highlight helper.
 - **Execution pickers** (Vitest): a non-executable provisioner is hidden — also when it is the
-  stored selection, in which case the select shows its placeholder (`value: ''`) and the stored
-  reference stays on the resource; an allowed provisioner (`can_use === true`) stays with its
-  label; non-provisioner "(view only)" options are unchanged. The `Cell.test.tsx` and
-  `ConnectorSelector.test.tsx` assertions (and the e2e spec's stored-selection step) cover the
-  selected case.
+  stored selection, in which case the select shows its placeholder (`value: ''`) plus the muted
+  "Current connector is unavailable" hint (`aria-describedby` wired to it) and the stored
+  reference stays on the resource; a visible selection renders no hint; an allowed provisioner
+  (`can_use === true`) stays with its label; non-provisioner "(view only)" options are unchanged.
+  The `Cell.test.tsx` and `ConnectorSelector.test.tsx` assertions (and the e2e spec's
+  stored-selection step, which asserts the hint) cover the selected case.
 - **E2E** (Playwright): `e2e/search.spec.ts` (Ctrl+K palette flow, Ctrl+J still opens the
   agent, `/search` deep link, favorites chip), `e2e/favorites.spec.ts` (toggle on Files +
   Dashboards, filter chip, palette empty state, persists after reload),

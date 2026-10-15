@@ -127,6 +127,9 @@ test.describe('Provisioner connector execution block', () => {
       const picker = page.getByLabel('Select a connector')
       await expect(picker.locator(`option[value="${connectorId}"]`)).toHaveCount(0)
       await expect(picker).toHaveValue('')
+      // The placeholder state is legible: a muted hint says the stored
+      // connector is unavailable until another one is picked.
+      await expect(page.getByText('Current connector is unavailable')).toBeVisible()
 
       // The connectors page badges it as a provisioner.
       await page.goto('/connectors')

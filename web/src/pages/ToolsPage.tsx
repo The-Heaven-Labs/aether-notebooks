@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useId } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { AppShell } from '../components/AppShell'
 import { SectionHeader } from '../components/SectionHeader'
@@ -14,6 +14,7 @@ import type { Tool, ToolType } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
 import type { HeaderRow } from '../components/HeadersEditor'
+import { ConnectorUnavailableHint } from '../components/ConnectorUnavailableHint'
 import { executableConnectorOptions } from '../utils/connectors'
 import type { Connector } from '../types'
 
@@ -372,8 +373,10 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
   const connectorOptions = executableConnectorOptions(connectors)
   // A stored reference to a hidden connector must not blank or mismatch the
   // select: fall back to the placeholder (the reference stays in the form
-  // until the user picks another connector).
+  // until the user picks another connector). The hint explains the fallback.
   const selectedConnectorVisible = form.connector_id !== '' && connectorOptions.some(c => c.id === form.connector_id)
+  const connectorHintId = useId()
+  const connectorHidden = form.connector_id !== '' && !selectedConnectorVisible
 
   return (
     <>
@@ -420,16 +423,19 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
 
       {form.type === 'sql_query' && (
         <>
-          <label style={styles.label}>Connector
-            <select style={styles.input} value={selectedConnectorVisible ? form.connector_id : ''} onChange={setField('connector_id')}>
-              <option value="">Select a connector…</option>
-              {connectorOptions.map(c => (
-                <option key={c.id} value={c.id}>
-                  {c.name} ({c.type})
-                </option>
-              ))}
-            </select>
-          </label>
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>Connector
+              <select style={styles.input} aria-describedby={connectorHidden ? connectorHintId : undefined} value={selectedConnectorVisible ? form.connector_id : ''} onChange={setField('connector_id')}>
+                <option value="">Select a connector…</option>
+                {connectorOptions.map(c => (
+                  <option key={c.id} value={c.id}>
+                    {c.name} ({c.type})
+                  </option>
+                ))}
+              </select>
+            </label>
+            {connectorHidden && <ConnectorUnavailableHint id={connectorHintId} />}
+          </div>
           <label style={{ ...styles.label, gridColumn: '1 / -1' }}>SQL Query
             <textarea style={{ ...styles.input, minHeight: 120, resize: 'vertical', fontFamily: 'var(--font-mono)' }} value={form.sql} onChange={setField('sql')} placeholder="SELECT * FROM table LIMIT 10" />
           </label>
@@ -479,6 +485,7 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
 const styles: Record<string, React.CSSProperties> = {
   body: { maxWidth: 1100, margin: '0 auto', padding: '32px 40px', width: '100%' },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
+  fieldGroup: { display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 },
   input: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, fontFamily: 'var(--font-mono)', background: 'var(--bg-input)', color: 'var(--text-primary)', marginTop: 2 },
   secondaryBtn: { padding: '6px 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   newBtn: { padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },

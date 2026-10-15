@@ -147,5 +147,43 @@ describe('ToolsPage', () => {
     expect(picker.value).toBe('')
     expect(within(dialog).queryByRole('option', { name: /Blocked provisioner/ })).not.toBeInTheDocument()
     expect(within(dialog).getByRole('option', { name: 'Service CH (clickhouse)' })).toBeInTheDocument()
+
+    // The muted hint explains the placeholder and the select points at it.
+    const hint = within(dialog).getByText('Current connector is unavailable')
+    expect(hint).toBeInTheDocument()
+    expect(picker).toHaveAttribute('aria-describedby', hint.id)
+  })
+
+  test('a tool with a visible connector shows no unavailable hint', async () => {
+    server.use(
+      http.get('/api/v1/connectors', () => HttpResponse.json([
+        { id: 'conn-svc', name: 'Service CH', type: 'clickhouse', can_use: true, is_provisioner: false, created_at: '2026-01-01T00:00:00Z' },
+      ])),
+      http.get('/api/v1/tools', () => HttpResponse.json([
+        {
+          id: 't-sql',
+          org_id: 'org-1',
+          name: 'Service Query',
+          description: '',
+          type: 'sql_query',
+          schema: { type: 'object', properties: {} },
+          config: { connector_id: 'conn-svc', query: 'SELECT 1' },
+          require_confirmation: false,
+          created_by: 'user-1',
+          created_at: '2026-01-01T00:00:00Z',
+          updated_at: '2026-01-01T00:00:00Z',
+        },
+      ])),
+    )
+    renderWithProviders(<ToolsPage />)
+    await screen.findByText('Service Query')
+
+    fireEvent.click(screen.getByLabelText('Edit tool'))
+    const dialog = await screen.findByRole('dialog')
+
+    const picker = within(dialog).getByLabelText('Connector') as HTMLSelectElement
+    expect(picker.value).toBe('conn-svc')
+    expect(within(dialog).queryByText('Current connector is unavailable')).not.toBeInTheDocument()
+    expect(picker).not.toHaveAttribute('aria-describedby')
   })
 })

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, memo } from 'react'
+import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, memo, useId } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft, Server } from 'lucide-react'
@@ -8,6 +8,7 @@ import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL, StandardSQL } from '@codemirror/lang-sql'
 import { syntaxHighlighting } from '@codemirror/language'
 import { OutputRenderer } from './OutputRenderer'
+import { ConnectorUnavailableHint } from './ConnectorUnavailableHint'
 import { sqlHighlight } from './sqlHighlight'
 const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m.MarkdownView })))
 import type { Cell as APICell, Connector, ExecuteRouting } from '../types'
@@ -447,9 +448,12 @@ export const Cell = memo(function Cell({
   const connector = connectors.find((c) => c.id === cell.connector_id)
   // Execution pickers never list provisioners that cannot serve this viewer;
   // a stored reference to one falls back to "Inherit from notebook" instead
-  // of a blank/mismatched select (the reference stays until reassigned).
+  // of a blank/mismatched select (the reference stays until reassigned). The
+  // hint explains the fallback; it is wired via aria-describedby on the select.
   const executableConnectors = executableConnectorOptions(connectors)
   const selectedConnectorVisible = cell.connector_id != null && executableConnectors.some((c) => c.id === cell.connector_id)
+  const connectorHintId = useId()
+  const connectorHidden = cell.connector_id != null && cell.connector_id !== '' && !selectedConnectorVisible
   const chartConfig = useMemo(() => normalizeChartConfig(cell.metadata?.chart), [cell.metadata?.chart])
   const handleChartConfigChange = useCallback(
     (cfg: ChartConfig) => onChartConfigChange?.(cell.id, cfg),
@@ -541,25 +545,29 @@ export const Cell = memo(function Cell({
           {/* Connector: badge → inline select on click */}
           {isCode && (
             connectorOpen ? (
-              <select
-                aria-label="Connector"
-                style={styles.connectorSelect}
-                value={selectedConnectorVisible ? cell.connector_id ?? '' : ''}
-                onChange={(e) => {
-                  if (e.target.value === '') onClearConnector?.(cell.id)
-                  else onAssignConnector(cell.id, e.target.value)
-                  setConnectorOpen(false)
-                }}
-                onBlur={() => setConnectorOpen(false)}
-                autoFocus
-              >
-                <option value="">Inherit from notebook</option>
-                {executableConnectors.map((c) => (
-                  <option key={c.id} value={c.id} disabled={c.can_use === false}>
-                    {connectorOptionLabel(c)}
-                  </option>
-                ))}
-              </select>
+              <>
+                <select
+                  aria-label="Connector"
+                  aria-describedby={connectorHidden ? connectorHintId : undefined}
+                  style={styles.connectorSelect}
+                  value={selectedConnectorVisible ? cell.connector_id ?? '' : ''}
+                  onChange={(e) => {
+                    if (e.target.value === '') onClearConnector?.(cell.id)
+                    else onAssignConnector(cell.id, e.target.value)
+                    setConnectorOpen(false)
+                  }}
+                  onBlur={() => setConnectorOpen(false)}
+                  autoFocus
+                >
+                  <option value="">Inherit from notebook</option>
+                  {executableConnectors.map((c) => (
+                    <option key={c.id} value={c.id} disabled={c.can_use === false}>
+                      {connectorOptionLabel(c)}
+                    </option>
+                  ))}
+                </select>
+                {connectorHidden && <ConnectorUnavailableHint id={connectorHintId} />}
+              </>
             ) : (
               <button
                 style={styles.connectorBadge}
