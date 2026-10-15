@@ -1378,9 +1378,9 @@ func TestMigration125DashboardCreatorViewWithData(t *testing.T) {
 	}
 }
 
-// TestMigration135ListAndSearchIndexes pins the six V135 indexes: four partial
-// btree listing indexes (org+folder+sort over alive rows only) and two GIN
-// expression indexes backing core-Postgres content FTS.
+// TestMigration135ListAndSearchIndexes pins the five V135 indexes: three
+// partial btree listing indexes (org+folder+sort over alive rows only) and two
+// GIN expression indexes backing core-Postgres content FTS.
 func TestMigration135ListAndSearchIndexes(t *testing.T) {
 	dsn := os.Getenv("AETHER_DATABASE_URL")
 	if dsn == "" {
@@ -1408,7 +1408,6 @@ func TestMigration135ListAndSearchIndexes(t *testing.T) {
 		{"idx_notebooks_org_folder_updated", "CREATE INDEX idx_notebooks_org_folder_updated ON public.notebooks USING btree (org_id, folder_id, updated_at DESC) WHERE (deleted_at IS NULL)"},
 		{"idx_dashboards_org_folder_updated", "CREATE INDEX idx_dashboards_org_folder_updated ON public.dashboards USING btree (org_id, folder_id, updated_at DESC) WHERE (deleted_at IS NULL)"},
 		{"idx_connectors_org_folder", "CREATE INDEX idx_connectors_org_folder ON public.connectors USING btree (org_id, folder_id) WHERE (deleted_at IS NULL)"},
-		{"idx_folders_org_parent", "CREATE INDEX idx_folders_org_parent ON public.folders USING btree (org_id, parent_id) WHERE (deleted_at IS NULL)"},
 		{"idx_cells_source_fts", "CREATE INDEX idx_cells_source_fts ON public.cells USING gin (to_tsvector('simple'::regconfig, source))"},
 		{"idx_widgets_query_fts", "CREATE INDEX idx_widgets_query_fts ON public.widgets USING gin (to_tsvector('simple'::regconfig, query))"},
 	}
@@ -1421,6 +1420,17 @@ func TestMigration135ListAndSearchIndexes(t *testing.T) {
 		if norm := strings.ReplaceAll(got, "public.", ""); norm != strings.ReplaceAll(want.def, "public.", "") {
 			t.Fatalf("%s = %q, want %q", want.name, got, want.def)
 		}
+	}
+
+	// No folders listing index: V009's UNIQUE (org_id, parent_id, name)
+	// already serves the folder-children scan, so a re-add would be redundant.
+	var redundant int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_folders_org_parent'`).Scan(&redundant); err != nil {
+		t.Fatalf("idx_folders_org_parent existence query: %v", err)
+	}
+	if redundant != 0 {
+		t.Fatal("idx_folders_org_parent should not exist (V009's UNIQUE covers the folder-children scan)")
 	}
 
 	var applied int
@@ -1438,7 +1448,7 @@ func TestMigration135ListAndSearchIndexes(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 
-	var orgID, userID, notebookID, cellID string
+	var orgID, userID, notebookID, cellID, connectorID, dashboardID string
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO orgs (name, slug)
 		VALUES ('V135 Index Org', 'v135-index-' || substr(gen_random_uuid()::text, 1, 8))
@@ -1459,49 +1469,79 @@ func TestMigration135ListAndSearchIndexes(t *testing.T) {
 	}
 	if err := tx.QueryRow(ctx, `
 		INSERT INTO cells (notebook_id, position, type, language, source)
-		VALUES ($1, 0, 'code', 'sql', 'SELECT revenue FROM orders')
+		VALUES ($1, 0, 'code', 'sql', 'SELECT revenue, order_items FROM orders')
 		RETURNING id::text`, notebookID).Scan(&cellID); err != nil {
 		t.Fatalf("seed cell: %v", err)
 	}
-
-	// Round-trip: the prefix tsquery form the search builder emits must match
-	// the seeded cell's text through the indexed expression.
-	var matched bool
 	if err := tx.QueryRow(ctx, `
-		SELECT to_tsvector('simple', source) @@ to_tsquery('simple', $1)
-		FROM cells WHERE id = $2`, "revenue:*", cellID).Scan(&matched); err != nil {
-		t.Fatalf("fts round-trip: %v", err)
+		INSERT INTO connectors (org_id, name, type, config_encrypted)
+		VALUES ($1, 'V135 FTS Connector', 'clickhouse', '\x'::bytea)
+		RETURNING id::text`, orgID).Scan(&connectorID); err != nil {
+		t.Fatalf("seed connector: %v", err)
 	}
-	if !matched {
-		t.Fatal("to_tsquery('simple', 'revenue:*') did not match the seeded cell")
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO dashboards (org_id, title, settings, created_by)
+		VALUES ($1, 'V135 FTS Dashboard', '{}', $2)
+		RETURNING id::text`, orgID, userID).Scan(&dashboardID); err != nil {
+		t.Fatalf("seed dashboard: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO widgets (dashboard_id, type, layout, config, connector_id, query)
+		VALUES ($1, 'table', '{}', '{}', $2, 'SELECT revenue, order_items FROM orders')`,
+		dashboardID, connectorID); err != nil {
+		t.Fatalf("seed widget: %v", err)
+	}
+
+	// Round-trip: the quoted prefix-tsquery form the search builder emits must
+	// match the seeded text through the indexed expression — including an
+	// underscored word. The simple parser splits "order_items" into the
+	// "order"/"items" lexemes on both the document and query sides, so the
+	// builder's literal 'order_items':* form must still match.
+	for _, q := range []string{"revenue:*", "'order_items':*"} {
+		var matched bool
+		if err := tx.QueryRow(ctx, `
+			SELECT to_tsvector('simple', source) @@ to_tsquery('simple', $1)
+			FROM cells WHERE id = $2`, q, cellID).Scan(&matched); err != nil {
+			t.Fatalf("fts round-trip %q: %v", q, err)
+		}
+		if !matched {
+			t.Fatalf("to_tsquery('simple', %q) did not match the seeded cell", q)
+		}
 	}
 
 	// With sequential scans discouraged, the planner must be able to match the
-	// predicate against the expression index (proves the index is usable, not
-	// just present).
+	// predicate against each expression index (proves the indexes are usable,
+	// not just present).
 	if _, err := tx.Exec(ctx, `SET LOCAL enable_seqscan = off`); err != nil {
 		t.Fatalf("disable seqscan: %v", err)
 	}
-	rows, err := tx.Query(ctx, `
+	explainUsesIndex := func(index, explain string) {
+		t.Helper()
+		rows, err := tx.Query(ctx, explain)
+		if err != nil {
+			t.Fatalf("explain %s: %v", index, err)
+		}
+		defer rows.Close()
+		var plan strings.Builder
+		for rows.Next() {
+			var line string
+			if err := rows.Scan(&line); err != nil {
+				t.Fatalf("scan explain %s: %v", index, err)
+			}
+			plan.WriteString(line)
+			plan.WriteString("\n")
+		}
+		if err := rows.Err(); err != nil {
+			t.Fatalf("explain rows %s: %v", index, err)
+		}
+		if !strings.Contains(plan.String(), index) {
+			t.Fatalf("EXPLAIN plan does not use %s:\n%s", index, plan.String())
+		}
+	}
+	explainUsesIndex("idx_cells_source_fts", `
 		EXPLAIN SELECT id FROM cells
 		WHERE to_tsvector('simple', source) @@ to_tsquery('simple', 'revenue:*')`)
-	if err != nil {
-		t.Fatalf("explain: %v", err)
-	}
-	defer rows.Close()
-	var plan strings.Builder
-	for rows.Next() {
-		var line string
-		if err := rows.Scan(&line); err != nil {
-			t.Fatalf("scan explain: %v", err)
-		}
-		plan.WriteString(line)
-		plan.WriteString("\n")
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("explain rows: %v", err)
-	}
-	if !strings.Contains(plan.String(), "idx_cells_source_fts") {
-		t.Fatalf("EXPLAIN plan does not use idx_cells_source_fts:\n%s", plan.String())
-	}
+	explainUsesIndex("idx_widgets_query_fts", `
+		EXPLAIN SELECT id FROM widgets
+		WHERE to_tsvector('simple', query) @@ to_tsquery('simple', '''order_items'':*')`)
 }
