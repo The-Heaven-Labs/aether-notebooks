@@ -50,6 +50,20 @@ async function fetchFavorites(): Promise<FavoritesData> {
   return { groups: response.groups, ids: favoriteIDs(response.groups) }
 }
 
+/**
+ * The shared `['favorites']` query definition: `useFavorites` (group
+ * renderers) and `useIsFavorite` (row toggles) observe this exact options
+ * object, so the two hooks can never drift on key, fetcher, or staleness —
+ * and the second observer never refires the fetch.
+ */
+const favoritesQueryOptions = {
+  queryKey: favoritesQueryKey,
+  queryFn: fetchFavorites,
+  // Favorites change only through the user's own toggles, which invalidate
+  // this key; 60s keeps cross-surface reads cheap without going stale.
+  staleTime: FAVORITES_STALE_TIME_MS,
+} as const
+
 export interface FavoritesState {
   groups: FavoriteGroup[]
   ids: FavoriteIDs
@@ -66,13 +80,7 @@ export interface FavoritesState {
  * consumer to the whole listing, so every toggle would re-render every row.
  */
 export function useFavorites(): FavoritesState {
-  const { data, isLoading, isError } = useQuery<FavoritesData>({
-    queryKey: favoritesQueryKey,
-    queryFn: fetchFavorites,
-    // Favorites change only through the user's own toggles, which invalidate
-    // this key; 60s keeps cross-surface reads cheap without going stale.
-    staleTime: FAVORITES_STALE_TIME_MS,
-  })
+  const { data, isLoading, isError } = useQuery<FavoritesData>(favoritesQueryOptions)
   return {
     groups: data?.groups ?? EMPTY_GROUPS,
     ids: data?.ids ?? EMPTY_IDS,
@@ -106,9 +114,7 @@ export interface IsFavoriteState {
  */
 export function useIsFavorite(resourceType: FavoriteResourceType, resourceId: string): IsFavoriteState {
   const { data, isLoading } = useQuery<FavoritesData, Error, boolean>({
-    queryKey: favoritesQueryKey,
-    queryFn: fetchFavorites,
-    staleTime: FAVORITES_STALE_TIME_MS,
+    ...favoritesQueryOptions,
     select: (data) => data.ids[resourceType]?.has(resourceId) ?? false,
   })
   return { isFavorite: data ?? false, isLoading }
@@ -194,9 +200,15 @@ export function useToggleFavorite(resourceType: FavoriteResourceType, resourceId
     onSuccess: () => {
       // Refresh the groups (and confirm the id sets) from the server.
       void queryClient.invalidateQueries({ queryKey: favoritesQueryKey })
-      // Search results carry `is_favorite` (and `favorites=1` filters on it);
-      // the 10s staleTime would otherwise leave both directions stale.
-      void queryClient.invalidateQueries({ queryKey: ['search'] })
+      // `favorites=1` searches render (and filter on) `is_favorite`, so a
+      // toggle invalidates exactly those: the search key is
+      // `['search', q, types, favorites, limit]` and index 3 is the flag.
+      // Plain searches never render toggle state, so they need no refetch.
+      // The 10s staleTime would otherwise leave both directions stale.
+      void queryClient.invalidateQueries({
+        queryKey: ['search'],
+        predicate: (query) => query.queryKey[3] === true,
+      })
     },
     onSettled: () => {
       togglesInFlight.delete(resourceKey)

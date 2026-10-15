@@ -209,8 +209,20 @@ describe('useToggleFavorite', () => {
     act(() => { result.current.toggle.toggle() })
     await waitFor(() => expect(result.current.toggle.isPending).toBe(false))
     expect(invalidate).toHaveBeenCalledWith({ queryKey: favoritesQueryKey })
-    // 10s staleTime would otherwise keep `favorites=1` search results stale.
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['search'] })
+
+    // Search invalidation is narrowed to `favorites=1` searches (which render
+    // and filter on `is_favorite`); plain searches never refetch. Key shape:
+    // `['search', q, types, favorites, limit]` — index 3 is the flag.
+    const searchInvalidations = invalidate.mock.calls
+      .map(([filters]) => filters)
+      .filter((filters) => filters?.queryKey?.[0] === 'search')
+    expect(searchInvalidations).toHaveLength(1)
+    const predicate = searchInvalidations[0]!.predicate!
+    const matches = (key: unknown[]) =>
+      predicate({ queryKey: key } as unknown as Parameters<typeof predicate>[0])
+    expect(matches(['search', 'rev', undefined, true, 5])).toBe(true)
+    expect(matches(['search', 'rev', undefined, false, 5])).toBe(false)
+    expect(matches(['search', 'rev'])).toBe(false)
   })
 
   test('flips the id set optimistically before the request resolves', async () => {
