@@ -105,6 +105,8 @@ describe('FavoriteButton', () => {
     renderWithProviders(<FavoriteButton resourceType="notebook" resourceId="nb-1" />)
 
     const button = await screen.findByRole('button', { name: 'Add to favorites' })
+    // The listing must land (the button un-disables) before it can take focus.
+    await waitFor(() => expect(button).toBeEnabled())
     button.focus()
     await userEvent.keyboard('{Enter}')
     await waitFor(() =>
@@ -118,5 +120,44 @@ describe('FavoriteButton', () => {
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Add to favorites' })).toHaveAttribute('aria-pressed', 'false'),
     )
+  })
+
+  test('disables itself until the favorites listing has data', async () => {
+    let release: () => void = () => {}
+    const parked = new Promise<void>((resolve) => { release = resolve })
+    server.use(
+      http.get('/api/v1/favorites', async () => {
+        await parked
+        return HttpResponse.json({ groups: [] })
+      }),
+    )
+    renderWithProviders(<FavoriteButton resourceType="notebook" resourceId="nb-1" />)
+
+    // The current state is unknown until the listing lands, so no click can
+    // silently PUT an already-favorited resource.
+    const button = await screen.findByRole('button', { name: 'Add to favorites' })
+    expect(button).toBeDisabled()
+
+    release()
+    await waitFor(() => expect(button).toBeEnabled())
+  })
+
+  test('stays enabled after a listing error (add-only fallback)', async () => {
+    let putCalls = 0
+    server.use(
+      http.get('/api/v1/favorites', () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+      http.put('/api/v1/favorites/notebook/nb-1', () => {
+        putCalls += 1
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    renderWithProviders(<FavoriteButton resourceType="notebook" resourceId="nb-1" />)
+
+    const button = await screen.findByRole('button', { name: 'Add to favorites' })
+    // A transient listing failure must not leave every bookmark dead; the
+    // toggle keeps its documented add-only semantics instead.
+    await waitFor(() => expect(button).toBeEnabled())
+    await userEvent.click(button)
+    await waitFor(() => expect(putCalls).toBe(1))
   })
 })

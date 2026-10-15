@@ -41,6 +41,15 @@ const EMPTY_GROUPS: FavoriteGroup[] = []
  */
 const EMPTY_IDS: FavoriteIDs = Object.freeze(favoriteIDs(EMPTY_GROUPS))
 
+/** Favorites change only through the user's own toggles; see `useFavorites`. */
+const FAVORITES_STALE_TIME_MS = 60_000
+
+/** Fetches the grouped listing and derives the per-type id sets. */
+async function fetchFavorites(): Promise<FavoritesData> {
+  const response = await api.get<FavoritesResponse>('/api/v1/favorites')
+  return { groups: response.groups, ids: favoriteIDs(response.groups) }
+}
+
 export interface FavoritesState {
   groups: FavoriteGroup[]
   ids: FavoriteIDs
@@ -52,17 +61,17 @@ export interface FavoritesState {
  * The caller's favorites: one source of truth every bookmark toggle reads and
  * writes. `ids` drives toggle state (fast, per-type set lookups); `groups` is
  * the grouped listing for renderers.
+ *
+ * Row toggles should prefer `useIsFavorite` — `useFavorites` subscribes a
+ * consumer to the whole listing, so every toggle would re-render every row.
  */
 export function useFavorites(): FavoritesState {
   const { data, isLoading, isError } = useQuery<FavoritesData>({
     queryKey: favoritesQueryKey,
-    queryFn: async () => {
-      const response = await api.get<FavoritesResponse>('/api/v1/favorites')
-      return { groups: response.groups, ids: favoriteIDs(response.groups) }
-    },
+    queryFn: fetchFavorites,
     // Favorites change only through the user's own toggles, which invalidate
     // this key; 60s keeps cross-surface reads cheap without going stale.
-    staleTime: 60_000,
+    staleTime: FAVORITES_STALE_TIME_MS,
   })
   return {
     groups: data?.groups ?? EMPTY_GROUPS,
@@ -70,6 +79,39 @@ export function useFavorites(): FavoritesState {
     isLoading,
     isError,
   }
+}
+
+/** One resource's bookmark state, without subscribing to unrelated changes. */
+export interface IsFavoriteState {
+  isFavorite: boolean
+  /**
+   * True until the first listing settles (no cache data yet, fetch still in
+   * flight). Bookmarks disable on it: before the listing lands the current
+   * state is unknown, so a click could PUT an already-favorited resource.
+   * A listing *error* is not loading — see `useToggleFavorite`'s add-only
+   * fallback — so buttons never stay permanently dead after a failure.
+   */
+  isLoading: boolean
+}
+
+/**
+ * Narrow subscription to one resource's favorite state on the shared
+ * `['favorites']` key. The `select` collapses the listing to a single
+ * boolean, so a toggle (or refetch) only re-renders the rows whose own state
+ * actually flipped — 50 bookmarks on a page do not each re-render on every
+ * favorites change, the way `useFavorites()` consumers would.
+ *
+ * Prefer this for row toggles; keep `useFavorites()` for group renderers
+ * (palette, search page, favorites filters) that read the grouped listing.
+ */
+export function useIsFavorite(resourceType: FavoriteResourceType, resourceId: string): IsFavoriteState {
+  const { data, isLoading } = useQuery<FavoritesData, Error, boolean>({
+    queryKey: favoritesQueryKey,
+    queryFn: fetchFavorites,
+    staleTime: FAVORITES_STALE_TIME_MS,
+    select: (data) => data.ids[resourceType]?.has(resourceId) ?? false,
+  })
+  return { isFavorite: data ?? false, isLoading }
 }
 
 /** The favorites URL for one resource. */
@@ -109,10 +151,17 @@ const togglesInFlight = new Set<string>()
  * Optimistic bookmark toggle for one resource.
  *
  * The `['favorites']` cache flips immediately (id sets only — the groups
- * catch up on the success invalidation), so every surface reading
- * `useFavorites()` flips together. On failure the exact previous cache value
+ * catch up on the success invalidation), so every surface reading the shared
+ * favorites cache flips together. On failure the exact previous cache value
  * is restored and the error is logged; the app has no toast system, so this
  * matches the console-only convention of its other mutations.
+ *
+ * Pre-load guard: before the first listing has data, the current state is
+ * unknown and a toggle would PUT an already-favorited resource. The pending
+ * state refuses the call (the button also disables itself). After a listing
+ * *error* the toggle stays live with add-only semantics — the PUT is
+ * idempotent server-side, and a permanently dead bookmark after a transient
+ * listing failure would be worse than an occasional redundant PUT.
  */
 export function useToggleFavorite(resourceType: FavoriteResourceType, resourceId: string): ToggleFavorite {
   const queryClient = useQueryClient()
@@ -145,6 +194,9 @@ export function useToggleFavorite(resourceType: FavoriteResourceType, resourceId
     onSuccess: () => {
       // Refresh the groups (and confirm the id sets) from the server.
       void queryClient.invalidateQueries({ queryKey: favoritesQueryKey })
+      // Search results carry `is_favorite` (and `favorites=1` filters on it);
+      // the 10s staleTime would otherwise leave both directions stale.
+      void queryClient.invalidateQueries({ queryKey: ['search'] })
     },
     onSettled: () => {
       togglesInFlight.delete(resourceKey)
@@ -154,6 +206,11 @@ export function useToggleFavorite(resourceType: FavoriteResourceType, resourceId
   const toggle = useCallback(() => {
     if (!resourceId || togglesInFlight.has(resourceKey)) return
     const data = queryClient.getQueryData<FavoritesData>(favoritesQueryKey)
+    if (!data && queryClient.getQueryState(favoritesQueryKey)?.status === 'pending') {
+      // Listing still loading: the flip would be guesswork. Not an error
+      // state, so a failed listing still falls through to add-only.
+      return
+    }
     const isFavorite = data?.ids[resourceType]?.has(resourceId) ?? false
     togglesInFlight.add(resourceKey)
     mutate(isFavorite)

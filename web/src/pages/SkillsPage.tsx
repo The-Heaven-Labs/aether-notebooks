@@ -157,10 +157,10 @@ export function SkillsPage() {
             headerClassNames={[undefined, undefined, 'row-actions-header']}
           >
             {skills.map((s) => (
-              <tr key={s.id} style={rowStyle}>
+              <tr key={s.id} style={rowStyle} className="favorite-host">
                 <td style={cellStyle}><strong>{s.name}</strong></td>
                 <td style={cellStyle}><span style={{ color: 'var(--text-secondary)', fontSize: 13 }}>{s.description || '—'}</span></td>
-                <RowActionsCell>
+                <RowActionsCell favorite={{ resourceType: 'skill', resourceId: s.id }}>
                   <RowAction label="Edit skill" icon={<Pencil size={13} />} accent onClick={() => startEdit(s)} />
                   <RowActionsBreak />
                   <RowAction label="Permissions" icon={<ShieldCheck size={13} />} onClick={() => setPermissionsTarget({ id: s.id, name: s.name })} />

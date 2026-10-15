@@ -1,16 +1,39 @@
 import type React from 'react'
 import { Loader2 } from 'lucide-react'
+import { FavoriteButton } from './FavoriteButton'
+import type { FavoriteResourceType } from '../types'
 
 /** Header cell for a table's action column (visually empty, announced to AT). */
 export function RowActionsHeader() {
   return <span className="sr-only">Actions</span>
 }
 
+interface RowActionsCellProps {
+  children: React.ReactNode
+  /**
+   * When set, renders the bookmark toggle immediately left of the action
+   * grid — outside it, because the grid packs exactly two controls per line
+   * (the row-actions CSS reserves 75px) and a third control inside would
+   * wrap to a second row. The cell widens by the bookmark's 26px so the
+   * reserved column never shifts when the toggle is hover-revealed.
+   */
+  favorite?: { resourceType: FavoriteResourceType; resourceId: string }
+}
+
 /** Right-aligned action column for a resource table row. */
-export function RowActionsCell({ children }: { children: React.ReactNode }) {
+export function RowActionsCell({ children, favorite }: RowActionsCellProps) {
+  const grid = <div className="row-actions-grid">{children}</div>
+  if (!favorite) return <td className="row-actions-cell">{grid}</td>
   return (
-    <td className="row-actions-cell">
-      <div className="row-actions-grid">{children}</div>
+    <td className="row-actions-cell row-actions-cell--favorite">
+      <div className="row-actions-cluster">
+        <FavoriteButton
+          resourceType={favorite.resourceType}
+          resourceId={favorite.resourceId}
+          className="favorite-reveal"
+        />
+        {grid}
+      </div>
     </td>
   )
 }

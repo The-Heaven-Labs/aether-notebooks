@@ -5,6 +5,7 @@ import { api } from '../api/client'
 import type { Dashboard } from '../types'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
+import { FavoriteButton } from '../components/FavoriteButton'
 import { Skeleton } from '../components/Skeleton'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormModal } from '../components/FormModal'
@@ -124,6 +125,8 @@ export function DashboardsPage() {
                       {d.public_token && <div style={styles.publicBadge}>Public</div>}
                     </Link>
                     <span style={styles.cardActions}>
+                      {/* Cards have no hover column to hide behind: the bookmark stays visible. */}
+                      <FavoriteButton resourceType="dashboard" resourceId={d.id} />
                       <RowAction label="Edit dashboard" title="Edit layout and widgets" accent icon={<Pencil size={13} />} onClick={() => navigate(`/dashboards/${d.id}`)} />
                       <RowAction label="Delete dashboard" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget(d)} />
                     </span>
@@ -150,7 +153,7 @@ export function DashboardsPage() {
 function DashboardRow({ dashboard, onRequestDelete }: { dashboard: Dashboard; onRequestDelete: () => void }) {
   const navigate = useNavigate()
   return (
-    <div style={rowStyles.row} className="card-hover">
+    <div style={rowStyles.row} className="card-hover favorite-host">
       <Link to={`/dashboards/${dashboard.id}/view`} style={rowStyles.link}>
         <LayoutDashboard size={18} style={{ color: 'var(--accent)', flexShrink: 0 }} />
         <div style={rowStyles.info}>
@@ -159,6 +162,7 @@ function DashboardRow({ dashboard, onRequestDelete }: { dashboard: Dashboard; on
         </div>
         <span style={rowStyles.date}>{fmtDate(dashboard.updated_at)}</span>
       </Link>
+      <FavoriteButton resourceType="dashboard" resourceId={dashboard.id} className="favorite-reveal" />
       <RowAction label="Edit dashboard" title="Edit layout and widgets" accent icon={<Pencil size={13} />} onClick={() => navigate(`/dashboards/${dashboard.id}`)} />
       <RowAction label="Delete dashboard" icon={<Trash2 size={13} />} danger onClick={onRequestDelete} />
     </div>

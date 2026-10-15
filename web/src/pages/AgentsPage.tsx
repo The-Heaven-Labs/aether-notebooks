@@ -279,7 +279,7 @@ export function AgentsPage() {
             {agents.map((a) => {
               const mc = modelConfigs.find(m => m.id === a.model_config_id)
               return (
-                <tr key={a.id} style={rowStyle}>
+                <tr key={a.id} style={rowStyle} className="favorite-host">
                   <td style={cellStyle}>
                     <strong>{a.name}</strong>
                     {a.description && <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>{a.description}</div>}
@@ -306,7 +306,7 @@ export function AgentsPage() {
                       ? a.mcp_servers.map(m => m.name).join(', ')
                       : <span style={{ color: 'var(--text-muted)' }}>—</span>}
                   </td>
-                  <RowActionsCell>
+                  <RowActionsCell favorite={{ resourceType: 'agent', resourceId: a.id }}>
                     <RowAction label="Permissions" icon={<ShieldCheck size={13} />} onClick={() => setPermissionsTarget({ id: a.id, name: a.name })} />
                     <RowAction label="Edit agent" icon={<Pencil size={13} />} accent onClick={() => startEdit(a)} />
                     <RowAction label="Delete agent" icon={<Trash2 size={13} />} danger onClick={() => setDeleteTarget({ id: a.id, name: a.name })} />

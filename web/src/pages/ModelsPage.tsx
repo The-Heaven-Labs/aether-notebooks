@@ -278,7 +278,7 @@ export function ModelsPage() {
               const testing = testMutation.isPending && testMutation.variables === c.id
               const test = testResult?.id === c.id ? testResult : null
               return (
-                <tr key={c.id} style={rowStyle}>
+                <tr key={c.id} style={rowStyle} className="favorite-host">
                   <td style={cellStyle}><strong>{c.name}</strong></td>
                   <td style={cellStyle}><code style={styles.badge}>{c.provider}</code></td>
                   <td style={{ ...cellStyle, fontFamily: 'var(--font-mono)', fontSize: 12, color: 'var(--text-secondary)' }}>{c.base_url}</td>
@@ -303,7 +303,7 @@ export function ModelsPage() {
                       </span>
                     )}
                   </td>
-                  <RowActionsCell>
+                  <RowActionsCell favorite={{ resourceType: 'model_config', resourceId: c.id }}>
                     <RowAction
                       label="Test model config"
                       icon={<Zap size={13} />}

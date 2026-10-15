@@ -1,12 +1,18 @@
 import { describe, test, expect, vi } from 'vitest'
 import { renderHook, waitFor, act } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse, delay } from 'msw'
 import type { ReactNode } from 'react'
 import { server } from '../test/server'
 import { favoritesFixture, favoriteSummary } from '../test/handlers'
 import { FAVORITE_RESOURCE_TYPES } from '../types'
-import { useFavorites, useToggleFavorite } from './useFavorites'
+import {
+  favoritesQueryKey,
+  useFavorites,
+  useIsFavorite,
+  useToggleFavorite,
+  type FavoritesData,
+} from './useFavorites'
 
 function createWrapper() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -63,7 +69,150 @@ describe('useFavorites', () => {
   })
 })
 
+describe('useIsFavorite', () => {
+  test('reports one resource per instance and shares a single listing fetch', async () => {
+    const { handlers, counts } = favoritesFixture([{ type: 'notebook', id: 'nb-a' }])
+    server.use(...handlers)
+    const { Wrapper } = createWrapper()
+    const { result } = renderHook(
+      () => ({ a: useIsFavorite('notebook', 'nb-a'), b: useIsFavorite('notebook', 'nb-b') }),
+      { wrapper: Wrapper },
+    )
+
+    await waitFor(() => expect(result.current.a.isLoading).toBe(false))
+    expect(result.current.a.isFavorite).toBe(true)
+    expect(result.current.b.isFavorite).toBe(false)
+    expect(result.current.b.isLoading).toBe(false)
+    // Two observers on the same key still issue exactly one listing request.
+    expect(counts.gets).toBe(1)
+  })
+
+  test('is loading until the first listing settles', async () => {
+    server.use(
+      http.get('/api/v1/favorites', async () => {
+        await delay(40)
+        return HttpResponse.json({
+          groups: [{ resource_type: 'notebook', results: [favoriteSummary('notebook', 'nb-a')] }],
+        })
+      }),
+    )
+    const { Wrapper } = createWrapper()
+    const { result } = renderHook(() => useIsFavorite('notebook', 'nb-a'), { wrapper: Wrapper })
+
+    expect(result.current.isLoading).toBe(true)
+    expect(result.current.isFavorite).toBe(false)
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    expect(result.current.isFavorite).toBe(true)
+  })
+
+  test('a listing error stops loading and reports the add-only default', async () => {
+    server.use(http.get('/api/v1/favorites', () => HttpResponse.json({ error: 'boom' }, { status: 500 })))
+    const { Wrapper } = createWrapper()
+    const { result } = renderHook(() => useIsFavorite('notebook', 'nb-1'), { wrapper: Wrapper })
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+    // Not favorited is not a claim here — the toggle falls back to add-only.
+    expect(result.current.isFavorite).toBe(false)
+  })
+
+  test('another resource flipping does not re-render this row', async () => {
+    const { handlers } = favoritesFixture()
+    server.use(...handlers)
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+    function Wrapper({ children }: { children: ReactNode }) {
+      return <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    }
+
+    let rendersA = 0
+    const { result: a } = renderHook(() => {
+      rendersA += 1
+      return useIsFavorite('notebook', 'nb-a')
+    }, { wrapper: Wrapper })
+    const { result: b } = renderHook(() => useIsFavorite('notebook', 'nb-b'), { wrapper: Wrapper })
+    await waitFor(() => expect(a.current.isLoading).toBe(false))
+    await waitFor(() => expect(b.current.isLoading).toBe(false))
+    const settled = rendersA
+
+    expect(b.current.isFavorite).toBe(false)
+    expect(a.current.isFavorite).toBe(false)
+
+    // Flip nb-b exactly the way the optimistic toggle writes the cache; the
+    // select must keep nb-a's boolean identity stable for its observer.
+    act(() => {
+      qc.setQueryData<FavoritesData>(favoritesQueryKey, (data) =>
+        data
+          ? { groups: data.groups, ids: { ...data.ids, notebook: new Set([...data.ids.notebook, 'nb-b']) } }
+          : data,
+      )
+    })
+
+    await waitFor(() => expect(b.current.isFavorite).toBe(true))
+    expect(a.current.isFavorite).toBe(false)
+    // The whole point of the narrow selector: nb-a's row never re-rendered.
+    expect(rendersA).toBe(settled)
+  })
+})
+
 describe('useToggleFavorite', () => {
+  test('refuses a toggle before the first listing has data, then proceeds once it lands', async () => {
+    let putCalls = 0
+    const held = new Set<string>()
+    const listing = deferred<void>()
+    server.use(
+      http.get('/api/v1/favorites', async () => {
+        await listing.promise
+        return HttpResponse.json({
+          groups: held.size
+            ? [{ resource_type: 'notebook', results: [...held].map((id) => favoriteSummary('notebook', id)) }]
+            : [],
+        })
+      }),
+      http.put('/api/v1/favorites/notebook/nb-1', ({ params }) => {
+        putCalls += 1
+        held.add(params.id as string)
+        return new HttpResponse(null, { status: 204 })
+      }),
+    )
+    const { Wrapper } = createWrapper()
+    const { result } = renderHook(
+      () => ({ favorite: useIsFavorite('notebook', 'nb-1'), toggle: useToggleFavorite('notebook', 'nb-1') }),
+      { wrapper: Wrapper },
+    )
+    expect(result.current.favorite.isLoading).toBe(true)
+
+    // Before the listing lands the flip would be guesswork: no request.
+    act(() => { result.current.toggle.toggle() })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(putCalls).toBe(0)
+
+    // Once the listing arrives the same toggle goes through.
+    await act(async () => {
+      listing.resolve()
+      await listing.promise
+    })
+    await waitFor(() => expect(result.current.favorite.isLoading).toBe(false))
+    act(() => { result.current.toggle.toggle() })
+    await waitFor(() => expect(putCalls).toBe(1))
+  })
+
+  test('a successful toggle invalidates both favorites and search', async () => {
+    const { handlers } = favoritesFixture()
+    server.use(...handlers)
+    const { qc, Wrapper } = createWrapper()
+    const invalidate = vi.spyOn(qc, 'invalidateQueries')
+    const { result } = renderHook(
+      () => ({ favorites: useFavorites(), toggle: useToggleFavorite('notebook', 'nb-1') }),
+      { wrapper: Wrapper },
+    )
+    await waitFor(() => expect(result.current.favorites.isLoading).toBe(false))
+
+    act(() => { result.current.toggle.toggle() })
+    await waitFor(() => expect(result.current.toggle.isPending).toBe(false))
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: favoritesQueryKey })
+    // 10s staleTime would otherwise keep `favorites=1` search results stale.
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ['search'] })
+  })
+
   test('flips the id set optimistically before the request resolves', async () => {
     const put = deferred<void>()
     let putCalls = 0

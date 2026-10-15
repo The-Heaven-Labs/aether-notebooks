@@ -1,10 +1,12 @@
 import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse, delay } from 'msw'
+import { Routes, Route } from 'react-router-dom'
 import { HomePage } from '../pages/HomePage'
 import type { FolderContents } from '../types'
 import { server } from './server'
 import { renderWithProviders } from './utils'
+import { favoritesFixture } from './handlers'
 
 // Mock PermissionsPanel to avoid real API calls; the lookup props are exposed
 // as data attributes so tests can assert what the panel would receive.
@@ -736,5 +738,123 @@ describe('Folder section pagination (B3)', () => {
     expect(requests[0]).toContain('type=notebook')
     expect(requests[0]).toContain('offset=1')
     expect(requests[0]).toContain('limit=50')
+  })
+})
+
+// ── Favorites toggles (F2) ────────────────────────────────────────────────────
+
+describe('Favorites toggles (F2)', () => {
+  test('bookmark state comes from the shared listing and every row type carries a toggle', async () => {
+    const { handlers, counts } = favoritesFixture([
+      { type: 'notebook', id: 'nb-1' },
+      { type: 'folder', id: 'f-fav' },
+    ])
+    server.use(
+      ...handlers,
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json({
+        ...folderPage([nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo')], 2, false),
+        folders: [{
+          id: 'f-fav', org_id: 'org-1', name: 'Favorites Folder', is_home: false,
+          created_by: 'user-1', created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        }],
+        connectors: [{
+          id: 'c-1', name: 'Warehouse', type: 'clickhouse', created_by: 'user-1',
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        }],
+        dashboards: [{
+          id: 'd-1', title: 'Ops Board', created_by: 'user-1',
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        }],
+        totals: { notebooks: 2, connectors: 1, dashboards: 1 },
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    // The seeded notebook row renders filled straight from the listing.
+    const notebookRow = (await screen.findByText('Alpha')).closest('.file-list-item') as HTMLElement
+    expect(await within(notebookRow).findByRole('button', { name: 'Remove from favorites' })).toHaveAttribute('aria-pressed', 'true')
+
+    const folderNameMatches = screen.getAllByText('Favorites Folder')
+    const folderCard = folderNameMatches[folderNameMatches.length - 1].closest('.file-list-item') as HTMLElement
+    // Grid cards have no hover column: the bookmark is always visible there.
+    expect(within(folderCard).getByRole('button', { name: 'Remove from favorites' })).not.toHaveClass('favorite-reveal')
+
+    const connectorRow = screen.getByText('Warehouse').closest('.file-list-item') as HTMLElement
+    expect(within(connectorRow).getByRole('button', { name: 'Add to favorites' })).toBeInTheDocument()
+    const dashboardRow = screen.getByText('Ops Board').closest('.file-list-item') as HTMLElement
+    expect(within(dashboardRow).getByRole('button', { name: 'Add to favorites' })).toBeInTheDocument()
+
+    // Four toggle surfaces, one shared listing request.
+    await waitFor(() => expect(counts.gets).toBe(1))
+  })
+
+  test('toggling a notebook row flips optimistically, never navigates, and a second click clears it', async () => {
+    const { handlers } = favoritesFixture()
+    server.use(
+      ...handlers,
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([nb('nb-1', 'Alpha')], 1, false))),
+    )
+    renderWithProviders(
+      <Routes>
+        <Route path="/" element={<HomePage />} />
+        <Route path="/notebooks/:id" element={<div>Notebook opened</div>} />
+      </Routes>,
+      { initialPath: '/?folder=f-page' },
+    )
+
+    const row = (await screen.findByText('Alpha')).closest('.file-list-item') as HTMLElement
+    await userEvent.click(within(row).getByRole('button', { name: 'Add to favorites' }))
+    await waitFor(() =>
+      expect(within(row).getByRole('button', { name: 'Remove from favorites' })).toHaveAttribute('aria-pressed', 'true'),
+    )
+    // The toggle is its own control: the row link never fires.
+    expect(screen.queryByText('Notebook opened')).not.toBeInTheDocument()
+
+    const active = within(row).getByRole('button', { name: 'Remove from favorites' })
+    await waitFor(() => expect(active).toBeEnabled())
+    await userEvent.click(active)
+    await waitFor(() =>
+      expect(within(row).getByRole('button', { name: 'Add to favorites' })).toHaveAttribute('aria-pressed', 'false'),
+    )
+    expect(screen.queryByText('Notebook opened')).not.toBeInTheDocument()
+  })
+
+  test('row bookmarks disable until the favorites listing arrives', async () => {
+    let release: () => void = () => {}
+    const parked = new Promise<void>((resolve) => { release = resolve })
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([nb('nb-1', 'Alpha')], 1, false))),
+      http.get('/api/v1/favorites', async () => {
+        await parked
+        return HttpResponse.json({ groups: [] })
+      }),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    const row = (await screen.findByText('Alpha')).closest('.file-list-item') as HTMLElement
+    const button = within(row).getByRole('button', { name: 'Add to favorites' })
+    expect(button).toBeDisabled()
+
+    release()
+    await waitFor(() => expect(button).toBeEnabled())
+  })
+
+  test('the bookmark column renders hidden-but-reserved when inactive', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([nb('nb-1', 'Alpha')], 1, false))),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    const row = (await screen.findByText('Alpha')).closest('.file-list-item') as HTMLElement
+    expect(row.className).toContain('favorite-host')
+
+    const button = within(row).getByRole('button', { name: 'Add to favorites' })
+    // Hidden by opacity (theme.css `.favorite-reveal`), never `display: none`,
+    // so its 26px column stays reserved and revealing cannot shift the row.
+    expect(button.className).toContain('favorite-reveal')
+    // A sibling of the row link (never inside it), immediately left of the ⋯.
+    expect(button.closest('a')).toBeNull()
+    const menu = within(row).getByTitle('More options')
+    expect(button.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 })

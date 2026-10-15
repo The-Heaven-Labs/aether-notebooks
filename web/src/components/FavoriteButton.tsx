@@ -1,5 +1,5 @@
 import { Bookmark } from 'lucide-react'
-import { useFavorites, useToggleFavorite } from '../hooks/useFavorites'
+import { useIsFavorite, useToggleFavorite } from '../hooks/useFavorites'
 import type { FavoriteResourceType } from '../types'
 
 interface FavoriteButtonProps {
@@ -13,12 +13,18 @@ interface FavoriteButtonProps {
  * Bookmark toggle for a catalog resource, built on the shared row-action
  * metrics (26×26, 36 on touch via the coarse-pointer rule). Filled accent
  * while favorited; the optimistic update in `useToggleFavorite` flips every
- * surface reading `useFavorites()` together.
+ * surface reading the shared `['favorites']` cache together.
+ *
+ * The button disables itself while the favorites listing is still loading
+ * (no cache data yet): before it lands the current state is unknown, so a
+ * click could PUT an already-favorited resource. A listing *error* is not a
+ * loading state, so the button stays live there — `useToggleFavorite` keeps
+ * its add-only fallback in that case, and a permanently disabled bookmark
+ * after a transient failure would be worse.
  */
 export function FavoriteButton({ resourceType, resourceId, className }: FavoriteButtonProps) {
-  const { ids } = useFavorites()
+  const { isFavorite, isLoading } = useIsFavorite(resourceType, resourceId)
   const { toggle, isPending } = useToggleFavorite(resourceType, resourceId)
-  const isFavorite = ids[resourceType].has(resourceId)
   const label = isFavorite ? 'Remove from favorites' : 'Add to favorites'
 
   return (
@@ -28,7 +34,7 @@ export function FavoriteButton({ resourceType, resourceId, className }: Favorite
       aria-pressed={isFavorite}
       aria-label={label}
       title={label}
-      disabled={isPending}
+      disabled={isLoading || isPending}
       onClick={(e) => {
         // Row clicks navigate; the toggle is its own control.
         e.stopPropagation()

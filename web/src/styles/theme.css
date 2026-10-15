@@ -705,6 +705,42 @@ input[type="color"] {
   padding: 0;
 }
 
+/* Bookmark + actions cluster: the bookmark sits immediately left of the
+   action grid, outside it — the grid packs exactly two 26px controls per
+   line (see the min-width above) and a third control inside would wrap. */
+.row-actions-cluster {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+/* Wider reserved column for cells that carry the bookmark: 75px grid +
+   26px bookmark + 3px gap. Reserved even while the bookmark is
+   hover-hidden, so revealing it never shifts the row. */
+.row-actions-cell--favorite {
+  min-width: 104px;
+}
+
+/* Hover-revealed bookmark toggles on row surfaces. Hiding is opacity-only
+   (never `display: none`), so the wrapper's 26px stays reserved and
+   revealing the toggle cannot move anything. Surfaces opt in by marking
+   the row container `.favorite-host`; grid cards render the button without
+   `favorite-reveal` and keep it always visible. */
+.favorite-reveal {
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.favorite-reveal:focus-visible {
+  opacity: 1;
+}
+
+.favorite-host:hover .favorite-reveal,
+.favorite-host:focus-within .favorite-reveal {
+  opacity: 1;
+}
+
 .row-action-spin {
   animation: spin 1s linear infinite;
 }
@@ -721,10 +757,24 @@ input[type="color"] {
     gap: 4px;
   }
 
+  .row-actions-cluster {
+    gap: 4px;
+  }
+
   .row-actions-header,
   .row-actions-cell {
     /* 2×36px + 4px gap + 20px cell padding. */
     min-width: 96px;
+  }
+
+  .row-actions-cell--favorite {
+    /* 96px grid + 36px bookmark + 4px gap. */
+    min-width: 136px;
+  }
+
+  /* Touch has no hover: the bookmark stays visible. */
+  .favorite-reveal {
+    opacity: 1;
   }
 }
 

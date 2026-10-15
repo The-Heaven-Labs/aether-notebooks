@@ -9,6 +9,7 @@ import { isApplePlatform } from '../utils/platform'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
+import { FavoriteButton } from '../components/FavoriteButton'
 import { FolderTree } from '../components/FolderTree'
 import { useFolderActions, useFolderMutations, type FolderActionKey } from '../components/FolderActions'
 import { PermissionsPanel } from '../components/PermissionsPanel'
@@ -1175,6 +1176,7 @@ export function HomePage() {
                           </div>
                         </button>
                       )}
+                      <FavoriteButton resourceType="folder" resourceId={f.id} />
                       <button
                         style={s.menuBtn}
                         title="More options"
@@ -1216,7 +1218,7 @@ export function HomePage() {
                     <div key={nb.id} style={{
                       ...s.item,
                       ...(isSelected('notebook', nb.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
-                    }} className="file-list-item">
+                    }} className="file-list-item favorite-host">
                       <div className={`file-checkbox${isSelected('notebook', nb.id) ? ' checked' : ''}`} style={s.hoverCheckbox}>
                         <input
                           type="checkbox"
@@ -1242,6 +1244,7 @@ export function HomePage() {
                           </div>
                         </Link>
                       )}
+                      <FavoriteButton resourceType="notebook" resourceId={nb.id} className="favorite-reveal" />
                       <div style={{ position: 'relative' }}>
                         <button
                           style={s.menuBtn}
@@ -1297,7 +1300,7 @@ export function HomePage() {
                     <div key={c.id} style={{
                       ...s.item,
                       ...(isSelected('connector', c.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
-                    }} className="file-list-item">
+                    }} className="file-list-item favorite-host">
                       <div className={`file-checkbox${isSelected('connector', c.id) ? ' checked' : ''}`} style={s.hoverCheckbox}>
                         <input
                           type="checkbox"
@@ -1316,6 +1319,7 @@ export function HomePage() {
                           <MetaLine createdBy={memberName(c.created_by)} createdAt={c.created_at} updatedAt={c.updated_at} />
                         </div>
                       </Link>
+                      <FavoriteButton resourceType="connector" resourceId={c.id} className="favorite-reveal" />
                       <div style={{ position: 'relative' }}>
                         <button
                           style={s.menuBtn}
@@ -1371,7 +1375,7 @@ export function HomePage() {
                     <div key={d.id} style={{
                       ...s.item,
                       ...(isSelected('dashboard', d.id) ? { borderColor: 'var(--accent)', background: 'var(--accent-light)' } : {}),
-                    }} className="file-list-item">
+                    }} className="file-list-item favorite-host">
                       <div className={`file-checkbox${isSelected('dashboard', d.id) ? ' checked' : ''}`} style={s.hoverCheckbox}>
                         <input
                           type="checkbox"
@@ -1387,6 +1391,7 @@ export function HomePage() {
                           <MetaLine createdBy={memberName(d.created_by)} createdAt={d.created_at} updatedAt={d.updated_at} />
                         </div>
                       </Link>
+                      <FavoriteButton resourceType="dashboard" resourceId={d.id} className="favorite-reveal" />
                       <div style={{ position: 'relative' }}>
                         <button
                           style={s.menuBtn}

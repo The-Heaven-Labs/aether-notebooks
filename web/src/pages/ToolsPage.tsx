@@ -282,7 +282,7 @@ export function ToolsPage() {
               const testing = testMutation.isPending && testMutation.variables === t.id
               const test = testResult?.id === t.id ? testResult : null
               return (
-                <tr key={t.id} style={rowStyle}>
+                <tr key={t.id} style={rowStyle} className="favorite-host">
                   <td style={cellStyle}><strong>{t.name}</strong></td>
                   <td style={cellStyle}>
                     <span style={styles.typeBadge}>
@@ -309,7 +309,7 @@ export function ToolsPage() {
                       </span>
                     )}
                   </td>
-                  <RowActionsCell>
+                  <RowActionsCell favorite={{ resourceType: 'tool', resourceId: t.id }}>
                     {t.type !== 'builtin' && (
                       <>
                         <RowAction
