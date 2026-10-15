@@ -6,10 +6,19 @@ import type { FolderContents } from '../types'
 import { server } from './server'
 import { renderWithProviders } from './utils'
 
-// Mock PermissionsPanel to avoid real API calls
+// Mock PermissionsPanel to avoid real API calls; the lookup props are exposed
+// as data attributes so tests can assert what the panel would receive.
 vi.mock('../components/PermissionsPanel', () => ({
-  PermissionsPanel: ({ onClose }: { onClose: () => void }) => (
-    <div data-testid="permissions-panel">
+  PermissionsPanel: ({ onClose, resourceOwnerId, canEdit }: {
+    onClose: () => void
+    resourceOwnerId?: string
+    canEdit?: boolean
+  }) => (
+    <div
+      data-testid="permissions-panel"
+      data-owner={resourceOwnerId ?? ''}
+      data-can-edit={canEdit === undefined ? '' : String(canEdit)}
+    >
       <button onClick={onClose}>Close</button>
     </div>
   ),
@@ -579,6 +588,94 @@ describe('Folder section pagination (B3)', () => {
     expect(requests[0]).toContain('type=connector')
     expect(requests[0]).toContain('offset=1')
     expect(requests[0]).toContain('limit=50')
+  })
+
+  test('extra-page rows resolve permissions lookups like first-page rows', async () => {
+    const extraRow = { ...nb('nb-extra', 'Extra Row'), created_by: 'user-2', can_share: true }
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([
+        { ...nb('nb-1', 'Alpha'), can_share: false },
+      ], 2, true))),
+      http.get('/api/v1/folders/f-page/contents', () => HttpResponse.json({
+        items: [extraRow], total: 2, has_more: false, offset: 1,
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }))
+    await screen.findByText('Extra Row')
+
+    const menuBtn = screen.getAllByTitle('More options')
+      .find(b => b.closest('.file-list-item')?.textContent?.includes('Extra Row'))
+    fireEvent.click(menuBtn!)
+    fireEvent.click(screen.getByText('Permissions'))
+
+    // The panel must see the row's real owner/can_share, not undefined.
+    const panel = await screen.findByTestId('permissions-panel')
+    expect(panel.getAttribute('data-owner')).toBe('user-2')
+    expect(panel.getAttribute('data-can-edit')).toBe('true')
+  })
+
+  test('an in-place invalidation drops loaded extras (mutation refetch)', async () => {
+    let pageOne = folderPage([
+      { ...nb('nb-1', 'Alpha'), can_edit: true },
+      { ...nb('nb-2', 'Bravo'), can_edit: true },
+    ], 4, true)
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(pageOne)),
+      http.get('/api/v1/folders/f-page/contents', () => HttpResponse.json({
+        items: [nb('nb-3', 'Charlie'), nb('nb-4', 'Delta')],
+        total: 4, has_more: false, offset: 2,
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    expect(await screen.findByText('2 of 4')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('Charlie')).toBeInTheDocument()
+
+    // Rename Alpha in place: renameNotebook invalidates ['folder-contents'], and
+    // the refetched first page no longer contains the extra rows.
+    pageOne = folderPage([nb('nb-1', 'Alpha Renamed'), nb('nb-new', 'Echo')], 2, false)
+    const renameBtn = screen.getAllByTitle('More options')
+      .find(b => b.closest('.file-list-item')?.textContent?.includes('Alpha'))
+    fireEvent.click(renameBtn!)
+    fireEvent.click(screen.getByText('Rename'))
+    const input = screen.getByDisplayValue('Alpha')
+    await userEvent.clear(input)
+    await userEvent.type(input, 'Alpha Renamed')
+    fireEvent.keyDown(input, { key: 'Enter' })
+
+    expect(await screen.findByText('Echo')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Charlie')).not.toBeInTheDocument())
+    expect(screen.queryByText('Delta')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  test('a double-click on Load more issues exactly one request', async () => {
+    let pageCalls = 0
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([
+        nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo'),
+      ], 4, true))),
+      http.get('/api/v1/folders/f-page/contents', async () => {
+        pageCalls++
+        await delay(100)
+        return HttpResponse.json({
+          items: [nb('nb-3', 'Charlie'), nb('nb-4', 'Delta')],
+          total: 4, has_more: false, offset: 2,
+        })
+      }),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    const loadMore = await screen.findByRole('button', { name: 'Load more' })
+    // Two clicks in one task, before the pending re-render lands.
+    fireEvent.click(loadMore)
+    fireEvent.click(loadMore)
+
+    expect(await screen.findByText('Delta')).toBeInTheDocument()
+    expect(pageCalls).toBe(1)
   })
 
   test('root listing pages through /folders/contents', async () => {

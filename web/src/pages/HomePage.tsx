@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
@@ -474,6 +474,9 @@ function BulkPermissionsModal({ count, items, onClose, onApplied }: {
 /** Load-more page size (the API default; server clamps to 1–200). */
 const FOLDER_SECTION_PAGE_SIZE = 50
 
+/** Stable empty first page, so pager inputs keep identity while data is absent. */
+const NO_ITEMS: never[] = []
+
 type FolderSectionKind = 'notebook' | 'connector' | 'dashboard'
 
 interface FolderSectionExtras<T> {
@@ -537,6 +540,16 @@ function useFolderSectionPager<T extends { id: string }>({
 
   // Only extras from the current folder and first-page generation count.
   const active = extras && extras.folderKey === folderKey && extras.base === generation ? extras : null
+  // First page plus accumulated extras, kept referentially stable so the
+  // section is usable as a lookup source for every loaded row.
+  const items = useMemo(
+    () => (active ? [...firstPage, ...active.items] : firstPage),
+    [active, firstPage],
+  )
+
+  // Synchronous in-flight latch: `isPending` flips a tick later, so two clicks
+  // dispatched in the same task would otherwise both fire.
+  const inFlight = useRef(false)
 
   const more = useMutation({
     mutationFn: ({ offset }: { offset: number; base: number }) =>
@@ -571,12 +584,16 @@ function useFolderSectionPager<T extends { id: string }>({
   })
 
   const loadMore = () => {
-    if (more.isPending) return
-    more.mutate({ offset: active ? active.nextOffset : firstPage.length, base: generation })
+    if (inFlight.current) return
+    inFlight.current = true
+    more.mutate(
+      { offset: active ? active.nextOffset : firstPage.length, base: generation },
+      { onSettled: () => { inFlight.current = false } },
+    )
   }
 
   return {
-    items: active ? [...firstPage, ...active.items] : firstPage,
+    items,
     total: active && active.total !== null ? active.total : firstPageTotal,
     hasMore: active && active.hasMore !== null ? active.hasMore : firstPageHasMore,
     stopped: active?.stopped ?? false,
@@ -662,7 +679,7 @@ export function HomePage() {
   const notebooksPager = useFolderSectionPager<FolderContents['notebooks'][number]>({
     kind: 'notebook',
     folderID: folderID ?? null,
-    firstPage: data?.notebooks ?? [],
+    firstPage: data?.notebooks ?? NO_ITEMS,
     firstPageTotal: data?.totals?.notebooks ?? null,
     firstPageHasMore: data?.has_more?.notebooks === true,
     generation: dataUpdatedAt,
@@ -672,7 +689,7 @@ export function HomePage() {
   const connectorsPager = useFolderSectionPager<FolderContents['connectors'][number]>({
     kind: 'connector',
     folderID: folderID ?? null,
-    firstPage: data?.connectors ?? [],
+    firstPage: data?.connectors ?? NO_ITEMS,
     firstPageTotal: data?.totals?.connectors ?? null,
     firstPageHasMore: data?.has_more?.connectors === true,
     generation: dataUpdatedAt,
@@ -682,7 +699,7 @@ export function HomePage() {
   const dashboardsPager = useFolderSectionPager<FolderContents['dashboards'][number]>({
     kind: 'dashboard',
     folderID: folderID ?? null,
-    firstPage: data?.dashboards ?? [],
+    firstPage: data?.dashboards ?? NO_ITEMS,
     firstPageTotal: data?.totals?.dashboards ?? null,
     firstPageHasMore: data?.has_more?.dashboards === true,
     generation: dataUpdatedAt,
@@ -1589,16 +1606,16 @@ export function HomePage() {
                 }
                 resourceOwnerId={
                   permissionsTarget.type === 'folder' ? data?.folder?.created_by :
-                  permissionsTarget.type === 'notebook' ? data?.notebooks?.find(nb => nb.id === permissionsTarget.id)?.created_by :
-                  permissionsTarget.type === 'connector' ? data?.connectors?.find(c => c.id === permissionsTarget.id)?.created_by :
-                  permissionsTarget.type === 'dashboard' ? data?.dashboards?.find(d => d.id === permissionsTarget.id)?.created_by :
+                  permissionsTarget.type === 'notebook' ? notebooksPager.items.find(nb => nb.id === permissionsTarget.id)?.created_by :
+                  permissionsTarget.type === 'connector' ? connectorsPager.items.find(c => c.id === permissionsTarget.id)?.created_by :
+                  permissionsTarget.type === 'dashboard' ? dashboardsPager.items.find(d => d.id === permissionsTarget.id)?.created_by :
                   undefined
                 }
                 canEdit={
                   permissionsTarget.type === 'folder' && data?.folder ? (data.folder as any).can_share :
-                  permissionsTarget.type === 'notebook' ? data?.notebooks?.find((nb: any) => nb.id === permissionsTarget.id)?.can_share :
-                  permissionsTarget.type === 'connector' ? data?.connectors?.find((c: any) => c.id === permissionsTarget.id)?.can_share :
-                  permissionsTarget.type === 'dashboard' ? data?.dashboards?.find((d: any) => d.id === permissionsTarget.id)?.can_share :
+                  permissionsTarget.type === 'notebook' ? notebooksPager.items.find(nb => nb.id === permissionsTarget.id)?.can_share :
+                  permissionsTarget.type === 'connector' ? connectorsPager.items.find(c => c.id === permissionsTarget.id)?.can_share :
+                  permissionsTarget.type === 'dashboard' ? dashboardsPager.items.find(d => d.id === permissionsTarget.id)?.can_share :
                   undefined
                 }
                 onClose={() => setPermissionsTarget(null)}
@@ -1647,7 +1664,7 @@ const s: Record<string, React.CSSProperties> = {
   sectionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', marginBottom: 8 },
   sectionHeader: { display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 },
   sectionCount: { fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 500, letterSpacing: '0.04em', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' },
-  loadMoreBtn: { alignSelf: 'flex-start' as const, marginTop: 10, padding: '7px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, transition: 'opacity 0.15s' },
+  loadMoreBtn: { marginTop: 10, padding: '7px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, transition: 'opacity 0.15s' },
   filterHint: { marginTop: 6, fontSize: 12, color: 'var(--text-muted)' },
   hintKbd: { fontFamily: 'var(--font-mono)', fontSize: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 4px', color: 'var(--text-primary)' },
   folderGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 },
