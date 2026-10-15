@@ -84,8 +84,7 @@ var softDeletableResourceTables = map[string]bool{
 }
 
 // resourceSummarySubtitles are the per-type descriptors that do not depend on
-// the row itself. Connectors use their type instead; mcp servers their fixed
-// label.
+// the row itself. Connectors use their type instead.
 var resourceSummarySubtitles = map[string]string{
 	"notebook":     "Notebook",
 	"dashboard":    "Dashboard",
@@ -121,6 +120,24 @@ type summaryRequest struct {
 // omitted from the output.
 type summaryOverrides map[string]map[string]resourceSummaryMeta
 
+// summaryBuildOptions carries the optional inputs of buildResourceSummaries.
+type summaryBuildOptions struct {
+	// Snippets maps resource type -> id -> snippet text. Nil renders no
+	// snippets (a favorites listing); a non-empty entry becomes the summary's
+	// snippet.
+	Snippets map[string]map[string]string
+	// Overrides substitutes metadata a caller already fetched with extra
+	// per-caller semantics (search's effective dashboard titles). A type
+	// present here is not re-fetched, and ids absent from the override group
+	// are omitted like any other miss.
+	Overrides summaryOverrides
+	// Favorites is the caller's preloaded favorite id sets
+	// (loadFavoriteIDs shape). When nil the builder loads them itself; a
+	// non-nil map — including an empty one — is used as-is, so a caller that
+	// already scanned its favorites never pays for a second query.
+	Favorites map[string]map[string]bool
+}
+
 // loadFavoriteIDs returns the caller's favorited resource ids per type. One
 // query; shared by the summary builder's is_favorite flag and search's
 // favorites filter.
@@ -153,6 +170,12 @@ func (s *Server) loadFavoriteIDs(ctx context.Context, userID, orgID string) (map
 // chain, root first, joined with " / " (e.g. "Home / Finance"). A root-level
 // folder resolves to its own name. Ids not in the org are absent from the
 // map. Empty input returns an empty map.
+//
+// Trashed folders are deliberately not filtered here: a path may resolve an
+// id whose deleted_at is set and may include a trashed ancestor's name,
+// matching the folder breadcrumb handler's behavior — being inside a trashed
+// folder does not change what a path means. (Callers still decide whether the
+// resource being described is live.)
 func (s *Server) folderPathsFor(ctx context.Context, orgID string, folderIDs []string) (map[string]string, error) {
 	paths := make(map[string]string, len(folderIDs))
 	if len(folderIDs) == 0 {
@@ -250,8 +273,7 @@ func (s *Server) fetchResourceSummaryMeta(ctx context.Context, orgID, resourceTy
 		query = `SELECT id::text, name, folder_id, updated_at FROM tools
 			WHERE id = ANY($1::uuid[]) AND org_id = $2`
 	case "mcp_server":
-		// mcp_servers has no folder_id column.
-		query = `SELECT id::text, name, updated_at FROM mcp_servers
+		query = `SELECT id::text, name, folder_id, updated_at FROM mcp_servers
 			WHERE id = ANY($1::uuid[]) AND org_id = $2`
 	default:
 		return nil, fmt.Errorf("unknown resource type %q", resourceType)
@@ -265,17 +287,11 @@ func (s *Server) fetchResourceSummaryMeta(ctx context.Context, orgID, resourceTy
 		var id string
 		var m resourceSummaryMeta
 		var folderID *string
-		switch resourceType {
-		case "connector":
+		if resourceType == "connector" {
 			if err := rows.Scan(&id, &m.Title, &folderID, &m.Subtitle, &m.UpdatedAt); err != nil {
 				return nil, fmt.Errorf("scan %s summary meta: %w", resourceType, err)
 			}
-		case "mcp_server":
-			m.Subtitle = resourceSummarySubtitles[resourceType]
-			if err := rows.Scan(&id, &m.Title, &m.UpdatedAt); err != nil {
-				return nil, fmt.Errorf("scan %s summary meta: %w", resourceType, err)
-			}
-		default:
+		} else {
 			m.Subtitle = resourceSummarySubtitles[resourceType]
 			if err := rows.Scan(&id, &m.Title, &folderID, &m.UpdatedAt); err != nil {
 				return nil, fmt.Errorf("scan %s summary meta: %w", resourceType, err)
@@ -291,20 +307,15 @@ func (s *Server) fetchResourceSummaryMeta(ctx context.Context, orgID, resourceTy
 }
 
 // buildResourceSummaries assembles summary groups for the caller. Metadata is
-// fetched in one query per type (or taken from overrides), visibility and
+// fetched in one query per type (or taken from opts.Overrides), visibility and
 // can_edit resolve per type through one batched resolveActions call, folder
-// paths resolve in one recursive query, and favorites load in one query.
+// paths resolve in one recursive query, and favorites come from
+// opts.Favorites — loaded once by the builder only when that field is nil.
 // Requests are processed in order (group order) and each request's ids keep
 // their order (result order); ids the caller cannot view, ids that no longer
 // exist, and soft-deleted resources are omitted, so a group whose ids all fail
 // disappears entirely.
-//
-// snippets maps resource type -> id -> snippet text (nil = no snippets, as in
-// a favorites listing). overrides lets a caller substitute metadata it already
-// fetched with extra per-caller semantics (search resolves effective dashboard
-// titles per viewer); a type present there is not re-fetched, and ids absent
-// from the override group are omitted like any other miss.
-func (s *Server) buildResourceSummaries(ctx context.Context, ident permIdentity, requests []summaryRequest, snippets map[string]map[string]string, overrides summaryOverrides) ([]summaryGroup, error) {
+func (s *Server) buildResourceSummaries(ctx context.Context, ident permIdentity, requests []summaryRequest, opts summaryBuildOptions) ([]summaryGroup, error) {
 	// Ordered unique types with the union of their ids in caller order. A
 	// repeated type merges into one group; the first occurrence fixes the
 	// group position and the id order.
@@ -332,7 +343,7 @@ func (s *Server) buildResourceSummaries(ctx context.Context, ident permIdentity,
 		if len(idsByType[resourceType]) == 0 {
 			continue
 		}
-		if override, ok := overrides[resourceType]; ok {
+		if override, ok := opts.Overrides[resourceType]; ok {
 			metaByType[resourceType] = override
 			continue
 		}
@@ -385,10 +396,14 @@ func (s *Server) buildResourceSummaries(ctx context.Context, ident permIdentity,
 		return nil, err
 	}
 
-	// 4. The caller's favorites, one query.
-	favorites, err := s.loadFavoriteIDs(ctx, ident.UserID, ident.OrgID)
-	if err != nil {
-		return nil, err
+	// 4. The caller's favorites: preloaded when provided, otherwise one query.
+	favorites := opts.Favorites
+	if favorites == nil {
+		loaded, err := s.loadFavoriteIDs(ctx, ident.UserID, ident.OrgID)
+		if err != nil {
+			return nil, err
+		}
+		favorites = loaded
 	}
 
 	// 5. Assemble in request order, dropping invisible resources.
@@ -415,7 +430,7 @@ func (s *Server) buildResourceSummaries(ctx context.Context, ident permIdentity,
 				summary.FolderID = m.FolderID
 				summary.FolderPath = folderPaths[*m.FolderID]
 			}
-			if text, ok := snippets[resourceType][id]; ok && text != "" {
+			if text, ok := opts.Snippets[resourceType][id]; ok && text != "" {
 				snippet := text
 				summary.Snippet = &snippet
 			}

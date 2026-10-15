@@ -147,11 +147,14 @@ func (s *Server) handleListFavorites(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
 	// One ordered, capped scan of the caller's favorites. The cap applies
-	// before grouping; the per-type id slices keep created_at DESC order.
+	// before grouping; the per-type id slices keep created_at DESC order and
+	// the tiebreakers make that order deterministic. The scan doubles as the
+	// favorite-id set the builder consumes, so the caller's favorites load
+	// exactly once per request.
 	rows, err := s.db.Pool.Query(ctx, `
 		SELECT resource_type, resource_id::text FROM favorites
 		WHERE user_id = $1 AND org_id = $2
-		ORDER BY created_at DESC
+		ORDER BY created_at DESC, resource_type, resource_id
 		LIMIT $3
 	`, claims.UserID, claims.OrgID, favoritesListLimit)
 	if err != nil {
@@ -160,6 +163,7 @@ func (s *Server) handleListFavorites(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 	idsByType := make(map[string][]string)
+	favoriteSet := make(map[string]map[string]bool)
 	for rows.Next() {
 		var resourceType, resourceID string
 		if err := rows.Scan(&resourceType, &resourceID); err != nil {
@@ -170,10 +174,20 @@ func (s *Server) handleListFavorites(w http.ResponseWriter, r *http.Request) {
 		if !favoriteResourceTypeSet[resourceType] {
 			continue
 		}
+		if favoriteSet[resourceType] == nil {
+			favoriteSet[resourceType] = make(map[string]bool)
+		}
+		favoriteSet[resourceType][resourceID] = true
 		idsByType[resourceType] = append(idsByType[resourceType], resourceID)
 	}
 	if err := rows.Err(); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load favorites")
+		return
+	}
+
+	// No favorites: skip the identity and summary round trips entirely.
+	if len(idsByType) == 0 {
+		writeJSON(w, http.StatusOK, favoritesResponse{Groups: []summaryGroup{}})
 		return
 	}
 
@@ -190,7 +204,7 @@ func (s *Server) handleListFavorites(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "permission check failed")
 		return
 	}
-	groups, err := s.buildResourceSummaries(ctx, ident, requests, nil, nil)
+	groups, err := s.buildResourceSummaries(ctx, ident, requests, summaryBuildOptions{Favorites: favoriteSet})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to build favorites")
 		return

@@ -233,6 +233,9 @@ func TestFavoritesListGroupingAndFiltering(t *testing.T) {
 	addOrgMember(t, srv, orgA, userB, "editor")
 	tokenB := issueToken(t, userB, orgA, "editor")
 
+	// A caller with no favorites gets an empty, well-formed listing.
+	require.Empty(t, getFavorites(t, srv, tokenA))
+
 	// Folder tree A -> B with a notebook inside B, plus a root notebook.
 	code, resp := doRequest(t, srv, tokenA, "POST", "/api/v1/folders", map[string]any{"name": "A"})
 	folderAID := resourceID(t, code, resp)
@@ -348,6 +351,41 @@ func TestFavoritesListGroupingAndFiltering(t *testing.T) {
 	require.Empty(t, getFavorites(t, srv, tokenB))
 }
 
+func TestFavoritesMCPServerFolderPath(t *testing.T) {
+	srv := setupTestServer(t)
+	ctx := context.Background()
+	email := fmt.Sprintf("favmcp-%d@test.com", time.Now().UnixNano())
+	token := registerAndGetToken(t, srv, email, "Fav MCP Org")
+	userID := userIDFromToken(t, srv, token)
+	orgID := orgIDFromUser(t, srv, userID)
+
+	code, resp := doRequest(t, srv, token, "POST", "/api/v1/folders", map[string]any{"name": "MCP Home"})
+	folderID := resourceID(t, code, resp)
+	code, resp = doRequest(t, srv, token, "POST", "/api/v1/mcp-servers", map[string]any{
+		"name": "Folded MCP", "type": "stdio", "command": "echo",
+	})
+	mcpID := resourceID(t, code, resp)
+	// The create endpoint takes no folder; place the server in one directly
+	// (V063 adds mcp_servers.folder_id).
+	_, err := srv.DB().Pool.Exec(ctx,
+		`UPDATE mcp_servers SET folder_id = $1 WHERE id = $2 AND org_id = $3`,
+		folderID, mcpID, orgID)
+	require.NoError(t, err)
+
+	code, _ = doRequest(t, srv, token, "PUT", favoritePath("mcp_server", mcpID), nil)
+	require.Equal(t, http.StatusNoContent, code)
+
+	groups := getFavorites(t, srv, token)
+	require.Len(t, groups, 1)
+	require.Equal(t, "mcp_server", groups[0].ResourceType)
+	require.Len(t, groups[0].Results, 1)
+	result := groups[0].Results[0]
+	require.Equal(t, mcpID, result.ID)
+	require.Equal(t, "MCP server", result.Subtitle)
+	require.Equal(t, "MCP Home", result.FolderPath)
+	require.True(t, result.CanEdit) // the create handler seeds a creator grant with edit
+}
+
 func TestFavoritesReFavoriteKeepsOrder(t *testing.T) {
 	srv := setupTestServer(t)
 	email := fmt.Sprintf("fav-order-%d@test.com", time.Now().UnixNano())
@@ -384,8 +422,9 @@ func TestFavoritesListCap500(t *testing.T) {
 	userID := userIDFromToken(t, srv, token)
 	orgID := orgIDFromUser(t, srv, userID)
 
-	// Seed 501 live, viewable notebooks and one favorite each with distinct
-	// timestamps; the listing must return only the newest 500.
+	// Seed 501 live, viewable notebooks (titles cap-1 .. cap-501) and one
+	// favorite each, with created_at ordered by the suffix: cap-1 is newest,
+	// cap-501 is oldest. The listing must return exactly the newest 500.
 	_, err := srv.DB().Pool.Exec(ctx, `
 		INSERT INTO notebooks (org_id, title, created_by)
 		SELECT $1, 'cap-' || g, $2 FROM generate_series(1, 501) AS g
@@ -399,13 +438,28 @@ func TestFavoritesListCap500(t *testing.T) {
 	require.NoError(t, err)
 	_, err = srv.DB().Pool.Exec(ctx, `
 		INSERT INTO favorites (user_id, org_id, resource_type, resource_id, created_at)
-		SELECT $1, $2, 'notebook', n.id,
-		       now() - (row_number() OVER (ORDER BY n.title)) * interval '1 second'
-		FROM notebooks n WHERE n.org_id = $2 AND n.title LIKE 'cap-%'
+		SELECT $1, $2, 'notebook', n.id, now() - g * interval '1 second'
+		FROM generate_series(1, 501) AS g
+		JOIN notebooks n ON n.org_id = $2 AND n.title = 'cap-' || g
 	`, userID, orgID)
 	require.NoError(t, err)
 
 	groups := getFavorites(t, srv, token)
 	require.Len(t, groups, 1)
 	require.Len(t, groups[0].Results, 500)
+
+	// Assert which 500 survive, not just how many: every favorited notebook
+	// from cap-1 to cap-500 is present and the oldest (cap-501) is dropped.
+	titles := make(map[string]bool, len(groups[0].Results))
+	for _, result := range groups[0].Results {
+		titles[result.Title] = true
+	}
+	for g := 1; g <= 500; g++ {
+		require.True(t, titles[fmt.Sprintf("cap-%d", g)], "cap-%d must survive the cap", g)
+	}
+	require.False(t, titles["cap-501"], "the oldest favorite must be dropped")
+
+	// Ordering is deterministic (created_at DESC, then type and id) and the
+	// newest surviving favorite comes first.
+	require.Equal(t, "cap-1", groups[0].Results[0].Title)
 }
