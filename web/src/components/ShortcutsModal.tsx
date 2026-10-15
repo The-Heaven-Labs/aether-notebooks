@@ -1,4 +1,5 @@
 import type React from 'react'
+import { Kbd } from './Kbd'
 import { Modal } from './Modal'
 
 interface ShortcutEntry {
@@ -33,7 +34,8 @@ const NOTEBOOK_SHORTCUTS: ShortcutEntry[] = [
 
 const GLOBAL_SHORTCUTS: ShortcutEntry[] = [
   { key: '?', action: 'Show keyboard shortcuts' },
-  { key: 'Ctrl+K', action: 'Open AI agent' },
+  { key: 'Ctrl/Cmd+K', action: 'Search' },
+  { key: 'Ctrl/Cmd+J', action: 'Open AI agent' },
 ]
 
 export function ShortcutsModal({ onClose, extraShortcuts }: Props) {
@@ -46,13 +48,13 @@ export function ShortcutsModal({ onClose, extraShortcuts }: Props) {
             <tbody>
               {GLOBAL_SHORTCUTS.map(({ key, action }) => (
                 <tr key={key}>
-                  <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
+                  <td style={styles.key}><Kbd>{key}</Kbd></td>
                   <td style={styles.action}>{action}</td>
                 </tr>
               ))}
               {extraShortcuts?.map(({ key, action }) => (
                 <tr key={`extra-${key}`}>
-                  <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
+                  <td style={styles.key}><Kbd>{key}</Kbd></td>
                   <td style={styles.action}>{action}</td>
                 </tr>
               ))}
@@ -65,7 +67,7 @@ export function ShortcutsModal({ onClose, extraShortcuts }: Props) {
             <tbody>
               {NOTEBOOK_SHORTCUTS.map(({ key, action }) => (
                 <tr key={key}>
-                  <td style={styles.key}><kbd style={styles.kbd}>{key}</kbd></td>
+                  <td style={styles.key}><Kbd>{key}</Kbd></td>
                   <td style={styles.action}>{action}</td>
                 </tr>
               ))}
@@ -83,6 +85,5 @@ const styles: Record<string, React.CSSProperties> = {
   sectionTitle: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--text-muted)', padding: '8px 20px 4px' },
   table: { width: '100%', borderCollapse: 'collapse' },
   key: { padding: '6px 20px 6px', width: 200 },
-  kbd: { fontFamily: 'var(--font-mono)', fontSize: 11, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 3, padding: '2px 6px', color: 'var(--text-primary)' },
   action: { padding: '6px 20px 6px 0', fontSize: 13, color: 'var(--text-secondary)' },
 }
