@@ -1545,3 +1545,207 @@ func TestMigration135ListAndSearchIndexes(t *testing.T) {
 		EXPLAIN SELECT id FROM widgets
 		WHERE to_tsvector('simple', query) @@ to_tsquery('simple', '''order_items'':*')`)
 }
+
+// TestMigration136Favorites pins the favorites table: exact columns/defaults,
+// the per-user unique key (idempotent PUTs), the listing index shape, the
+// ON DELETE CASCADE rules that clean rows up with their user/org, the fact
+// that no FK guards the polymorphic resource_id, and the user-delete cascade
+// end to end.
+func TestMigration136Favorites(t *testing.T) {
+	dsn := os.Getenv("AETHER_DATABASE_URL")
+	if dsn == "" {
+		dsn = "postgres://aether:aether_dev@localhost:5432/aether?sslmode=disable"
+	}
+
+	db, err := database.Connect(context.Background(), dsn, "")
+	if err != nil {
+		t.Fatalf("failed to connect: %v", err)
+	}
+	defer db.Close()
+
+	if err := db.Migrate(context.Background()); err != nil {
+		t.Fatalf("migration failed: %v", err)
+	}
+
+	ctx := context.Background()
+
+	// Columns are pinned exactly (name, type, nullability, default): the
+	// favorites listing and upsert depend on each one, and resource_type is
+	// deliberately plain TEXT (the type whitelist lives in the API layer).
+	wantCols := map[string]struct {
+		dataType string
+		nullable string
+		def      *string
+	}{
+		"id":            {"uuid", "NO", strPtr("gen_random_uuid()")},
+		"user_id":       {"uuid", "NO", nil},
+		"org_id":        {"uuid", "NO", nil},
+		"resource_type": {"text", "NO", nil},
+		"resource_id":   {"uuid", "NO", nil},
+		"created_at":    {"timestamp with time zone", "NO", strPtr("now()")},
+	}
+	rows, err := db.Pool.Query(ctx, `
+		SELECT column_name, data_type, is_nullable, column_default
+		FROM information_schema.columns
+		WHERE table_schema = 'public' AND table_name = 'favorites'`)
+	if err != nil {
+		t.Fatalf("favorites columns query: %v", err)
+	}
+	defer rows.Close()
+	seen := make(map[string]bool)
+	for rows.Next() {
+		var name, dataType, nullable string
+		var def *string
+		if err := rows.Scan(&name, &dataType, &nullable, &def); err != nil {
+			t.Fatalf("scan favorites column: %v", err)
+		}
+		seen[name] = true
+		want, ok := wantCols[name]
+		if !ok {
+			t.Fatalf("unexpected favorites column %q", name)
+		}
+		if dataType != want.dataType || nullable != want.nullable {
+			t.Fatalf("favorites.%s = (%s, nullable=%s), want (%s, %s)", name, dataType, nullable, want.dataType, want.nullable)
+		}
+		switch {
+		case want.def == nil && def != nil:
+			t.Fatalf("favorites.%s default = %q, want none", name, *def)
+		case want.def != nil && (def == nil || *def != *want.def):
+			t.Fatalf("favorites.%s default = %v, want %q", name, def, *want.def)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("favorites columns rows: %v", err)
+	}
+	for name := range wantCols {
+		if !seen[name] {
+			t.Fatalf("favorites.%s missing after V136", name)
+		}
+	}
+
+	// The unique key must cover exactly (user_id, org_id, resource_type,
+	// resource_id): PUT is an INSERT … ON CONFLICT DO NOTHING against it, so
+	// the column order and membership are load-bearing.
+	var uniqueCols string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT string_agg(a.attname, ',' ORDER BY k.ord)
+		FROM pg_constraint c
+		JOIN pg_class t ON t.oid = c.conrelid
+		JOIN pg_namespace n ON n.oid = t.relnamespace AND n.nspname = 'public'
+		JOIN unnest(c.conkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		WHERE t.relname = 'favorites' AND c.contype = 'u'`).Scan(&uniqueCols); err != nil {
+		t.Fatalf("favorites unique constraint query: %v", err)
+	}
+	if uniqueCols != "user_id,org_id,resource_type,resource_id" {
+		t.Fatalf("favorites unique constraint covers %q, want \"user_id,org_id,resource_type,resource_id\"", uniqueCols)
+	}
+
+	// Both FKs (user, org) must cascade deletes.
+	for _, ref := range []string{"users", "orgs"} {
+		var delRule string
+		if err := db.Pool.QueryRow(ctx, `
+			SELECT confdeltype
+			FROM pg_constraint
+			WHERE conrelid = 'favorites'::regclass AND contype = 'f' AND confrelid = $1::regclass`, ref).
+			Scan(&delRule); err != nil {
+			t.Fatalf("favorites -> %s FK missing: %v", ref, err)
+		}
+		if delRule != "c" {
+			t.Fatalf("favorites -> %s FK ON DELETE = %q, want CASCADE ('c')", ref, delRule)
+		}
+	}
+
+	// resource_id intentionally carries no FK (polymorphic, acl_entries
+	// convention): cleanup is explicit in purge/hard-delete paths.
+	var resourceFKs int
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT COUNT(*)
+		FROM pg_constraint c
+		JOIN unnest(c.conkey) AS k(attnum) ON true
+		JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.attnum
+		WHERE c.conrelid = 'favorites'::regclass AND c.contype = 'f' AND a.attname = 'resource_id'`).Scan(&resourceFKs); err != nil {
+		t.Fatalf("resource_id FK query: %v", err)
+	}
+	if resourceFKs != 0 {
+		t.Fatal("favorites.resource_id must carry no FK (cleanup is explicit)")
+	}
+
+	// The listing index shape is pinned (normalizing schema qualification).
+	var idxDef string
+	if err := db.Pool.QueryRow(ctx, `
+		SELECT indexdef FROM pg_indexes WHERE schemaname = 'public' AND indexname = 'idx_favorites_user_org'`).
+		Scan(&idxDef); err != nil {
+		t.Fatalf("idx_favorites_user_org missing after V136: %v", err)
+	}
+	const wantIdxDef = "CREATE INDEX idx_favorites_user_org ON public.favorites USING btree (user_id, org_id, created_at DESC)"
+	if got := strings.ReplaceAll(idxDef, "public.", ""); got != strings.ReplaceAll(wantIdxDef, "public.", "") {
+		t.Fatalf("idx_favorites_user_org = %q, want %q", idxDef, wantIdxDef)
+	}
+
+	var applied int
+	if err := db.Pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM schema_migrations WHERE version='136_favorites'`).Scan(&applied); err != nil {
+		t.Fatalf("schema_migrations query: %v", err)
+	}
+	if applied != 1 {
+		t.Fatalf("V136 not recorded (count=%d)", applied)
+	}
+
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	var orgID, userID, favoriteID string
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO orgs (name, slug)
+		VALUES ('V136 Favorites Org', 'v136-favorites-' || substr(gen_random_uuid()::text, 1, 8))
+		RETURNING id::text`).Scan(&orgID); err != nil {
+		t.Fatalf("seed org: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO users (email, name)
+		VALUES ('v136-favorites-' || substr(gen_random_uuid()::text, 1, 8) || '@test.local', 'V136 Favorites')
+		RETURNING id::text`).Scan(&userID); err != nil {
+		t.Fatalf("seed user: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO favorites (user_id, org_id, resource_type, resource_id)
+		VALUES ($1, $2, 'notebook', gen_random_uuid())
+		RETURNING id::text`, userID, orgID).Scan(&favoriteID); err != nil {
+		t.Fatalf("seed favorite: %v", err)
+	}
+
+	// A duplicate (user_id, org_id, resource_type, resource_id) must be
+	// rejected with SQLSTATE 23505 — the savepoint keeps the tx usable.
+	sp, err := tx.Begin(ctx)
+	if err != nil {
+		t.Fatalf("savepoint: %v", err)
+	}
+	_, err = sp.Exec(ctx, `
+		INSERT INTO favorites (user_id, org_id, resource_type, resource_id)
+		SELECT user_id, org_id, resource_type, resource_id FROM favorites WHERE id = $1`, favoriteID)
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("duplicate favorite insert = %v, want SQLSTATE 23505", err)
+	}
+	if err := sp.Rollback(ctx); err != nil {
+		t.Fatalf("rollback savepoint: %v", err)
+	}
+
+	// Deleting the user cascades the favorite away.
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id=$1`, userID); err != nil {
+		t.Fatalf("delete user: %v", err)
+	}
+	var remaining int
+	if err := tx.QueryRow(ctx, `SELECT COUNT(*) FROM favorites WHERE user_id=$1`, userID).Scan(&remaining); err != nil {
+		t.Fatalf("count favorites after user delete: %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("%d favorites survived user delete, want 0", remaining)
+	}
+}
+
+func strPtr(s string) *string { return &s }
