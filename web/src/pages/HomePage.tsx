@@ -1,9 +1,11 @@
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Cell, Folder, FolderContents, FolderSection, Notebook } from '../types'
+import type { Cell, Folder, FolderContents, Notebook } from '../types'
 import { useAuth } from '../hooks/useAuth'
+import { useFolderSectionPager } from '../hooks/useFolderSectionPager'
+import { isApplePlatform } from '../utils/platform'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -471,136 +473,8 @@ function BulkPermissionsModal({ count, items, onClose, onApplied }: {
 
 // ─── Folder section pagination ───────────────────────────────────────────────
 
-/** Load-more page size (the API default; server clamps to 1–200). */
-const FOLDER_SECTION_PAGE_SIZE = 50
-
 /** Stable empty first page, so pager inputs keep identity while data is absent. */
 const NO_ITEMS: never[] = []
-
-type FolderSectionKind = 'notebook' | 'connector' | 'dashboard'
-
-interface FolderSectionExtras<T> {
-  /** Folder these pages belong to ('root' for the root listing). */
-  folderKey: string
-  /** First-page generation (`dataUpdatedAt`) these pages extend. */
-  base: number
-  items: T[]
-  /**
-   * Offset for the next request, advanced by each page's raw item count (not
-   * the deduped one) so a skipped duplicate can never shift the window.
-   */
-  nextOffset: number
-  /** Latest server total / has_more; a page's values win over the first page's. */
-  total: number | null
-  hasMore: boolean | null
-  /** A page added no new rows while the server still reported more: stop. */
-  stopped: boolean
-}
-
-interface FolderSectionPager<T> {
-  /** First page plus every loaded extra page, deduped by id. */
-  items: T[]
-  /** Exact visible total, or null when the server did not report one. */
-  total: number | null
-  hasMore: boolean
-  stopped: boolean
-  loading: boolean
-  loadMore: () => void
-}
-
-/**
- * Accumulates load-more pages for one folder section on top of the first page
- * the listing query returned. Extras are pinned to the folder and to the
- * listing generation they were appended to, so any successful refetch (e.g.
- * after a mutation invalidation) — or a folder switch — drops them instead of
- * mixing stale rows into the first page. Pages are deduped by id.
- */
-function useFolderSectionPager<T extends { id: string }>({
-  kind,
-  folderID,
-  firstPage,
-  firstPageTotal,
-  firstPageHasMore,
-  generation,
-  contentsKey,
-  onError,
-}: {
-  kind: FolderSectionKind
-  folderID: string | null
-  firstPage: T[]
-  firstPageTotal: number | null
-  firstPageHasMore: boolean
-  generation: number
-  contentsKey: readonly unknown[]
-  onError: (e: Error) => void
-}): FolderSectionPager<T> {
-  const qc = useQueryClient()
-  const folderKey = folderID ?? 'root'
-  const [extras, setExtras] = useState<FolderSectionExtras<T> | null>(null)
-
-  // Only extras from the current folder and first-page generation count.
-  const active = extras && extras.folderKey === folderKey && extras.base === generation ? extras : null
-  // First page plus accumulated extras, kept referentially stable so the
-  // section is usable as a lookup source for every loaded row.
-  const items = useMemo(
-    () => (active ? [...firstPage, ...active.items] : firstPage),
-    [active, firstPage],
-  )
-
-  // Synchronous in-flight latch: `isPending` flips a tick later, so two clicks
-  // dispatched in the same task would otherwise both fire.
-  const inFlight = useRef(false)
-
-  const more = useMutation({
-    mutationFn: ({ offset }: { offset: number; base: number }) =>
-      api.get<FolderSection<T>>(
-        `${folderID ? `/api/v1/folders/${folderID}` : '/api/v1/folders'}/contents` +
-          `?type=${kind}&offset=${offset}&limit=${FOLDER_SECTION_PAGE_SIZE}`
-      ),
-    onError,
-    onSuccess: (page, { offset, base }) => {
-      // The listing moved on (refetch or folder switch) while this page was in
-      // flight: drop it rather than mixing generations.
-      if (qc.getQueryState(contentsKey)?.dataUpdatedAt !== base) return
-      setExtras((prev) => {
-        const current = prev && prev.folderKey === folderKey && prev.base === base
-          ? prev
-          : { folderKey, base, items: [], nextOffset: firstPage.length, total: null, hasMore: null, stopped: false }
-        const seen = new Set<string>(firstPage.map((item) => item.id))
-        for (const item of current.items) seen.add(item.id)
-        const fresh = page.items.filter((item) => !seen.has(item.id))
-        return {
-          ...current,
-          items: [...current.items, ...fresh],
-          nextOffset: offset + page.items.length,
-          total: page.total,
-          hasMore: page.has_more,
-          // An empty page while has_more stays true would loop forever: keep
-          // what is loaded and stop asking.
-          stopped: fresh.length === 0,
-        }
-      })
-    },
-  })
-
-  const loadMore = () => {
-    if (inFlight.current) return
-    inFlight.current = true
-    more.mutate(
-      { offset: active ? active.nextOffset : firstPage.length, base: generation },
-      { onSettled: () => { inFlight.current = false } },
-    )
-  }
-
-  return {
-    items,
-    total: active && active.total !== null ? active.total : firstPageTotal,
-    hasMore: active && active.hasMore !== null ? active.hasMore : firstPageHasMore,
-    stopped: active?.stopped ?? false,
-    loading: more.isPending,
-    loadMore,
-  }
-}
 
 /**
  * Instrument-label counter: `50 of 1,247` while rows remain unloaded, the
@@ -608,17 +482,11 @@ function useFolderSectionPager<T extends { id: string }>({
  * report a total (older fixture) — callers must degrade, not guess.
  */
 function sectionCounter(loaded: number, total: number | null): string | null {
-  if (total === null) return null
+  if (typeof total !== 'number') return null
   if (loaded < total) {
     return `${loaded.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}`
   }
   return loaded.toLocaleString('en-US')
-}
-
-/** ⌘ on Apple platforms, Ctrl elsewhere — same reading as the palette binding. */
-function isApplePlatform(): boolean {
-  if (typeof navigator === 'undefined') return false
-  return /Mac|iPhone|iPad|iPod/.test(navigator.userAgent)
 }
 
 // ─── HomePage ────────────────────────────────────────────────────────────────
@@ -1409,6 +1277,7 @@ export function HomePage() {
                     onClick={notebooksPager.loadMore}
                     disabled={notebooksPager.loading}
                     aria-busy={notebooksPager.loading}
+                    aria-label="Load more notebooks"
                   >
                     {notebooksPager.loading ? 'Loading…' : 'Load more'}
                   </button>
@@ -1482,6 +1351,7 @@ export function HomePage() {
                     onClick={connectorsPager.loadMore}
                     disabled={connectorsPager.loading}
                     aria-busy={connectorsPager.loading}
+                    aria-label="Load more connectors"
                   >
                     {connectorsPager.loading ? 'Loading…' : 'Load more'}
                   </button>
@@ -1552,6 +1422,7 @@ export function HomePage() {
                     onClick={dashboardsPager.loadMore}
                     disabled={dashboardsPager.loading}
                     aria-busy={dashboardsPager.loading}
+                    aria-label="Load more dashboards"
                   >
                     {dashboardsPager.loading ? 'Loading…' : 'Load more'}
                   </button>

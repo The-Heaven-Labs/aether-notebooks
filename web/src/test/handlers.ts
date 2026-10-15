@@ -133,6 +133,9 @@ export const handlers = [
     { id: 'f-home', name: "Alice's Home", is_home: true, owner_id: 'user-1', sub_folders: [] },
   ])),
 
+  // Message of the Day banner (AppShell fetches it on every render)
+  http.get('/api/v1/motd', () => HttpResponse.json([])),
+
   // Org settings
   http.get('/api/v1/org/data-export', () => HttpResponse.json({ data_export_enabled: true })),
 

@@ -359,7 +359,7 @@ describe('Folder section pagination (B3)', () => {
     expect(await screen.findByText('50 of 120')).toBeInTheDocument()
     expect(screen.getByText('Paged Notebook 1')).toBeInTheDocument()
 
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
     expect(await screen.findByText('100 of 120')).toBeInTheDocument()
     expect(screen.getByText('Paged Notebook 51')).toBeInTheDocument()
 
@@ -370,12 +370,12 @@ describe('Folder section pagination (B3)', () => {
 
     // The second click continues from the new offset; the last page turns the
     // counter into the plain count and removes the button.
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
     expect(await screen.findByText('120')).toBeInTheDocument()
     expect(screen.queryByText('100 of 120')).not.toBeInTheDocument()
     expect(requests).toHaveLength(2)
     expect(requests[1]).toContain('offset=100')
-    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument()
   })
 
   test('a page that repeats a loaded id does not duplicate the row', async () => {
@@ -384,21 +384,47 @@ describe('Folder section pagination (B3)', () => {
         nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo'), nb('nb-3', 'Charlie'),
       ], 5, true))),
       http.get('/api/v1/folders/f-page/contents', () => HttpResponse.json({
-        items: [nb('nb-3', 'Charlie'), nb('nb-4', 'Delta'), nb('nb-5', 'Echo')],
+        // `Charlie` repeats the first page; `Delta` repeats within the page.
+        items: [nb('nb-3', 'Charlie'), nb('nb-4', 'Delta'), nb('nb-4', 'Delta'), nb('nb-5', 'Echo')],
         total: 5, has_more: false, offset: 3,
       })),
     )
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
 
     expect(await screen.findByText('3 of 5')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
 
     expect(await screen.findByText('Delta')).toBeInTheDocument()
     expect(screen.getByText('Echo')).toBeInTheDocument()
     expect(screen.getAllByText('Charlie')).toHaveLength(1)
+    expect(screen.getAllByText('Delta')).toHaveLength(1)
     // Everything is loaded: plain count, no "N of M", no button.
     await waitFor(() => expect(screen.queryByText('3 of 5')).not.toBeInTheDocument())
     expect(screen.getByText('5')).toBeInTheDocument()
+  })
+
+  test('a page without a total hides the counter instead of inventing a plain count', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([
+        nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo'),
+      ], 4, true))),
+      // Legacy envelope: neither total nor has_more is reported.
+      http.get('/api/v1/folders/f-page/contents', () => HttpResponse.json({
+        items: [nb('nb-3', 'Charlie')],
+        offset: 2,
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    expect(await screen.findByText('2 of 4')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
+
+    expect(await screen.findByText('Charlie')).toBeInTheDocument()
+    // Unknown total must degrade to no counter at all — not a bare "3".
+    await waitFor(() => expect(screen.queryByText('2 of 4')).not.toBeInTheDocument())
+    expect(screen.queryByText('3')).not.toBeInTheDocument()
+    // Unknown has_more also hides the button.
+    expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument()
   })
 
   test('zero new items with has_more still true stops paging and keeps rows', async () => {
@@ -415,9 +441,9 @@ describe('Folder section pagination (B3)', () => {
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
 
     expect(await screen.findByText('2 of 10')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
 
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument())
     expect(pageCalls).toBe(1)
     expect(screen.getByText('Alpha')).toBeInTheDocument()
     expect(screen.getByText('Bravo')).toBeInTheDocument()
@@ -439,13 +465,14 @@ describe('Folder section pagination (B3)', () => {
     )
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }))
-    const busy = await screen.findByRole('button', { name: 'Loading…' })
-    expect(busy).toBeDisabled()
+    fireEvent.click(await screen.findByRole('button', { name: 'Load more notebooks' }))
+    const busy = screen.getByRole('button', { name: 'Load more notebooks' })
+    await waitFor(() => expect(busy).toBeDisabled())
     expect(busy).toHaveAttribute('aria-busy', 'true')
+    expect(busy).toHaveTextContent('Loading…')
 
     expect(await screen.findByText('Delta')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument()
   })
 
   test('shows the plain count when everything is loaded', async () => {
@@ -460,7 +487,7 @@ describe('Folder section pagination (B3)', () => {
     expect(await screen.findByText('Solo')).toBeInTheDocument()
     expect(screen.getByText('2')).toBeInTheDocument()
     expect(screen.queryByText('2 of 2')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument()
   })
 
   test('legacy payloads without totals/has_more show no counter and no button', async () => {
@@ -476,7 +503,7 @@ describe('Folder section pagination (B3)', () => {
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-legacy' })
 
     expect(await screen.findByText('Legacy Notebook')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument()
     expect(screen.queryByText(/\d+ of \d+/)).not.toBeInTheDocument()
     // The header carries the label alone — no plain count either.
     expect(screen.getByText('Notebooks').parentElement?.textContent).toBe('Notebooks')
@@ -539,7 +566,7 @@ describe('Folder section pagination (B3)', () => {
     // Enter the folder and load its second page.
     fireEvent.click(await screen.findByText('Paginated'))
     expect(await screen.findByText('2 of 4')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
     expect(await screen.findByText('Charlie')).toBeInTheDocument()
 
     // The first page changes server-side; leaving and re-entering refetches it.
@@ -550,7 +577,7 @@ describe('Folder section pagination (B3)', () => {
     expect(await screen.findByText('Replacement One')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Charlie')).not.toBeInTheDocument())
     await waitFor(() => expect(screen.queryByText('Alpha')).not.toBeInTheDocument())
-    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument()
   })
 
   test('pages connector sections with the singular query type and keeps the button focusable', async () => {
@@ -579,7 +606,7 @@ describe('Folder section pagination (B3)', () => {
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-conn' })
 
     expect(await screen.findByText('1 of 2')).toBeInTheDocument()
-    const loadMore = screen.getByRole('button', { name: 'Load more' })
+    const loadMore = screen.getByRole('button', { name: 'Load more connectors' })
     loadMore.focus()
     expect(loadMore).toHaveFocus()
     fireEvent.click(loadMore)
@@ -602,7 +629,7 @@ describe('Folder section pagination (B3)', () => {
     )
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Load more notebooks' }))
     await screen.findByText('Extra Row')
 
     const menuBtn = screen.getAllByTitle('More options')
@@ -631,7 +658,7 @@ describe('Folder section pagination (B3)', () => {
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
 
     expect(await screen.findByText('2 of 4')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
     expect(await screen.findByText('Charlie')).toBeInTheDocument()
 
     // Rename Alpha in place: renameNotebook invalidates ['folder-contents'], and
@@ -649,7 +676,7 @@ describe('Folder section pagination (B3)', () => {
     expect(await screen.findByText('Echo')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('Charlie')).not.toBeInTheDocument())
     expect(screen.queryByText('Delta')).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /^Load more/ })).not.toBeInTheDocument()
   })
 
   test('a double-click on Load more issues exactly one request', async () => {
@@ -669,7 +696,7 @@ describe('Folder section pagination (B3)', () => {
     )
     renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
 
-    const loadMore = await screen.findByRole('button', { name: 'Load more' })
+    const loadMore = await screen.findByRole('button', { name: 'Load more notebooks' })
     // Two clicks in one task, before the pending re-render lands.
     fireEvent.click(loadMore)
     fireEvent.click(loadMore)
@@ -701,7 +728,7 @@ describe('Folder section pagination (B3)', () => {
     renderWithProviders(<HomePage />)
 
     expect(await screen.findByText('1 of 2')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Load more notebooks' }))
 
     expect(await screen.findByText('Root Paged 2')).toBeInTheDocument()
     expect(requests).toHaveLength(1)
