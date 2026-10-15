@@ -5,7 +5,7 @@ import { http, HttpResponse } from 'msw'
 import { Routes, Route, useLocation } from 'react-router-dom'
 import { server } from './server'
 import { renderWithProviders } from './utils'
-import { favoritesFixture } from './handlers'
+import { favoritesFixture, favoriteSummary } from './handlers'
 import { DashboardsPage } from '../pages/DashboardsPage'
 import type { FavoriteResourceType } from '../types'
 
@@ -145,6 +145,68 @@ describe('DashboardsPage favorites filter (F3)', () => {
 
     expect(await screen.findByText('No favorite dashboards')).toBeInTheDocument()
     expect(screen.getByText('Bookmark a dashboard with the bookmark icon to see it here.')).toBeInTheDocument()
+  })
+
+  test('a failed favorites listing shows the error panel with a retry that reports its fetch', async () => {
+    let gets = 0
+    let release: () => void = () => {}
+    const parked = new Promise<void>((resolve) => { release = resolve })
+    server.use(
+      http.get('/api/v1/favorites', async () => {
+        gets += 1
+        if (gets === 1) return HttpResponse.json({ error: 'boom' }, { status: 500 })
+        await parked
+        return HttpResponse.json({ groups: [] })
+      }),
+    )
+    renderPage('/dashboards?fav=1')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent("Couldn't load favorites.")
+    const retry = within(alert).getByRole('button', { name: 'Retry' })
+
+    await userEvent.click(retry)
+    // Pending feedback: the button disables and relabels while retrying.
+    await waitFor(() => expect(retry).toBeDisabled())
+    expect(retry).toHaveTextContent('Retrying…')
+
+    release()
+    // Recovery: the retried listing lands and the filtered empty state shows.
+    expect(await screen.findByText('No favorite dashboards')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  test('a failed refetch keeps the cached filtered rows', async () => {
+    let gets = 0
+    server.use(
+      http.get('/api/v1/favorites', () => {
+        gets += 1
+        if (gets === 1) {
+          return HttpResponse.json({
+            groups: [{
+              resource_type: 'dashboard',
+              results: [favoriteSummary('dashboard', 'd-1'), favoriteSummary('dashboard', 'd-2')],
+            }],
+          })
+        }
+        return HttpResponse.json({ error: 'boom' }, { status: 500 })
+      }),
+      http.delete('/api/v1/favorites/:type/:id', () => new HttpResponse(null, { status: 204 })),
+    )
+    renderPage('/dashboards?fav=1')
+
+    expect(await screen.findByText('Revenue Board')).toBeInTheDocument()
+    expect(screen.getByText('Ops Board')).toBeInTheDocument()
+
+    // Un-favorite one: the success invalidation refetches, the refetch fails.
+    const row = screen.getByText('Revenue Board').closest('.favorite-host') as HTMLElement
+    await userEvent.click(within(row).getByRole('button', { name: 'Remove from favorites' }))
+    await waitFor(() => expect(gets).toBe(2))
+
+    // Cached id sets still filter; no error panel replaces the rows.
+    expect(screen.queryByText('Revenue Board')).not.toBeInTheDocument()
+    expect(screen.getByText('Ops Board')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
   })
 
   test('un-favoriting removes the row while the request is still pending', async () => {

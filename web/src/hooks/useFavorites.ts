@@ -69,6 +69,15 @@ export interface FavoritesState {
   ids: FavoriteIDs
   isLoading: boolean
   isError: boolean
+  /**
+   * True once a listing has settled (even an empty one). Error surfaces must
+   * gate on `isError && !hasData`: a failed *refetch* keeps the cached
+   * (possibly empty) listing renderable, while a failed first fetch has
+   * nothing to show and should say so.
+   */
+  hasData: boolean
+  /** Any fetch in flight, including a retry of a failed listing. */
+  isFetching: boolean
 }
 
 /**
@@ -80,12 +89,14 @@ export interface FavoritesState {
  * consumer to the whole listing, so every toggle would re-render every row.
  */
 export function useFavorites(): FavoritesState {
-  const { data, isLoading, isError } = useQuery<FavoritesData>(favoritesQueryOptions)
+  const { data, isLoading, isError, isFetching } = useQuery<FavoritesData>(favoritesQueryOptions)
   return {
     groups: data?.groups ?? EMPTY_GROUPS,
     ids: data?.ids ?? EMPTY_IDS,
     isLoading,
     isError,
+    hasData: data !== undefined,
+    isFetching,
   }
 }
 
@@ -100,6 +111,9 @@ export interface IsFavoriteState {
    * fallback — so buttons never stay permanently dead after a failure.
    */
   isLoading: boolean
+  /** Cached-listing and in-flight mirrors of `useFavorites` (see there). */
+  hasData: boolean
+  isFetching: boolean
 }
 
 /**
@@ -113,11 +127,16 @@ export interface IsFavoriteState {
  * (palette, search page, favorites filters) that read the grouped listing.
  */
 export function useIsFavorite(resourceType: FavoriteResourceType, resourceId: string): IsFavoriteState {
-  const { data, isLoading } = useQuery<FavoritesData, Error, boolean>({
+  const { data, isLoading, isFetching } = useQuery<FavoritesData, Error, boolean>({
     ...favoritesQueryOptions,
     select: (data) => data.ids[resourceType]?.has(resourceId) ?? false,
   })
-  return { isFavorite: data ?? false, isLoading }
+  return {
+    isFavorite: data ?? false,
+    isLoading,
+    hasData: data !== undefined,
+    isFetching,
+  }
 }
 
 /** The favorites URL for one resource. */

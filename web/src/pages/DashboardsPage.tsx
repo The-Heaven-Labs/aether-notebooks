@@ -3,7 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard } from '../types'
-import { useFavorites } from '../hooks/useFavorites'
+import { favoritesQueryKey, useFavorites } from '../hooks/useFavorites'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { FavoriteButton } from '../components/FavoriteButton'
@@ -58,12 +58,38 @@ export function DashboardsPage() {
     queryKey: ['dashboards'],
     queryFn: () => api.get<Dashboard[]>('/api/v1/dashboards'),
   })
-  const { ids: favoriteIds, isLoading: favoritesLoading, isError: favoritesError } = useFavorites()
-  // Never filter on an unknown id set (still loading, or the listing failed):
-  // an empty set would claim "no favorites" as a fact.
-  const visibleDashboards = favoritesOnly && !favoritesLoading && !favoritesError
-    ? dashboards.filter((d) => favoriteIds.dashboard.has(d.id))
+  const {
+    ids: favoriteIds,
+    isLoading: favoritesLoading,
+    isError: favoritesError,
+    hasData: favoritesHasData,
+    isFetching: favoritesFetching,
+  } = useFavorites()
+  // A data-less refetch flips the query back to "loading" and clears the
+  // error, so the flag keeps the error panel (and its pending feedback) up
+  // from the Retry click until the retry settles.
+  const [favoritesRetrying, setFavoritesRetrying] = useState(false)
+  // Never filter on an unknown id set (a still-loading first fetch), but a
+  // failed *refetch* keeps the cached id set usable: only a data-less failure
+  // — the first fetch, or a retry of it — is an error state.
+  const favoritesUnavailable = !favoritesHasData && (favoritesError || favoritesRetrying)
+  const favoriteDashboards = dashboards.filter((d) => favoriteIds.dashboard.has(d.id))
+  const visibleDashboards = favoritesOnly && !favoritesLoading && !favoritesUnavailable
+    ? favoriteDashboards
     : dashboards
+  // The header count follows what is listed: the filtered set while the chip
+  // is on, the catalog otherwise.
+  const listedCount = favoritesOnly ? favoriteDashboards.length : dashboards.length
+  const subtitle = listedCount > 0 ? `${listedCount} dashboard${listedCount !== 1 ? 's' : ''}` : ''
+
+  const retryFavorites = () => {
+    setFavoritesRetrying(true)
+    void qc.invalidateQueries({ queryKey: favoritesQueryKey })
+      // The failure is already rendered from the query state; the promise is
+      // only the settle signal for the flag.
+      .catch(() => {})
+      .finally(() => setFavoritesRetrying(false))
+  }
 
   const createDashboard = useMutation({
     mutationFn: () => api.post<Dashboard>('/api/v1/dashboards', { title: newTitle.trim(), settings: {} }),
@@ -88,7 +114,7 @@ export function DashboardsPage() {
   return (
     <AppShell>
       <div style={styles.body}>
-        <SectionHeader title="Dashboards" subtitle={dashboards.length > 0 ? `${dashboards.length} dashboard${dashboards.length !== 1 ? 's' : ''}` : ''}>
+        <SectionHeader title="Dashboards" subtitle={subtitle}>
           <span style={styles.headerActions}>
             <button
               type="button"
@@ -136,19 +162,20 @@ export function DashboardsPage() {
         )}
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
-        {isLoading || (favoritesOnly && favoritesLoading) ? (
+        {isLoading || (favoritesOnly && favoritesLoading && !favoritesUnavailable) ? (
           <div style={{ padding: '8px 0' }}>
             <Skeleton count={4} height={48} />
           </div>
-        ) : favoritesOnly && favoritesError ? (
+        ) : favoritesOnly && favoritesUnavailable ? (
           <div role="alert" style={styles.favoritesError}>
             <span>Couldn't load favorites.</span>
             <button
               type="button"
-              style={styles.retryBtn}
-              onClick={() => { void qc.invalidateQueries({ queryKey: ['favorites'] }) }}
+              style={{ ...styles.retryBtn, ...(favoritesFetching || favoritesRetrying ? styles.retryBtnBusy : {}) }}
+              disabled={favoritesFetching || favoritesRetrying}
+              onClick={retryFavorites}
             >
-              Retry
+              {favoritesFetching || favoritesRetrying ? 'Retrying…' : 'Retry'}
             </button>
           </div>
         ) : favoritesOnly && visibleDashboards.length === 0 ? (
@@ -238,6 +265,7 @@ const styles: Record<string, React.CSSProperties> = {
   chipActive: { borderColor: 'var(--accent)', color: 'var(--accent)' },
   favoritesError: { display: 'flex', alignItems: 'center', gap: 12, padding: '16px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, color: 'var(--text-secondary)' },
   retryBtn: { background: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12, padding: '3px 10px' },
+  retryBtnBusy: { opacity: 0.6, cursor: 'default' },
   body: { maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },

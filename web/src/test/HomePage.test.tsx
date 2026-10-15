@@ -991,6 +991,44 @@ describe('Favorites view (F3)', () => {
     expect(screen.queryByText('No favorites yet')).not.toBeInTheDocument()
   })
 
+  test('a failed refetch keeps the cached (optimistically filtered) favorites rendered', async () => {
+    let gets = 0
+    server.use(
+      http.get('/api/v1/favorites', () => {
+        gets += 1
+        if (gets === 1) {
+          return HttpResponse.json({
+            groups: [{
+              resource_type: 'notebook',
+              results: [
+                favoriteRow('notebook', 'nb-1', 'Alpha Notes'),
+                favoriteRow('notebook', 'nb-2', 'Bravo Notes'),
+              ],
+            }],
+          })
+        }
+        return HttpResponse.json({ error: 'boom' }, { status: 500 })
+      }),
+      http.delete('/api/v1/favorites/:type/:id', () => new HttpResponse(null, { status: 204 })),
+    )
+    renderHome('/?fav=1')
+
+    expect(await screen.findByText('Alpha Notes')).toBeInTheDocument()
+    expect(screen.getByText('Bravo Notes')).toBeInTheDocument()
+
+    // Un-favorite one: the success invalidation refetches, the refetch fails.
+    const row = screen.getByText('Alpha Notes').closest('.favorite-host') as HTMLElement
+    await userEvent.click(within(row).getByRole('button', { name: 'Remove from favorites' }))
+    await waitFor(() => expect(gets).toBe(2))
+
+    // The cached listing survives: the removal sticks and the sibling row
+    // stays, instead of an error panel replacing what we demonstrably have.
+    expect(screen.queryByText('Alpha Notes')).not.toBeInTheDocument()
+    expect(screen.getByText('Bravo Notes')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.queryByText('No favorites yet')).not.toBeInTheDocument()
+  })
+
   test('the local name filter narrows the loaded favorites and shows the hint', async () => {
     const { handlers } = favoritesFixture([
       { type: 'notebook', id: 'nb-1' },

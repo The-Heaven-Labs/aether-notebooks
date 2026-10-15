@@ -5,7 +5,7 @@ import { api } from '../api/client'
 import { FAVORITE_RESOURCE_TYPES } from '../types'
 import type { Cell, Folder, FolderContents, Notebook } from '../types'
 import { useAuth } from '../hooks/useAuth'
-import { useFavorites } from '../hooks/useFavorites'
+import { favoritesQueryKey, useFavorites } from '../hooks/useFavorites'
 import { useFolderSectionPager } from '../hooks/useFolderSectionPager'
 import { isApplePlatform } from '../utils/platform'
 import { isKnownType, resourceHref, TYPE_ICONS, TYPE_LABELS } from '../utils/resources'
@@ -592,7 +592,13 @@ export function HomePage() {
     ids: favoriteIds,
     isLoading: favoritesLoading,
     isError: favoritesError,
+    hasData: favoritesHasData,
+    isFetching: favoritesFetching,
   } = useFavorites()
+  // A data-less refetch flips the query back to "loading" and clears the
+  // error, so the flag keeps the error panel (and its pending feedback) up
+  // from the Retry click until the retry settles.
+  const [favoritesRetrying, setFavoritesRetrying] = useState(false)
 
   // Default to user's home folder if no folder param is set (first mount only)
   const initialLoad = useRef(true)
@@ -783,9 +789,10 @@ export function HomePage() {
         .filter((group) => group.results.length > 0)
     : liveFavoriteGroups
   const favoriteCount = liveFavoriteGroups.reduce((count, group) => count + group.results.length, 0)
-  // A listing error with nothing cached is an error state; a background
-  // refetch failure keeps rendering the cached favorites (never blank).
-  const favoritesUnavailable = favoritesError && liveFavoriteGroups.length === 0
+  // Only a data-less failure is an error state: a failed refetch keeps the
+  // cached listing (even a cached *empty* one) on screen, and the panel stays
+  // up through a retry, which React Query reports as a fresh load.
+  const favoritesUnavailable = !favoritesHasData && (favoritesError || favoritesRetrying)
 
   // Instrument-label counters (null when the server reported no totals).
   const notebookCounter = sectionCounter(notebooksPager.items.length, notebooksPager.total)
@@ -815,6 +822,15 @@ export function HomePage() {
       else params.set('fav', '1')
       return params
     })
+  }
+
+  function retryFavorites() {
+    setFavoritesRetrying(true)
+    void qc.invalidateQueries({ queryKey: favoritesQueryKey })
+      // The failure is already rendered from the query state; the promise is
+      // only the settle signal for the flag.
+      .catch(() => {})
+      .finally(() => setFavoritesRetrying(false))
   }
 
   const handleCreate = () => {
@@ -1027,20 +1043,21 @@ export function HomePage() {
                     <span style={s.sectionCount}>{favoriteCount.toLocaleString('en-US')}</span>
                   )}
                 </div>
-                {favoritesLoading ? (
-                  <div style={{ padding: '8px 0' }}>
-                    <Skeleton count={4} height={40} />
-                  </div>
-                ) : favoritesUnavailable ? (
+                {favoritesUnavailable ? (
                   <div role="alert" style={s.favoritesError}>
                     <span>Couldn't load favorites.</span>
                     <button
                       type="button"
-                      style={s.retryBtn}
-                      onClick={() => { void qc.invalidateQueries({ queryKey: ['favorites'] }) }}
+                      style={{ ...s.retryBtn, ...(favoritesFetching || favoritesRetrying ? s.retryBtnBusy : {}) }}
+                      disabled={favoritesFetching || favoritesRetrying}
+                      onClick={retryFavorites}
                     >
-                      Retry
+                      {favoritesFetching || favoritesRetrying ? 'Retrying…' : 'Retry'}
                     </button>
+                  </div>
+                ) : favoritesLoading ? (
+                  <div style={{ padding: '8px 0' }}>
+                    <Skeleton count={4} height={40} />
                   </div>
                 ) : liveFavoriteGroups.length === 0 ? (
                   <EmptyState
@@ -1715,6 +1732,7 @@ const s: Record<string, React.CSSProperties> = {
   favoritePath: { display: 'block', marginTop: 2, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
   favoritesError: { display: 'flex', alignItems: 'center', gap: 12, padding: '16px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, color: 'var(--text-secondary)' },
   retryBtn: { background: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12, padding: '3px 10px' },
+  retryBtnBusy: { opacity: 0.6, cursor: 'default' },
   recentChip: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' },
   bulkToolbar: {
     display: 'flex',
