@@ -339,7 +339,7 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 			nonEditorIDs = append(nonEditorIDs, d.ID)
 		}
 	}
-	snapshots := map[string]publishedDashboardSnapshot{}
+	snapshots := map[string]publishedDashboardMeta{}
 	if len(nonEditorIDs) > 0 {
 		snapshots, err = s.loadLatestDashboardSnapshots(ctx, claims.OrgID, nonEditorIDs)
 		if err != nil {
@@ -369,21 +369,6 @@ func (s *Server) handleListDashboards(w http.ResponseWriter, r *http.Request) {
 type dashboardPublishedVersion struct {
 	Version   int       `json:"version"`
 	CreatedAt time.Time `json:"created_at"`
-}
-
-// dashboardSnapshotSettings decodes a published snapshot's settings map
-// (variables folded in under settings["variables"]) into the typed settings
-// shape the REST read paths serve.
-func dashboardSnapshotSettings(settings map[string]any) (models.DashboardSettings, error) {
-	var out models.DashboardSettings
-	raw, err := json.Marshal(settings)
-	if err != nil {
-		return out, err
-	}
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return out, err
-	}
-	return out, nil
 }
 
 // snapshotWidgetToModel converts one published snapshot widget into the REST
