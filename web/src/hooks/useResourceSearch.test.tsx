@@ -139,4 +139,34 @@ describe('useResourceSearch', () => {
     await waitFor(() => expect(result.current.data?.query).toBe('two'))
     expect(result.current.isPlaceholderData).toBe(false)
   })
+
+  test('a stale response cannot overwrite a newer query', async () => {
+    const first = deferred<void>()
+    server.use(
+      http.get('/api/v1/search', async ({ request }) => {
+        const q = new URL(request.url).searchParams.get('q') ?? ''
+        if (q === 'one') await first.promise
+        return HttpResponse.json({
+          query: q,
+          groups: [{ resource_type: 'notebook', has_more: false, results: [summary(q)] }],
+        })
+      }),
+    )
+
+    const { result, rerender } = renderHook(
+      ({ query }: { query: string }) => useResourceSearch({ query }),
+      { initialProps: { query: 'one' }, wrapper: createWrapper() },
+    )
+    // The first request is stuck in flight; the key changes underneath it.
+    await waitFor(() => expect(result.current.fetchStatus).toBe('fetching'))
+    rerender({ query: 'two' })
+    await waitFor(() => expect(result.current.data?.query).toBe('two'))
+
+    // Let the abandoned request finish; it must not clobber the current data.
+    await act(async () => {
+      first.resolve()
+      await first.promise
+    })
+    await waitFor(() => expect(result.current.data?.query).toBe('two'))
+  })
 })

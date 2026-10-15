@@ -39,7 +39,9 @@ export function ConfirmDialog({
       ;(defaultFocusRef?.current ?? cancelRef.current)?.focus()
       const handleKey = (e: KeyboardEvent) => {
         if (e.key === 'Escape') {
-          onCancel()
+          // A nested layer that already handled this Escape keeps it
+          // (defaultPrevented), matching the PermissionsPanel convention.
+          if (!e.defaultPrevented) onCancel()
           return
         }
         // Left/Right arrows to switch between buttons (only while a button is focused,

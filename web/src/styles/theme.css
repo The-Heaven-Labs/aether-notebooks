@@ -1601,10 +1601,12 @@ input[type="color"] {
 }
 
 /* ── Search highlighting (HighlightedText) ──────────────────────────────── */
-/* Matched query terms inside titles and snippets: accent wash only, ink and
-   weight inherited so the row's own type hierarchy is untouched. */
+/* Matched query terms inside titles and snippets: an accent wash strong
+   enough to read against cards (the plain --accent-light token is ~1.1:1 in
+   both themes), with ink and weight inherited so the row's own type
+   hierarchy is untouched. */
 .search-hit {
-  background: var(--accent-light);
+  background: color-mix(in srgb, var(--accent) 24%, transparent);
   color: inherit;
   text-decoration: none;
   border-radius: var(--radius-xs);

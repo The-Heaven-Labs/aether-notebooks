@@ -14,7 +14,9 @@ interface ConfirmModalProps {
 export function ConfirmModal({ title, message, confirmLabel = 'Discard', cancelLabel = 'Cancel', onConfirm, onCancel, destructive }: ConfirmModalProps) {
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onCancel()
+      // Skip Escapes a nested layer already handled (defaultPrevented), so a
+      // palette sitting above this modal owns its own Escape.
+      if (e.key === 'Escape' && !e.defaultPrevented) onCancel()
     }
     document.addEventListener('keydown', onKeyDown)
     return () => document.removeEventListener('keydown', onKeyDown)

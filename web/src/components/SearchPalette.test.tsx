@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach, vi } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { favoritesFixture } from '../test/handlers'
@@ -79,6 +79,37 @@ describe('SearchPalette', () => {
     expect(new URL(searchRequests[0]).searchParams.get('q')).toBe('rev')
   })
 
+  test('closing before the debounce settles never fires a request', async () => {
+    useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')])])
+    const { onClose, rerender } = renderPalette()
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'rev' } })
+    rerender(<SearchPalette open={false} onClose={onClose} />)
+
+    // Well past the 150ms debounce: the timer was cancelled with the close.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 200))
+    })
+    expect(searchRequests).toHaveLength(0)
+  })
+
+  test('Enter before the debounce settles flushes instead of opening a stale row', async () => {
+    server.use(...favoritesFixture([{ type: 'notebook', id: 'nb-fav' }]).handlers)
+    useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')])])
+    renderPalette()
+    // The empty state's favorite row is the active row until the query lands.
+    await screen.findByText('nb-fav')
+
+    const input = screen.getByLabelText('Search')
+    fireEvent.change(input, { target: { value: 'rev' } })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(navigateMock).not.toHaveBeenCalled()
+
+    // The flush kicked the search off; the settled Enter opens the fresh row.
+    await screen.findByRole('option', { name: /Revenue by region/ })
+    fireEvent.keyDown(input, { key: 'Enter' })
+    expect(navigateMock).toHaveBeenCalledWith('/notebooks/nb-1')
+  })
+
   test('renders groups in API order with highlighted matches and meta', async () => {
     useSearchGroups([
       group('notebook', [
@@ -99,6 +130,28 @@ describe('SearchPalette', () => {
     expect(screen.getByText('Finance · Notebook')).toBeInTheDocument()
   })
 
+  test('skips result groups carrying an unknown resource type', async () => {
+    server.use(
+      http.get('/api/v1/search', ({ request }) => {
+        const q = new URL(request.url).searchParams.get('q') ?? ''
+        return HttpResponse.json({
+          query: q,
+          groups: [
+            // A retired type has no icon and would crash the render.
+            { resource_type: 'widget', has_more: false, results: [summary('notebook', 'nb-ghost', 'Ghost row')] },
+            group('notebook', [summary('notebook', 'nb-2', 'Real row')]),
+          ],
+        })
+      }),
+    )
+    renderPalette()
+    typeQuery('row')
+
+    expect(await screen.findByRole('option', { name: /Real row/ })).toBeInTheDocument()
+    expect(screen.getAllByRole('option')).toHaveLength(2) // result + View all results
+    expect(screen.queryByText(/Ghost row/)).toBeNull()
+  })
+
   test('arrows wrap across all rows including View all results', async () => {
     useSearchGroups([
       group('notebook', [summary('notebook', 'nb-1', 'Notebook hit')]),
@@ -113,16 +166,20 @@ describe('SearchPalette', () => {
     const options = screen.getAllByRole('option')
     expect(options).toHaveLength(3) // two results + View all results
     expect(options[2].textContent).toContain('View all results')
-    expect(listbox).toHaveAttribute('aria-activedescendant', options[0].id)
+    // The combobox input owns the active-descendant pointer (finding E1-2).
+    expect(input).toHaveAttribute('role', 'combobox')
+    expect(input).toHaveAttribute('aria-expanded', 'true')
+    expect(input).toHaveAttribute('aria-controls', listbox.id)
+    expect(input).toHaveAttribute('aria-activedescendant', options[0].id)
 
     fireEvent.keyDown(input, { key: 'ArrowDown' })
-    expect(listbox).toHaveAttribute('aria-activedescendant', options[1].id)
+    expect(input).toHaveAttribute('aria-activedescendant', options[1].id)
     fireEvent.keyDown(input, { key: 'ArrowDown' })
-    expect(listbox).toHaveAttribute('aria-activedescendant', options[2].id)
+    expect(input).toHaveAttribute('aria-activedescendant', options[2].id)
     fireEvent.keyDown(input, { key: 'ArrowDown' })
-    expect(listbox).toHaveAttribute('aria-activedescendant', options[0].id)
+    expect(input).toHaveAttribute('aria-activedescendant', options[0].id)
     fireEvent.keyDown(input, { key: 'ArrowUp' })
-    expect(listbox).toHaveAttribute('aria-activedescendant', options[2].id)
+    expect(input).toHaveAttribute('aria-activedescendant', options[2].id)
 
     fireEvent.keyDown(input, { key: 'Home' })
     fireEvent.keyDown(input, { key: 'Enter' })
@@ -179,10 +236,29 @@ describe('SearchPalette', () => {
     expect(navigateMock).not.toHaveBeenCalled()
   })
 
+  test('never highlights the View all results row against the query', async () => {
+    // "results" would match the synthetic row's own title.
+    useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Playoff results')])])
+    renderPalette()
+    typeQuery('results')
+
+    const viewAll = await screen.findByRole('option', { name: 'View all results' })
+    expect(viewAll.querySelector('mark.search-hit')).toBeNull()
+    // The real result still highlights.
+    expect(screen.getAllByText('results', { selector: 'mark.search-hit' }).length).toBeGreaterThan(0)
+  })
+
   test('Escape closes the palette', () => {
     const { onClose } = renderPalette()
     fireEvent.keyDown(document, { key: 'Escape' })
     expect(onClose).toHaveBeenCalledTimes(1)
+  })
+
+  test('renders nothing when closed', () => {
+    renderPalette({ open: false })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.queryByLabelText('Search')).toBeNull()
+    expect(screen.queryByRole('listbox')).toBeNull()
   })
 
   test('takes focus into the search input on open', async () => {
@@ -202,6 +278,8 @@ describe('SearchPalette', () => {
     // The default /recent handler serves one notebook.
     expect(await screen.findByText('Root Notebook')).toBeInTheDocument()
     expect(searchRequests).toHaveLength(0)
+    // "View all results" belongs to a query, not the empty state.
+    expect(screen.queryByText('View all results')).toBeNull()
   })
 
   test('a query with no results names it', async () => {

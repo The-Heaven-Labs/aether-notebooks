@@ -70,6 +70,11 @@ const RECENT_TYPES: Record<string, FavoriteResourceType> = {
   connector: 'connector',
 }
 
+/** True for the nine catalog types the palette can render. */
+function isKnownType(type: string): type is FavoriteResourceType {
+  return Object.prototype.hasOwnProperty.call(TYPE_ICONS, type)
+}
+
 /** Where Enter (or a click) takes each resource type. */
 function resourceHref(type: FavoriteResourceType, id: string): string {
   switch (type) {
@@ -120,14 +125,17 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   // 150ms debounce: the input stays instant, the request fires on the settled
-  // value (keepPreviousData renders the prior results meanwhile).
+  // value (keepPreviousData renders the prior results meanwhile). Closing
+  // cancels the pending timer so a palette closed right after a keystroke
+  // never fires a request.
   useEffect(() => {
+    if (!open) return
     const timer = window.setTimeout(() => {
       setQuery(inputValue.trim())
       setActiveIndex(0)
     }, 150)
     return () => window.clearTimeout(timer)
-  }, [inputValue])
+  }, [inputValue, open])
 
   // Fresh session on every open; the palette may stay mounted while closed.
   // (Render-time adjustment: the documented alternative to resetting state in
@@ -167,11 +175,14 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
   const sections: PaletteSection[] = []
   if (searching) {
     for (const group of search.data?.groups ?? []) {
-      sections.push({
-        key: group.resource_type,
-        label: TYPE_LABELS[group.resource_type],
-        rows: group.results.map(summaryRow),
-      })
+      // A retired/unknown type would have no icon and crash the render; skip
+      // it (and any result row carrying one) instead of showing a broken row.
+      if (!isKnownType(group.resource_type)) continue
+      const rows = group.results
+        .filter((result) => isKnownType(result.resource_type))
+        .map(summaryRow)
+      if (!rows.length) continue
+      sections.push({ key: group.resource_type, label: TYPE_LABELS[group.resource_type], rows })
     }
   } else {
     const favorites = favoriteGroups.flatMap((group) => group.results).slice(0, 5)
@@ -213,6 +224,7 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
   rows.forEach((row, index) => rowIndex.set(row, index))
 
   const listboxId = `${idPrefix}-listbox`
+  const inputId = `${idPrefix}-input`
   const optionId = (index: number) => `${idPrefix}-opt-${index}`
 
   // Keep the active row in view while arrowing through the list.
@@ -246,6 +258,16 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
       return
     }
     if (e.key === 'Enter') {
+      const pending = inputValue.trim()
+      if (pending !== query) {
+        // Enter arrived before the debounce settled: flush the input so the
+        // next Enter acts on the fresh results, never on the stale rows this
+        // keystroke invalidated.
+        e.preventDefault()
+        setQuery(pending)
+        setActiveIndex(0)
+        return
+      }
       const row = rows[active < 0 ? 0 : active]
       if (!row) return
       e.preventDefault()
@@ -257,6 +279,9 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
     const Icon = row.icon
     const index = rowIndex.get(row) ?? 0
     const isActive = index === active
+    // The synthetic "View all results" row is about the query, not a match in
+    // it: never highlight it against the live terms.
+    const highlightQuery = row.viewAll ? '' : query
     return (
       <div
         key={row.key}
@@ -272,11 +297,11 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
         <Icon size={14} strokeWidth={2} style={styles.rowIcon} aria-hidden="true" />
         <div style={styles.rowBody}>
           <div style={styles.rowTitle}>
-            <HighlightedText text={row.title} query={query} />
+            <HighlightedText text={row.title} query={highlightQuery} />
           </div>
           {row.snippet && (
             <div style={styles.rowSnippet}>
-              <HighlightedText text={row.snippet} query={query} />
+              <HighlightedText text={row.snippet} query={highlightQuery} />
             </div>
           )}
           {row.meta && <div style={styles.rowMeta}>{row.meta}</div>}
@@ -362,12 +387,16 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
           <Search size={16} style={styles.searchIcon} aria-hidden="true" />
           <input
             ref={inputRef}
+            id={inputId}
             type="text"
+            role="combobox"
+            aria-expanded={rows.length > 0}
+            aria-controls={listboxId}
+            aria-activedescendant={rows.length && active >= 0 ? optionId(active) : undefined}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
             placeholder="Search files, dashboards, SQL…"
             aria-label="Search"
-            aria-controls={rows.length ? listboxId : undefined}
             aria-autocomplete="list"
             autoComplete="off"
             spellCheck={false}
@@ -378,8 +407,7 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
         <div
           id={listboxId}
           role={rows.length ? 'listbox' : undefined}
-          aria-label={rows.length ? 'Search results' : undefined}
-          aria-activedescendant={rows.length && active >= 0 ? optionId(active) : undefined}
+          aria-labelledby={rows.length ? inputId : undefined}
           style={styles.results}
         >
           {renderBody()}
@@ -475,6 +503,8 @@ const styles: Record<string, React.CSSProperties> = {
   rowSnippet: {
     marginTop: 2,
     fontSize: 12,
+    // Snippets quote SQL/code: mono, per the Two Scripts Rule.
+    fontFamily: 'var(--font-mono)',
     color: 'var(--text-muted)',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
@@ -520,7 +550,7 @@ const styles: Record<string, React.CSSProperties> = {
     borderTop: '1px solid var(--border-light)',
     flexShrink: 0,
     fontSize: 11,
-    fontFamily: 'var(--font-mono)',
+    // The hint words are prose (DM Sans); the Kbd chips stay mono.
     color: 'var(--text-muted)',
   },
   footerHint: { display: 'inline-flex', alignItems: 'center', gap: 6 },
