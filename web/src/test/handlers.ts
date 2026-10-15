@@ -221,6 +221,9 @@ export const handlers = [
   http.put('/api/v1/favorites/:type/:id', () => new HttpResponse(null, { status: 204 })),
   http.delete('/api/v1/favorites/:type/:id', () => new HttpResponse(null, { status: 204 })),
 
+  // Search: no results by default; tests override with their own groups.
+  http.get('/api/v1/search', () => HttpResponse.json({ query: '', groups: [] })),
+
   // Recent
   http.get('/api/v1/recent', () => HttpResponse.json([
     { id: 'nb-1', type: 'notebook', name: 'Root Notebook', updated_at: '2026-01-01T00:00:00Z' },

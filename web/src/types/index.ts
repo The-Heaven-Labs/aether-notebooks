@@ -492,8 +492,11 @@ export const FAVORITE_RESOURCE_TYPES = [
 
 export type FavoriteResourceType = (typeof FAVORITE_RESOURCE_TYPES)[number]
 
-/** One favorites-listing row (mirrors the API's `resourceSummary`). */
-export interface FavoriteResult {
+/**
+ * One catalog resource summary row (mirrors the API's `resourceSummary`).
+ * Favorites listings and search results share this shape.
+ */
+export interface ResourceSummary {
   id: string
   resource_type: FavoriteResourceType
   title: string
@@ -508,15 +511,40 @@ export interface FavoriteResult {
   can_edit: boolean
 }
 
+/** The favorites-era name for {@link ResourceSummary}; kept for its call sites. */
+export type FavoriteResult = ResourceSummary
+
 /** Favorites grouped by resource type; the API omits empty groups. */
 export interface FavoriteGroup {
   resource_type: FavoriteResourceType
-  results: FavoriteResult[]
+  results: ResourceSummary[]
 }
 
 /** `GET /api/v1/favorites` payload, newest first within each group. */
 export interface FavoritesResponse {
   groups: FavoriteGroup[]
+}
+
+/** Search results grouped by resource type; the API omits empty groups. */
+export interface SearchGroup {
+  resource_type: FavoriteResourceType
+  /** The per-type candidate window held more results back than `results` shows. */
+  has_more: boolean
+  results: ResourceSummary[]
+}
+
+/** `GET /api/v1/search` payload, groups in the API's fixed type order. */
+export interface SearchResponse {
+  query: string
+  groups: SearchGroup[]
+}
+
+/** One row of `GET /api/v1/recent` (a notebook, dashboard, or connector). */
+export interface RecentItem {
+  id: string
+  type: string
+  name: string
+  updated_at: string
 }
 
 export interface Group {

@@ -1599,3 +1599,13 @@ input[type="color"] {
     animation: none;
   }
 }
+
+/* ── Search highlighting (HighlightedText) ──────────────────────────────── */
+/* Matched query terms inside titles and snippets: accent wash only, ink and
+   weight inherited so the row's own type hierarchy is untouched. */
+.search-hit {
+  background: var(--accent-light);
+  color: inherit;
+  text-decoration: none;
+  border-radius: var(--radius-xs);
+}
