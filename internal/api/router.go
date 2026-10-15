@@ -23,6 +23,7 @@ import (
 	"github.com/the-heaven-labs/aether/internal/database"
 	"github.com/the-heaven-labs/aether/internal/executor"
 	"github.com/the-heaven-labs/aether/internal/oauth"
+	"github.com/the-heaven-labs/aether/internal/search"
 	"github.com/the-heaven-labs/aether/internal/storage"
 	"golang.org/x/sync/singleflight"
 )
@@ -93,6 +94,11 @@ type Server struct {
 	// dashboardQueryCompute overrides the real query computation in tests
 	// (nil = production path). Guarded by the single flight when a cache key exists.
 	dashboardQueryCompute func(context.Context, dashboardQueryParams) (*dashboardQueryResponse, error)
+	// searcher backs GET /api/v1/search content matching (notebook cell SQL,
+	// dashboard widget SQL) and the search_resources agent tool. It is
+	// swappable behind internal/search.Searcher; NewServer always wires the
+	// PostgreSQL implementation.
+	searcher search.Searcher
 	// warehouseInvalidationLoop runs the Redis subscriber that applies other
 	// replicas' pooled-identity invalidations. It stops from Close; it is a
 	// no-op when no Redis client is configured.
@@ -124,6 +130,7 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 		MaxPools: connPoolMaxPools,
 		IdleTTL:  connPoolIdleTTL,
 	})
+	s.searcher = search.NewPGSearcher(db.Pool)
 	s.agentEngine = agent.NewEngine(context.Background(), db.Pool, rdb)
 	s.agentEngine.BroadcastFunc = func(notebookID string, msg any) {
 		s.hub.Broadcast(notebookID, msg)
@@ -599,6 +606,9 @@ func (s *Server) routes() {
 
 	// Recent route
 	s.mux.Handle("GET /api/v1/recent", authMW(http.HandlerFunc(s.handleGetRecent)))
+
+	// Search route
+	s.mux.Handle("GET /api/v1/search", authMW(http.HandlerFunc(s.handleSearch)))
 
 	// Favorite routes
 	s.mux.Handle("GET /api/v1/favorites", authMW(http.HandlerFunc(s.handleListFavorites)))

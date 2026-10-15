@@ -37,6 +37,9 @@ const (
 // which is exactly the work the pick exists to avoid. Within a resource the
 // pick is deterministic — the topmost cell (c.position, unique per notebook)
 // and the oldest widget (w.created_at then w.id; widgets have no position).
+// The outer ORDER BY carries the resource id as its final key: without it,
+// equal-updated_at rows could trade places at the LIMIT, so truncation
+// survivors would not be deterministic across calls.
 //
 // The ts_headline option string uses the quoted-empty form
 // (StartSel="", StopSel=""): Postgres rejects an unquoted empty option value
@@ -57,7 +60,7 @@ const notebookContentSQL = `
 	                   'MaxWords=24, MinWords=8, ShortWord=2, StartSel="", StopSel=""')
 	FROM picked p
 	JOIN cells c ON c.id = p.cell_id
-	ORDER BY p.updated_at DESC
+	ORDER BY p.updated_at DESC, p.notebook_id
 	LIMIT $3`
 
 const dashboardContentSQL = `
@@ -74,7 +77,7 @@ const dashboardContentSQL = `
 	                   'MaxWords=24, MinWords=8, ShortWord=2, StartSel="", StopSel=""')
 	FROM picked p
 	JOIN widgets w ON w.id = p.widget_id
-	ORDER BY p.updated_at DESC
+	ORDER BY p.updated_at DESC, p.dashboard_id
 	LIMIT $3`
 
 // PGSearcher implements Searcher with PostgreSQL core full-text search over
