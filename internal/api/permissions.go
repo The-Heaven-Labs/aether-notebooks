@@ -313,9 +313,15 @@ func (s *Server) permIdentity(ctx context.Context, claims *auth.Claims) (permIde
 // in a constant number of queries: a resource→folder map query, one direct-ACL
 // query, and one recursive ancestry walk seeded with every distinct folder.
 // Evaluation goes through evaluateCandidates, so results match checkPermission
-// exactly. The result contains an entry for every requested id (deduped); ids
-// that are not in the org (or fail every rule) get all requested actions false.
-// Unknown resource types fail closed with an error.
+// exactly, with two deliberate fail-closed divergences: ids that do not exist
+// in the caller's org resolve all-false even when orphaned acl_entries rows
+// exist for them, and only canonical lowercase UUID spellings resolve (the
+// queries match on id::text), so an uppercase-spelling input is denied where
+// checkPermission's uuid cast would allow it. Callers pass ids read from
+// org-scoped tables, so both divergences are inert in practice. The result
+// contains an entry for every requested id (deduped); ids that are not in the
+// org (or fail every rule) get all requested actions false. Unknown resource
+// types fail closed with an error.
 func (s *Server) resolveActions(ctx context.Context, ident permIdentity, resourceType string, ids []string, actions []string) (map[string]map[string]bool, error) {
 	table := ""
 	switch {

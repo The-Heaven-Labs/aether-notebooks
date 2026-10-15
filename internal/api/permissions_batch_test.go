@@ -41,6 +41,7 @@ type batchResolverFixture struct {
 
 	notebookDirectID     uuid.UUID // direct user view in child
 	notebookRootDirectID uuid.UUID // direct user view at root: no ancestor grants apply
+	notebookFolderlessID uuid.UUID // folder_id NULL: direct grants only, no ancestry walk
 	notebookGroupID      uuid.UUID // direct group edit in parent
 	notebookEveryoneID   uuid.UUID // Everyone view at root + restrictive direct user entry
 	notebookShareID      uuid.UUID // direct share (implies view) in child
@@ -75,6 +76,18 @@ func grantBatchACL(t *testing.T, s *Server, orgID uuid.UUID, resourceType string
 		 DO UPDATE SET actions = EXCLUDED.actions`,
 		orgID.String(), resourceType, resourceID.String(), subjectType, subjectID, actions)
 	require.NoError(t, err)
+}
+
+// insertBatchFolderlessNotebook inserts a notebook with folder_id NULL: the
+// resolver branch where seed[id] is nil and only direct ACLs apply.
+func insertBatchFolderlessNotebook(t *testing.T, s *Server, orgID, owner uuid.UUID, title string) uuid.UUID {
+	t.Helper()
+	id := uuid.New()
+	_, err := s.db.Pool.Exec(context.Background(),
+		`INSERT INTO notebooks (id, org_id, title, created_by) VALUES ($1, $2, $3, $4)`,
+		id.String(), orgID.String(), title, owner.String())
+	require.NoError(t, err)
+	return id
 }
 
 // setupBatchResolverFixture builds the shared world described on
@@ -143,6 +156,11 @@ func setupBatchResolverFixture(t *testing.T) *batchResolverFixture {
 	fx.notebookShareID = insertInheritanceNotebook(t, fx.srv, fx.orgID, fx.ownerID, fx.childID)
 	grantBatchACL(t, fx.srv, fx.orgID, "notebook", fx.notebookShareID, "user", fx.memberID.String(), []string{"share"})
 
+	// A notebook with no folder exercises the NULL folder_id branch: no
+	// ancestry walk exists, so only the direct entry can apply.
+	fx.notebookFolderlessID = insertBatchFolderlessNotebook(t, fx.srv, fx.orgID, fx.ownerID, "Batch Folderless Notebook")
+	grantBatchACL(t, fx.srv, fx.orgID, "notebook", fx.notebookFolderlessID, "user", fx.memberID.String(), []string{"view"})
+
 	fx.notebookUnknownID = uuid.New()
 
 	// Connector and dashboard: a direct use grant and a folder-inherited view.
@@ -169,11 +187,14 @@ func setupBatchResolverFixture(t *testing.T) *batchResolverFixture {
 }
 
 // batchResolverMatrix is one resource type's parity matrix: the ids to resolve
-// (including unknown, cross-org, and a duplicate id) and the actions to compare.
+// (including unknown, cross-org, and a duplicate id), the actions to compare,
+// and the out-of-org ids the admin-mode subtest asserts stay denied.
 type batchResolverMatrix struct {
 	resourceType string
 	ids          []string
 	actions      []string
+	unknownID    string
+	crossOrgID   string
 }
 
 // batchResolverMatrices returns the four per-type matrices the fixture covers.
@@ -184,6 +205,7 @@ func batchResolverMatrices(fx *batchResolverFixture) []batchResolverMatrix {
 			ids: []string{
 				fx.notebookDirectID.String(),
 				fx.notebookRootDirectID.String(),
+				fx.notebookFolderlessID.String(),
 				fx.notebookGroupID.String(),
 				fx.notebookEveryoneID.String(),
 				fx.notebookShareID.String(),
@@ -191,7 +213,9 @@ func batchResolverMatrices(fx *batchResolverFixture) []batchResolverMatrix {
 				fx.notebookCrossOrgID.String(),
 				fx.notebookDirectID.String(), // duplicate: deduped internally
 			},
-			actions: []string{"view", "edit", "delete", "share", "run", "use"},
+			actions:    []string{"view", "edit", "delete", "share", "run", "use"},
+			unknownID:  fx.notebookUnknownID.String(),
+			crossOrgID: fx.notebookCrossOrgID.String(),
 		},
 		{
 			resourceType: "connector",
@@ -200,7 +224,9 @@ func batchResolverMatrices(fx *batchResolverFixture) []batchResolverMatrix {
 				fx.connectorUnknownID.String(),
 				fx.connectorCrossOrgID.String(),
 			},
-			actions: []string{"view", "edit", "delete", "share", "run", "use"},
+			actions:    []string{"view", "edit", "delete", "share", "run", "use"},
+			unknownID:  fx.connectorUnknownID.String(),
+			crossOrgID: fx.connectorCrossOrgID.String(),
 		},
 		{
 			resourceType: "dashboard",
@@ -209,7 +235,9 @@ func batchResolverMatrices(fx *batchResolverFixture) []batchResolverMatrix {
 				fx.dashboardUnknownID.String(),
 				fx.dashboardCrossOrgID.String(),
 			},
-			actions: []string{"view", "edit", "delete", "share", "run", "use", "view_with_data"},
+			actions:    []string{"view", "edit", "delete", "share", "run", "use", "view_with_data"},
+			unknownID:  fx.dashboardUnknownID.String(),
+			crossOrgID: fx.dashboardCrossOrgID.String(),
 		},
 		{
 			resourceType: "folder",
@@ -220,7 +248,9 @@ func batchResolverMatrices(fx *batchResolverFixture) []batchResolverMatrix {
 				fx.folderUnknownID.String(),
 				fx.folderCrossOrgID.String(),
 			},
-			actions: []string{"view", "edit", "delete", "share", "run", "use", "create"},
+			actions:    []string{"view", "edit", "delete", "share", "run", "use", "create"},
+			unknownID:  fx.folderUnknownID.String(),
+			crossOrgID: fx.folderCrossOrgID.String(),
 		},
 	}
 }
@@ -304,9 +334,9 @@ func TestResolveActionsParity(t *testing.T) {
 		matrix := matrix
 		t.Run("admin-mode/"+matrix.resourceType, func(t *testing.T) {
 			got := requireBatchParity(t, adminCtx, fx, adminIdent, matrix.resourceType, matrix.ids, matrix.actions)
-			require.False(t, actionAllowed(got, fx.notebookUnknownID.String(), "view"),
+			require.False(t, actionAllowed(got, matrix.unknownID, "view"),
 				"admin mode must not fabricate access to unknown ids")
-			require.False(t, actionAllowed(got, fx.notebookCrossOrgID.String(), "view"),
+			require.False(t, actionAllowed(got, matrix.crossOrgID, "view"),
 				"admin mode must not fabricate access across orgs")
 		})
 	}
@@ -325,6 +355,7 @@ func TestResolveActionsSemantics(t *testing.T) {
 	notebooks, err := fx.srv.resolveActions(ctx, ident, "notebook", []string{
 		fx.notebookDirectID.String(),
 		fx.notebookRootDirectID.String(),
+		fx.notebookFolderlessID.String(),
 		fx.notebookGroupID.String(),
 		fx.notebookEveryoneID.String(),
 		fx.notebookShareID.String(),
@@ -343,6 +374,14 @@ func TestResolveActionsSemantics(t *testing.T) {
 	require.True(t, rootDirect["view"])
 	for _, action := range []string{"edit", "delete", "share", "run", "use"} {
 		require.Falsef(t, rootDirect[action], "a direct view grant must not imply %s", action)
+	}
+
+	// A folderless notebook (folder_id NULL) has no ancestry to walk: the
+	// direct entry is the only source, so it stays view-only too.
+	folderless := notebooks[fx.notebookFolderlessID.String()]
+	require.True(t, folderless["view"])
+	for _, action := range []string{"edit", "delete", "share", "run", "use"} {
+		require.Falsef(t, folderless[action], "a folderless notebook must resolve from direct entries only (saw %s)", action)
 	}
 
 	group := notebooks[fx.notebookGroupID.String()]
@@ -457,6 +496,19 @@ func TestResolveActionsContract(t *testing.T) {
 	t.Run("unknown resource type fails closed", func(t *testing.T) {
 		_, err := fx.srv.resolveActions(ctx, ident, "widget", []string{fx.notebookDirectID.String()}, []string{"view"})
 		require.Error(t, err)
+	})
+
+	t.Run("orphaned ACL rows without a resource are ignored", func(t *testing.T) {
+		// resource_id carries no foreign key, so a direct ACL row can outlive
+		// its resource. checkPermission would consult that row; resolveActions
+		// scopes by resource existence and deliberately stays fail-closed.
+		orphanID := uuid.New()
+		grantBatchACL(t, fx.srv, fx.orgID, "notebook", orphanID, "user", fx.memberID.String(), []string{"view"})
+
+		got, err := fx.srv.resolveActions(ctx, ident, "notebook", []string{orphanID.String()}, []string{"view"})
+		require.NoError(t, err)
+		require.Len(t, got, 1)
+		require.False(t, actionAllowed(got, orphanID.String(), "view"))
 	})
 
 	t.Run("admin mode grants org resources and denies ids outside the org", func(t *testing.T) {
