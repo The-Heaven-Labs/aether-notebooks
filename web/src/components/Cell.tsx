@@ -13,7 +13,7 @@ const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m
 import type { Cell as APICell, Connector, ExecuteRouting } from '../types'
 import type { ChartConfig } from '../charts'
 import { normalizeChartConfig } from '../charts/normalizeChartConfig'
-import { executableConnectorOptions } from '../utils/connectors'
+import { executableConnectorOptions, connectorOptionLabel } from '../utils/connectors'
 import type { NotebookCollab } from './collabRuntime'
 
 // ── Yjs collaboration cache (shared across all cells in a notebook) ───────────
@@ -445,6 +445,9 @@ export const Cell = memo(function Cell({
   const sourceVisible = cell.source_visible ?? true
   const outputHidden = cell.outputs_hidden ?? false
   const connector = connectors.find((c) => c.id === cell.connector_id)
+  // Execution pickers hide provisioners that cannot serve this viewer; the
+  // cell's own connector is kept so its selection never blanks out.
+  const executableConnectors = executableConnectorOptions(connectors, cell.connector_id)
   const chartConfig = useMemo(() => normalizeChartConfig(cell.metadata?.chart), [cell.metadata?.chart])
   const handleChartConfigChange = useCallback(
     (cfg: ChartConfig) => onChartConfigChange?.(cell.id, cfg),
@@ -537,6 +540,7 @@ export const Cell = memo(function Cell({
           {isCode && (
             connectorOpen ? (
               <select
+                aria-label="Connector"
                 style={styles.connectorSelect}
                 value={cell.connector_id ?? ''}
                 onChange={(e) => {
@@ -548,12 +552,9 @@ export const Cell = memo(function Cell({
                 autoFocus
               >
                 <option value="">Inherit from notebook</option>
-                {executableConnectorOptions(connectors, cell.connector_id).map((c) => (
+                {executableConnectors.map((c) => (
                   <option key={c.id} value={c.id} disabled={c.can_use === false}>
-                    {c.name}
-                    {c.is_provisioner
-                      ? (c.can_use === false ? ' (provisioner — no access)' : ' (provisioner)')
-                      : (c.can_use === false ? ' (view only)' : '')}
+                    {connectorOptionLabel(c)}
                   </option>
                 ))}
               </select>
@@ -645,7 +646,9 @@ export const Cell = memo(function Cell({
         {/* Hover toolbar */}
         <div className="aether-cell-actions" style={styles.actions} role="toolbar" aria-label="Cell actions">
           {isCode && (() => {
-            const hasConnector = !!(cell.connector_id || connectors.length > 0)
+            // A provisioner-only org shows the "select a connector" state: the
+            // only connectors left are hidden from execution pickers.
+            const hasConnector = !!(cell.connector_id || executableConnectors.length > 0)
             return (
               <button
                 style={{ ...styles.actionBtn, opacity: hasConnector ? 1 : 0.4 }}

@@ -14,7 +14,8 @@ import type { Tool, ToolType } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
 import type { HeaderRow } from '../components/HeadersEditor'
-import { executableConnectorOptions } from '../utils/connectors'
+import { executableConnectorOptions, isBlockedProvisioner } from '../utils/connectors'
+import type { Connector } from '../types'
 
 interface ParamDef {
   name: string
@@ -35,14 +36,6 @@ interface ToolForm {
   sql: string
   parameters: ParamDef[]
   require_confirmation: boolean
-}
-
-interface Connector {
-  id: string
-  name: string
-  type: string
-  can_use?: boolean
-  is_provisioner?: boolean
 }
 
 const emptyForm = (): ToolForm => ({
@@ -427,7 +420,7 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
               {executableConnectorOptions(connectors, form.connector_id).map(c => (
                 // The current-selection exception can surface one non-executable
                 // provisioner; it stays visible but unpickable so the value shows.
-                <option key={c.id} value={c.id} disabled={c.is_provisioner === true && c.can_use === false}>
+                <option key={c.id} value={c.id} disabled={isBlockedProvisioner(c)}>
                   {c.name} ({c.type})
                 </option>
               ))}

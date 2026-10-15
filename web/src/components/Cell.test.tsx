@@ -799,12 +799,12 @@ describe('connector picker provisioner handling', () => {
     }
   }
 
-  function renderCodeCell(cell: CellType) {
+  function renderCodeCell(cell: CellType, connectors = provisionerConnectors) {
     render(
       <Suspense fallback={null}>
         <Cell
           cell={cell}
-          connectors={provisionerConnectors}
+          connectors={connectors}
           notebookId="nb-1"
           onRun={vi.fn()}
           onDelete={vi.fn()}
@@ -821,9 +821,8 @@ describe('connector picker provisioner handling', () => {
     fireEvent.click(await screen.findByTitle('Click to change connector'))
     const option = await screen.findByRole('option', { name: 'Provisioner (provisioner — no access)' })
     expect(option).toBeDisabled()
-    // The connector select (first combobox, ahead of the row-limit one) still
-    // displays the kept option instead of blanking out.
-    expect(screen.getAllByRole('combobox')[0]).toHaveValue('conn-prov')
+    // The connector select still displays the kept option instead of blanking out.
+    expect(screen.getByRole('combobox', { name: 'Connector' })).toHaveValue('conn-prov')
     // Usable connectors stay pickable next to it.
     expect(screen.getByRole('option', { name: 'Service' })).toBeEnabled()
   })
@@ -834,5 +833,12 @@ describe('connector picker provisioner handling', () => {
     fireEvent.click(await screen.findByTitle('Click to change connector'))
     expect(await screen.findByRole('option', { name: 'Service' })).toBeInTheDocument()
     expect(screen.queryByRole('option', { name: /Provisioner/ })).not.toBeInTheDocument()
+  })
+
+  it('shows the select-a-connector state when only a blocked provisioner exists', async () => {
+    renderCodeCell(codeCell(), [provisionerConnectors[0]])
+
+    expect(await screen.findByRole('button', { name: 'Run cell (Ctrl+Enter)' }))
+      .toHaveAttribute('title', 'Select a connector first')
   })
 })

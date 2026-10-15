@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { executableConnectorOptions } from './connectors'
+import { connectorOptionLabel, executableConnectorOptions, isBlockedProvisioner } from './connectors'
 
 interface TestConnector {
   id: string
@@ -19,6 +19,45 @@ const CONNECTORS: TestConnector[] = [
 function ids(connectors: TestConnector[]): string[] {
   return connectors.map(c => c.id)
 }
+
+describe('isBlockedProvisioner', () => {
+  test('is true only for a provisioner with can_use false', () => {
+    expect(isBlockedProvisioner({ is_provisioner: true, can_use: false })).toBe(true)
+  })
+
+  test('is false for an allowed provisioner', () => {
+    expect(isBlockedProvisioner({ is_provisioner: true, can_use: true })).toBe(false)
+  })
+
+  test('is false for a non-provisioner that cannot be used', () => {
+    expect(isBlockedProvisioner({ is_provisioner: false, can_use: false })).toBe(false)
+  })
+
+  test('is false when can_use is undefined', () => {
+    expect(isBlockedProvisioner({ is_provisioner: true })).toBe(false)
+  })
+})
+
+describe('connectorOptionLabel', () => {
+  test('labels a blocked provisioner', () => {
+    expect(connectorOptionLabel({ name: 'Provisioner', is_provisioner: true, can_use: false }))
+      .toBe('Provisioner (provisioner — no access)')
+  })
+
+  test('labels an allowed provisioner', () => {
+    expect(connectorOptionLabel({ name: 'Provisioner', is_provisioner: true, can_use: true }))
+      .toBe('Provisioner (provisioner)')
+  })
+
+  test('labels a view-only connector', () => {
+    expect(connectorOptionLabel({ name: 'Read replica', is_provisioner: false, can_use: false }))
+      .toBe('Read replica (view only)')
+  })
+
+  test('leaves a usable connector unlabelled', () => {
+    expect(connectorOptionLabel({ name: 'Service', can_use: true })).toBe('Service')
+  })
+})
 
 describe('executableConnectorOptions', () => {
   test('hides a non-executable provisioner', () => {
