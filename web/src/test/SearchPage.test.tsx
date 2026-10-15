@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -304,5 +304,78 @@ describe('SearchPage', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'probe back' }))
     await waitFor(() => expect(searchInput()).toHaveValue('rev'))
+  })
+
+  test('Back within the debounce window restores the destination and discards the draft', async () => {
+    useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')])])
+    renderSearch('/search?q=revenue')
+    await screen.findByRole('link', { name: /Revenue by region/ })
+
+    // A chip pushes a second entry; its `q` equals the committed value.
+    fireEvent.click(screen.getByRole('button', { name: 'Favorites' }))
+    await waitFor(() => expect(locationSearch()).toBe('/search?q=revenue&favorites=1'))
+
+    // The exact race: typing a draft and Backing in the same task. The
+    // destination's `q` is unchanged, so only a location-keyed import can see
+    // that the URL — not the draft — is now the truth.
+    typeQuery('raced')
+    fireEvent.click(screen.getByRole('button', { name: 'probe back' }))
+    await waitFor(() => expect(locationSearch()).toBe('/search?q=revenue'))
+    expect(searchInput()).toHaveValue('revenue')
+    expect(screen.getByRole('button', { name: 'Favorites' })).toHaveAttribute('aria-pressed', 'false')
+
+    // Well past the debounce: the pending timer was cancelled with the import,
+    // so Back is not cancelled by a late `?q=raced` write.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300))
+    })
+    expect(locationSearch()).toBe('/search?q=revenue')
+    expect(searchInput()).toHaveValue('revenue')
+  })
+
+  test('typing rewrites the history entry while chips push new ones', async () => {
+    useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')])])
+    renderSearch()
+    typeQuery('rev')
+    await waitFor(() => expect(locationSearch()).toBe('/search?q=rev'))
+
+    // Replace-style typing: the pristine entry was rewritten, so going Back
+    // has no earlier search state to reveal.
+    fireEvent.click(screen.getByRole('button', { name: 'probe back' }))
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50))
+    })
+    expect(locationSearch()).toBe('/search?q=rev')
+    expect(searchInput()).toHaveValue('rev')
+
+    // Chips push: Back returns to the unfiltered URL.
+    fireEvent.click(screen.getByRole('button', { name: 'Notebooks' }))
+    await waitFor(() => expect(locationSearch()).toContain('type=notebook'))
+    fireEvent.click(screen.getByRole('button', { name: 'probe back' }))
+    await waitFor(() => expect(locationSearch()).toBe('/search?q=rev'))
+    expect(screen.getByRole('button', { name: 'Notebooks' })).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('the active type chip renders even when the type has no results', async () => {
+    useSearchGroups([])
+    renderSearch('/search?q=zzz&type=notebook')
+    await screen.findByText('No matches for “zzz”')
+
+    expect(screen.getByRole('button', { name: 'Notebooks' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByRole('button', { name: 'All' })).toHaveAttribute('aria-pressed', 'false')
+    expect(screen.getByRole('button', { name: 'Favorites' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Dashboards' })).toBeNull()
+  })
+
+  test('a filter with no query is a no-results state, not the orientation panel', async () => {
+    renderSearch('/search?type=notebook')
+
+    expect(await screen.findByText('No results')).toBeInTheDocument()
+    expect(screen.getByText('Type a query to search, or clear the filters above.')).toBeInTheDocument()
+    expect(screen.queryByText('Search the workspace')).toBeNull()
+    // Nothing ran, so there is no outcome to announce.
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Notebooks' })).toHaveAttribute('aria-pressed', 'true')
+    expect(searchRequests).toHaveLength(0)
   })
 })

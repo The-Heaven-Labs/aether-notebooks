@@ -32,24 +32,41 @@ export function SearchPage() {
   const favoritesOnly = searchParams.get('favorites') === '1'
 
   const [inputValue, setInputValue] = useState(urlQuery)
-  // The last `q` this component wrote to the URL. A URL value that differs
-  // arrived from outside (back/forward, a shared link, the palette's "View all
-  // results") and wins over the local typing state.
-  const lastWrittenQuery = useRef(urlQuery)
+  // Mirrors the sync effects read: the import effect reacts to location changes
+  // only (a keystroke must never re-trigger it), and the debounce timer checks
+  // the settled URL at fire time.
+  const inputValueRef = useRef(inputValue)
+  const urlQueryRef = useRef(urlQuery)
 
+  // Declared before both sync effects so they read fresh mirrors in the commit
+  // that changed them.
   useEffect(() => {
-    if (urlQuery === lastWrittenQuery.current) return
-    lastWrittenQuery.current = urlQuery
+    inputValueRef.current = inputValue
+    urlQueryRef.current = urlQuery
+  }, [inputValue, urlQuery])
+
+  // The URL is the source of truth. Any location change — a chip push, a
+  // back/forward, a deep link, the palette's "View all results" — wins over an
+  // un-debounced draft; importing also cancels the pending debounce timer via
+  // the input state change. This must fire on *every* location change, not just
+  // on `q` changes: backing to an entry whose `q` matches the last committed
+  // value leaves `urlQuery` identical, and a value-only gate would let the
+  // pending timer overwrite that entry (cancelling Back). Typing cannot
+  // re-trigger it — its own replace write lands with `q` already equal to the
+  // input — so the two can never loop.
+  useEffect(() => {
+    if (urlQuery === inputValueRef.current.trim()) return
     setInputValue(urlQuery)
-  }, [urlQuery])
+  }, [urlQuery, searchParams])
 
   // 200ms debounce: the input stays instant, the URL (and the request keyed by
-  // it) follows the settled value, replace-style.
+  // it) follows the settled value, replace-style. Skipping when the URL has
+  // already settled on this value keeps the initial mount and an imported URL
+  // from rewriting their own entry.
   useEffect(() => {
     const next = inputValue.trim()
     const timer = window.setTimeout(() => {
-      if (next === lastWrittenQuery.current) return
-      lastWrittenQuery.current = next
+      if (next === urlQueryRef.current) return
       setSearchParams((current) => {
         const params = new URLSearchParams(current)
         if (next) params.set('q', next)
@@ -68,6 +85,7 @@ export function SearchPage() {
   })
 
   const searching = urlQuery.length > 0
+  const filtersActive = activeType !== null || favoritesOnly
   // Defensive type guards, same as the palette: a retired type would have no
   // icon and no route, so it is skipped rather than rendered broken.
   const groups = (search.data?.groups ?? [])
@@ -109,15 +127,27 @@ export function SearchPage() {
 
   const renderBody = () => {
     if (!searching) {
+      // Pristine page (no query, no filters): the orientation panel. A filter
+      // set with no query — hand-crafted URL, or the query cleared while a
+      // chip stayed active — is a no-results state instead, so the chips and
+      // the "no results" claim never layer over the orientation copy.
+      if (!filtersActive) {
+        return (
+          <>
+            <EmptyState
+              icon={<Search size={24} />}
+              title="Search the workspace"
+              text="Search across notebooks, dashboards, folders, connectors, agents, models, skills, tools, and MCP servers."
+            />
+            <p style={styles.hint}>Start typing to see results.</p>
+          </>
+        )
+      }
       return (
-        <>
-          <EmptyState
-            icon={<Search size={24} />}
-            title="Search the workspace"
-            text="Search across notebooks, dashboards, folders, connectors, agents, models, skills, tools, and MCP servers."
-          />
-          <p style={styles.hint}>Start typing to see results.</p>
-        </>
+        <EmptyState
+          title="No results"
+          text="Type a query to search, or clear the filters above."
+        />
       )
     }
     if (search.isError) {
@@ -168,7 +198,7 @@ export function SearchPage() {
     )
   }
 
-  const showChrome = searching || activeType !== null || favoritesOnly
+  const showChrome = searching || filtersActive
 
   return (
     <AppShell>
@@ -223,8 +253,9 @@ export function SearchPage() {
               </button>
             </div>
 
-            {/* AT announcement of result changes; also the visible count. */}
-            {!search.isError && !(search.isLoading && !search.data) && (
+            {/* AT announcement of result changes; also the visible count.
+                Only a ran query has an outcome to announce. */}
+            {searching && !search.isError && !(search.isLoading && !search.data) && (
               <p style={styles.status} role="status" aria-live="polite">
                 {resultCount === 0 ? 'No results' : `${resultCount} result${resultCount === 1 ? '' : 's'}`}
               </p>
