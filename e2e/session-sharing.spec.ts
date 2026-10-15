@@ -65,7 +65,7 @@ function permissionsDialog(page: Page) {
 // openAgentHistory selects the agent in the global agent panel and switches to
 // the chat-history view, where "My sessions" and "Shared with me" live.
 async function openAgentHistory(page: Page, agentName: string): Promise<void> {
-  await page.getByTitle('Open AI Agent (Ctrl+K)').click()
+  await page.getByTitle('Open AI Agent (Ctrl+J)').click()
   const select = page.locator('select.agent-select').first()
   await expect(select.locator('option', { hasText: agentName })).toHaveCount(1, { timeout: 15_000 })
   await select.selectOption({ label: agentName })

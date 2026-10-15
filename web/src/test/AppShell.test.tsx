@@ -10,6 +10,12 @@ async function flushLazy() {
   })
 }
 
+/**
+ * Headroom for the lazy palette/agent-panel chunks: under the full parallel
+ * suite their first fetch can exceed RTL's 1s default query timeout.
+ */
+const LAZY_TIMEOUT = { timeout: 5000 }
+
 describe('AppShell', () => {
   beforeEach(() => {
     localStorage.clear()
@@ -56,21 +62,21 @@ describe('AppShell', () => {
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
 
     // The palette is lazy-loaded, so the dialog arrives after the chunk loads.
-    expect(await screen.findByRole('dialog', { name: 'Search palette' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: 'Search palette' }, LAZY_TIMEOUT)).toBeInTheDocument()
     expect(screen.queryByTitle('Close agent panel')).toBeNull()
   })
 
   it('opens the search palette on Cmd+K (metaKey)', async () => {
     renderWithProviders(<AppShell><div>Page content</div></AppShell>)
     fireEvent.keyDown(document, { key: 'k', metaKey: true })
-    expect(await screen.findByRole('dialog', { name: 'Search palette' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: 'Search palette' }, LAZY_TIMEOUT)).toBeInTheDocument()
   })
 
   it('toggles the global agent panel on Ctrl+J', async () => {
     renderWithProviders(<AppShell><div>Page content</div></AppShell>)
 
     fireEvent.keyDown(document, { key: 'j', ctrlKey: true })
-    expect(await screen.findByTitle('Close agent panel')).toBeInTheDocument()
+    expect(await screen.findByTitle('Close agent panel', {}, LAZY_TIMEOUT)).toBeInTheDocument()
 
     fireEvent.keyDown(document, { key: 'j', ctrlKey: true })
     expect(screen.queryByTitle('Close agent panel')).toBeNull()
@@ -117,8 +123,10 @@ describe('AppShell', () => {
 
   it('binds neither chord in bare mode', async () => {
     renderWithProviders(<AppShell bare><div>App surface</div></AppShell>)
-    fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
-    fireEvent.keyDown(document, { key: 'j', ctrlKey: true })
+    // A handled chord would have called preventDefault (false); no handler is
+    // bound in bare mode, so both dispatches stay uncancelled.
+    expect(fireEvent.keyDown(document, { key: 'k', ctrlKey: true })).toBe(true)
+    expect(fireEvent.keyDown(document, { key: 'j', ctrlKey: true })).toBe(true)
     await flushLazy()
     expect(screen.queryByRole('dialog', { name: 'Search palette' })).toBeNull()
     expect(screen.queryByTitle('Close agent panel')).toBeNull()
@@ -127,13 +135,13 @@ describe('AppShell', () => {
   it('suppresses Ctrl+J but keeps Ctrl+K enabled on chat pages', async () => {
     renderWithProviders(<AppShell><div>Page content</div></AppShell>, { initialPath: '/chats/s-1' })
 
-    fireEvent.keyDown(document, { key: 'j', ctrlKey: true })
+    expect(fireEvent.keyDown(document, { key: 'j', ctrlKey: true })).toBe(true)
     await flushLazy()
     expect(screen.queryByTitle('Close agent panel')).toBeNull()
 
     // Search is global: the palette still opens on /chats.
     fireEvent.keyDown(document, { key: 'k', ctrlKey: true })
-    expect(await screen.findByRole('dialog', { name: 'Search palette' })).toBeInTheDocument()
+    expect(await screen.findByRole('dialog', { name: 'Search palette' }, LAZY_TIMEOUT)).toBeInTheDocument()
   })
 
   it('renders children in a bare main landmark: no shell chrome', () => {
