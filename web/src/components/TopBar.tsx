@@ -82,6 +82,7 @@ export function TopBar({ onShowShortcuts, onOpenSearch }: TopBarProps) {
             onClick={onOpenSearch}
             title={`Search (${searchShortcut})`}
             aria-label="Search"
+            aria-keyshortcuts="Control+K Meta+K"
           >
             <Search size={16} aria-hidden="true" />
           </button>
@@ -93,10 +94,11 @@ export function TopBar({ onShowShortcuts, onOpenSearch }: TopBarProps) {
             style={styles.search}
             onClick={onOpenSearch}
             aria-label="Search"
+            aria-keyshortcuts="Control+K Meta+K"
           >
             <Search size={14} style={styles.searchIcon} aria-hidden="true" />
             <span style={styles.searchPlaceholder}>Search files, dashboards, SQL…</span>
-            <Kbd style={styles.searchKbd}>{searchShortcut}</Kbd>
+            <Kbd tone="chrome" style={styles.searchKbd}>{searchShortcut}</Kbd>
           </button>
         )
       ) : (
@@ -224,10 +226,22 @@ const styles: Record<string, React.CSSProperties> = {
     marginLeft: 'auto',
     cursor: 'pointer',
   },
-  orgName: { fontSize: 12, color: 'var(--nav-text)', fontWeight: 500, opacity: 0.75 },
-  right: { position: 'relative', display: 'flex', alignItems: 'center', gap: 10 },
+  orgName: {
+    fontSize: 12,
+    color: 'var(--nav-text)',
+    fontWeight: 500,
+    opacity: 0.75,
+    // Phones: the cluster must give way to the fixed-size controls beside it
+    // rather than wrap the name onto a second line inside the 52px bar.
+    maxWidth: 160,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+  },
+  right: { position: 'relative', display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 },
   avatar: {
     width: 30, height: 30,
+    flexShrink: 0,
     borderRadius: '50%',
     background: 'var(--accent-light)',
     border: '1.5px solid var(--accent)',

@@ -10,10 +10,11 @@ import { renderWithProviders } from './utils'
 vi.mock('../utils/platform', () => ({ isApplePlatform: vi.fn(() => false) }))
 
 /** Pin the viewport below the 768px collapse breakpoint (the shared stub
- *  pattern used for matchMedia in these tests). */
+ *  pattern used for matchMedia in these tests). Only max-width queries match,
+ *  so a future pointer/reduced-motion consumer can't silently flip. */
 function stubNarrowViewport() {
   vi.stubGlobal('matchMedia', vi.fn().mockImplementation((query: string) => ({
-    matches: true,
+    matches: query.includes('max-width'),
     media: query,
     onchange: null,
     addListener: vi.fn(),
@@ -39,6 +40,7 @@ describe('TopBar search field', () => {
 
     const field = screen.getByRole('button', { name: 'Search' })
     expect(field.tagName).toBe('BUTTON')
+    expect(field).toHaveAttribute('aria-keyshortcuts', 'Control+K Meta+K')
     expect(screen.getByText('Search files, dashboards, SQL…')).toBeInTheDocument()
   })
 
@@ -47,6 +49,9 @@ describe('TopBar search field', () => {
 
     const chip = screen.getByText('Ctrl K')
     expect(chip.tagName).toBe('KBD')
+    // Chrome tone: the always-dark bar would nearly swallow the body-token cap.
+    expect(chip).toHaveStyle({ backgroundColor: 'rgba(255, 255, 255, 0.08)' })
+    expect(chip.getAttribute('style')).toContain('var(--nav-text)')
     expect(screen.queryByText('⌘K')).toBeNull()
   })
 
@@ -90,8 +95,44 @@ describe('TopBar search field', () => {
 
     const field = screen.getByRole('button', { name: 'Search' })
     expect(field.tagName).toBe('BUTTON')
+    expect(field).toHaveAttribute('aria-keyshortcuts', 'Control+K Meta+K')
     expect(screen.queryByText('Search files, dashboards, SQL…')).toBeNull()
     expect(screen.queryByText('Ctrl K')).toBeNull()
+  })
+
+  it('names the Ctrl K chord in the collapsed button tooltip off Apple platforms', () => {
+    stubNarrowViewport()
+    renderWithProviders(<TopBar onOpenSearch={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: 'Search' }))
+      .toHaveAttribute('title', 'Search (Ctrl K)')
+  })
+
+  it('names the ⌘K chord in the collapsed button tooltip on Apple platforms', () => {
+    vi.mocked(isApplePlatform).mockReturnValue(true)
+    stubNarrowViewport()
+    renderWithProviders(<TopBar onOpenSearch={vi.fn()} />)
+
+    expect(screen.getByRole('button', { name: 'Search' }))
+      .toHaveAttribute('title', 'Search (⌘K)')
+  })
+
+  it('keeps a long org name on one line in the narrow bar', () => {
+    stubNarrowViewport()
+    localStorage.setItem('aether_org_name', 'A Very Long Organization Name')
+    renderWithProviders(<TopBar onOpenSearch={vi.fn()} />)
+
+    const orgName = screen.getByText('A Very Long Organization Name')
+    expect(orgName).toHaveStyle({
+      maxWidth: '160px',
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    })
+    // The cluster itself can shrink so the ellipsis kicks in before wrapping,
+    // while the avatar holds its fixed 30px size.
+    expect(orgName.parentElement).toHaveStyle({ minWidth: '0px' })
+    expect(screen.getByRole('button', { name: 'Profile menu' })).toHaveStyle({ flexShrink: '0' })
   })
 
   it('opens the palette from the collapsed icon button', () => {
