@@ -76,25 +76,31 @@ describe('executableConnectorOptions', () => {
     expect(ids(executableConnectorOptions(CONNECTORS))).toContain('view-only')
   })
 
-  test('keeps the non-executable provisioner when it is the current selection', () => {
-    expect(ids(executableConnectorOptions(CONNECTORS, 'prov-blocked'))).toContain('prov-blocked')
+  test('hides a non-executable provisioner even when it is the only option', () => {
+    const onlyBlocked: TestConnector[] = [
+      { id: 'prov-blocked', name: 'Blocked provisioner', is_provisioner: true, can_use: false },
+    ]
+    expect(executableConnectorOptions(onlyBlocked)).toEqual([])
   })
 
-  test('hides other non-executable provisioners even when one is selected', () => {
+  test('hides a blocked provisioner no matter what extra argument is passed (no selection exception)', () => {
+    // The old signature accepted a selectedId that kept the blocked connector
+    // as a disabled option; pin that no second argument can bring it back.
+    const legacyCall = executableConnectorOptions as unknown as (
+      connectors: TestConnector[],
+      selectedId?: string | null,
+    ) => TestConnector[]
+    expect(ids(legacyCall(CONNECTORS, 'prov-blocked'))).not.toContain('prov-blocked')
+    expect(ids(legacyCall(CONNECTORS, null))).not.toContain('prov-blocked')
+    expect(ids(legacyCall(CONNECTORS, undefined))).not.toContain('prov-blocked')
+  })
+
+  test('hides every non-executable provisioner in a mixed list', () => {
     const connectors: TestConnector[] = [
       { id: 'prov-a', name: 'A', is_provisioner: true, can_use: false },
       { id: 'prov-b', name: 'B', is_provisioner: true, can_use: false },
     ]
-    expect(ids(executableConnectorOptions(connectors, 'prov-a'))).toEqual(['prov-a'])
-  })
-
-  test('does not keep a hidden connector for a different selected id', () => {
-    expect(ids(executableConnectorOptions(CONNECTORS, 'svc'))).not.toContain('prov-blocked')
-  })
-
-  test('does not keep a hidden connector for null/undefined selections', () => {
-    expect(ids(executableConnectorOptions(CONNECTORS, null))).not.toContain('prov-blocked')
-    expect(ids(executableConnectorOptions(CONNECTORS, undefined))).not.toContain('prov-blocked')
+    expect(executableConnectorOptions(connectors)).toEqual([])
   })
 
   test('only can_use === false hides — falsey-but-not-false values stay', () => {

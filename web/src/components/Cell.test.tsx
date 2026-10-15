@@ -815,19 +815,18 @@ describe('connector picker provisioner handling', () => {
     )
   }
 
-  it('keeps a selected blocked provisioner as a disabled option', async () => {
+  it('hides a selected blocked provisioner and shows the placeholder', async () => {
     renderCodeCell(codeCell({ connector_id: 'conn-prov' }))
 
     fireEvent.click(await screen.findByTitle('Click to change connector'))
-    const option = await screen.findByRole('option', { name: 'Provisioner (provisioner — no access)' })
-    expect(option).toBeDisabled()
-    // The connector select still displays the kept option instead of blanking out.
-    expect(screen.getByRole('combobox', { name: 'Connector' })).toHaveValue('conn-prov')
-    // Usable connectors stay pickable next to it.
-    expect(screen.getByRole('option', { name: 'Service' })).toBeEnabled()
+    expect(await screen.findByRole('option', { name: 'Service' })).toBeEnabled()
+    expect(screen.queryByRole('option', { name: /Provisioner/ })).not.toBeInTheDocument()
+    // The stored reference falls back to "Inherit from notebook" instead of
+    // blanking or mismatching the select; it stays on the cell until reassigned.
+    expect(screen.getByRole('combobox', { name: 'Connector' })).toHaveValue('')
   })
 
-  it('hides a blocked provisioner when it is not the current selection', async () => {
+  it('hides a blocked provisioner when the cell has no connector', async () => {
     renderCodeCell(codeCell())
 
     fireEvent.click(await screen.findByTitle('Click to change connector'))

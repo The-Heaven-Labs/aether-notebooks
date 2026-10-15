@@ -113,7 +113,7 @@ describe('ToolsPage', () => {
     expect(within(dialog).getByRole('option', { name: 'Service CH (clickhouse)' })).toBeInTheDocument()
   })
 
-  test('keeps a tool configured with a blocked provisioner as a disabled option', async () => {
+  test('a tool configured with a blocked provisioner is not listed and shows the placeholder', async () => {
     server.use(
       http.get('/api/v1/connectors', () => HttpResponse.json([
         { id: 'conn-svc', name: 'Service CH', type: 'clickhouse', can_use: true, is_provisioner: false, created_at: '2026-01-01T00:00:00Z' },
@@ -142,11 +142,10 @@ describe('ToolsPage', () => {
     const dialog = await screen.findByRole('dialog')
 
     const picker = within(dialog).getByLabelText('Connector') as HTMLSelectElement
-    expect(picker.value).toBe('conn-prov')
-    const disabledOptions = within(dialog).getAllByRole('option')
-      .filter((o): o is HTMLOptionElement => (o as HTMLOptionElement).disabled)
-    expect(disabledOptions).toHaveLength(1)
-    expect(disabledOptions[0]).toHaveTextContent('Blocked provisioner (clickhouse)')
-    expect(disabledOptions[0].selected).toBe(true)
+    // The stored reference is hidden, so the select falls back to the
+    // placeholder instead of a disabled option.
+    expect(picker.value).toBe('')
+    expect(within(dialog).queryByRole('option', { name: /Blocked provisioner/ })).not.toBeInTheDocument()
+    expect(within(dialog).getByRole('option', { name: 'Service CH (clickhouse)' })).toBeInTheDocument()
   })
 })

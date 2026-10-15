@@ -854,25 +854,30 @@ Tests: chip toggles view, URL sync, empty state, Dashboard filter hides non-favo
 - Modify tests: `web/src/test/ConnectorSelector.test.tsx`, `web/src/components/Cell.test.tsx` (:800)
 
 ```ts
-// Hides provisioner connectors that cannot execute for anyone
-// (can_use === false, computed server-side). A currently-selected hidden
-// connector is kept as a single disabled option so selects never blank out.
+// Hides provisioner connectors that cannot execute for the viewer
+// (can_use === false, computed server-side). Blocked provisioners are
+// never listed — not even as the current selection; the picker falls
+// back to its placeholder while the stored reference remains.
 export function executableConnectorOptions<T extends { id: string; is_provisioner?: boolean; can_use?: boolean }>(
-  connectors: T[], selectedId?: string | null,
+  connectors: T[],
 ): T[] {
   return connectors.filter((c) =>
-    !(c.is_provisioner === true && c.can_use === false) || c.id === selectedId)
+    !(c.is_provisioner === true && c.can_use === false))
 }
 ```
 
-Both selects render `is_provisioner && can_use === false` connectors only as the disabled
-selected option, preserving the existing "(provisioner — no access)" label for that one case;
-the "(provisioner)" label stays for `can_use === true` ones; "(view only)" behavior for
-non-provisioners is unchanged. Management surfaces (ConnectorsPage, WarehouseSettingsPage,
-PermissionsPanel, search, favorites) are untouched.
+Execution selects never render `is_provisioner && can_use === false` connectors at all; a stored
+reference to one displays the select's placeholder ("Inherit from notebook" / "Select a
+connector…") without mutating the stored value. The "(provisioner — no access)" label survives
+only as a defensive fallback in `connectorOptionLabel`; the "(provisioner)" label stays for
+`can_use === true` ones; "(view only)" behavior for non-provisioners is unchanged. Management
+surfaces (ConnectorsPage, WarehouseSettingsPage, PermissionsPanel, search, favorites) are untouched.
+*(Amended 2026-10-15 per product owner: the selected hidden connector used to stay as one disabled
+option.)*
 
-Tests: hidden when non-executable; allowed provisioner visible with label; selected hidden
-renders disabled with reason; view-only non-provisioner unchanged; ToolsPage select filtered.
+Tests: hidden when non-executable and when it is the stored selection (placeholder shown,
+`value: ''`); allowed provisioner visible with label; view-only non-provisioner unchanged;
+ToolsPage select filtered.
 
 **Commit** — `feat(web): hide non-executable provisioner connectors from execution pickers`
 
@@ -902,7 +907,8 @@ worktree dev stack; specs that need collab config inject `window.__AETHER_CONFIG
 
 1. `agent-browser` pass over: folder page (counters + load more), palette (open, type, keyboard,
    Enter, empty state), top-bar field, `/search` page, favorites toggles + filters,
-   notebook connector picker (provisioner absent; selected provisioner still shown disabled).
+   notebook connector picker (provisioner absent, also when it is the stored selection — the
+   select shows its placeholder).
    Use `agent-browser errors` / `console` to confirm nothing throws.
 2. Run the impeccable detector once over the changed UI:
    `/home/jesus/.config/opencode/skills/impeccable/scripts/impeccable detect --json <changed targets>`;
@@ -944,6 +950,7 @@ worktree dev stack; specs that need collab config inject `window.__AETHER_CONFIG
   see unpublished dashboard titles or SQL; agents/MCP can search with the same guarantees.
 - Favorites work on every catalog surface and filter everywhere specified; revoked resources
   disappear from lists; purged resources leave no rows behind.
-- Non-executable provisioner connectors never appear in an execution picker; an existing
-  selection still renders (disabled) instead of blanking.
+- Non-executable provisioner connectors never appear in an execution picker — including when one
+  is the stored selection (the picker shows its placeholder; the stored reference remains until
+  the user picks another connector).
 - Real-browser validation + detector pass recorded on the PR.

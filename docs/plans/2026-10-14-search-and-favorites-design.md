@@ -62,7 +62,7 @@ Three production reports, all in the "finding things in a big workspace" family:
 | Shortcuts | `Ctrl/Cmd+K` = search palette; agent panel rebinds to `Ctrl/Cmd+J` | Palette on Ctrl+P (search loses the universal chord); dropping the agent chord (loses a habit) |
 | Search affordance | Persistent top-bar search field that opens the overlay (one implementation), `Ctrl/Cmd+K` anywhere | Inline top-bar typing with dropdown (more states, duplicate implementation) |
 | Agent access | In scope: `search_resources` builtin + MCP allowlist entry | Follow-up (user explicitly pulled it into scope) |
-| Provisioner connectors in execution pickers | Hidden when not executable (`is_provisioner && can_use === false`); a currently selected hidden connector stays as one disabled option so nothing blanks | Status quo disabled option "(provisioner — no access)" (the report: why show an unusable choice); hiding every provisioner even when `allow_provisioner_execution` is on (hides a legitimately allowed target); hiding non-provisioner "view only" connectors (their disabled + reason treatment stays) |
+| Provisioner connectors in execution pickers | Hidden when not executable (`is_provisioner && can_use === false`) — never listed, not even for the current selection: the picker falls back to its placeholder and the stored reference stays until the user picks another connector. *(Amended 2026-10-15 per product owner; previously a selected hidden connector stayed as one disabled option so nothing blanked.)* | Status quo disabled option "(provisioner — no access)" (the report: why show an unusable choice); hiding every provisioner even when `allow_provisioner_execution` is on (hides a legitimately allowed target); hiding non-provisioner "view only" connectors (their disabled + reason treatment stays) |
 
 ## Design
 
@@ -343,18 +343,21 @@ CREATE INDEX idx_favorites_user_org ON favorites (user_id, org_id, created_at DE
 A warehouse provisioner is reserved for the reconcile worker. Unless the warehouse sets
 `allow_provisioner_execution` **and** management is enabled, execution through it fails closed
 (`resolveExecutionTarget` → `ErrProvisionerNotExecutable`), and `handleListConnectors` already
-reports exactly that predicate as `can_use: false` (connector_handlers.go:242-244). Today the
-pickers still render it as a disabled option labeled "(provisioner — no access)" — noise, since
-it can never be chosen.
+reports exactly that predicate as `can_use: false` (connector_handlers.go:242-244). The pickers
+used to render it as a disabled option labeled "(provisioner — no access)" — noise, since it can
+never be chosen.
 
 - **Rule**: execution-target pickers hide connectors with `is_provisioner === true && can_use === false`.
   A provisioner with `can_use === true` (admin override on, management enabled) stays, carrying
   today's "(provisioner)" label.
-- **Current-selection exception**: when the current value points at a hidden connector, it
-  renders as a single disabled option with its name and the existing reason label — a cell,
-  widget, or variable query that references a provisioner keeps displaying its target instead of
-  silently blanking; running requires picking another connector.
-- **Shared helper** (`web/src/utils/connectors.ts`, e.g. `executableConnectorOptions(connectors, selectedId)`)
+- **No selection exception** (amended 2026-10-15 per product owner): a hidden connector is never
+  listed — not even as one disabled option for the current selection. The picker falls back to
+  its placeholder ("Select a connector" / "Inherit from notebook" / "Select a connector…") while
+  the stored reference (cell, tool, widget, or variable) remains until the user picks another
+  connector; running still requires picking another connector. The helper takes no selection
+  argument, and `connectorOptionLabel` keeps "(provisioner — no access)" only as a defensive
+  fallback for non-picker callers.
+- **Shared helper** (`web/src/utils/connectors.ts`, `executableConnectorOptions(connectors)`)
   applied to the shared `ConnectorSelector` (notebook header in `NotebookPage`, `DashboardPage`,
   `DashboardEditorPage` picker, `DashboardVariablesPanel` options query, `WidgetConfigDrawer`
   SQL) and to the cell inline select (`Cell.tsx`), plus the `ToolsPage` tool-connector picker —
@@ -391,11 +394,12 @@ it can never be chosen.
   favorites/recents), search page (URL params, chips, favorites filter), `FavoriteButton`
   (optimistic toggle, aria), TopBar field, Files pagination (append + counters), shortcuts
   rebind, highlight helper.
-- **Execution pickers** (Vitest): a non-executable provisioner is hidden; an allowed provisioner
-  (`can_use === true`) stays with its label; a currently selected hidden provisioner renders as
-  a disabled option (select never blanks); non-provisioner "(view only)" options are unchanged.
-  Existing assertions on the old "(provisioner — no access)" option in `Cell.test.tsx` and
-  `ConnectorSelector.test.tsx` update with the behavior.
+- **Execution pickers** (Vitest): a non-executable provisioner is hidden — also when it is the
+  stored selection, in which case the select shows its placeholder (`value: ''`) and the stored
+  reference stays on the resource; an allowed provisioner (`can_use === true`) stays with its
+  label; non-provisioner "(view only)" options are unchanged. The `Cell.test.tsx` and
+  `ConnectorSelector.test.tsx` assertions (and the e2e spec's stored-selection step) cover the
+  selected case.
 - **E2E** (Playwright): `e2e/search.spec.ts` (Ctrl+K palette flow, Ctrl+J still opens the
   agent, `/search` deep link, favorites chip), `e2e/favorites.spec.ts` (toggle on Files +
   Dashboards, filter chip, palette empty state, persists after reload),

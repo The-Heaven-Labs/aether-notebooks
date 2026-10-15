@@ -94,14 +94,15 @@ describe('ConnectorSelector', () => {
     expect(option).toBeEnabled()
   })
 
-  test('keeps a selected non-executable provisioner as a disabled option', async () => {
+  test('a selected non-executable provisioner is not listed and the select shows the placeholder', async () => {
     server.use(
       http.get('/api/v1/connectors', () => HttpResponse.json(provisionerConnectors))
     )
     renderWithQuery(<ConnectorSelector value="conn-prov-blocked" onChange={() => {}} />)
-    const option = await screen.findByRole('option', { name: 'Blocked provisioner (provisioner — no access)' })
-    expect(option).toBeDisabled()
-    // The kept option is what the select displays; it never blanks out.
-    expect(screen.getByRole('combobox')).toHaveValue('conn-prov-blocked')
+    expect(await screen.findByRole('option', { name: 'Service CH' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: /Blocked provisioner/ })).not.toBeInTheDocument()
+    // The stored reference is hidden, so the select falls back to the
+    // placeholder instead of blanking or mismatching.
+    expect(screen.getByRole('combobox')).toHaveValue('')
   })
 })

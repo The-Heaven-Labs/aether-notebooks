@@ -14,7 +14,7 @@ import type { Tool, ToolType } from '../types/agent'
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { HeadersEditor, emptyHeaderRow, headersToRows, rowsToPayload } from '../components/HeadersEditor'
 import type { HeaderRow } from '../components/HeadersEditor'
-import { executableConnectorOptions, isBlockedProvisioner } from '../utils/connectors'
+import { executableConnectorOptions } from '../utils/connectors'
 import type { Connector } from '../types'
 
 interface ParamDef {
@@ -369,6 +369,12 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
   const addParam = () => setForm(f => ({ ...f, parameters: [...f.parameters, { name: '', type: 'string', description: '', required: false }] }))
   const removeParam = (i: number) => setForm(f => ({ ...f, parameters: f.parameters.filter((_, idx) => idx !== i) }))
 
+  const connectorOptions = executableConnectorOptions(connectors)
+  // A stored reference to a hidden connector must not blank or mismatch the
+  // select: fall back to the placeholder (the reference stays in the form
+  // until the user picks another connector).
+  const selectedConnectorVisible = form.connector_id !== '' && connectorOptions.some(c => c.id === form.connector_id)
+
   return (
     <>
       <label style={styles.label}>Name
@@ -415,12 +421,10 @@ function ToolFormFields({ form, setForm, connectors, editing, nameRef }: {
       {form.type === 'sql_query' && (
         <>
           <label style={styles.label}>Connector
-            <select style={styles.input} value={form.connector_id} onChange={setField('connector_id')}>
+            <select style={styles.input} value={selectedConnectorVisible ? form.connector_id : ''} onChange={setField('connector_id')}>
               <option value="">Select a connector…</option>
-              {executableConnectorOptions(connectors, form.connector_id).map(c => (
-                // The current-selection exception can surface one non-executable
-                // provisioner; it stays visible but unpickable so the value shows.
-                <option key={c.id} value={c.id} disabled={isBlockedProvisioner(c)}>
+              {connectorOptions.map(c => (
+                <option key={c.id} value={c.id}>
                   {c.name} ({c.type})
                 </option>
               ))}

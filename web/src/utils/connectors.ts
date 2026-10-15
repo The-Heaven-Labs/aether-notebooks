@@ -17,9 +17,12 @@ export function isBlockedProvisioner(c: Pick<PickerConnector, 'is_provisioner' |
 
 /**
  * Option label for a connector in an execution picker: its name plus the
- * reason suffix — "(provisioner — no access)" when execution is blocked,
- * "(provisioner)" for an allowed provisioner, "(view only)" when the viewer
- * may not run through it, and no suffix otherwise.
+ * reason suffix — "(provisioner)" for an allowed provisioner, "(view only)"
+ * when the viewer may not run through it, and no suffix otherwise.
+ *
+ * "(provisioner — no access)" is a defensive fallback only: execution pickers
+ * never list a blocked provisioner ({@link executableConnectorOptions}), so
+ * the branch is unreachable through them.
  */
 export function connectorOptionLabel(c: Pick<PickerConnector, 'name' | 'is_provisioner' | 'can_use'>): string {
   const suffix = c.is_provisioner === true
@@ -29,13 +32,13 @@ export function connectorOptionLabel(c: Pick<PickerConnector, 'name' | 'is_provi
 }
 
 /**
- * Hides provisioner connectors that cannot execute for the current viewer. A
- * currently-selected hidden connector is kept as a single option so selects
- * never blank out.
+ * Hides provisioner connectors that cannot execute for the current viewer.
+ * A blocked provisioner is never listed — not even when it is the current
+ * selection (callers fall back to their placeholder; the stored reference
+ * remains until the user picks another connector).
  */
 export function executableConnectorOptions<T extends PickerConnector>(
   connectors: T[],
-  selectedId?: string | null,
 ): T[] {
-  return connectors.filter(c => !isBlockedProvisioner(c) || c.id === selectedId)
+  return connectors.filter(c => !isBlockedProvisioner(c))
 }

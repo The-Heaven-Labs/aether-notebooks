@@ -445,9 +445,11 @@ export const Cell = memo(function Cell({
   const sourceVisible = cell.source_visible ?? true
   const outputHidden = cell.outputs_hidden ?? false
   const connector = connectors.find((c) => c.id === cell.connector_id)
-  // Execution pickers hide provisioners that cannot serve this viewer; the
-  // cell's own connector is kept so its selection never blanks out.
-  const executableConnectors = executableConnectorOptions(connectors, cell.connector_id)
+  // Execution pickers never list provisioners that cannot serve this viewer;
+  // a stored reference to one falls back to "Inherit from notebook" instead
+  // of a blank/mismatched select (the reference stays until reassigned).
+  const executableConnectors = executableConnectorOptions(connectors)
+  const selectedConnectorVisible = cell.connector_id != null && executableConnectors.some((c) => c.id === cell.connector_id)
   const chartConfig = useMemo(() => normalizeChartConfig(cell.metadata?.chart), [cell.metadata?.chart])
   const handleChartConfigChange = useCallback(
     (cfg: ChartConfig) => onChartConfigChange?.(cell.id, cfg),
@@ -542,7 +544,7 @@ export const Cell = memo(function Cell({
               <select
                 aria-label="Connector"
                 style={styles.connectorSelect}
-                value={cell.connector_id ?? ''}
+                value={selectedConnectorVisible ? cell.connector_id ?? '' : ''}
                 onChange={(e) => {
                   if (e.target.value === '') onClearConnector?.(cell.id)
                   else onAssignConnector(cell.id, e.target.value)
