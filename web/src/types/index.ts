@@ -473,6 +473,48 @@ export interface FolderContents {
   has_more?: Partial<Record<FolderSectionName, boolean>>
 }
 
+/**
+ * Catalog resource types that can be favorited, in the API's canonical group
+ * order (folder → … → tool). Mirrors the backend's `favoriteResourceTypes`.
+ */
+export type FavoriteResourceType =
+  | 'folder'
+  | 'notebook'
+  | 'dashboard'
+  | 'connector'
+  | 'agent'
+  | 'model_config'
+  | 'skill'
+  | 'mcp_server'
+  | 'tool'
+
+/** One favorites-listing row (mirrors the API's `resourceSummary`). */
+export interface FavoriteResult {
+  id: string
+  resource_type: FavoriteResourceType
+  title: string
+  subtitle: string
+  /** Content-search context; favorites listings omit it. */
+  snippet?: string
+  folder_id?: string
+  /** Resolved folder path; absent for root-level resources. */
+  folder_path?: string
+  updated_at: string
+  is_favorite: boolean
+  can_edit: boolean
+}
+
+/** Favorites grouped by resource type; the API omits empty groups. */
+export interface FavoriteGroup {
+  resource_type: FavoriteResourceType
+  results: FavoriteResult[]
+}
+
+/** `GET /api/v1/favorites` payload, newest first within each group. */
+export interface FavoritesResponse {
+  groups: FavoriteGroup[]
+}
+
 export interface Group {
   id: string
   org_id: string

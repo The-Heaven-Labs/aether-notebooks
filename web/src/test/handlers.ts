@@ -1,5 +1,6 @@
 import { http, HttpResponse } from 'msw'
-import type { Folder, FolderContents } from '../types'
+import { FAVORITE_RESOURCE_TYPES } from '../hooks/useFavorites'
+import type { FavoriteResourceType, FavoriteResult, Folder, FolderContents } from '../types'
 
 // ── Shared fixtures ──────────────────────────────────────────────────────────
 
@@ -214,6 +215,12 @@ export const handlers = [
     )
   }),
 
+  // Favorites: an empty listing by default; toggles are idempotent no-ops.
+  // Tests that toggle use `favoritesFixture()` so GET agrees with PUT/DELETE.
+  http.get('/api/v1/favorites', () => HttpResponse.json({ groups: [] })),
+  http.put('/api/v1/favorites/:type/:id', () => new HttpResponse(null, { status: 204 })),
+  http.delete('/api/v1/favorites/:type/:id', () => new HttpResponse(null, { status: 204 })),
+
   // Recent
   http.get('/api/v1/recent', () => HttpResponse.json([
     { id: 'nb-1', type: 'notebook', name: 'Root Notebook', updated_at: '2026-01-01T00:00:00Z' },
@@ -296,3 +303,62 @@ export const handlers = [
     }),
   ),
 ]
+
+// ── Favorites test API ───────────────────────────────────────────────────────
+
+/** Minimal favorites-listing row for one resource id. */
+export function favoriteSummary(resourceType: FavoriteResourceType, id: string): FavoriteResult {
+  return {
+    id,
+    resource_type: resourceType,
+    title: id,
+    subtitle: '',
+    updated_at: '2026-01-01T00:00:00Z',
+    is_favorite: true,
+    can_edit: true,
+  }
+}
+
+/**
+ * Stateful favorites API for tests: GET reflects the ids PUT/DELETE stored, so
+ * a toggle's post-success invalidation refetch agrees with the request that
+ * preceded it (the stateless defaults above would flap an optimistic state
+ * back). Build one per test and register it with
+ * `server.use(...fixture.handlers)`.
+ */
+export function favoritesFixture(initial: Array<{ type: FavoriteResourceType; id: string }> = []) {
+  const held = new Map<FavoriteResourceType, Set<string>>()
+  const hold = (type: FavoriteResourceType, id: string) => {
+    let set = held.get(type)
+    if (!set) {
+      set = new Set()
+      held.set(type, set)
+    }
+    set.add(id)
+  }
+  for (const { type, id } of initial) hold(type, id)
+
+  const counts = { gets: 0 }
+  const handlers = [
+    http.get('/api/v1/favorites', () => {
+      counts.gets += 1
+      const groups = FAVORITE_RESOURCE_TYPES
+        .filter((type) => (held.get(type)?.size ?? 0) > 0)
+        .map((type) => ({
+          resource_type: type,
+          results: [...(held.get(type) ?? [])].map((id) => favoriteSummary(type, id)),
+        }))
+      return HttpResponse.json({ groups })
+    }),
+    http.put('/api/v1/favorites/:type/:id', ({ params }) => {
+      hold(params.type as FavoriteResourceType, params.id as string)
+      return new HttpResponse(null, { status: 204 })
+    }),
+    http.delete('/api/v1/favorites/:type/:id', ({ params }) => {
+      held.get(params.type as FavoriteResourceType)?.delete(params.id as string)
+      return new HttpResponse(null, { status: 204 })
+    }),
+  ]
+
+  return { handlers, counts, held, hold }
+}
