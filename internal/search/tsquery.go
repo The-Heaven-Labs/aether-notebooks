@@ -19,6 +19,12 @@ const maxTSQueryInputBytes = 256
 // a quoted run such as 'order_items':* still matches text containing that
 // identifier.
 //
+// Phrase nuance: a quoted underscored run parses on the query side as an
+// adjacency phrase — 'order_items':* becomes 'order':* <-> 'items':* — so the
+// query "order_items" matches document text "order items" adjacent in that
+// order, but not the reversed "items order". A space-separated query
+// ("order items") becomes a non-adjacent ' & ' AND that matches either order.
+//
 // No escaping is needed after the split: emitted tokens contain only ASCII
 // letters, digits, and underscores, and the single quotes delimit the whole
 // lexeme.

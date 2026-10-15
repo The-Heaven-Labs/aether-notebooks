@@ -7,28 +7,36 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// Content types the PostgreSQL implementation supports. Anything else a
-// caller requests is skipped (a future backend may serve more types).
-const (
-	notebookType  = "notebook"
-	dashboardType = "dashboard"
-)
-
 const (
 	// defaultLimitPerType applies when the caller passes <= 0; maxLimitPerType
 	// clamps anything above it so one search can never fan out unbounded.
 	defaultLimitPerType = 50
 	maxLimitPerType     = 200
 
-	// fetchLimitFactor over-fetches per type so de-duplication (several cells
-	// of the same notebook matching) still leaves up to limitPerType
-	// resources, while the SQL never loads an unbounded row set.
-	fetchLimitFactor = 5
+	// The SQL window is resource-level (the picked CTE collapses each resource
+	// to one row before the outer LIMIT): max(fetchLimitFactor×limit,
+	// minFetchLimitPerType), clamped to maxLimitPerType. The factor follows
+	// the design's max(4×limit, 50) spirit — it leaves the slice step
+	// something to cut — and the floor keeps a small caller limit from
+	// shrinking the window into a starvation trap.
+	fetchLimitFactor     = 5
+	minFetchLimitPerType = 50
 )
 
-// The content queries spell the GIN-index expression exactly —
-// to_tsvector('simple', <column>) @@ to_tsquery('simple', $2) — so the
-// planner can use idx_cells_source_fts / idx_widgets_query_fts (V135).
+// The @@ predicates spell the V135 GIN expression indexes exactly —
+// to_tsvector('simple', <column>) @@ to_tsquery('simple', $2) — which keeps
+// identifier-like terms at index speeds (milliseconds). Latency is still
+// data-dependent: a high-frequency term can flip the planner to a scan that
+// re-evaluates to_tsvector per row (measured ~134ms over 42k cells, scaling
+// with the org's content), so callers should encourage refining the query.
+//
+// The picked CTE de-duplicates per resource in SQL, and the outer query
+// computes ts_headline only for the one picked row of each resource. Keeping
+// ts_headline outside the CTE is deliberate: inside the DISTINCT ON subquery
+// the planner evaluates it for every matched cell (verified with EXPLAIN),
+// which is exactly the work the pick exists to avoid. Within a resource the
+// pick is deterministic — the topmost cell (c.position, unique per notebook)
+// and the oldest widget (w.created_at then w.id; widgets have no position).
 //
 // The ts_headline option string uses the quoted-empty form
 // (StartSel="", StopSel=""): Postgres rejects an unquoted empty option value
@@ -36,25 +44,37 @@ const (
 // form, so this is the supported way to ask for marker-free snippets. The
 // snippet is plain text; the client does the highlighting.
 const notebookContentSQL = `
-	SELECT c.notebook_id::text,
+	WITH picked AS (
+	    SELECT DISTINCT ON (c.notebook_id) c.id AS cell_id, c.notebook_id, n.updated_at
+	    FROM cells c
+	    JOIN notebooks n ON n.id = c.notebook_id
+	    WHERE n.org_id = $1 AND n.deleted_at IS NULL AND c.source <> ''
+	      AND to_tsvector('simple', c.source) @@ to_tsquery('simple', $2)
+	    ORDER BY c.notebook_id, n.updated_at DESC, c.position
+	)
+	SELECT p.notebook_id::text,
 	       ts_headline('simple', c.source, to_tsquery('simple', $2),
 	                   'MaxWords=24, MinWords=8, ShortWord=2, StartSel="", StopSel=""')
-	FROM cells c
-	JOIN notebooks n ON n.id = c.notebook_id
-	WHERE n.org_id = $1 AND n.deleted_at IS NULL AND c.source <> ''
-	  AND to_tsvector('simple', c.source) @@ to_tsquery('simple', $2)
-	ORDER BY n.updated_at DESC
+	FROM picked p
+	JOIN cells c ON c.id = p.cell_id
+	ORDER BY p.updated_at DESC
 	LIMIT $3`
 
 const dashboardContentSQL = `
-	SELECT w.dashboard_id::text,
+	WITH picked AS (
+	    SELECT DISTINCT ON (w.dashboard_id) w.id AS widget_id, w.dashboard_id, d.updated_at
+	    FROM widgets w
+	    JOIN dashboards d ON d.id = w.dashboard_id
+	    WHERE d.org_id = $1 AND d.deleted_at IS NULL AND w.query IS NOT NULL AND w.query <> ''
+	      AND to_tsvector('simple', w.query) @@ to_tsquery('simple', $2)
+	    ORDER BY w.dashboard_id, d.updated_at DESC, w.created_at, w.id
+	)
+	SELECT p.dashboard_id::text,
 	       ts_headline('simple', w.query, to_tsquery('simple', $2),
 	                   'MaxWords=24, MinWords=8, ShortWord=2, StartSel="", StopSel=""')
-	FROM widgets w
-	JOIN dashboards d ON d.id = w.dashboard_id
-	WHERE d.org_id = $1 AND d.deleted_at IS NULL AND w.query IS NOT NULL AND w.query <> ''
-	  AND to_tsvector('simple', w.query) @@ to_tsquery('simple', $2)
-	ORDER BY d.updated_at DESC
+	FROM picked p
+	JOIN widgets w ON w.id = p.widget_id
+	ORDER BY p.updated_at DESC
 	LIMIT $3`
 
 // PGSearcher implements Searcher with PostgreSQL core full-text search over
@@ -69,10 +89,11 @@ func NewPGSearcher(pool *pgxpool.Pool) *PGSearcher {
 }
 
 // ContentMatches runs one bounded FTS query per supported requested type and
-// returns the matching resources with plain-text snippets. The map holds an
-// entry only for supported, requested types that produced hits. An empty
-// tsquery (punctuation-only, CJK-only, whitespace-only input) short-circuits
-// without touching the database.
+// returns the matching resources with plain-text snippets. Results are
+// org-scoped but not ACL-filtered — callers apply view/edit policy (see
+// Searcher). The map holds an entry only for supported, requested types that
+// produced hits. An empty tsquery (punctuation-only, CJK-only,
+// whitespace-only input) short-circuits without touching the database.
 func (s *PGSearcher) ContentMatches(ctx context.Context, orgID string, types []string, query string, limitPerType int) (map[string][]ContentHit, error) {
 	hits := make(map[string][]ContentHit)
 
@@ -96,12 +117,12 @@ func (s *PGSearcher) ContentMatches(ctx context.Context, orgID string, types []s
 			err     error
 		)
 		switch resourceType {
-		case notebookType:
+		case TypeNotebook:
 			results, err = s.contentMatches(ctx, notebookContentSQL, orgID, tsquery, fetch, limit)
 			if err != nil {
 				return nil, fmt.Errorf("search notebook content: %w", err)
 			}
-		case dashboardType:
+		case TypeDashboard:
 			results, err = s.contentMatches(ctx, dashboardContentSQL, orgID, tsquery, fetch, limit)
 			if err != nil {
 				return nil, fmt.Errorf("search dashboard content: %w", err)
@@ -116,9 +137,11 @@ func (s *PGSearcher) ContentMatches(ctx context.Context, orgID string, types []s
 	return hits, nil
 }
 
-// contentMatches runs one content query and collapses the raw cell/widget rows
-// into per-resource hits: the first row for a resource wins, result order is
-// preserved, and the list is sliced to limit after de-duplication.
+// contentMatches runs one content query and scans the per-resource rows. The
+// SQL already collapses each resource to one row (DISTINCT ON in the picked
+// CTE); the in-loop de-duplication stays as a cheap safety net so a query
+// shape regression can never surface duplicate resources to callers. Result
+// order is preserved and the list is sliced to limit.
 func (s *PGSearcher) contentMatches(ctx context.Context, sql, orgID, tsquery string, fetch, limit int) ([]ContentHit, error) {
 	rows, err := s.pool.Query(ctx, sql, orgID, tsquery, fetch)
 	if err != nil {
@@ -160,10 +183,15 @@ func clampLimitPerType(limit int) int {
 	return limit
 }
 
-// fetchLimitPerType is the SQL LIMIT: room for de-duplication (several cells
-// of one notebook can match) while still bounded by maxLimitPerType.
+// fetchLimitPerType is the resource-level SQL window:
+// clamp(max(5×limit, 50), 50, 200). The floor keeps small caller limits from
+// starving the result set, the factor leaves the slice step headroom, and the
+// ceiling bounds the work one search can trigger.
 func fetchLimitPerType(limit int) int {
 	fetch := limit * fetchLimitFactor
+	if fetch < minFetchLimitPerType {
+		fetch = minFetchLimitPerType
+	}
 	if fetch > maxLimitPerType {
 		fetch = maxLimitPerType
 	}

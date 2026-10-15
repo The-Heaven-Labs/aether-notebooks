@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/google/uuid"
@@ -109,6 +110,30 @@ func seedSearchDashboard(t *testing.T, pool *pgxpool.Pool, orgID, userID string,
 		require.NoError(t, err)
 	}
 	return dashboardID
+}
+
+// setNotebookUpdatedAt backdates a seeded notebook so ordering and truncation
+// tests have distinct updated_at values.
+func setNotebookUpdatedAt(t *testing.T, pool *pgxpool.Pool, id string, at time.Time) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `UPDATE notebooks SET updated_at = $2 WHERE id = $1`, id, at)
+	require.NoError(t, err)
+}
+
+// setDashboardUpdatedAt is the dashboard counterpart of setNotebookUpdatedAt.
+func setDashboardUpdatedAt(t *testing.T, pool *pgxpool.Pool, id string, at time.Time) {
+	t.Helper()
+	_, err := pool.Exec(context.Background(), `UPDATE dashboards SET updated_at = $2 WHERE id = $1`, id, at)
+	require.NoError(t, err)
+}
+
+// contentHitIDs lists the resource ids of a hit slice in order.
+func contentHitIDs(hits []ContentHit) []string {
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ResourceID)
+	}
+	return ids
 }
 
 func TestPGSearcherNotebookContent(t *testing.T) {
@@ -273,13 +298,18 @@ func TestPGSearcherLimitPerType(t *testing.T) {
 	pool := setupSearchTestDB(t)
 	ctx := context.Background()
 
-	// Clamp/default behavior is pure math, asserted directly.
+	// Clamp/default behavior and the resource-level fetch window are pure
+	// math, asserted directly: clamp(max(5×limit, 50), 50, 200).
 	require.Equal(t, defaultLimitPerType, clampLimitPerType(0))
 	require.Equal(t, defaultLimitPerType, clampLimitPerType(-3))
 	require.Equal(t, 7, clampLimitPerType(7))
 	require.Equal(t, maxLimitPerType, clampLimitPerType(10_000))
-	require.Equal(t, 10, fetchLimitPerType(2))
+	require.Equal(t, 50, fetchLimitPerType(1))
+	require.Equal(t, 50, fetchLimitPerType(2))
+	require.Equal(t, 75, fetchLimitPerType(15))
+	require.Equal(t, 200, fetchLimitPerType(50))
 	require.Equal(t, maxLimitPerType, fetchLimitPerType(maxLimitPerType))
+	require.Equal(t, 200, fetchLimitPerType(10_000))
 
 	searcher := NewPGSearcher(pool)
 	org, user := seedSearchOrg(t, pool, "PGSearcher Limit")
@@ -289,8 +319,9 @@ func TestPGSearcherLimitPerType(t *testing.T) {
 			"SELECT revenue FROM invoices")
 	}
 
-	// Six matching cells across three notebooks: fetch (10) covers them all,
-	// dedupe leaves three, and the slice to 2 is applied last.
+	// Six matching cells across three notebooks: the window (50) covers them
+	// all, de-duplication in SQL leaves three, and the slice to 2 is applied
+	// last.
 	hits, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, "revenue", 2)
 	require.NoError(t, err)
 	require.Len(t, hits["notebook"], 2)
@@ -378,4 +409,173 @@ func TestPGSearcherSnippetIsBoundedAndPlain(t *testing.T) {
 	for _, marker := range []string{"<b>", "</b>", "«", "»", "StartSel", "StopSel"} {
 		require.NotContains(t, snippet, marker, "snippet must be plain text")
 	}
+}
+
+// TestPGSearcherStarvationRegression reproduces the review finding: with a
+// cell-level fetch window, one notebook whose 250 matching cells filled the
+// window starved every other notebook out of the result. De-duplication now
+// happens per resource in SQL, so both notebooks survive even at limit 2.
+func TestPGSearcherStarvationRegression(t *testing.T) {
+	pool := setupSearchTestDB(t)
+	searcher := NewPGSearcher(pool)
+	ctx := context.Background()
+
+	org, user := seedSearchOrg(t, pool, "PGSearcher Starvation")
+
+	sources := make([]string, 0, 250)
+	for i := 0; i < 250; i++ {
+		sources = append(sources, fmt.Sprintf("SELECT revenue FROM orders_%d", i))
+	}
+	light := seedSearchNotebook(t, pool, org, user, "Light notebook", "SELECT revenue FROM orders")
+	heavy := seedSearchNotebook(t, pool, org, user, "Heavy notebook", sources...)
+
+	// Make the heavy notebook the newer one on purpose: a cell-level window
+	// ordered by notebook updated_at would be filled entirely by its 250
+	// matching cells and drop every other notebook.
+	base := time.Now()
+	setNotebookUpdatedAt(t, pool, light, base.Add(-2*time.Hour))
+	setNotebookUpdatedAt(t, pool, heavy, base.Add(-1*time.Hour))
+
+	hits, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, "revenue", 2)
+	require.NoError(t, err)
+	require.Len(t, hits["notebook"], 2, "both notebooks must survive a small limit")
+	require.ElementsMatch(t, []string{heavy, light}, contentHitIDs(hits["notebook"]))
+}
+
+func TestPGSearcherOrderingNewestFirst(t *testing.T) {
+	pool := setupSearchTestDB(t)
+	searcher := NewPGSearcher(pool)
+	ctx := context.Background()
+
+	org, user := seedSearchOrg(t, pool, "PGSearcher Ordering")
+	base := time.Now()
+
+	oldestNB := seedSearchNotebook(t, pool, org, user, "Oldest notebook", "SELECT revenue FROM orders")
+	middleNB := seedSearchNotebook(t, pool, org, user, "Middle notebook", "SELECT revenue FROM orders")
+	newestNB := seedSearchNotebook(t, pool, org, user, "Newest notebook", "SELECT revenue FROM orders")
+	setNotebookUpdatedAt(t, pool, oldestNB, base.Add(-3*time.Hour))
+	setNotebookUpdatedAt(t, pool, middleNB, base.Add(-2*time.Hour))
+	setNotebookUpdatedAt(t, pool, newestNB, base.Add(-1*time.Hour))
+
+	hits, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, "revenue", 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{newestNB, middleNB, oldestNB}, contentHitIDs(hits["notebook"]),
+		"notebook hits must be newest-first by notebooks.updated_at")
+
+	oldestD := seedSearchDashboard(t, pool, org, user, "SELECT sum(amount) FROM payments")
+	middleD := seedSearchDashboard(t, pool, org, user, "SELECT sum(amount) FROM payments")
+	newestD := seedSearchDashboard(t, pool, org, user, "SELECT sum(amount) FROM payments")
+	setDashboardUpdatedAt(t, pool, oldestD, base.Add(-3*time.Hour))
+	setDashboardUpdatedAt(t, pool, middleD, base.Add(-2*time.Hour))
+	setDashboardUpdatedAt(t, pool, newestD, base.Add(-1*time.Hour))
+
+	hits, err = searcher.ContentMatches(ctx, org, []string{"dashboard"}, "amount", 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{newestD, middleD, oldestD}, contentHitIDs(hits["dashboard"]),
+		"dashboard hits must be newest-first by dashboards.updated_at")
+}
+
+func TestPGSearcherTruncationSurvivorship(t *testing.T) {
+	pool := setupSearchTestDB(t)
+	searcher := NewPGSearcher(pool)
+	ctx := context.Background()
+
+	org, user := seedSearchOrg(t, pool, "PGSearcher Truncation")
+	base := time.Now()
+
+	// 60 matching resources with distinct updated_at. The window for limit 1
+	// is 50, and the window for the cap is 200 (all 60).
+	ids := make([]string, 60)
+	for i := range ids {
+		ids[i] = seedSearchNotebook(t, pool, org, user, fmt.Sprintf("Trunc notebook %d", i), "SELECT revenue FROM orders")
+		setNotebookUpdatedAt(t, pool, ids[i], base.Add(-time.Duration(i)*time.Minute))
+	}
+
+	hits, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, "revenue", 1)
+	require.NoError(t, err)
+	require.Len(t, hits["notebook"], 1)
+	require.Equal(t, ids[0], hits["notebook"][0].ResourceID, "the newest resource must survive the cut")
+	require.NotEqual(t, ids[len(ids)-1], hits["notebook"][0].ResourceID)
+
+	hits, err = searcher.ContentMatches(ctx, org, []string{"notebook"}, "revenue", maxLimitPerType)
+	require.NoError(t, err)
+	require.Len(t, hits["notebook"], len(ids))
+}
+
+// TestPGSearcherSnippetComesFromTopmostCell pins the deterministic pick: the
+// SQL orders the DISTINCT ON pick by c.position, so the earlier-positioned
+// matching cell supplies the snippet every time.
+func TestPGSearcherSnippetComesFromTopmostCell(t *testing.T) {
+	pool := setupSearchTestDB(t)
+	searcher := NewPGSearcher(pool)
+	ctx := context.Background()
+
+	org, user := seedSearchOrg(t, pool, "PGSearcher Snippet Pick")
+	notebookID := seedSearchNotebook(t, pool, org, user, "Two matching cells",
+		"SELECT revenue_alpha FROM orders",
+		"SELECT revenue_beta FROM orders")
+
+	hits, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, "revenue", 0)
+	require.NoError(t, err)
+	require.Len(t, hits["notebook"], 1)
+	require.Equal(t, notebookID, hits["notebook"][0].ResourceID)
+	snippet := hits["notebook"][0].Snippet
+	require.Contains(t, snippet, "revenue_alpha", "the topmost (lowest position) matching cell must win")
+	require.NotContains(t, snippet, "revenue_beta")
+
+	// Repeated calls pick the same cell.
+	for i := 0; i < 3; i++ {
+		again, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, "revenue", 0)
+		require.NoError(t, err)
+		require.Len(t, again["notebook"], 1)
+		require.Equal(t, snippet, again["notebook"][0].Snippet, "the snippet must be stable across calls")
+	}
+}
+
+// TestPGSearcherUnderscoredTokenIsAPhrase pins the documented query-side
+// phrase behavior: 'order_items':* parses as 'order':* <-> 'items':*, matching
+// adjacent "order items" in that order but not reversed "items order"; a
+// space-separated query becomes a non-adjacent AND.
+func TestPGSearcherUnderscoredTokenIsAPhrase(t *testing.T) {
+	pool := setupSearchTestDB(t)
+	searcher := NewPGSearcher(pool)
+	ctx := context.Background()
+
+	org, user := seedSearchOrg(t, pool, "PGSearcher Phrase")
+	adjacent := seedSearchNotebook(t, pool, org, user, "Adjacent", "SELECT order items FROM t")
+	reversed := seedSearchNotebook(t, pool, org, user, "Reversed", "SELECT items order FROM t")
+
+	hits, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, "order_items", 0)
+	require.NoError(t, err)
+	require.Len(t, hits["notebook"], 1)
+	require.Equal(t, adjacent, hits["notebook"][0].ResourceID,
+		"the whole spelled identifier must only match the adjacent occurrence")
+
+	for _, q := range []string{"order items", "items order"} {
+		hits, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, q, 0)
+		require.NoError(t, err, "query %q", q)
+		require.ElementsMatch(t, []string{adjacent, reversed}, contentHitIDs(hits["notebook"]),
+			"query %q must match both orders (non-adjacent AND)", q)
+	}
+}
+
+func TestPGSearcherEmptySourceNeverMatches(t *testing.T) {
+	pool := setupSearchTestDB(t)
+	searcher := NewPGSearcher(pool)
+	ctx := context.Background()
+
+	org, user := seedSearchOrg(t, pool, "PGSearcher Empty Source")
+	empty := seedSearchNotebook(t, pool, org, user, "Empty cell notebook", "")
+	withMatch := seedSearchNotebook(t, pool, org, user, "Matching notebook", "SELECT revenue FROM orders")
+
+	hits, err := searcher.ContentMatches(ctx, org, []string{"notebook"}, "revenue", 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{withMatch}, contentHitIDs(hits["notebook"]))
+
+	// An empty source contributes no lexemes, so even "select" (present in
+	// the matching notebook) never surfaces it.
+	hits, err = searcher.ContentMatches(ctx, org, []string{"notebook"}, "select", 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{withMatch}, contentHitIDs(hits["notebook"]))
+	require.NotContains(t, contentHitIDs(hits["notebook"]), empty)
 }
