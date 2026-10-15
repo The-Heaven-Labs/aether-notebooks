@@ -531,6 +531,46 @@ describe('TableOutput selection & TSV copy', () => {
     document.dispatchEvent(event)
     expect(calls).toEqual(['b1\nb2'])
   })
+
+  it('blurs the active cell editor on mousedown so the table owns focus', async () => {
+    const { container } = await renderTable('cell-sel-focus')
+
+    const editor = document.createElement('div')
+    editor.className = 'cm-editor'
+    const focusable = document.createElement('div')
+    focusable.tabIndex = 0
+    editor.appendChild(focusable)
+    document.body.appendChild(editor)
+    focusable.focus()
+    expect(document.activeElement?.closest('.cm-editor')).toBe(editor)
+
+    fireEvent.mouseDown(cell(container, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    expect(document.activeElement?.closest('.cm-editor')).toBeNull()
+
+    document.body.removeChild(editor)
+  })
+
+  it('copies the TSV selection after the editor loses focus', async () => {
+    const { container } = await renderTable('cell-sel-copy-after-blur')
+
+    const editor = document.createElement('div')
+    editor.className = 'cm-editor'
+    const focusable = document.createElement('div')
+    focusable.tabIndex = 0
+    editor.appendChild(focusable)
+    document.body.appendChild(editor)
+    focusable.focus()
+
+    fireEvent.mouseDown(cell(container, 0, 0), { button: 0, clientX: 10, clientY: 10 })
+    fireEvent.mouseMove(cell(container, 0, 2), { clientX: 300, clientY: 10 })
+    fireEvent.mouseUp(window)
+
+    const { event, data } = dispatchCopy()
+    expect(event.defaultPrevented).toBe(true)
+    expect(data['text/plain']).toBe('1\ta\t')
+
+    document.body.removeChild(editor)
+  })
 })
 
 // ── Column resizing ──────────────────────────────────────────────────────────

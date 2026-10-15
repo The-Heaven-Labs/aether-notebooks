@@ -28,3 +28,16 @@
   - `cd web && npx tsc --noEmit` → clean
 - Notes: Added `testWarehouseProvisioner` API helper, a `Test provisioner` button under the provisioner select, and per-card result state that is cleared on provisioner change. Existing `WarehouseSettingsPage.test.tsx` tests were preserved and extended with a new `provisioner test button` describe block.
 - Review pass (changes requested): fixed error formatting so the first failed step name is always shown when present; added a stale-guard that tags each test run with the provisioner id it started against and drops results whose tag no longer matches; added regression tests for both findings.
+
+## Task 3: Copy table selections while a cell editor keeps focus — 2026-10-15
+
+- Outcome: done
+- Changed:
+  - Created: none
+  - Modified: `web/src/components/OutputRenderer.tsx`, `web/src/test/OutputRenderer.test.tsx`
+  - Deleted: none
+- Verified:
+  - `cd web && npx vitest run src/test/OutputRenderer.test.tsx` → pass
+  - `cd web && npm run test:run` → pass (1487 passed, 2 skipped)
+  - `cd web && npx tsc --noEmit` → clean
+- Notes: Added a `cm-editor` focus blur at the start of `beginCellSelection`; the existing copy/keydown guards remain intact so real editor copies are still protected. New tests verify that mousedown on a data cell blurs the active editor and that the subsequent document copy event writes the TSV selection.

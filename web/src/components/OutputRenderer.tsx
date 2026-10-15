@@ -568,6 +568,11 @@ const TableOutput = memo(function TableOutput({ rs, fixedView, cellId, chartConf
 
   const beginCellSelection = useCallback((e: React.MouseEvent, row: number, col: number) => {
     if (e.button !== 0) return
+    // If a CodeMirror cell editor currently owns focus, blur it so this mousedown
+    // moves focus to the output and the document-level copy handler can route
+    // Ctrl/Cmd+C to the table selection instead of the editor's current line.
+    const active = document.activeElement as HTMLElement | null
+    if (active?.closest('.cm-editor')) active.blur()
     // Suppress native text selection while dragging; click still fires.
     e.preventDefault()
     const anchor = e.shiftKey && selection ? selection.anchor : { row, col }
