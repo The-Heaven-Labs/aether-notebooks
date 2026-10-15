@@ -619,3 +619,359 @@ func TestFolderRootContentsPagination(t *testing.T) {
 	status, body = f.get(t, "/api/v1/folders?limit=abc")
 	require.Equal(t, http.StatusBadRequest, status, string(body))
 }
+
+// ——— Task B2: folder section load-more endpoints ———
+
+// sectionPage is the load-more envelope decoded for the row-shape tests.
+type sectionPage struct {
+	Items   []folderRow `json:"items"`
+	Total   int         `json:"total"`
+	HasMore bool        `json:"has_more"`
+	Offset  int         `json:"offset"`
+}
+
+// getSectionPage fetches one load-more page and requires a 200.
+func (f *folderBatchFixture) getSectionPage(t *testing.T, path string) sectionPage {
+	t.Helper()
+	status, body := f.get(t, path)
+	require.Equal(t, http.StatusOK, status, string(body))
+	var page sectionPage
+	require.NoError(t, json.Unmarshal(body, &page))
+	return page
+}
+
+// orderedVisibleIDs reads a section's notebook ids in the section's display
+// order (updated_at DESC, id::text) straight from the database and keeps the
+// visible ones, so a walk expectation cannot drift from the handler's ORDER
+// BY. folderID nil selects the root section.
+func orderedVisibleIDs(t *testing.T, f *folderBatchFixture, folderID *string, visible map[string]bool) []string {
+	t.Helper()
+	query := `SELECT id::text FROM notebooks
+		 WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL
+		 ORDER BY updated_at DESC, id::text`
+	args := []any{f.orgID}
+	if folderID != nil {
+		query = `SELECT id::text FROM notebooks
+		 WHERE org_id = $1 AND folder_id = $2 AND deleted_at IS NULL
+		 ORDER BY updated_at DESC, id::text`
+		args = append(args, *folderID)
+	}
+	rows, err := f.srv.DB().Pool.Query(context.Background(), query, args...)
+	require.NoError(t, err)
+	defer rows.Close()
+	expected := make([]string, 0, len(visible))
+	for rows.Next() {
+		var id string
+		require.NoError(t, rows.Scan(&id))
+		if visible[id] {
+			expected = append(expected, id)
+		}
+	}
+	require.NoError(t, rows.Err())
+	return expected
+}
+
+// walkSection pages through a load-more section (via the path closure) until
+// has_more is false, asserting the per-page contract on the way, and returns
+// the union of every page's ids. It fails instead of looping when a page
+// reports has_more without carrying items.
+func walkSection(t *testing.T, f *folderBatchFixture, path func(offset int) string, wantTotal, limit int) []string {
+	t.Helper()
+	offset := 0
+	pages := 0
+	var got []string
+	for {
+		pages++
+		require.Less(t, pages, 20, "paging must terminate")
+		page := f.getSectionPage(t, path(offset))
+		require.Equal(t, wantTotal, page.Total, "every page reports the exact visible total")
+		require.Equal(t, offset, page.Offset, "the response echoes the requested offset")
+		require.LessOrEqual(t, len(page.Items), limit, "a page never exceeds the requested limit")
+		got = append(got, rowIDs(page.Items)...)
+		if !page.HasMore {
+			break
+		}
+		require.NotEmpty(t, page.Items, "a page reporting has_more must carry items")
+		offset += len(page.Items)
+	}
+	return got
+}
+
+// TestFolderContentsSectionWalk walks every load-more page of a folder
+// notebook section whose visible rows are interleaved with hidden ones,
+// asserting the exact visible total on every page, the echoed offset, the
+// stable (updated_at DESC, id) order across page boundaries, and that the
+// union covers each visible row exactly once with no skips or duplicates.
+func TestFolderContentsSectionWalk(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	// No folder ACL on purpose: a folder view grant is inherited by every
+	// notebook inside and would unhide the interleaved rows. The folder is
+	// reached through its visible descendant content instead.
+	folderID := f.insertFolder(t, "section walk", nil, f.otherUserID)
+
+	visible := make(map[string]bool, 11)
+	hidden := make([]string, 0, 6)
+	for i := 0; i < 17; i++ {
+		id := f.insertNotebook(t, fmt.Sprintf("section walk notebook %02d", i), &folderID, f.otherUserID)
+		if i%3 == 0 {
+			hidden = append(hidden, id)
+			continue
+		}
+		f.grant(t, "notebook", id, []string{"view"})
+		visible[id] = true
+	}
+	require.Len(t, visible, 11, "17 rows with every third hidden leave 11 visible")
+
+	expected := orderedVisibleIDs(t, f, &folderID, visible)
+
+	var offsets []int
+	got := walkSection(t, f, func(offset int) string {
+		offsets = append(offsets, offset)
+		return fmt.Sprintf("/api/v1/folders/%s/contents?type=notebook&offset=%d&limit=5", folderID, offset)
+	}, 11, 5)
+
+	require.Equal(t, []int{0, 5, 10}, offsets, "11 visible rows at 5 per page need exactly three pages")
+	require.Equal(t, expected, got, "the walk must cover every visible row exactly once in stable order")
+	for _, id := range hidden {
+		require.NotContains(t, got, id, "a hidden row must never surface on any page")
+	}
+
+	// An offset at (and past) the visible total is a legitimate empty page:
+	// present JSON array, exact total, has_more false, offset echoed.
+	status, body := f.get(t, fmt.Sprintf("/api/v1/folders/%s/contents?type=notebook&offset=11&limit=5", folderID))
+	require.Equal(t, http.StatusOK, status, string(body))
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.JSONEq(t, "[]", string(raw["items"]), "an empty page must serialize items as []")
+	require.JSONEq(t, "11", string(raw["total"]))
+	require.JSONEq(t, "false", string(raw["has_more"]))
+	require.JSONEq(t, "11", string(raw["offset"]))
+}
+
+// TestFolderRootSectionWalk walks every load-more page of the root notebook
+// section: the same hidden-interleave guarantees as the folder variant, plus
+// an in-folder notebook that must never appear in a root section.
+func TestFolderRootSectionWalk(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	visible := make(map[string]bool, 11)
+	hidden := make([]string, 0, 6)
+	for i := 0; i < 17; i++ {
+		id := f.insertNotebook(t, fmt.Sprintf("root section walk notebook %02d", i), nil, f.otherUserID)
+		if i%3 == 0 {
+			hidden = append(hidden, id)
+			continue
+		}
+		f.grant(t, "notebook", id, []string{"view"})
+		visible[id] = true
+	}
+	require.Len(t, visible, 11)
+
+	// Granted to the caller, but inside a folder: root sections are
+	// folder_id IS NULL, so this row must never appear in the walk.
+	folderID := f.insertFolder(t, "root section walk folder", nil, f.otherUserID)
+	inFolder := f.insertNotebook(t, "root section walk in-folder notebook", &folderID, f.otherUserID)
+	f.grant(t, "notebook", inFolder, []string{"view"})
+
+	expected := orderedVisibleIDs(t, f, nil, visible)
+
+	var offsets []int
+	got := walkSection(t, f, func(offset int) string {
+		offsets = append(offsets, offset)
+		return fmt.Sprintf("/api/v1/folders/contents?type=notebook&offset=%d&limit=5", offset)
+	}, 11, 5)
+
+	require.Equal(t, []int{0, 5, 10}, offsets, "11 visible rows at 5 per page need exactly three pages")
+	require.Equal(t, expected, got, "the root walk must cover every visible root row exactly once in stable order")
+	for _, id := range hidden {
+		require.NotContains(t, got, id, "a hidden root row must never surface on any page")
+	}
+	require.NotContains(t, got, inFolder, "an in-folder notebook must never appear in a root section")
+}
+
+// TestFolderContentsSectionValidation pins the load-more query contract on
+// both endpoints: the required type, rejected offsets and limits, clamped
+// oversized limits (including Atoi overflow), the default page size, echoed
+// offsets, and past-the-end empty pages.
+func TestFolderContentsSectionValidation(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	// One folder grant makes all 205 seeded notebooks visible (folder view is
+	// inherited), so the 200 clamp is observable: an unclamped page would
+	// return 201+ rows.
+	folderID := f.insertFolder(t, "section validation", nil, f.otherUserID)
+	f.grant(t, "folder", folderID, []string{"view"})
+	for i := 0; i < 205; i++ {
+		f.insertNotebook(t, fmt.Sprintf("section validation notebook %03d", i), &folderID, f.otherUserID)
+	}
+
+	folderPath := "/api/v1/folders/" + folderID + "/contents"
+	for _, base := range []string{folderPath, "/api/v1/folders/contents"} {
+		for _, suffix := range []string{
+			"",                          // missing type
+			"?type=folder",              // unknown type
+			"?type=",                    // empty type
+			"?type=notebook&offset=-1",  // negative offset
+			"?type=notebook&offset=abc", // non-numeric offset
+			"?type=notebook&limit=0",    // below-1 limit
+			"?type=notebook&limit=-5",   // negative limit
+			"?type=notebook&limit=abc",  // non-numeric limit
+		} {
+			status, body := f.get(t, base+suffix)
+			require.Equal(t, http.StatusBadRequest, status, "%s%s must be rejected: %s", base, suffix, string(body))
+		}
+	}
+
+	// The root variant accepts a valid request too (this org has no root
+	// connectors).
+	root := f.getSectionPage(t, "/api/v1/folders/contents?type=connector")
+	require.Equal(t, 0, root.Total)
+	require.False(t, root.HasMore)
+
+	// The default page is 50 of the 205 visible rows.
+	page := f.getSectionPage(t, folderPath+"?type=notebook")
+	require.Equal(t, 205, page.Total)
+	require.Len(t, page.Items, 50)
+	require.True(t, page.HasMore)
+	require.Equal(t, 0, page.Offset)
+
+	// An oversized limit clamps to the 200 maximum instead of failing,
+	// including a number that overflows Atoi.
+	for _, limit := range []string{"201", "99999999999999999999"} {
+		page = f.getSectionPage(t, folderPath+"?type=notebook&limit="+limit)
+		require.Equal(t, 205, page.Total, "limit=%s", limit)
+		require.Len(t, page.Items, 200, "limit=%s must clamp to 200", limit)
+		require.True(t, page.HasMore, "limit=%s still leaves a next page", limit)
+	}
+
+	// Offset paging: the requested offset is echoed with the page.
+	page = f.getSectionPage(t, folderPath+"?type=notebook&limit=10&offset=199")
+	require.Equal(t, 205, page.Total)
+	require.Len(t, page.Items, 6)
+	require.False(t, page.HasMore)
+	require.Equal(t, 199, page.Offset)
+
+	// An offset at or past the visible total is a legitimate empty page; a
+	// positively overflowed offset degrades the same way instead of a 500.
+	for _, offset := range []string{"205", "99999999999999999999"} {
+		page = f.getSectionPage(t, folderPath+"?type=notebook&limit=10&offset="+offset)
+		require.Equal(t, 205, page.Total, "offset=%s", offset)
+		require.Empty(t, page.Items, "offset=%s is at or past the end", offset)
+		require.False(t, page.HasMore, "offset=%s", offset)
+	}
+}
+
+// TestFolderContentsSectionDashboardSnapshot pins that load-more dashboard
+// pages receive the published-snapshot substitution through the shared section
+// helper: viewers see the latest snapshot's title/settings on every page,
+// editors keep the draft, and a never-published dashboard keeps its draft for
+// everyone.
+func TestFolderContentsSectionDashboardSnapshot(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	folderID := f.insertFolder(t, "section dashboards", nil, f.otherUserID)
+	f.grant(t, "folder", folderID, []string{"view"})
+	editorToken := issueToken(t, f.otherUserID, f.orgID, "editor")
+
+	published := f.insertDashboard(t, "draft title of published", &folderID, f.otherUserID)
+	f.grant(t, "dashboard", published, []string{"view"})
+	f.grantFor(t, "dashboard", published, f.otherUserID, []string{"view", "edit"})
+	_, err := f.srv.DB().Pool.Exec(context.Background(),
+		`INSERT INTO dashboard_versions (dashboard_id, org_id, version, title, settings, widgets, content_hash, created_by)
+		 VALUES ($1, $2, 1, 'snapshot title', '{"auto_refresh_seconds": 5}', '[]', 'section-hash', $3)`,
+		published, f.orgID, f.otherUserID)
+	require.NoError(t, err)
+
+	neverPublished := f.insertDashboard(t, "never published draft", &folderID, f.otherUserID)
+	f.grant(t, "dashboard", neverPublished, []string{"view"})
+	f.grantFor(t, "dashboard", neverPublished, f.otherUserID, []string{"view", "edit"})
+
+	type dashboardSectionPage struct {
+		Items   []dashboardListingRow `json:"items"`
+		Total   int                   `json:"total"`
+		HasMore bool                  `json:"has_more"`
+		Offset  int                   `json:"offset"`
+	}
+	fetchPage := func(token, query string) dashboardSectionPage {
+		t.Helper()
+		status, body := f.getAs(t, token, "/api/v1/folders/"+folderID+"/contents?type=dashboard"+query)
+		require.Equal(t, http.StatusOK, status, string(body))
+		var page dashboardSectionPage
+		require.NoError(t, json.Unmarshal(body, &page))
+		return page
+	}
+
+	// Viewer: walk both limit=1 pages; the published dashboard serves the
+	// snapshot, the never-published one keeps its draft, and neither is
+	// editable.
+	viewerRows := make([]dashboardListingRow, 0, 2)
+	for offset := 0; offset < 2; offset++ {
+		page := fetchPage(f.token, fmt.Sprintf("&limit=1&offset=%d", offset))
+		require.Equal(t, 2, page.Total)
+		require.Equal(t, offset, page.Offset)
+		viewerRows = append(viewerRows, page.Items...)
+	}
+	viewerPublished := requireDashboardListingRow(t, viewerRows, published)
+	require.Equal(t, "snapshot title", viewerPublished.Title)
+	require.Equal(t, 5, viewerPublished.Settings.AutoRefreshSeconds)
+	require.False(t, viewerPublished.CanEdit)
+	require.Equal(t, "never published draft", requireDashboardListingRow(t, viewerRows, neverPublished).Title)
+
+	// Editor: the same page keeps the draft for both.
+	editorPage := fetchPage(editorToken, "&limit=2")
+	require.Equal(t, 2, editorPage.Total)
+	require.False(t, editorPage.HasMore)
+	editorPublished := requireDashboardListingRow(t, editorPage.Items, published)
+	require.Equal(t, "draft title of published", editorPublished.Title)
+	require.True(t, editorPublished.CanEdit)
+	require.Zero(t, editorPublished.Settings.AutoRefreshSeconds)
+	require.Equal(t, "never published draft", requireDashboardListingRow(t, editorPage.Items, neverPublished).Title)
+}
+
+// TestFolderContentsSectionRoutes pins the ServeMux precedence: the literal
+// `contents` segment reaches the root section handler rather than being
+// captured as {id}, the folder variant reaches its own handler, and the full
+// listing route keeps answering with the listing shape.
+func TestFolderContentsSectionRoutes(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	folderID := f.insertFolder(t, "section routes", nil, f.otherUserID)
+	f.grant(t, "folder", folderID, []string{"view"})
+	folderNotebook := f.insertNotebook(t, "section routes folder notebook", &folderID, f.otherUserID)
+	f.grant(t, "notebook", folderNotebook, []string{"view"})
+	folderConnector := f.insertConnector(t, "section routes folder connector", &folderID, f.otherUserID)
+	f.grant(t, "connector", folderConnector, []string{"view"})
+	rootNotebook := f.insertNotebook(t, "section routes root notebook", nil, f.otherUserID)
+	f.grant(t, "notebook", rootNotebook, []string{"view"})
+
+	// /folders/contents is the root section: the section envelope proves the
+	// literal beat {id} (a lookup of the folder named "contents" would not
+	// produce an items array).
+	root := f.getSectionPage(t, "/api/v1/folders/contents?type=notebook")
+	require.Equal(t, 1, root.Total)
+	require.Equal(t, []string{rootNotebook}, rowIDs(root.Items))
+
+	// /folders/{uuid}/contents is the folder section, and the type parameter
+	// dispatches to the matching section (connector rows here; the dashboard
+	// section is pinned by the snapshot test).
+	folder := f.getSectionPage(t, "/api/v1/folders/"+folderID+"/contents?type=notebook")
+	require.Equal(t, 1, folder.Total)
+	require.Equal(t, []string{folderNotebook}, rowIDs(folder.Items))
+	connectors := f.getSectionPage(t, "/api/v1/folders/"+folderID+"/contents?type=connector")
+	require.Equal(t, 1, connectors.Total)
+	require.Equal(t, []string{folderConnector}, rowIDs(connectors.Items))
+
+	// The full folder listing still answers with the listing shape.
+	status, body := f.get(t, "/api/v1/folders/"+folderID)
+	require.Equal(t, http.StatusOK, status, string(body))
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.Contains(t, raw, "notebooks")
+	require.NotContains(t, raw, "items")
+}

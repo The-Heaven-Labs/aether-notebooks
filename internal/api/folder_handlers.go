@@ -431,7 +431,14 @@ func (s *Server) folderSectionIDs(ctx context.Context, table, orderBy, orgID str
 // describe what the caller can actually see. An offset at or past the end is a
 // legitimate empty page (a client can race a deletion): it yields no ids and
 // has_more false because nothing follows it.
+//
+// Precondition: offset must be >= 0; the load-more handlers parse and reject
+// negative offsets before calling. A negative offset is clamped to 0
+// defensively anyway so a future caller cannot panic the slice below.
 func folderSectionPageIDs(perms map[string]map[string]bool, orderedIDs []string, offset, limit int) (pageIDs []string, total int, hasMore bool) {
+	if offset < 0 {
+		offset = 0
+	}
 	visible := make([]string, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
 		if actionAllowed(perms, id, "view") {
@@ -1220,6 +1227,196 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	contents.HasMore["dashboards"] = dashboardsHasMore
 
 	writeJSON(w, http.StatusOK, contents)
+}
+
+// folderSectionResponse is the load-more envelope: one section page, the exact
+// visible total of the whole section, whether more visible rows follow the
+// page, and the requested offset echoed back.
+type folderSectionResponse struct {
+	Items   any  `json:"items"`
+	Total   int  `json:"total"`
+	HasMore bool `json:"has_more"`
+	Offset  int  `json:"offset"`
+}
+
+// folderSectionQuery parses and validates the load-more endpoints' query
+// parameters per the settled contract: `type` is required and must be
+// notebook, connector, or dashboard; `offset` is absent = 0, and non-numeric
+// or negative values are rejected (a positively overflowed number saturates
+// and acts as a genuinely past-the-end offset instead of failing); `limit`
+// follows the listing contract (absent = 50, non-numeric or below 1 rejected,
+// above 200 clamped, including positive overflow). ok=false means the request
+// must be answered with 400.
+func folderSectionQuery(r *http.Request) (sectionType string, offset, limit int, ok bool) {
+	query := r.URL.Query()
+	sectionType = query.Get("type")
+	switch sectionType {
+	case "notebook", "connector", "dashboard":
+	default:
+		return "", 0, 0, false
+	}
+
+	if raw := query.Get("offset"); raw != "" {
+		n, err := strconv.Atoi(raw)
+		switch {
+		case err == nil && n >= 0:
+			offset = n
+		case errors.Is(err, strconv.ErrRange) && n > 0:
+			// Overflowed positively: every such ask skips past the end of any
+			// real section, so it degrades to an empty page rather than a 400.
+			offset = n
+		default:
+			return "", 0, 0, false
+		}
+	}
+
+	limit, ok = folderSectionLimit(r)
+	if !ok {
+		return "", 0, 0, false
+	}
+	return sectionType, offset, limit, true
+}
+
+// writeFolderSection serves one load-more page for a section type at the
+// requested offset. Every page — first or load-more — is produced by the B1
+// section helpers (folderSectionIDs → resolveActions → folderSectionPageIDs →
+// per-type hydration): this function only parses the request and shapes the
+// envelope, so no caller can re-implement the pipeline and drop a rule (e.g.
+// the dashboard snapshot substitution). folderID nil selects the root section.
+func (s *Server) writeFolderSection(w http.ResponseWriter, ctx context.Context, ident permIdentity, sectionType string, folderID *string, offset, limit int) {
+	var (
+		items   any
+		total   int
+		hasMore bool
+		err     error
+	)
+	switch sectionType {
+	case "notebook":
+		items, total, hasMore, err = s.folderNotebookSection(ctx, ident, folderID, offset, limit)
+	case "connector":
+		items, total, hasMore, err = s.folderConnectorSection(ctx, ident, folderID, offset, limit)
+	case "dashboard":
+		items, total, hasMore, err = s.folderDashboardSection(ctx, ident, folderID, offset, limit)
+	default:
+		// Unreachable: folderSectionQuery validates the type before calling.
+		writeError(w, http.StatusBadRequest, "invalid section type")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+	writeJSON(w, http.StatusOK, folderSectionResponse{
+		Items:   items,
+		Total:   total,
+		HasMore: hasMore,
+		Offset:  offset,
+	})
+}
+
+// @Summary Get a folder section page
+// @Description Load-more page for one folder section (notebooks, connectors, or dashboards), with the exact visible total
+// @Tags folders
+// @Produce json
+// @Param id path string true "Folder ID"
+// @Param type query string true "Section type: notebook, connector, or dashboard"
+// @Param offset query int false "Rows to skip (default 0)"
+// @Param limit query int false "Page size (default 50, max 200)"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 404 {object} map[string]string
+// @Security BearerAuth
+// @Router /folders/{id}/contents [get]
+func (s *Server) handleGetFolderContentsSection(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	ctx := r.Context()
+
+	sectionType, offset, limit, ok := folderSectionQuery(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid section query")
+		return
+	}
+
+	// The folder must exist in the org, exactly like the full listing.
+	folderID := r.PathValue("id")
+	var folder models.Folder
+	err := s.db.Pool.QueryRow(ctx,
+		`SELECT id, org_id, parent_id, name, is_home, owner_id, created_by, created_at, updated_at
+		 FROM folders WHERE id = $1 AND org_id = $2`,
+		folderID, claims.OrgID,
+	).Scan(&folder.ID, &folder.OrgID, &folder.ParentID, &folder.Name, &folder.IsHome,
+		&folder.OwnerID, &folder.CreatedBy, &folder.CreatedAt, &folder.UpdatedAt)
+	if err == pgx.ErrNoRows {
+		writeError(w, http.StatusNotFound, "folder not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	// One identity per request, shared by the access check and the section
+	// helpers' batched resolution.
+	ident, err := s.permIdentity(ctx, claims)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	// Same access rule as the full listing (GET /folders/{id}): view on the
+	// folder, or visible descendant content (deep sharing). The page's rows
+	// are ACL-filtered per item by the shared section helpers anyway.
+	folderPerms, err := s.resolveActions(ctx, ident, "folder", []string{folder.ID}, []string{"view"})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "permission check failed")
+		return
+	}
+	if !actionAllowed(folderPerms, folder.ID, "view") {
+		hasContent, cErr := s.folderHasDescendantContent(ctx, folder.ID, ident.OrgID, ident.UserID, ident.GroupIDs)
+		if cErr != nil || !hasContent {
+			writeError(w, http.StatusForbidden, "insufficient permissions")
+			return
+		}
+	}
+
+	s.writeFolderSection(w, ctx, ident, sectionType, &folder.ID, offset, limit)
+}
+
+// @Summary List a root section page
+// @Description Load-more page for one root-level section (notebooks, connectors, or dashboards), with the exact visible total
+// @Tags folders
+// @Produce json
+// @Param type query string true "Section type: notebook, connector, or dashboard"
+// @Param offset query int false "Rows to skip (default 0)"
+// @Param limit query int false "Page size (default 50, max 200)"
+// @Success 200 {object} object
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Security BearerAuth
+// @Router /folders/contents [get]
+func (s *Server) handleListRootContentsSection(w http.ResponseWriter, r *http.Request) {
+	claims := ClaimsFromContext(r.Context())
+	if claims.OrgID == "" {
+		writeError(w, http.StatusForbidden, "organization required — complete onboarding first")
+		return
+	}
+
+	sectionType, offset, limit, ok := folderSectionQuery(r)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid section query")
+		return
+	}
+
+	ident, err := s.permIdentity(r.Context(), claims)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query failed")
+		return
+	}
+
+	// Root sections have no resource to gate: the page's rows are
+	// ACL-filtered per item by the shared section helpers.
+	s.writeFolderSection(w, r.Context(), ident, sectionType, nil, offset, limit)
 }
 
 // @Summary Get folder ancestors
