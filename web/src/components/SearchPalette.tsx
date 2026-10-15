@@ -3,9 +3,7 @@ import type React from 'react'
 import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useQuery } from '@tanstack/react-query'
-import {
-  BookOpen, Bot, Cpu, Database, Folder, LayoutDashboard, Plug, Search, Sparkles, Wrench,
-} from 'lucide-react'
+import { Search } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { api } from '../api/client'
 import { useResourceSearch } from '../hooks/useResourceSearch'
@@ -14,80 +12,18 @@ import { useFocusTrap } from '../hooks/useFocusTrap'
 import { useEscapeToClose } from '../hooks/useEscapeToClose'
 import { useMediaQuery } from '../hooks/useMediaQuery'
 import { HighlightedText } from '../utils/highlight'
+import {
+  isKnownType, RECENT_TYPES, resourceHref, TYPE_ICONS, TYPE_LABELS, TYPE_SINGULAR,
+} from '../utils/resources'
 import { Kbd } from './Kbd'
 import { Skeleton } from './Skeleton'
-import type { FavoriteResourceType, RecentItem, ResourceSummary } from '../types'
+import type { RecentItem, ResourceSummary } from '../types'
 
 interface Props {
   open: boolean
   onClose: () => void
   /** Replaces the default `/search?q=` navigation of the "View all results" row. */
   onOpenResults?: (query: string) => void
-}
-
-const TYPE_ICONS: Record<FavoriteResourceType, LucideIcon> = {
-  folder: Folder,
-  notebook: BookOpen,
-  dashboard: LayoutDashboard,
-  connector: Database,
-  agent: Bot,
-  model_config: Cpu,
-  skill: Sparkles,
-  mcp_server: Plug,
-  tool: Wrench,
-}
-
-/** Group-header labels (plural) for result sections, in the API's group order. */
-const TYPE_LABELS: Record<FavoriteResourceType, string> = {
-  folder: 'Folders',
-  notebook: 'Notebooks',
-  dashboard: 'Dashboards',
-  connector: 'Connectors',
-  agent: 'Agents',
-  model_config: 'Models',
-  skill: 'Skills',
-  mcp_server: 'MCP servers',
-  tool: 'Tools',
-}
-
-/** Singular labels for the recents rows' meta line. */
-const TYPE_SINGULAR: Record<FavoriteResourceType, string> = {
-  folder: 'Folder',
-  notebook: 'Notebook',
-  dashboard: 'Dashboard',
-  connector: 'Connector',
-  agent: 'Agent',
-  model_config: 'Model',
-  skill: 'Skill',
-  mcp_server: 'MCP server',
-  tool: 'Tool',
-}
-
-/** The resource types `/recent` can return, mapped onto the catalog union. */
-const RECENT_TYPES: Record<string, FavoriteResourceType> = {
-  notebook: 'notebook',
-  dashboard: 'dashboard',
-  connector: 'connector',
-}
-
-/** True for the nine catalog types the palette can render. */
-function isKnownType(type: string): type is FavoriteResourceType {
-  return Object.prototype.hasOwnProperty.call(TYPE_ICONS, type)
-}
-
-/** Where Enter (or a click) takes each resource type. */
-function resourceHref(type: FavoriteResourceType, id: string): string {
-  switch (type) {
-    case 'notebook': return `/notebooks/${id}`
-    case 'dashboard': return `/dashboards/${id}/view`
-    case 'folder': return `/?folder=${id}`
-    case 'connector': return '/connectors'
-    case 'agent': return '/agents'
-    case 'model_config': return '/models'
-    case 'skill': return '/skills'
-    case 'tool': return '/tools'
-    case 'mcp_server': return '/mcps'
-  }
 }
 
 interface PaletteRow {

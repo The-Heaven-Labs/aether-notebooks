@@ -36,6 +36,7 @@ const SkillsPage = lazy(() => import('./pages/SkillsPage').then(m => ({ default:
 const ToolsPage = lazy(() => import('./pages/ToolsPage').then(m => ({ default: m.ToolsPage })))
 const TrashPage = lazy(() => import('./pages/TrashPage').then(m => ({ default: m.TrashPage })))
 const MCPPage = lazy(() => import('./pages/MCPPage').then(m => ({ default: m.MCPPage })))
+const SearchPage = lazy(() => import('./pages/SearchPage').then(m => ({ default: m.SearchPage })))
 const JoinPage = lazy(() => import('./pages/JoinPage').then(m => ({ default: m.JoinPage })))
 
 const queryClient = new QueryClient({
@@ -115,6 +116,14 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <DashboardPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/search"
+        element={
+          <ProtectedRoute>
+            <SearchPage />
           </ProtectedRoute>
         }
       />
