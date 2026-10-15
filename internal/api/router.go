@@ -141,6 +141,9 @@ func NewServer(db *database.DB, jwt *auth.JWTIssuer, auditLogger *audit.Logger, 
 	s.agentEngine.ResolveTarget = s.resolveExecutionTarget
 	s.agentEngine.ConnPool = s.connPool
 	s.agentEngine.CheckPermissionFunc = s.checkPermission
+	// search_resources runs the same leak-safe core as GET /api/v1/search, so
+	// agent searches see exactly what the session's user may see.
+	s.agentEngine.SearchResourcesFunc = s.searchResourcesForTool
 	s.agentEngine.RecordConnectorActivity = s.recordConnectorActivity
 	// Dashboard-mutating agent tools write through the dashboard Yjs document
 	// (the same seed/store path REST uses) so their edits are live and cannot

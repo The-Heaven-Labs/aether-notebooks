@@ -87,6 +87,11 @@ type ToolContext struct {
 	// resolver makes CheckPermission fail closed; bare contexts (tests, tool
 	// handlers invoked outside a server) must wire a stub explicitly.
 	CheckPermissionFunc func(ctx context.Context, userID, orgID, orgRole, resourceType, resourceID, action string) (bool, error)
+	// SearchResourcesFunc is the catalog search engine (api.Server.searchResourcesForTool).
+	// Wired by the API server so agent and MCP executions search exactly what the
+	// caller can see (the same leak-safe rules as GET /api/v1/search).
+	// A nil resolver makes the tool fail closed.
+	SearchResourcesFunc func(ctx context.Context, userID, orgID, orgRole, query string, types []string, limit int) (any, error)
 	// Running-state hooks wired to the notebook Hub (see internal/api/router.go
 	// and mcp.go). They let agent-driven cell runs participate in the same
 	// running/cancel lifecycle as user-triggered runs: badge, refresh-safe

@@ -3,9 +3,17 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+// search_resources argument bounds, mirroring the HTTP endpoint's per-type
+// page contract (internal/api.searchDefaultLimit/searchMaxLimit).
+const (
+	searchResourcesDefaultLimit = 5
+	searchResourcesMaxLimit     = 20
 )
 
 func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
@@ -64,6 +72,58 @@ func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		Handler: makeGetFolderTreeHandler(db),
 		Timeout: 30 * time.Second,
 	})
+
+	reg.Register(&ToolDef{
+		Function: struct {
+			Name        string `json:"name"`
+			Description string `json:"description"`
+			Parameters  any    `json:"parameters"`
+		}{
+			Name:        "search_resources",
+			Description: "Search the org's resources (notebooks, dashboards, folders, connectors, agents, models, skills, tools, MCP servers) by title and content. Returns grouped results with snippets. Refine the query instead of paging.",
+			Parameters:  `{"type":"object","properties":{"query":{"type":"string","description":"Search text (title/name and content)"},"types":{"type":"array","items":{"type":"string"},"description":"Optional resource types to restrict to"},"limit":{"type":"integer","minimum":1,"maximum":20,"description":"Max results per type (default 5)"}},"required":["query"]}`,
+		},
+		Handler: makeSearchResourcesHandler(),
+		Timeout: 20 * time.Second,
+	})
+}
+
+// makeSearchResourcesHandler builds the search_resources tool handler. The
+// search itself runs through ToolContext.SearchResourcesFunc — wired by the
+// API server to the same leak-safe core GET /api/v1/search uses — so the
+// handler only parses and clamps the arguments. A bare context without the
+// engine fails closed rather than searching with no ACL filtering.
+func makeSearchResourcesHandler() ToolHandler {
+	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
+		var req struct {
+			Query string   `json:"query"`
+			Types []string `json:"types"`
+			Limit *int     `json:"limit"`
+		}
+		if err := json.Unmarshal(args, &req); err != nil {
+			return nil, fmt.Errorf("invalid args: %w", err)
+		}
+		query := strings.TrimSpace(req.Query)
+		if query == "" {
+			return nil, fmt.Errorf("query is required")
+		}
+		if ctx.SearchResourcesFunc == nil {
+			// Fail closed: without the shared search engine there is no way
+			// to apply the caller's ACLs or the dashboard leak rules.
+			return nil, fmt.Errorf("search resources: no search engine is wired in this context")
+		}
+		limit := searchResourcesDefaultLimit
+		if req.Limit != nil {
+			limit = *req.Limit
+			if limit < 1 {
+				limit = 1
+			}
+			if limit > searchResourcesMaxLimit {
+				limit = searchResourcesMaxLimit
+			}
+		}
+		return ctx.SearchResourcesFunc(ctx.Context, ctx.UserID, ctx.OrgID, ctx.OrgRole, query, req.Types, limit)
+	}
 }
 
 func makeListNotebooksHandler(db *pgxpool.Pool) ToolHandler {

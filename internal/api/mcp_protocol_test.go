@@ -213,7 +213,7 @@ func TestMCPToolsListMatchesAllowlist(t *testing.T) {
 		got = append(got, name)
 	}
 	expected := srv.MCPToolAllowlistForTest()
-	require.Len(t, expected, 45)
+	require.Len(t, expected, 46)
 	sort.Strings(got)
 	sort.Strings(expected)
 	require.Equal(t, expected, got, "tools/list must match the allowlist exactly (renames or missing definitions will show as diffs)")

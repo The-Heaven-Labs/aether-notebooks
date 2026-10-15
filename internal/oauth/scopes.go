@@ -29,7 +29,7 @@ var scopeTools = map[string][]string{
 		"list_snapshots", "list_notebook_parameters", "list_dashboards",
 		"get_dashboard", "list_skills", "load_skill", "list_agents",
 		"list_connectors", "list_folders", "get_folder_tree",
-		"read_permissions",
+		"search_resources", "read_permissions",
 	},
 	ScopeWrite: {
 		"create_notebook", "delete_notebook", "update_notebook",

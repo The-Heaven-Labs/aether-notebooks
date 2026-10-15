@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -445,6 +446,178 @@ type searchResponse struct {
 	Groups []searchGroup `json:"groups"`
 }
 
+// searchFailure is one search-core stage failure: message is the exact
+// client-facing body the endpoint has always returned for that stage, while
+// the wrapped cause stays available to logs and errors.Is/As — it is never
+// part of what HTTP or the agent tool sees.
+type searchFailure struct {
+	message string
+	err     error
+}
+
+func (e *searchFailure) Error() string { return e.message }
+func (e *searchFailure) Unwrap() error { return e.err }
+
+// searchFailureMessage extracts the client-facing message of a core failure,
+// falling back to the generic search body for unexpected errors.
+func searchFailureMessage(err error) string {
+	var failure *searchFailure
+	if errors.As(err, &failure) {
+		return failure.message
+	}
+	return "search failed"
+}
+
+// searchResourceGroups is the search core: the content pass, the per-type
+// ranked pages (ACL- and leak-filtered), and summary assembly. GET
+// /api/v1/search and the search_resources agent/MCP tool both run it, so
+// agents search exactly what their caller can see under the same dashboard
+// rules.
+func (s *Server) searchResourceGroups(ctx context.Context, ident permIdentity, req searchRequest) (searchResponse, error) {
+	if s.searcher == nil {
+		return searchResponse{}, &searchFailure{message: "search unavailable"}
+	}
+
+	// Unbounded on purpose: favorites=1 intersects candidates with these ids
+	// before ranking, and the summary builder needs the full set for
+	// is_favorite. A capped scan could silently hide a favorite match.
+	favorites, err := s.loadFavoriteIDs(ctx, ident.UserID, ident.OrgID)
+	if err != nil {
+		return searchResponse{}, &searchFailure{message: "failed to load favorites", err: err}
+	}
+
+	requested := make(map[string]bool, len(req.Types))
+	for _, resourceType := range req.Types {
+		requested[resourceType] = true
+	}
+
+	// Content pass: notebooks (cell SQL, view-gated) and dashboards (widget
+	// SQL, edit-gated), only for the types the caller asked for. The searcher
+	// is neither org-external nor ACL-aware; both filters apply below.
+	contentTypes := make([]string, 0, 2)
+	for _, resourceType := range []string{search.TypeNotebook, search.TypeDashboard} {
+		if requested[resourceType] {
+			contentTypes = append(contentTypes, resourceType)
+		}
+	}
+	window := searchCandidateCap(req.Limit)
+	var contentByType map[string][]search.ContentHit
+	if len(contentTypes) > 0 {
+		contentByType, err = s.searcher.ContentMatches(ctx, ident.OrgID, contentTypes, req.Query, window)
+		if err != nil {
+			return searchResponse{}, &searchFailure{message: "search failed", err: err}
+		}
+	}
+
+	pages := make(map[string]searchTypePage, len(searchGroupOrder))
+	for _, resourceType := range searchGroupOrder {
+		if !requested[resourceType] {
+			continue
+		}
+		page, err := s.searchTypePage(ctx, ident, resourceType, req, window, contentByType[resourceType], favorites)
+		if err != nil {
+			return searchResponse{}, &searchFailure{message: "search failed", err: err}
+		}
+		pages[resourceType] = page
+	}
+
+	// Summaries for the ranked page ids, in the fixed group order. The
+	// metadata already fetched for ranking rides along as overrides — every
+	// page id of every type is covered — so the builder never re-fetches and
+	// dashboard rows keep their caller-relative effective titles.
+	requests := make([]summaryRequest, 0, len(searchGroupOrder))
+	opts := summaryBuildOptions{
+		Snippets:  map[string]map[string]string{},
+		Overrides: summaryOverrides{},
+		Favorites: favorites,
+	}
+	for _, resourceType := range searchGroupOrder {
+		page, ok := pages[resourceType]
+		if !ok || len(page.IDs) == 0 {
+			continue
+		}
+		requests = append(requests, summaryRequest{ResourceType: resourceType, IDs: page.IDs})
+		if len(page.Snippets) > 0 {
+			opts.Snippets[resourceType] = page.Snippets
+		}
+		opts.Overrides[resourceType] = page.Meta
+	}
+	groups, err := s.buildResourceSummaries(ctx, ident, requests, opts)
+	if err != nil {
+		return searchResponse{}, &searchFailure{message: "failed to build results", err: err}
+	}
+
+	response := searchResponse{Query: req.Query, Groups: []searchGroup{}}
+	for _, group := range groups {
+		response.Groups = append(response.Groups, searchGroup{
+			ResourceType: group.ResourceType,
+			HasMore:      pages[group.ResourceType].HasMore,
+			Results:      group.Results,
+		})
+	}
+	return response, nil
+}
+
+// searchResourcesForTool is the agent/MCP entry point for catalog search,
+// wired to ToolContext.SearchResourcesFunc. It validates the tool arguments
+// with GET /api/v1/search's rules, builds the caller identity directly from
+// the tool context (group memberships plus the admin-mode flag riding the
+// context), and runs the same core — so agent searches are ACL- and
+// leak-safe exactly like HTTP searches.
+func (s *Server) searchResourcesForTool(ctx context.Context, userID, orgID, orgRole, query string, types []string, limit int) (any, error) {
+	query = strings.TrimSpace(query)
+	if query == "" {
+		return nil, fmt.Errorf("query is required")
+	}
+	if utf8.RuneCountInString(query) > searchMaxQueryRunes {
+		return nil, fmt.Errorf("query must be at most %d characters", searchMaxQueryRunes)
+	}
+
+	req := searchRequest{Query: query, Limit: limit}
+	if req.Limit < 1 {
+		req.Limit = searchDefaultLimit
+	}
+	if req.Limit > searchMaxLimit {
+		req.Limit = searchMaxLimit
+	}
+	// Types are optional; empty means every searchable type. The whitelist is
+	// the same set the HTTP endpoint validates against, so an unknown type is
+	// an error rather than a silently-empty group.
+	if len(types) == 0 {
+		req.Types = append(req.Types, favoriteResourceTypes...)
+	} else {
+		seen := make(map[string]bool, len(types))
+		for _, raw := range types {
+			resourceType := strings.TrimSpace(raw)
+			if !favoriteResourceTypeSet[resourceType] {
+				return nil, fmt.Errorf("unknown resource type %q", resourceType)
+			}
+			if seen[resourceType] {
+				continue
+			}
+			seen[resourceType] = true
+			req.Types = append(req.Types, resourceType)
+		}
+	}
+
+	groupIDs, err := s.callerGroupIDs(ctx, userID, orgID)
+	if err != nil {
+		return nil, fmt.Errorf("permission check failed: %w", err)
+	}
+	ident := permIdentity{
+		UserID:    userID,
+		OrgID:     orgID,
+		OrgRole:   orgRole,
+		GroupIDs:  groupIDs,
+		AdminMode: adminModeFromContext(ctx),
+	}
+	response, err := s.searchResourceGroups(ctx, ident, req)
+	if err != nil {
+		return nil, err
+	}
+	return response, nil
+}
+
 // @Summary Search the catalog
 // @Description Searches notebooks, dashboards, folders, connectors, agents, models, skills, tools, and MCP servers by title/name/description, plus content (notebook cell SQL for viewers, dashboard widget SQL for editors only). Results are ACL-filtered, grouped in a fixed type order, capped per type (default 5, max 20) with has_more, and ranked exact title > prefix > contains > content-only, then most recent. Non-editors match dashboards on their effective title only: the latest published snapshot when one exists, never an unpublished draft title.
 // @Tags search
@@ -474,93 +647,17 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "search unavailable")
 		return
 	}
-	ctx := r.Context()
 
+	ctx := r.Context()
 	ident, err := s.permIdentity(ctx, claims)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "permission check failed")
 		return
 	}
-	// Unbounded on purpose: favorites=1 intersects candidates with these ids
-	// before ranking, and the summary builder needs the full set for
-	// is_favorite. A capped scan could silently hide a favorite match.
-	favorites, err := s.loadFavoriteIDs(ctx, claims.UserID, claims.OrgID)
+	response, err := s.searchResourceGroups(ctx, ident, req)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load favorites")
+		writeError(w, http.StatusInternalServerError, searchFailureMessage(err))
 		return
-	}
-
-	requested := make(map[string]bool, len(req.Types))
-	for _, resourceType := range req.Types {
-		requested[resourceType] = true
-	}
-
-	// Content pass: notebooks (cell SQL, view-gated) and dashboards (widget
-	// SQL, edit-gated), only for the types the caller asked for. The searcher
-	// is neither org-external nor ACL-aware; both filters apply below.
-	contentTypes := make([]string, 0, 2)
-	for _, resourceType := range []string{search.TypeNotebook, search.TypeDashboard} {
-		if requested[resourceType] {
-			contentTypes = append(contentTypes, resourceType)
-		}
-	}
-	window := searchCandidateCap(req.Limit)
-	var contentByType map[string][]search.ContentHit
-	if len(contentTypes) > 0 {
-		contentByType, err = s.searcher.ContentMatches(ctx, claims.OrgID, contentTypes, req.Query, window)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "search failed")
-			return
-		}
-	}
-
-	pages := make(map[string]searchTypePage, len(searchGroupOrder))
-	for _, resourceType := range searchGroupOrder {
-		if !requested[resourceType] {
-			continue
-		}
-		page, err := s.searchTypePage(ctx, ident, resourceType, req, window, contentByType[resourceType], favorites)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "search failed")
-			return
-		}
-		pages[resourceType] = page
-	}
-
-	// Summaries for the ranked page ids, in the fixed group order. The
-	// metadata already fetched for ranking rides along as overrides — every
-	// page id of every type is covered — so the builder never re-fetches and
-	// dashboard rows keep their caller-relative effective titles.
-	requests := make([]summaryRequest, 0, len(searchGroupOrder))
-	opts := summaryBuildOptions{
-		Snippets:  map[string]map[string]string{},
-		Overrides: summaryOverrides{},
-		Favorites: favorites,
-	}
-	for _, resourceType := range searchGroupOrder {
-		page, ok := pages[resourceType]
-		if !ok || len(page.IDs) == 0 {
-			continue
-		}
-		requests = append(requests, summaryRequest{ResourceType: resourceType, IDs: page.IDs})
-		if len(page.Snippets) > 0 {
-			opts.Snippets[resourceType] = page.Snippets
-		}
-		opts.Overrides[resourceType] = page.Meta
-	}
-	groups, err := s.buildResourceSummaries(ctx, ident, requests, opts)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build results")
-		return
-	}
-
-	response := searchResponse{Query: req.Query, Groups: []searchGroup{}}
-	for _, group := range groups {
-		response.Groups = append(response.Groups, searchGroup{
-			ResourceType: group.ResourceType,
-			HasMore:      pages[group.ResourceType].HasMore,
-			Results:      group.Results,
-		})
 	}
 	writeJSON(w, http.StatusOK, response)
 }

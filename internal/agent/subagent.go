@@ -139,6 +139,7 @@ func (e *Engine) runSubagent(ctx context.Context, parentSessionID string, task S
 				ResolveTarget:           e.ResolveTarget,
 				ConnPool:                e.ConnPool,
 				CheckPermissionFunc:     e.CheckPermissionFunc,
+				SearchResourcesFunc:     e.SearchResourcesFunc,
 				RecordConnectorActivity: e.RecordConnectorActivity,
 				DashboardDocStore:       e.DashboardDocStore,
 			})
@@ -443,6 +444,7 @@ func (e *Engine) runSubagentLoop(ctx context.Context, parentSessionID string, ta
 				ResolveTarget:           e.ResolveTarget,
 				ConnPool:                e.ConnPool,
 				CheckPermissionFunc:     e.CheckPermissionFunc,
+				SearchResourcesFunc:     e.SearchResourcesFunc,
 				RecordConnectorActivity: e.RecordConnectorActivity,
 				DashboardDocStore:       e.DashboardDocStore,
 			})

@@ -778,13 +778,16 @@ func TestEnginePropagatesWarehouseExecutionHooks(t *testing.T) {
 	}
 	engine.ConnPool = executor.NewConnPool(executor.PoolConfig{})
 	engine.CheckPermissionFunc = allowAllPermissions
+	engine.SearchResourcesFunc = func(context.Context, string, string, string, string, []string, int) (any, error) {
+		return map[string]any{"groups": []any{}}, nil
+	}
 
 	agentID := createTestAgentRow(t, db, orgID, userID, []string{})
 	nbID := createTestNotebook(t, db, orgID, userID)
 	sid := createTestSession(t, db, agentID, nbID, userID)
 	engine.session.SetAdminMode(sid, true)
 
-	var sawResolver, sawPool, sawCheck, sawAdmin bool
+	var sawResolver, sawPool, sawCheck, sawSearch, sawAdmin bool
 	probe := &ToolDef{Type: "function"}
 	probe.Function.Name = "probe_warehouse_hooks"
 	probe.Function.Parameters = `{"type":"object","properties":{}}`
@@ -792,6 +795,7 @@ func TestEnginePropagatesWarehouseExecutionHooks(t *testing.T) {
 		sawResolver = ctx.ResolveTarget != nil
 		sawPool = ctx.ConnPool != nil
 		sawCheck = ctx.CheckPermissionFunc != nil
+		sawSearch = ctx.SearchResourcesFunc != nil
 		sawAdmin = executor.AdminModeFromContext(ctx.Context)
 		return map[string]any{"ok": true}, nil
 	}
@@ -835,5 +839,6 @@ func TestEnginePropagatesWarehouseExecutionHooks(t *testing.T) {
 	require.True(t, sawResolver, "ResolveTarget must propagate into tool contexts")
 	require.True(t, sawPool, "ConnPool must propagate into tool contexts")
 	require.True(t, sawCheck, "CheckPermissionFunc must propagate into tool contexts")
+	require.True(t, sawSearch, "SearchResourcesFunc must propagate into tool contexts")
 	require.True(t, sawAdmin, "the session's admin mode must ride the tool context")
 }
