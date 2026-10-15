@@ -371,6 +371,8 @@ bash scripts/go-test.sh ./internal/api/ -run 'TestFolder|TestListRoot|TestHomeFo
 ```sql
 -- V135: listing performance (org+folder+sort, alive rows) and content-search
 -- GIN indexes. Stock Postgres only: no CREATE EXTENSION anywhere.
+-- NOTE (post-review): the folders index originally sketched here was dropped —
+-- V009's UNIQUE (org_id, parent_id, name) already covers the folder scan.
 
 CREATE INDEX IF NOT EXISTS idx_notebooks_org_folder_updated
   ON notebooks (org_id, folder_id, updated_at DESC) WHERE deleted_at IS NULL;
@@ -378,8 +380,6 @@ CREATE INDEX IF NOT EXISTS idx_dashboards_org_folder_updated
   ON dashboards (org_id, folder_id, updated_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_connectors_org_folder
   ON connectors (org_id, folder_id) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_folders_org_parent
-  ON folders (org_id, parent_id) WHERE deleted_at IS NULL;
 
 CREATE INDEX IF NOT EXISTS idx_cells_source_fts
   ON cells USING gin (to_tsvector('simple', source));

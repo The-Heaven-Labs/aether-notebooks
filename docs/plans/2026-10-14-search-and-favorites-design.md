@@ -119,8 +119,6 @@ CREATE INDEX IF NOT EXISTS idx_dashboards_org_folder_updated
   ON dashboards (org_id, folder_id, updated_at DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_connectors_org_folder
   ON connectors (org_id, folder_id) WHERE deleted_at IS NULL;
-CREATE INDEX IF NOT EXISTS idx_folders_org_parent
-  ON folders (org_id, parent_id) WHERE deleted_at IS NULL;
 
 -- content search: stock FTS, no extensions
 CREATE INDEX IF NOT EXISTS idx_cells_source_fts
@@ -128,6 +126,10 @@ CREATE INDEX IF NOT EXISTS idx_cells_source_fts
 CREATE INDEX IF NOT EXISTS idx_widgets_query_fts
   ON widgets USING gin (to_tsvector('simple', query));
 ```
+
+No folders index ships on purpose: V009's `UNIQUE (org_id, parent_id, name)` already serves
+the folder-children scan (its key ordering even satisfies `ORDER BY name` without a sort), so a
+duplicate would only add write cost. (The plan originally listed one; the A6 review removed it.)
 
 `to_tsvector('simple', …)` expression indexes are plain DDL (no `CREATE EXTENSION`), valid on
 locked-down managed Postgres. NULL/empty `query` rows simply contribute no index entries.
