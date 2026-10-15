@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
-import type { Cell, Folder, FolderContents, Notebook } from '../types'
+import type { Cell, Folder, FolderContents, FolderSection, Notebook } from '../types'
 import { useAuth } from '../hooks/useAuth'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
@@ -469,6 +469,141 @@ function BulkPermissionsModal({ count, items, onClose, onApplied }: {
   )
 }
 
+// ─── Folder section pagination ───────────────────────────────────────────────
+
+/** Load-more page size (the API default; server clamps to 1–200). */
+const FOLDER_SECTION_PAGE_SIZE = 50
+
+type FolderSectionKind = 'notebook' | 'connector' | 'dashboard'
+
+interface FolderSectionExtras<T> {
+  /** Folder these pages belong to ('root' for the root listing). */
+  folderKey: string
+  /** First-page generation (`dataUpdatedAt`) these pages extend. */
+  base: number
+  items: T[]
+  /**
+   * Offset for the next request, advanced by each page's raw item count (not
+   * the deduped one) so a skipped duplicate can never shift the window.
+   */
+  nextOffset: number
+  /** Latest server total / has_more; a page's values win over the first page's. */
+  total: number | null
+  hasMore: boolean | null
+  /** A page added no new rows while the server still reported more: stop. */
+  stopped: boolean
+}
+
+interface FolderSectionPager<T> {
+  /** First page plus every loaded extra page, deduped by id. */
+  items: T[]
+  /** Exact visible total, or null when the server did not report one. */
+  total: number | null
+  hasMore: boolean
+  stopped: boolean
+  loading: boolean
+  loadMore: () => void
+}
+
+/**
+ * Accumulates load-more pages for one folder section on top of the first page
+ * the listing query returned. Extras are pinned to the folder and to the
+ * listing generation they were appended to, so any successful refetch (e.g.
+ * after a mutation invalidation) — or a folder switch — drops them instead of
+ * mixing stale rows into the first page. Pages are deduped by id.
+ */
+function useFolderSectionPager<T extends { id: string }>({
+  kind,
+  folderID,
+  firstPage,
+  firstPageTotal,
+  firstPageHasMore,
+  generation,
+  contentsKey,
+  onError,
+}: {
+  kind: FolderSectionKind
+  folderID: string | null
+  firstPage: T[]
+  firstPageTotal: number | null
+  firstPageHasMore: boolean
+  generation: number
+  contentsKey: readonly unknown[]
+  onError: (e: Error) => void
+}): FolderSectionPager<T> {
+  const qc = useQueryClient()
+  const folderKey = folderID ?? 'root'
+  const [extras, setExtras] = useState<FolderSectionExtras<T> | null>(null)
+
+  // Only extras from the current folder and first-page generation count.
+  const active = extras && extras.folderKey === folderKey && extras.base === generation ? extras : null
+
+  const more = useMutation({
+    mutationFn: ({ offset }: { offset: number; base: number }) =>
+      api.get<FolderSection<T>>(
+        `${folderID ? `/api/v1/folders/${folderID}` : '/api/v1/folders'}/contents` +
+          `?type=${kind}&offset=${offset}&limit=${FOLDER_SECTION_PAGE_SIZE}`
+      ),
+    onError,
+    onSuccess: (page, { offset, base }) => {
+      // The listing moved on (refetch or folder switch) while this page was in
+      // flight: drop it rather than mixing generations.
+      if (qc.getQueryState(contentsKey)?.dataUpdatedAt !== base) return
+      setExtras((prev) => {
+        const current = prev && prev.folderKey === folderKey && prev.base === base
+          ? prev
+          : { folderKey, base, items: [], nextOffset: firstPage.length, total: null, hasMore: null, stopped: false }
+        const seen = new Set<string>(firstPage.map((item) => item.id))
+        for (const item of current.items) seen.add(item.id)
+        const fresh = page.items.filter((item) => !seen.has(item.id))
+        return {
+          ...current,
+          items: [...current.items, ...fresh],
+          nextOffset: offset + page.items.length,
+          total: page.total,
+          hasMore: page.has_more,
+          // An empty page while has_more stays true would loop forever: keep
+          // what is loaded and stop asking.
+          stopped: fresh.length === 0,
+        }
+      })
+    },
+  })
+
+  const loadMore = () => {
+    if (more.isPending) return
+    more.mutate({ offset: active ? active.nextOffset : firstPage.length, base: generation })
+  }
+
+  return {
+    items: active ? [...firstPage, ...active.items] : firstPage,
+    total: active && active.total !== null ? active.total : firstPageTotal,
+    hasMore: active && active.hasMore !== null ? active.hasMore : firstPageHasMore,
+    stopped: active?.stopped ?? false,
+    loading: more.isPending,
+    loadMore,
+  }
+}
+
+/**
+ * Instrument-label counter: `50 of 1,247` while rows remain unloaded, the
+ * plain count once everything is loaded, and nothing when the server did not
+ * report a total (older fixture) — callers must degrade, not guess.
+ */
+function sectionCounter(loaded: number, total: number | null): string | null {
+  if (total === null) return null
+  if (loaded < total) {
+    return `${loaded.toLocaleString('en-US')} of ${total.toLocaleString('en-US')}`
+  }
+  return loaded.toLocaleString('en-US')
+}
+
+/** ⌘ on Apple platforms, Ctrl elsewhere — same reading as the palette binding. */
+function isApplePlatform(): boolean {
+  if (typeof navigator === 'undefined') return false
+  return /Mac|iPhone|iPad|iPod/.test(navigator.userAgent)
+}
+
 // ─── HomePage ────────────────────────────────────────────────────────────────
 
 export function HomePage() {
@@ -514,12 +649,45 @@ export function HomePage() {
 
   // The root listing is shared with the sidebar tree (same key), so the two
   // views fetch /api/v1/folders once; folder-contents invalidations refresh
-  // both.
-  const { data, isLoading } = useQuery<FolderContents>({
+  // both. The paginated sections start from the first page this query returns
+  // and extend it with load-more pages (see useFolderSectionPager).
+  const { data, isLoading, dataUpdatedAt } = useQuery<FolderContents>({
     queryKey: contentsKey,
     queryFn: () => folderID
       ? api.get<FolderContents>(`/api/v1/folders/${folderID}`)
       : api.get<FolderContents>('/api/v1/folders'),
+  })
+
+  const sectionOnError = (e: Error) => setError(e.message)
+  const notebooksPager = useFolderSectionPager<FolderContents['notebooks'][number]>({
+    kind: 'notebook',
+    folderID: folderID ?? null,
+    firstPage: data?.notebooks ?? [],
+    firstPageTotal: data?.totals?.notebooks ?? null,
+    firstPageHasMore: data?.has_more?.notebooks === true,
+    generation: dataUpdatedAt,
+    contentsKey,
+    onError: sectionOnError,
+  })
+  const connectorsPager = useFolderSectionPager<FolderContents['connectors'][number]>({
+    kind: 'connector',
+    folderID: folderID ?? null,
+    firstPage: data?.connectors ?? [],
+    firstPageTotal: data?.totals?.connectors ?? null,
+    firstPageHasMore: data?.has_more?.connectors === true,
+    generation: dataUpdatedAt,
+    contentsKey,
+    onError: sectionOnError,
+  })
+  const dashboardsPager = useFolderSectionPager<FolderContents['dashboards'][number]>({
+    kind: 'dashboard',
+    folderID: folderID ?? null,
+    firstPage: data?.dashboards ?? [],
+    firstPageTotal: data?.totals?.dashboards ?? null,
+    firstPageHasMore: data?.has_more?.dashboards === true,
+    generation: dataUpdatedAt,
+    contentsKey,
+    onError: sectionOnError,
   })
 
   // Default to user's home folder if no folder param is set (first mount only)
@@ -674,14 +842,25 @@ export function HomePage() {
     ? (data?.folders ?? []).filter(f => f.name.toLowerCase().includes(q))
     : data?.folders ?? []
   const searchNotebooks = q
-    ? (data?.notebooks ?? []).filter(nb => nb.title.toLowerCase().includes(q))
-    : data?.notebooks ?? []
+    ? notebooksPager.items.filter(nb => nb.title.toLowerCase().includes(q))
+    : notebooksPager.items
   const searchConnectors = q
-    ? (data?.connectors ?? []).filter(c => c.name.toLowerCase().includes(q))
-    : data?.connectors ?? []
+    ? connectorsPager.items.filter(c => c.name.toLowerCase().includes(q))
+    : connectorsPager.items
   const searchDashboards = q
-    ? (data?.dashboards ?? []).filter(d => d.title.toLowerCase().includes(q))
-    : data?.dashboards ?? []
+    ? dashboardsPager.items.filter(d => d.title.toLowerCase().includes(q))
+    : dashboardsPager.items
+
+  // Instrument-label counters (null when the server reported no totals).
+  const notebookCounter = sectionCounter(notebooksPager.items.length, notebooksPager.total)
+  const connectorCounter = sectionCounter(connectorsPager.items.length, connectorsPager.total)
+  const dashboardCounter = sectionCounter(dashboardsPager.items.length, dashboardsPager.total)
+
+  // The name filter only sees loaded rows: while a section still has unloaded
+  // rows, say so and point at the palette, which searches everything.
+  const showFilterHint = q !== '' &&
+    (notebooksPager.hasMore || connectorsPager.hasMore || dashboardsPager.hasMore)
+  const searchShortcutHint = isApplePlatform() ? '⌘K' : 'Ctrl K'
 
   const isEmpty = data &&
     searchFolders.length === 0 &&
@@ -770,12 +949,12 @@ export function HomePage() {
   const selectAll = useCallback(() => {
     const allIds = [
       ...(data?.folders ?? []).map(f => `folder:${f.id}`),
-      ...(data?.notebooks ?? []).map(nb => `notebook:${nb.id}`),
-      ...(data?.connectors ?? []).map(c => `connector:${c.id}`),
-      ...(data?.dashboards ?? []).map(d => `dashboard:${d.id}`),
+      ...notebooksPager.items.map(nb => `notebook:${nb.id}`),
+      ...connectorsPager.items.map(c => `connector:${c.id}`),
+      ...dashboardsPager.items.map(d => `dashboard:${d.id}`),
     ]
     setSelected(new Set(allIds))
-  }, [data])
+  }, [data, notebooksPager.items, connectorsPager.items, dashboardsPager.items])
 
   const clearSelection = useCallback(() => {
     setSelected(new Set())
@@ -870,6 +1049,11 @@ export function HomePage() {
                 }}
                 aria-label="Search files"
               />
+              {showFilterHint && (
+                <div style={s.filterHint}>
+                  Filtering loaded items — press <kbd style={s.hintKbd}>{searchShortcutHint}</kbd> to search everything
+                </div>
+              )}
             </div>
 
             {/* Hover-visible checkbox style */}
@@ -887,9 +1071,9 @@ export function HomePage() {
                     type="checkbox"
                     checked={selected.size > 0 && selected.size === (
                       (data?.folders?.length ?? 0) +
-                      (data?.notebooks?.length ?? 0) +
-                      (data?.connectors?.length ?? 0) +
-                      (data?.dashboards?.length ?? 0)
+                      notebooksPager.items.length +
+                      connectorsPager.items.length +
+                      dashboardsPager.items.length
                     )}
                     onChange={(e) => e.target.checked ? selectAll() : clearSelection()}
                   />
@@ -1138,7 +1322,10 @@ export function HomePage() {
             {/* Notebooks */}
             {data && searchNotebooks.length > 0 && (
               <section style={s.section}>
-                <div style={s.sectionLabel}>Notebooks</div>
+                <div style={s.sectionHeader}>
+                  <span style={{ ...s.sectionLabel, marginBottom: 0 }}>Notebooks</span>
+                  {notebookCounter !== null && <span style={s.sectionCount}>{notebookCounter}</span>}
+                </div>
                 <div style={s.list}>
                   {searchNotebooks.map((nb) => (
                     <div key={nb.id} style={{
@@ -1198,13 +1385,27 @@ export function HomePage() {
                     </div>
                   ))}
                 </div>
+                {notebooksPager.hasMore && !notebooksPager.stopped && (
+                  <button
+                    type="button"
+                    style={s.loadMoreBtn}
+                    onClick={notebooksPager.loadMore}
+                    disabled={notebooksPager.loading}
+                    aria-busy={notebooksPager.loading}
+                  >
+                    {notebooksPager.loading ? 'Loading…' : 'Load more'}
+                  </button>
+                )}
               </section>
             )}
 
             {/* Connectors */}
             {data && searchConnectors.length > 0 && (
               <section style={s.section}>
-                <div style={s.sectionLabel}>Connectors</div>
+                <div style={s.sectionHeader}>
+                  <span style={{ ...s.sectionLabel, marginBottom: 0 }}>Connectors</span>
+                  {connectorCounter !== null && <span style={s.sectionCount}>{connectorCounter}</span>}
+                </div>
                 <div style={s.list}>
                   {searchConnectors.map((c) => (
                     <div key={c.id} style={{
@@ -1257,13 +1458,27 @@ export function HomePage() {
                     </div>
                   ))}
                 </div>
+                {connectorsPager.hasMore && !connectorsPager.stopped && (
+                  <button
+                    type="button"
+                    style={s.loadMoreBtn}
+                    onClick={connectorsPager.loadMore}
+                    disabled={connectorsPager.loading}
+                    aria-busy={connectorsPager.loading}
+                  >
+                    {connectorsPager.loading ? 'Loading…' : 'Load more'}
+                  </button>
+                )}
               </section>
             )}
 
             {/* Dashboards */}
             {data && searchDashboards.length > 0 && (
               <section style={s.section}>
-                <div style={s.sectionLabel}>Dashboards</div>
+                <div style={s.sectionHeader}>
+                  <span style={{ ...s.sectionLabel, marginBottom: 0 }}>Dashboards</span>
+                  {dashboardCounter !== null && <span style={s.sectionCount}>{dashboardCounter}</span>}
+                </div>
                 <div style={s.list}>
                   {searchDashboards.map((d) => (
                     <div key={d.id} style={{
@@ -1313,6 +1528,17 @@ export function HomePage() {
                     </div>
                   ))}
                 </div>
+                {dashboardsPager.hasMore && !dashboardsPager.stopped && (
+                  <button
+                    type="button"
+                    style={s.loadMoreBtn}
+                    onClick={dashboardsPager.loadMore}
+                    disabled={dashboardsPager.loading}
+                    aria-busy={dashboardsPager.loading}
+                  >
+                    {dashboardsPager.loading ? 'Loading…' : 'Load more'}
+                  </button>
+                )}
               </section>
             )}
 
@@ -1419,6 +1645,11 @@ const s: Record<string, React.CSSProperties> = {
   cancelBtn: { padding: '7px 14px', border: '1px solid var(--border)', borderRadius: 4, background: 'none', fontSize: 13, cursor: 'pointer', color: 'var(--text-secondary)' },
   section: { marginBottom: 28 },
   sectionLabel: { fontSize: 11, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--text-muted)', marginBottom: 8 },
+  sectionHeader: { display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 8 },
+  sectionCount: { fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 500, letterSpacing: '0.04em', color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums' },
+  loadMoreBtn: { alignSelf: 'flex-start' as const, marginTop: 10, padding: '7px 16px', background: 'transparent', border: '1px solid var(--border)', borderRadius: 6, color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600, transition: 'opacity 0.15s' },
+  filterHint: { marginTop: 6, fontSize: 12, color: 'var(--text-muted)' },
+  hintKbd: { fontFamily: 'var(--font-mono)', fontSize: 10, background: 'var(--bg-secondary)', border: '1px solid var(--border)', borderRadius: 3, padding: '1px 4px', color: 'var(--text-primary)' },
   folderGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 8 },
   folderCard: { display: 'flex', alignItems: 'center', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, overflow: 'visible', transition: 'border-color 0.15s', position: 'relative' },
   folderBtn: { flex: 1, display: 'flex', alignItems: 'center', gap: 7, padding: '9px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' as const, minWidth: 0 },

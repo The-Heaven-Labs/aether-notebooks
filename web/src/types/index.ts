@@ -435,6 +435,20 @@ export interface Folder {
   updated_at: string
 }
 
+/** Names of the paginated sections of a folder listing. */
+export type FolderSectionName = 'notebooks' | 'connectors' | 'dashboards'
+
+/**
+ * Load-more envelope for one folder section
+ * (`GET /folders/contents` / `GET /folders/{id}/contents`).
+ */
+export interface FolderSection<T> {
+  items: T[]
+  total: number
+  has_more: boolean
+  offset: number
+}
+
 export interface FolderContents {
   folder?: Folder
   folders: (Folder & { can_edit?: boolean; can_delete?: boolean; can_share?: boolean })[]
@@ -453,6 +467,10 @@ export interface FolderContents {
     can_share?: boolean
   }>
   dashboards: (Dashboard & { can_edit?: boolean; can_delete?: boolean; can_share?: boolean })[]
+  /** Exact visible totals per paginated section. Absent on older servers. */
+  totals?: Partial<Record<FolderSectionName, number>>
+  /** Whether the first page left visible rows behind. Absent on older servers. */
+  has_more?: Partial<Record<FolderSectionName, boolean>>
 }
 
 export interface Group {

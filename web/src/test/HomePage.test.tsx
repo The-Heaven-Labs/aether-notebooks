@@ -1,7 +1,8 @@
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { http, HttpResponse } from 'msw'
+import { http, HttpResponse, delay } from 'msw'
 import { HomePage } from '../pages/HomePage'
+import type { FolderContents } from '../types'
 import { server } from './server'
 import { renderWithProviders } from './utils'
 
@@ -287,5 +288,328 @@ describe('Permissions panel (T7.1)', () => {
     expect(panel).toBeInTheDocument()
     fireEvent.click(screen.getByText('Close'))
     await waitFor(() => expect(screen.queryByTestId('permissions-panel')).not.toBeInTheDocument())
+  })
+})
+
+// ── Folder section pagination (B3) ────────────────────────────────────────────
+
+type FolderNotebook = FolderContents['notebooks'][number]
+
+const PAGE_FOLDER = 'f-page'
+
+function nb(id: string, title: string): FolderNotebook {
+  return {
+    id, org_id: 'org-1', title, description: '',
+    created_by: 'user-1', folder_id: PAGE_FOLDER,
+    created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+  }
+}
+
+function pageNotebooks(count: number, startIndex: number): FolderNotebook[] {
+  return Array.from({ length: count }, (_, i) =>
+    nb(`nb-page-${startIndex + i}`, `Paged Notebook ${startIndex + i + 1}`)
+  )
+}
+
+function folderPage(notebooks: FolderNotebook[], total: number, hasMore: boolean): FolderContents {
+  return {
+    folder: {
+      id: PAGE_FOLDER, org_id: 'org-1', name: 'Paginated', is_home: false,
+      created_by: 'user-1',
+      created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+    },
+    folders: [],
+    notebooks,
+    connectors: [],
+    dashboards: [],
+    totals: { notebooks: total, connectors: 0, dashboards: 0 },
+    has_more: { notebooks: hasMore, connectors: false, dashboards: false },
+  }
+}
+
+describe('Folder section pagination (B3)', () => {
+  test('counter shows loaded of total and Load more pages from the loaded offset', { timeout: 15000 }, async () => {
+    const requests: string[] = []
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage(pageNotebooks(50, 0), 120, true))),
+      http.get('/api/v1/folders/f-page/contents', ({ request }) => {
+        const url = new URL(request.url)
+        requests.push(url.search)
+        const offset = Number(url.searchParams.get('offset'))
+        const items = pageNotebooks(Math.min(50, 120 - offset), offset)
+        return HttpResponse.json({
+          items,
+          total: 120,
+          has_more: offset + items.length < 120,
+          offset,
+        })
+      }),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    expect(await screen.findByText('50 of 120')).toBeInTheDocument()
+    expect(screen.getByText('Paged Notebook 1')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('100 of 120')).toBeInTheDocument()
+    expect(screen.getByText('Paged Notebook 51')).toBeInTheDocument()
+
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toContain('type=notebook')
+    expect(requests[0]).toContain('offset=50')
+    expect(requests[0]).toContain('limit=50')
+
+    // The second click continues from the new offset; the last page turns the
+    // counter into the plain count and removes the button.
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('120')).toBeInTheDocument()
+    expect(screen.queryByText('100 of 120')).not.toBeInTheDocument()
+    expect(requests).toHaveLength(2)
+    expect(requests[1]).toContain('offset=100')
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  test('a page that repeats a loaded id does not duplicate the row', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([
+        nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo'), nb('nb-3', 'Charlie'),
+      ], 5, true))),
+      http.get('/api/v1/folders/f-page/contents', () => HttpResponse.json({
+        items: [nb('nb-3', 'Charlie'), nb('nb-4', 'Delta'), nb('nb-5', 'Echo')],
+        total: 5, has_more: false, offset: 3,
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    expect(await screen.findByText('3 of 5')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+
+    expect(await screen.findByText('Delta')).toBeInTheDocument()
+    expect(screen.getByText('Echo')).toBeInTheDocument()
+    expect(screen.getAllByText('Charlie')).toHaveLength(1)
+    // Everything is loaded: plain count, no "N of M", no button.
+    await waitFor(() => expect(screen.queryByText('3 of 5')).not.toBeInTheDocument())
+    expect(screen.getByText('5')).toBeInTheDocument()
+  })
+
+  test('zero new items with has_more still true stops paging and keeps rows', async () => {
+    let pageCalls = 0
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([
+        nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo'),
+      ], 10, true))),
+      http.get('/api/v1/folders/f-page/contents', () => {
+        pageCalls++
+        return HttpResponse.json({ items: [], total: 10, has_more: true, offset: 2 })
+      }),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    expect(await screen.findByText('2 of 10')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument())
+    expect(pageCalls).toBe(1)
+    expect(screen.getByText('Alpha')).toBeInTheDocument()
+    expect(screen.getByText('Bravo')).toBeInTheDocument()
+    expect(screen.getByText('2 of 10')).toBeInTheDocument()
+  })
+
+  test('Load more is disabled and single-flight while a page is in flight', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([
+        nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo'),
+      ], 4, true))),
+      http.get('/api/v1/folders/f-page/contents', async () => {
+        await delay(120)
+        return HttpResponse.json({
+          items: [nb('nb-3', 'Charlie'), nb('nb-4', 'Delta')],
+          total: 4, has_more: false, offset: 2,
+        })
+      }),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Load more' }))
+    const busy = await screen.findByRole('button', { name: 'Loading…' })
+    expect(busy).toBeDisabled()
+    expect(busy).toHaveAttribute('aria-busy', 'true')
+
+    expect(await screen.findByText('Delta')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  test('shows the plain count when everything is loaded', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-full', () => HttpResponse.json({
+        ...folderPage([nb('nb-1', 'Solo'), nb('nb-2', 'Duo')], 2, false),
+        folder: { id: 'f-full', org_id: 'org-1', name: 'Full', is_home: false, created_by: 'user-1', created_at: '', updated_at: '' },
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-full' })
+
+    expect(await screen.findByText('Solo')).toBeInTheDocument()
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(screen.queryByText('2 of 2')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  test('legacy payloads without totals/has_more show no counter and no button', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-legacy', () => HttpResponse.json({
+        folder: { id: 'f-legacy', org_id: 'org-1', name: 'Legacy', is_home: false, created_by: 'user-1', created_at: '', updated_at: '' },
+        folders: [],
+        notebooks: [nb('nb-legacy', 'Legacy Notebook')],
+        connectors: [],
+        dashboards: [],
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-legacy' })
+
+    expect(await screen.findByText('Legacy Notebook')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+    expect(screen.queryByText(/\d+ of \d+/)).not.toBeInTheDocument()
+    // The header carries the label alone — no plain count either.
+    expect(screen.getByText('Notebooks').parentElement?.textContent).toBe('Notebooks')
+  })
+
+  test('filter hint appears only while filtering with unloaded rows', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage(pageNotebooks(2, 0), 10, true))),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-page' })
+
+    expect(await screen.findByText('2 of 10')).toBeInTheDocument()
+    expect(screen.queryByText(/Filtering loaded items/)).not.toBeInTheDocument()
+
+    const filter = screen.getByLabelText('Search files')
+    fireEvent.change(filter, { target: { value: 'Paged' } })
+    expect(screen.getByText(/Filtering loaded items/)).toBeInTheDocument()
+    expect(screen.getByText('Ctrl K')).toBeInTheDocument()
+
+    fireEvent.change(filter, { target: { value: '' } })
+    expect(screen.queryByText(/Filtering loaded items/)).not.toBeInTheDocument()
+  })
+
+  test('no filter hint when every row is loaded', async () => {
+    server.use(
+      http.get('/api/v1/folders/f-full2', () => HttpResponse.json({
+        ...folderPage(pageNotebooks(2, 0), 2, false),
+        folder: { id: 'f-full2', org_id: 'org-1', name: 'Full', is_home: false, created_by: 'user-1', created_at: '', updated_at: '' },
+      })),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-full2' })
+
+    expect(await screen.findByText('2')).toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'Paged' } })
+    expect(screen.queryByText(/Filtering loaded items/)).not.toBeInTheDocument()
+  })
+
+  test('a successful refetch drops loaded extras (first page wins)', async () => {
+    let pageOne = folderPage([nb('nb-1', 'Alpha'), nb('nb-2', 'Bravo')], 4, true)
+    server.use(
+      http.get('/api/v1/home', () => HttpResponse.json([])),
+      http.get('/api/v1/folders', () => HttpResponse.json({
+        folders: [{
+          id: PAGE_FOLDER, org_id: 'org-1', name: 'Paginated', is_home: false,
+          created_by: 'user-1',
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        }],
+        notebooks: [], connectors: [], dashboards: [],
+        totals: { notebooks: 0, connectors: 0, dashboards: 0 },
+        has_more: { notebooks: false, connectors: false, dashboards: false },
+      })),
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(pageOne)),
+      http.get('/api/v1/folders/f-page/contents', () => HttpResponse.json({
+        items: [nb('nb-3', 'Charlie'), nb('nb-4', 'Delta')],
+        total: 4, has_more: false, offset: 2,
+      })),
+    )
+    renderWithProviders(<HomePage />)
+
+    // Enter the folder and load its second page.
+    fireEvent.click(await screen.findByText('Paginated'))
+    expect(await screen.findByText('2 of 4')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+    expect(await screen.findByText('Charlie')).toBeInTheDocument()
+
+    // The first page changes server-side; leaving and re-entering refetches it.
+    pageOne = folderPage([nb('nb-new-1', 'Replacement One'), nb('nb-new-2', 'Replacement Two')], 2, false)
+    fireEvent.click(screen.getAllByText('Files')[0])
+    fireEvent.click(await screen.findByText('Paginated'))
+
+    expect(await screen.findByText('Replacement One')).toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('Charlie')).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.queryByText('Alpha')).not.toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: 'Load more' })).not.toBeInTheDocument()
+  })
+
+  test('pages connector sections with the singular query type and keeps the button focusable', async () => {
+    const requests: string[] = []
+    server.use(
+      http.get('/api/v1/folders/f-conn', () => HttpResponse.json({
+        folder: { id: 'f-conn', org_id: 'org-1', name: 'Conn', is_home: false, created_by: 'user-1', created_at: '', updated_at: '' },
+        folders: [],
+        notebooks: [],
+        connectors: [
+          { id: 'c-1', name: 'Warehouse', type: 'clickhouse', created_by: 'user-1', created_at: '', updated_at: '' },
+        ],
+        dashboards: [],
+        totals: { notebooks: 0, connectors: 2, dashboards: 0 },
+        has_more: { notebooks: false, connectors: true, dashboards: false },
+      })),
+      http.get('/api/v1/folders/f-conn/contents', ({ request }) => {
+        const url = new URL(request.url)
+        requests.push(url.search)
+        return HttpResponse.json({
+          items: [{ id: 'c-2', name: 'Second Source', type: 'postgres', created_by: 'user-1', created_at: '', updated_at: '' }],
+          total: 2, has_more: false, offset: 1,
+        })
+      }),
+    )
+    renderWithProviders(<HomePage />, { initialPath: '/?folder=f-conn' })
+
+    expect(await screen.findByText('1 of 2')).toBeInTheDocument()
+    const loadMore = screen.getByRole('button', { name: 'Load more' })
+    loadMore.focus()
+    expect(loadMore).toHaveFocus()
+    fireEvent.click(loadMore)
+
+    expect(await screen.findByText('Second Source')).toBeInTheDocument()
+    expect(requests[0]).toContain('type=connector')
+    expect(requests[0]).toContain('offset=1')
+    expect(requests[0]).toContain('limit=50')
+  })
+
+  test('root listing pages through /folders/contents', async () => {
+    const requests: string[] = []
+    server.use(
+      http.get('/api/v1/home', () => HttpResponse.json([])),
+      http.get('/api/v1/folders', () => HttpResponse.json({
+        folders: [],
+        notebooks: [nb('nb-root-1', 'Root Paged 1')],
+        connectors: [], dashboards: [],
+        totals: { notebooks: 2, connectors: 0, dashboards: 0 },
+        has_more: { notebooks: true, connectors: false, dashboards: false },
+      })),
+      http.get('/api/v1/folders/contents', ({ request }) => {
+        const url = new URL(request.url)
+        requests.push(url.search)
+        return HttpResponse.json({
+          items: [nb('nb-root-2', 'Root Paged 2')],
+          total: 2, has_more: false, offset: 1,
+        })
+      }),
+    )
+    renderWithProviders(<HomePage />)
+
+    expect(await screen.findByText('1 of 2')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+
+    expect(await screen.findByText('Root Paged 2')).toBeInTheDocument()
+    expect(requests).toHaveLength(1)
+    expect(requests[0]).toContain('type=notebook')
+    expect(requests[0]).toContain('offset=1')
+    expect(requests[0]).toContain('limit=50')
   })
 })

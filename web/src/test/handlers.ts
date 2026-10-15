@@ -27,6 +27,8 @@ export const FOLDER_ROOT: FolderContents = {
   ],
   connectors: [],
   dashboards: [],
+  totals: { notebooks: 1, connectors: 0, dashboards: 0 },
+  has_more: { notebooks: false, connectors: false, dashboards: false },
 }
 
 export const FOLDER_ENG: FolderContents = {
@@ -45,6 +47,8 @@ export const FOLDER_ENG: FolderContents = {
   ],
   connectors: [],
   dashboards: [],
+  totals: { notebooks: 1, connectors: 0, dashboards: 0 },
+  has_more: { notebooks: false, connectors: false, dashboards: false },
 }
 
 export const GROUPS = [
@@ -134,9 +138,26 @@ export const handlers = [
 
   // Folders
   http.get('/api/v1/folders', () => HttpResponse.json(FOLDER_ROOT)),
+  // Section pages (load more). The root literal must be registered before the
+  // `:id` route: MSW matches in order, so `/folders/contents` would otherwise
+  // be captured as folder id "contents". Defaults serve an empty last page.
+  http.get('/api/v1/folders/contents', ({ request }) => {
+    const url = new URL(request.url)
+    return HttpResponse.json({
+      items: [], total: 0, has_more: false,
+      offset: Number(url.searchParams.get('offset') ?? 0) || 0,
+    })
+  }),
   http.get('/api/v1/folders/:id', ({ params }) => {
     if (params.id === 'f-eng') return HttpResponse.json(FOLDER_ENG)
     return HttpResponse.json({ folder: null, folders: [], notebooks: [], connectors: [], dashboards: [] })
+  }),
+  http.get('/api/v1/folders/:id/contents', ({ request }) => {
+    const url = new URL(request.url)
+    return HttpResponse.json({
+      items: [], total: 0, has_more: false,
+      offset: Number(url.searchParams.get('offset') ?? 0) || 0,
+    })
   }),
   http.get('/api/v1/folders/:id/ancestors', ({ params }) => {
     if (params.id === 'f-eng')
