@@ -595,6 +595,7 @@ func (s *Server) routes() {
 	s.mux.Handle("PUT /api/v1/warehouses/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleUpdateWarehouse))))
 	s.mux.Handle("DELETE /api/v1/warehouses/{id}", authMW(RequireRole("admin")(http.HandlerFunc(s.handleDeleteWarehouse))))
 	s.mux.Handle("PUT /api/v1/warehouses/{id}/provisioner", authMW(RequireRole("admin")(http.HandlerFunc(s.handleSetWarehouseProvisioner))))
+	s.mux.Handle("POST /api/v1/warehouses/{id}/test", authMW(RequireRole("admin")(http.HandlerFunc(s.handleTestWarehouseProvisioner))))
 
 	// Warehouse table grants and service routing (handlers scope by org:
 	// mutations and listing are org admin, effective-access is org admin or
