@@ -136,6 +136,14 @@ type summaryBuildOptions struct {
 	// non-nil map — including an empty one — is used as-is, so a caller that
 	// already scanned its favorites never pays for a second query.
 	Favorites map[string]map[string]bool
+	// Perms substitutes permission verdicts a caller already resolved (search
+	// resolves view/edit for every candidate while ranking, then hands the
+	// batch over). A type present here is authoritative for that type: the
+	// builder trusts the supplied verdicts and skips resolveActions entirely,
+	// so the map must cover every id the type's requests name and every
+	// action the builder reads (view and edit). Types absent resolve through
+	// the batched resolver exactly as before.
+	Perms map[string]map[string]map[string]bool
 }
 
 // loadFavoriteIDs returns the caller's favorited resource ids per type. One
@@ -308,13 +316,13 @@ func (s *Server) fetchResourceSummaryMeta(ctx context.Context, orgID, resourceTy
 
 // buildResourceSummaries assembles summary groups for the caller. Metadata is
 // fetched in one query per type (or taken from opts.Overrides), visibility and
-// can_edit resolve per type through one batched resolveActions call, folder
-// paths resolve in one recursive query, and favorites come from
-// opts.Favorites — loaded once by the builder only when that field is nil.
-// Requests are processed in order (group order) and each request's ids keep
-// their order (result order); ids the caller cannot view, ids that no longer
-// exist, and soft-deleted resources are omitted, so a group whose ids all fail
-// disappears entirely.
+// can_edit resolve per type through one batched resolveActions call (or come
+// from opts.Perms when the caller already resolved them), folder paths resolve
+// in one recursive query, and favorites come from opts.Favorites — loaded once
+// by the builder only when that field is nil. Requests are processed in order
+// (group order) and each request's ids keep their order (result order); ids
+// the caller cannot view, ids that no longer exist, and soft-deleted resources
+// are omitted, so a group whose ids all fail disappears entirely.
 func (s *Server) buildResourceSummaries(ctx context.Context, ident permIdentity, requests []summaryRequest, opts summaryBuildOptions) ([]summaryGroup, error) {
 	// Ordered unique types with the union of their ids in caller order. A
 	// repeated type merges into one group; the first occurrence fixes the
@@ -354,12 +362,17 @@ func (s *Server) buildResourceSummaries(ctx context.Context, ident permIdentity,
 		metaByType[resourceType] = meta
 	}
 
-	// 2. view/edit per type through the batched resolver, over the ids the
+	// 2. view/edit per type: the caller's supplied verdicts win (search already
+	//    resolved them), otherwise the batched resolver runs over the ids the
 	//    metadata fetch actually found (a missing id is never probed).
 	permsByType := make(map[string]map[string]map[string]bool, len(types))
 	for _, resourceType := range types {
 		meta := metaByType[resourceType]
 		if len(meta) == 0 {
+			continue
+		}
+		if supplied, ok := opts.Perms[resourceType]; ok {
+			permsByType[resourceType] = supplied
 			continue
 		}
 		liveIDs := make([]string, 0, len(idsByType[resourceType]))

@@ -76,15 +76,19 @@ func TestSearchResourcesToolDelegatesArgs(t *testing.T) {
 		require.Equal(t, 3, calls[0].limit)
 	})
 
-	t.Run("limit clamps into 1..20", func(t *testing.T) {
+	t.Run("limit passes through unclamped", func(t *testing.T) {
+		// The engine's shared normalizer owns the HTTP limit rules (reject
+		// < 1, clamp > 20), so the handler must not reshape the value on the
+		// way in — clamping 0 up to 1 would silently turn a caller error into
+		// a default page.
 		for _, tc := range []struct {
 			args string
 			want int
 		}{
-			{`{"query":"revenue","limit":500}`, searchResourcesMaxLimit},
-			{`{"query":"revenue","limit":21}`, searchResourcesMaxLimit},
-			{`{"query":"revenue","limit":0}`, 1},
-			{`{"query":"revenue","limit":-3}`, 1},
+			{`{"query":"revenue","limit":500}`, 500},
+			{`{"query":"revenue","limit":21}`, 21},
+			{`{"query":"revenue","limit":0}`, 0},
+			{`{"query":"revenue","limit":-3}`, -3},
 		} {
 			var calls []searchResourcesCall
 			ctx := &ToolContext{Context: context.Background(), SearchResourcesFunc: stubSearchResources(&calls)}

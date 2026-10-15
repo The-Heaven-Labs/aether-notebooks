@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -85,6 +86,47 @@ const searchDashboardTitleSQL = `
 	ORDER BY d.updated_at DESC, d.id::text
 	LIMIT $3`
 
+// searchImplementedTypeSet is the set of resource types the search core can
+// actually run: the types carrying a title query (searchTitleSQL, plus
+// dashboard's dedicated query) that also hold a slot in searchGroupOrder. A
+// type missing either half cannot be searched — searchTitleHits would fail
+// with an unknown type, or the group loop would silently skip it.
+var searchImplementedTypeSet = func() map[string]bool {
+	implemented := make(map[string]bool, len(searchGroupOrder))
+	for _, resourceType := range searchGroupOrder {
+		if resourceType == "dashboard" || searchTitleSQL[resourceType] != "" {
+			implemented[resourceType] = true
+		}
+	}
+	return implemented
+}()
+
+// searchSupportedTypes is the ordered search whitelist and default type list,
+// shared by GET /search and the search_resources tool: the favorites whitelist
+// (the accepted resource universe, derived from resourceTable) intersected
+// with the implemented types above. Deriving from the implemented source keeps
+// a future favoritable type without search SQL from being accepted or
+// defaulted — it is simply not searchable — instead of failing every default
+// search with an internal error.
+var searchSupportedTypes = func() []string {
+	types := make([]string, 0, len(favoriteResourceTypes))
+	for _, resourceType := range favoriteResourceTypes {
+		if searchImplementedTypeSet[resourceType] {
+			types = append(types, resourceType)
+		}
+	}
+	return types
+}()
+
+// searchSupportedTypeSet is searchSupportedTypes as a lookup set.
+var searchSupportedTypeSet = func() map[string]bool {
+	set := make(map[string]bool, len(searchSupportedTypes))
+	for _, resourceType := range searchSupportedTypes {
+		set[resourceType] = true
+	}
+	return set
+}()
+
 // searchRequest is a validated GET /search request.
 type searchRequest struct {
 	Query         string
@@ -93,29 +135,48 @@ type searchRequest struct {
 	FavoritesOnly bool
 }
 
-// parseSearchRequest validates the query parameters. q is trimmed and must be
-// 1–200 runes. types is an optional comma list defaulting to every searchable
-// type; an unknown name is rejected. limit defaults to 5, rejects non-numeric
-// and < 1, and clamps anything above 20. favorites=1 restricts results to the
-// caller's favorites. A non-empty error message is the 400 body.
-func parseSearchRequest(r *http.Request) (searchRequest, string) {
-	values := r.URL.Query()
+// searchParamsInput is one entry point's raw, unvalidated search arguments:
+// GET /search's query parameters and the search_resources tool arguments both
+// funnel into normalizeSearchParams.
+type searchParamsInput struct {
+	// QueryLabel names the query field in validation errors ("q" for HTTP,
+	// "query" for the tool).
+	QueryLabel string
+	// Query is the raw search text; the normalizer trims and bounds it.
+	Query string
+	// Types is the raw requested-type list; empty means every searchable
+	// type. The HTTP side splits its comma list into it, the tool side passes
+	// its array as-is.
+	Types []string
+	// Limit is the raw limit in textual form; empty means the default.
+	Limit string
+}
 
-	query := strings.TrimSpace(values.Get("q"))
+// normalizeSearchParams applies the shared search argument rules to both entry
+// points. q is trimmed and must be 1–searchMaxQueryRunes runes. types is an
+// optional whitelist-validated list, deduped in caller order; unknown names
+// (including blank entries) are rejected with "unknown resource type", and
+// empty means every searchable type. limit defaults to searchDefaultLimit,
+// rejects non-numeric and < 1, and clamps anything above searchMaxLimit. A
+// non-empty error message is the client-facing rejection for both surfaces.
+func normalizeSearchParams(in searchParamsInput) (searchRequest, string) {
+	query := strings.TrimSpace(in.Query)
 	if query == "" {
-		return searchRequest{}, "q is required"
+		return searchRequest{}, in.QueryLabel + " is required"
 	}
 	if utf8.RuneCountInString(query) > searchMaxQueryRunes {
-		return searchRequest{}, fmt.Sprintf("q must be at most %d characters", searchMaxQueryRunes)
+		return searchRequest{}, fmt.Sprintf("%s must be at most %d characters", in.QueryLabel, searchMaxQueryRunes)
 	}
 
 	req := searchRequest{Query: query, Limit: searchDefaultLimit}
 
-	if typesParam := strings.TrimSpace(values.Get("types")); typesParam != "" {
-		seen := make(map[string]bool)
-		for _, part := range strings.Split(typesParam, ",") {
-			resourceType := strings.TrimSpace(part)
-			if !favoriteResourceTypeSet[resourceType] {
+	if len(in.Types) == 0 {
+		req.Types = append(req.Types, searchSupportedTypes...)
+	} else {
+		seen := make(map[string]bool, len(in.Types))
+		for _, raw := range in.Types {
+			resourceType := strings.TrimSpace(raw)
+			if !searchSupportedTypeSet[resourceType] {
 				return searchRequest{}, fmt.Sprintf("unknown resource type %q", resourceType)
 			}
 			if seen[resourceType] {
@@ -124,11 +185,9 @@ func parseSearchRequest(r *http.Request) (searchRequest, string) {
 			seen[resourceType] = true
 			req.Types = append(req.Types, resourceType)
 		}
-	} else {
-		req.Types = append(req.Types, favoriteResourceTypes...)
 	}
 
-	if raw := strings.TrimSpace(values.Get("limit")); raw != "" {
+	if raw := strings.TrimSpace(in.Limit); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 {
 			return searchRequest{}, "limit must be a positive integer"
@@ -139,15 +198,39 @@ func parseSearchRequest(r *http.Request) (searchRequest, string) {
 		req.Limit = n
 	}
 
+	return req, ""
+}
+
+// parseSearchRequest validates the GET /search query parameters through the
+// shared normalizer and applies the endpoint-only favorites flag. A non-empty
+// error message is the 400 body.
+func parseSearchRequest(r *http.Request) (searchRequest, string) {
+	values := r.URL.Query()
+
+	var types []string
+	if typesParam := strings.TrimSpace(values.Get("types")); typesParam != "" {
+		types = strings.Split(typesParam, ",")
+	}
+	req, errMsg := normalizeSearchParams(searchParamsInput{
+		QueryLabel: "q",
+		Query:      values.Get("q"),
+		Types:      types,
+		Limit:      values.Get("limit"),
+	})
+	if errMsg != "" {
+		return searchRequest{}, errMsg
+	}
+
 	req.FavoritesOnly = values.Get("favorites") == "1"
 	return req, ""
 }
 
-// searchTitleHit is one title/name/description candidate row.
+// searchTitleHit is one title/name/description candidate row. Only ID and
+// SnapshotTitle are read back: the SQL SELECT lists carry the title and
+// updated_at for their deterministic ORDER BY, but the resource summary
+// metadata fetch is authoritative for every rendered field.
 type searchTitleHit struct {
-	ID        string
-	Title     string
-	UpdatedAt time.Time
+	ID string
 	// SnapshotTitle is the dashboard-only latest published title; nil when the
 	// dashboard has never been published (and always nil for other types).
 	SnapshotTitle *string
@@ -167,8 +250,11 @@ func (s *Server) searchTitleHits(ctx context.Context, orgID, resourceType, patte
 			var hit searchTitleHit
 			// The folder id column is selected for parity with the title
 			// queries' shape; the summary metadata fetch is authoritative.
+			// Title and updated_at are scanned for the SQL ORDER BY only.
+			var title string
 			var folderID *string
-			if err := rows.Scan(&hit.ID, &hit.Title, &folderID, &hit.UpdatedAt, &hit.SnapshotTitle); err != nil {
+			var updatedAt time.Time
+			if err := rows.Scan(&hit.ID, &title, &folderID, &updatedAt, &hit.SnapshotTitle); err != nil {
 				return nil, fmt.Errorf("scan dashboard title: %w", err)
 			}
 			hits = append(hits, hit)
@@ -191,7 +277,11 @@ func (s *Server) searchTitleHits(ctx context.Context, orgID, resourceType, patte
 	var hits []searchTitleHit
 	for rows.Next() {
 		var hit searchTitleHit
-		if err := rows.Scan(&hit.ID, &hit.Title, &hit.UpdatedAt); err != nil {
+		// Title and updated_at are scanned for the SQL ORDER BY only; the
+		// summary metadata fetch is authoritative.
+		var title string
+		var updatedAt time.Time
+		if err := rows.Scan(&hit.ID, &title, &updatedAt); err != nil {
 			return nil, fmt.Errorf("scan %s title: %w", resourceType, err)
 		}
 		hits = append(hits, hit)
@@ -252,6 +342,16 @@ func searchTitleRank(title, query string) int {
 	return 3
 }
 
+// contentRequiresEdit names the content-bearing types whose matched content
+// is visible only to callers holding the listed action: dashboard widget SQL
+// is editor-only, while notebook cell SQL is view-gated and therefore absent
+// here. The gate is applied once, where content hits become the snippet and
+// has-content sets below, so a future content-bearing type cannot silently
+// skip it.
+var contentRequiresEdit = map[string]string{
+	"dashboard": "edit",
+}
+
 // searchTypePage is one type's ranked result page after ACL and favorites
 // filtering, ready for summary assembly.
 type searchTypePage struct {
@@ -264,6 +364,10 @@ type searchTypePage struct {
 	// titles already resolved to the caller's effective title. The builder
 	// consumes it as an override: its own fetch would serve draft titles.
 	Meta map[string]resourceSummaryMeta
+	// Perms carries the resolved view/edit verdicts for every candidate id
+	// (a superset of the page ids). searchResourceGroups hands it to the
+	// summary builder so the same permissions are never resolved twice.
+	Perms map[string]map[string]bool
 }
 
 // searchTypePage builds one type's ranked page. Title candidates come from
@@ -272,9 +376,9 @@ type searchTypePage struct {
 // ACL-filtered, favorites-filtered, ranked, and sliced. The frame is
 // deliberately permission- and visibility-first: every drop happens before
 // ranking and the limit, so has_more never counts a resource the caller
-// cannot see. Dashboard content hits are intersected with the caller's
-// edit-holding id set before they merge, so a viewer can never receive a
-// draft-SQL snippet and draft SQL can never keep or rank a candidate for one.
+// cannot see. Content is gated where hits become snippets and has-content
+// entries (contentRequiresEdit), so a viewer can never receive a draft-SQL
+// snippet and draft SQL can never keep or rank a candidate for one.
 func (s *Server) searchTypePage(
 	ctx context.Context,
 	ident permIdentity,
@@ -309,39 +413,26 @@ func (s *Server) searchTypePage(
 	}
 
 	// One metadata fetch and one batched permission resolution per type, over
-	// every candidate id.
+	// every candidate id. view+edit for every type: edit feeds both the
+	// content gate (dashboards) and the summaries' can_edit, and the batch
+	// costs the same either way. The verdicts ride along in the page so the
+	// summary builder does not resolve the same ids again.
 	meta, err := s.fetchResourceSummaryMeta(ctx, ident.OrgID, resourceType, candidates)
 	if err != nil {
 		return searchTypePage{}, err
 	}
-	actions := []string{"view"}
-	if resourceType == "dashboard" {
-		actions = append(actions, "edit")
-	}
-	perms, err := s.resolveActions(ctx, ident, resourceType, candidates, actions)
+	perms, err := s.resolveActions(ctx, ident, resourceType, candidates, []string{"view", "edit"})
 	if err != nil {
 		return searchTypePage{}, err
 	}
 
-	// Dashboard widget SQL is editor-only, so intersect the content hits with
-	// the caller's edit-holding ids BEFORE they merge into the candidate,
-	// snippet, and has-content maps: a viewer whose query also matches the
-	// published title must not receive the draft-SQL snippet, and draft SQL
-	// must never keep or rank a candidate the caller cannot edit. Notebook
-	// content stays view-gated by the keep rules below.
-	if resourceType == "dashboard" {
-		editableHits := make([]search.ContentHit, 0, len(contentHits))
-		for _, hit := range contentHits {
-			if actionAllowed(perms, hit.ResourceID, "edit") {
-				editableHits = append(editableHits, hit)
-			}
-		}
-		contentHits = editableHits
-	}
-
 	// The merged candidate list: title candidates first, then the surviving
-	// content-only ids; the snippet and has-content maps cover surviving
-	// content hits only.
+	// content-only ids; the snippet and has-content maps cover gated content
+	// hits only. This is the single place content hits turn into snippets and
+	// keep-set entries: a type in contentRequiresEdit whose caller lacks the
+	// required action contributes no snippet, no content-only candidate, and
+	// no has-content keep reason downstream (notebooks are view-gated, so
+	// their hits pass through).
 	ids := make([]string, 0, len(titleHits)+len(contentHits))
 	seen := make(map[string]bool, len(titleHits)+len(contentHits))
 	for _, hit := range titleHits {
@@ -352,7 +443,11 @@ func (s *Server) searchTypePage(
 	}
 	contentSnippets := make(map[string]string, len(contentHits))
 	contentIDs := make(map[string]bool, len(contentHits))
+	contentAction := contentRequiresEdit[resourceType]
 	for _, hit := range contentHits {
+		if contentAction != "" && !actionAllowed(perms, hit.ResourceID, contentAction) {
+			continue
+		}
 		contentIDs[hit.ResourceID] = true
 		if hit.Snippet != "" {
 			contentSnippets[hit.ResourceID] = hit.Snippet
@@ -396,18 +491,15 @@ func (s *Server) searchTypePage(
 		}
 
 		// Keep rules. Non-dashboards: the SQL candidate matched title or
-		// description, and content-only candidates carry a snippet.
-		// Dashboards: the effective title must match, or the caller must hold
-		// edit (content is editor-only) with a widget-SQL hit.
+		// description; content-only candidates survive only with a gated
+		// content hit. Dashboards: the effective title must match, or a
+		// gated content hit must have survived (content is editor-only
+		// there, so hasContent already implies the caller holds edit).
 		var keep bool
 		if isTitleHit {
-			if resourceType == "dashboard" {
-				keep = searchTitleMatches(effectiveTitle, req.Query) || (hasContent && canEdit)
-			} else {
-				keep = true
-			}
+			keep = resourceType != "dashboard" || searchTitleMatches(effectiveTitle, req.Query) || hasContent
 		} else {
-			keep = hasContent && (resourceType != "dashboard" || canEdit)
+			keep = hasContent
 		}
 		if !keep {
 			continue
@@ -456,6 +548,7 @@ func (s *Server) searchTypePage(
 		HasMore:  len(ranked) > req.Limit,
 		Snippets: make(map[string]string),
 		Meta:     make(map[string]resourceSummaryMeta),
+		Perms:    perms,
 	}
 	if page.HasMore {
 		ranked = ranked[:req.Limit]
@@ -560,14 +653,16 @@ func (s *Server) searchResourceGroups(ctx context.Context, ident permIdentity, r
 	}
 
 	// Summaries for the ranked page ids, in the fixed group order. The
-	// metadata already fetched for ranking rides along as overrides — every
-	// page id of every type is covered — so the builder never re-fetches and
+	// metadata and view/edit verdicts already resolved for ranking ride along
+	// as overrides — every page id of every type is covered — so the builder
+	// never re-fetches and never resolves the same permissions again, and
 	// dashboard rows keep their caller-relative effective titles.
 	requests := make([]summaryRequest, 0, len(searchGroupOrder))
 	opts := summaryBuildOptions{
 		Snippets:  map[string]map[string]string{},
 		Overrides: summaryOverrides{},
 		Favorites: favorites,
+		Perms:     map[string]map[string]map[string]bool{},
 	}
 	for _, resourceType := range searchGroupOrder {
 		page, ok := pages[resourceType]
@@ -579,6 +674,7 @@ func (s *Server) searchResourceGroups(ctx context.Context, ident permIdentity, r
 			opts.Snippets[resourceType] = page.Snippets
 		}
 		opts.Overrides[resourceType] = page.Meta
+		opts.Perms[resourceType] = page.Perms
 	}
 	groups, err := s.buildResourceSummaries(ctx, ident, requests, opts)
 	if err != nil {
@@ -598,44 +694,21 @@ func (s *Server) searchResourceGroups(ctx context.Context, ident permIdentity, r
 
 // searchResourcesForTool is the agent/MCP entry point for catalog search,
 // wired to ToolContext.SearchResourcesFunc. It validates the tool arguments
-// with GET /api/v1/search's rules, builds the caller identity directly from
-// the tool context (group memberships plus the admin-mode flag riding the
-// context), and runs the same core — so agent searches are ACL- and
-// leak-safe exactly like HTTP searches.
+// through the same normalizer as GET /api/v1/search — the tool caller's limit
+// arrives in its textual form so the HTTP limit rules (reject < 1, clamp
+// > 20) apply verbatim — builds the caller identity directly from the tool
+// context (group memberships plus the admin-mode flag riding the context),
+// and runs the same core, so agent searches are ACL- and leak-safe exactly
+// like HTTP searches.
 func (s *Server) searchResourcesForTool(ctx context.Context, userID, orgID, orgRole, query string, types []string, limit int) (any, error) {
-	query = strings.TrimSpace(query)
-	if query == "" {
-		return nil, fmt.Errorf("query is required")
-	}
-	if utf8.RuneCountInString(query) > searchMaxQueryRunes {
-		return nil, fmt.Errorf("query must be at most %d characters", searchMaxQueryRunes)
-	}
-
-	req := searchRequest{Query: query, Limit: limit}
-	if req.Limit < 1 {
-		req.Limit = searchDefaultLimit
-	}
-	if req.Limit > searchMaxLimit {
-		req.Limit = searchMaxLimit
-	}
-	// Types are optional; empty means every searchable type. The whitelist is
-	// the same set the HTTP endpoint validates against, so an unknown type is
-	// an error rather than a silently-empty group.
-	if len(types) == 0 {
-		req.Types = append(req.Types, favoriteResourceTypes...)
-	} else {
-		seen := make(map[string]bool, len(types))
-		for _, raw := range types {
-			resourceType := strings.TrimSpace(raw)
-			if !favoriteResourceTypeSet[resourceType] {
-				return nil, fmt.Errorf("unknown resource type %q", resourceType)
-			}
-			if seen[resourceType] {
-				continue
-			}
-			seen[resourceType] = true
-			req.Types = append(req.Types, resourceType)
-		}
+	req, errMsg := normalizeSearchParams(searchParamsInput{
+		QueryLabel: "query",
+		Query:      query,
+		Types:      types,
+		Limit:      strconv.Itoa(limit),
+	})
+	if errMsg != "" {
+		return nil, errors.New(errMsg)
 	}
 
 	groupIDs, err := s.callerGroupIDs(ctx, userID, orgID)
@@ -657,7 +730,7 @@ func (s *Server) searchResourcesForTool(ctx context.Context, userID, orgID, orgR
 }
 
 // @Summary Search the catalog
-// @Description Searches notebooks, dashboards, folders, connectors, agents, models, skills, tools, and MCP servers by title/name/description, plus content (notebook cell SQL for viewers, dashboard widget SQL for editors only). Results are ACL-filtered, grouped in a fixed type order, capped per type (default 5, max 20) with has_more, and ranked exact title > prefix > contains > content-only, then most recent. Non-editors match dashboards on their effective title only: the latest published snapshot when one exists, never an unpublished draft title.
+// @Description Searches notebooks, dashboards, folders, connectors, agents, models, skills, tools, and MCP servers by title/name/description, plus content (notebook cell SQL for viewers, dashboard widget SQL for editors only). Results are ACL-filtered, grouped in a fixed type order, capped per type (default 5, max 20) with has_more, and ranked exact title > prefix > contains > content-only, then most recent. has_more is window-bounded: the per-type candidate window is finite, so a very broad query can under-report and clients should refine the query rather than page exhaustively. Non-editors match dashboards on their effective title only: the latest published snapshot when one exists, never an unpublished draft title.
 // @Tags search
 // @Produce json
 // @Param q query string true "Search query (1-200 characters)"
@@ -694,6 +767,13 @@ func (s *Server) handleSearch(w http.ResponseWriter, r *http.Request) {
 	}
 	response, err := s.searchResourceGroups(ctx, ident, req)
 	if err != nil {
+		// The client body stays a stable per-stage message; the cause lives
+		// here, in the log.
+		slog.Error("search failed",
+			"error", err,
+			"user_id", claims.UserID,
+			"org_id", claims.OrgID,
+			"query", req.Query)
 		writeError(w, http.StatusInternalServerError, searchFailureMessage(err))
 		return
 	}

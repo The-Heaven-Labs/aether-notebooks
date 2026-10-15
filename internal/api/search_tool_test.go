@@ -6,6 +6,7 @@ package api_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"testing"
 
@@ -107,4 +108,26 @@ func TestSearchResourcesToolValidation(t *testing.T) {
 
 	_, errText = callSearchResourcesTool(t, f, f.viewerToken, map[string]any{"query": "x", "types": []string{"bogus"}})
 	require.Contains(t, errText, `unknown resource type "bogus"`)
+}
+
+// The tool shares the HTTP limit rules end to end: an explicit limit above
+// the ceiling clamps to 20 (has_more reports the truncation) and a limit
+// below 1 is an error, never a silent default.
+func TestSearchResourcesToolLimitRules(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupSearchTestFixture(t, srv)
+
+	for i := 0; i < 25; i++ {
+		id := f.seedNotebook(t, fmt.Sprintf("Limit probe %02d", i), nil, f.userID)
+		f.grant(t, "notebook", id, f.userID, []string{"view"})
+	}
+
+	body, errText := callSearchResourcesTool(t, f, f.token, map[string]any{"query": "limit probe", "limit": 999})
+	require.Empty(t, errText)
+	notebooks := requireSearchGroup(t, body, "notebook")
+	require.Len(t, notebooks.Results, 20, "the shared normalizer must clamp to the per-type ceiling")
+	require.True(t, notebooks.HasMore)
+
+	_, errText = callSearchResourcesTool(t, f, f.token, map[string]any{"query": "limit probe", "limit": 0})
+	require.Contains(t, errText, "limit must be a positive integer", "limit 0 must be rejected, not clamped to 1")
 }

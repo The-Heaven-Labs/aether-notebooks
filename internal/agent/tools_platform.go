@@ -9,12 +9,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// search_resources argument bounds, mirroring the HTTP endpoint's per-type
-// page contract (internal/api.searchDefaultLimit/searchMaxLimit).
-const (
-	searchResourcesDefaultLimit = 5
-	searchResourcesMaxLimit     = 20
-)
+// searchResourcesDefaultLimit mirrors the HTTP endpoint's per-type default
+// page size (internal/api.searchDefaultLimit). The engine's shared normalizer
+// owns the remaining limit rules — reject < 1, clamp > 20 — so the handler
+// never reshapes a caller-supplied limit.
+const searchResourcesDefaultLimit = 5
 
 func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 	reg.Register(&ToolDef{
@@ -91,8 +90,11 @@ func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 // makeSearchResourcesHandler builds the search_resources tool handler. The
 // search itself runs through ToolContext.SearchResourcesFunc — wired by the
 // API server to the same leak-safe core GET /api/v1/search uses — so the
-// handler only parses and clamps the arguments. A bare context without the
-// engine fails closed rather than searching with no ACL filtering.
+// handler only parses the arguments and passes the limit through untouched:
+// the engine's shared normalizer applies the HTTP rules (a limit below 1 is
+// rejected, above 20 is clamped), and clamping 0 up to 1 here would silently
+// turn a caller error into a default page. A bare context without the engine
+// fails closed rather than searching with no ACL filtering.
 func makeSearchResourcesHandler() ToolHandler {
 	return func(args json.RawMessage, ctx *ToolContext) (any, error) {
 		var req struct {
@@ -115,12 +117,6 @@ func makeSearchResourcesHandler() ToolHandler {
 		limit := searchResourcesDefaultLimit
 		if req.Limit != nil {
 			limit = *req.Limit
-			if limit < 1 {
-				limit = 1
-			}
-			if limit > searchResourcesMaxLimit {
-				limit = searchResourcesMaxLimit
-			}
 		}
 		return ctx.SearchResourcesFunc(ctx.Context, ctx.UserID, ctx.OrgID, ctx.OrgRole, query, req.Types, limit)
 	}

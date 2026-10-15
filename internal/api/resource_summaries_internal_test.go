@@ -73,3 +73,48 @@ func TestFavoritesBuilderLoadsFavoritesWhenNil(t *testing.T) {
 	require.True(t, groups[0].Results[0].IsFavorite)
 	require.False(t, groups[0].Results[0].CanEdit)
 }
+
+// TestSummariesUseSuppliedPerms pins the Perms option semantics: supplied
+// verdicts are authoritative for a type — the builder must not fall back to
+// (or even consult) its own resolution. The fixture makes the real ACLs
+// contradict the supplied verdicts in both directions, so a builder that
+// resolved for itself would return the opposite result.
+func TestSummariesUseSuppliedPerms(t *testing.T) {
+	srv := newSessionPermissionTestServer(t)
+	ctx := context.Background()
+	orgID := insertSessionPermOrg(t, srv, "perms-option")
+	userID := insertSessionPermUser(t, srv, "perms-option")
+
+	// grantedID has a real view+edit ACL the supplied verdicts deny;
+	// deniedID has no ACL at all the supplied verdicts allow.
+	grantedID := uuid.New()
+	deniedID := uuid.New()
+	for _, id := range []uuid.UUID{grantedID, deniedID} {
+		_, err := srv.db.Pool.Exec(ctx,
+			`INSERT INTO notebooks (id, org_id, title, created_by) VALUES ($1, $2, $3, $4)`,
+			id, orgID, "Perms "+id.String(), userID)
+		require.NoError(t, err)
+	}
+	_, err := srv.db.Pool.Exec(ctx,
+		`INSERT INTO acl_entries (org_id, resource_type, resource_id, subject_type, subject_id, actions)
+		 VALUES ($1, 'notebook', $2, 'user', $3, ARRAY['view', 'edit'])`,
+		orgID, grantedID, userID)
+	require.NoError(t, err)
+
+	ident := permIdentity{UserID: userID.String(), OrgID: orgID.String(), OrgRole: "editor"}
+	groups, err := srv.buildResourceSummaries(ctx, ident, []summaryRequest{
+		{ResourceType: "notebook", IDs: []string{grantedID.String(), deniedID.String()}},
+	}, summaryBuildOptions{
+		Perms: map[string]map[string]map[string]bool{
+			"notebook": {
+				grantedID.String(): {"view": false, "edit": false},
+				deniedID.String():  {"view": true, "edit": true},
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, groups, 1)
+	require.Equal(t, deniedID.String(), groups[0].Results[0].ID,
+		"a supplied view verdict must be trusted even when the caller's real ACLs deny it")
+	require.True(t, groups[0].Results[0].CanEdit, "supplied edit verdict must feed can_edit")
+}
