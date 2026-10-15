@@ -1471,6 +1471,25 @@ input[type="color"] {
   border-radius: 4px;
 }
 
+/* Top-bar search: a field-styled button (it opens the palette; it never takes
+   typing). Wash + border live here because :hover can't be inline. */
+.topbar-search {
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--nav-border);
+  border-radius: 6px;
+  color: var(--nav-text-muted);
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.topbar-search:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.topbar-search:active {
+  background: rgba(255, 255, 255, 0.14);
+}
+
 /* ── Dashboard editor widget chrome (DashboardEditorPage) ───────────────── */
 /* Dashboard-editor widget chrome: a slim header row carries the widget kind
    and its edit/remove controls, so the widget's own meta text (rows/columns,

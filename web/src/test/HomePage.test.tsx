@@ -1,4 +1,4 @@
-import { screen, fireEvent, waitFor } from '@testing-library/react'
+import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse, delay } from 'msw'
 import { HomePage } from '../pages/HomePage'
@@ -521,7 +521,8 @@ describe('Folder section pagination (B3)', () => {
     const filter = screen.getByLabelText('Search files')
     fireEvent.change(filter, { target: { value: 'Paged' } })
     expect(screen.getByText(/Filtering loaded items/)).toBeInTheDocument()
-    expect(screen.getByText('Ctrl K')).toBeInTheDocument()
+    // The top bar renders its own Ctrl K chip too, so scope to the hint line.
+    expect(within(screen.getByText(/Filtering loaded items/)).getByText('Ctrl K')).toBeInTheDocument()
 
     fireEvent.change(filter, { target: { value: '' } })
     expect(screen.queryByText(/Filtering loaded items/)).not.toBeInTheDocument()

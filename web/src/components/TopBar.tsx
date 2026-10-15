@@ -1,7 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Keyboard, Menu } from 'lucide-react'
+import { Keyboard, Menu, Search } from 'lucide-react'
 import { useAuth } from '../hooks/useAuth'
+import { useMediaQuery } from '../hooks/useMediaQuery'
+import { isApplePlatform } from '../utils/platform'
+import { Kbd } from './Kbd'
 import { openMobileSidebar } from './Sidebar'
 
 function LogoMark() {
@@ -24,12 +27,18 @@ function LogoMark() {
 
 interface TopBarProps {
   onShowShortcuts?: () => void
+  /**
+   * Opens the search palette. The field is the palette's second affordance
+   * (Ctrl/Cmd+K is the first) and renders only when a caller wires it.
+   */
+  onOpenSearch?: () => void
 }
 
-export function TopBar({ onShowShortcuts }: TopBarProps) {
+export function TopBar({ onShowShortcuts, onOpenSearch }: TopBarProps) {
   const { user, logout } = useAuth()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const isNarrow = useMediaQuery(768)
 
   const name = localStorage.getItem('aether_user_name') ?? ''
   const email = localStorage.getItem('aether_user_email') ?? ''
@@ -37,6 +46,7 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
   const isPlatformAdmin = localStorage.getItem('aether_is_platform_admin') === 'true'
   const homeFolderId = sessionStorage.getItem('aether_home_folder_id')
   const initials = name ? name[0].toUpperCase() : email ? email[0].toUpperCase() : '?'
+  const searchShortcut = isApplePlatform() ? '⌘K' : 'Ctrl K'
 
   useEffect(() => {
     const handler = (e: MouseEvent) => {
@@ -62,7 +72,36 @@ export function TopBar({ onShowShortcuts }: TopBarProps) {
         <div style={styles.logo}><LogoMark /></div>
         <span style={styles.appName}>Aether</span>
       </Link>
-      <div style={styles.spacer} />
+      {onOpenSearch ? (
+        isNarrow ? (
+          // Icon-only below 768px: the bar has no room for the field between
+          // the hamburger/brand and the org/avatar cluster.
+          <button
+            className="topbar-search"
+            style={styles.searchCompact}
+            onClick={onOpenSearch}
+            title={`Search (${searchShortcut})`}
+            aria-label="Search"
+          >
+            <Search size={16} aria-hidden="true" />
+          </button>
+        ) : (
+          // Field-styled button: a real input would be a second search
+          // implementation, so the affordance only opens the palette.
+          <button
+            className="topbar-search"
+            style={styles.search}
+            onClick={onOpenSearch}
+            aria-label="Search"
+          >
+            <Search size={14} style={styles.searchIcon} aria-hidden="true" />
+            <span style={styles.searchPlaceholder}>Search files, dashboards, SQL…</span>
+            <Kbd style={styles.searchKbd}>{searchShortcut}</Kbd>
+          </button>
+        )
+      ) : (
+        <div style={styles.spacer} />
+      )}
       {onShowShortcuts && (
         <button
           style={styles.shortcutsBtn}
@@ -148,6 +187,43 @@ const styles: Record<string, React.CSSProperties> = {
   brandDivider: { width: 1, height: 20, background: 'var(--nav-border)', flexShrink: 0 },
   appName: { fontSize: 13, fontWeight: 500, color: 'var(--nav-text)', letterSpacing: '0.01em' },
   spacer: { flex: 1 },
+  // Layout only: the chrome surface (wash, border, radius, hover) lives in
+  // the `.topbar-search` class beside the other nav-chrome controls, since
+  // inline styles can't express :hover on the dark bar.
+  search: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+    height: 30,
+    padding: '0 10px',
+    flex: 1,
+    maxWidth: 'min(420px, 40vw)',
+    minWidth: 0,
+    margin: '0 auto',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+  searchIcon: { color: 'var(--nav-text-muted)', flexShrink: 0 },
+  searchPlaceholder: {
+    flex: 1,
+    minWidth: 0,
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
+    whiteSpace: 'nowrap',
+    fontSize: 13,
+    color: 'var(--nav-text-muted)',
+  },
+  searchKbd: { flexShrink: 0 },
+  searchCompact: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: 30,
+    height: 30,
+    padding: 0,
+    marginLeft: 'auto',
+    cursor: 'pointer',
+  },
   orgName: { fontSize: 12, color: 'var(--nav-text)', fontWeight: 500, opacity: 0.75 },
   right: { position: 'relative', display: 'flex', alignItems: 'center', gap: 10 },
   avatar: {

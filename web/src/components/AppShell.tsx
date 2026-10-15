@@ -229,7 +229,10 @@ export function AppShell({ children, noPadding, bare }: Props) {
     <AgentPanelLayoutContext.Provider value={layoutVersion}>
     <div className="app-shell" style={styles.root}>
       <a href="#main-content" className="skip-link">Skip to content</a>
-      <TopBar onShowShortcuts={() => setShowShortcuts(true)} />
+      <TopBar
+        onShowShortcuts={() => setShowShortcuts(true)}
+        onOpenSearch={() => setShowSearch(true)}
+      />
       <div style={{
         ...styles.body,
         ...(showGlobalAgent && !globalAgentMinimized && globalAgentDocked && !isChatPage ? { paddingRight: globalAgentWidth } : {}),

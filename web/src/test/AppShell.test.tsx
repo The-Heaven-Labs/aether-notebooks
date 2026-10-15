@@ -72,6 +72,14 @@ describe('AppShell', () => {
     expect(await screen.findByRole('dialog', { name: 'Search palette' }, LAZY_TIMEOUT)).toBeInTheDocument()
   })
 
+  it('opens the search palette from the top-bar search field', async () => {
+    renderWithProviders(<AppShell><div>Page content</div></AppShell>)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Search' }))
+    // The palette is lazy-loaded, so the dialog arrives after the chunk loads.
+    expect(await screen.findByRole('dialog', { name: 'Search palette' }, LAZY_TIMEOUT)).toBeInTheDocument()
+  })
+
   it('toggles the global agent panel on Ctrl+J', async () => {
     renderWithProviders(<AppShell><div>Page content</div></AppShell>)
 
