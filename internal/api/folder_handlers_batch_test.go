@@ -510,3 +510,53 @@ func (f *folderBatchFixture) ownHomeFolderID(t *testing.T) string {
 	require.NoError(t, err)
 	return id
 }
+
+// TestFolderListingManageToCanShare pins the listing's folder can_share
+// mapping: a folder's can_share comes from the manage action (matched by name
+// at any ancestor depth), not from the share action. An accidental
+// manage→share swap for folders would flip the direct-manage expectation below
+// to false, because share neither matches a manage grant by name nor expands
+// onto folder resources. Folder can_share has mapped to manage since before
+// the batch migration (the migrated code replaced the former
+// checkPermission(..., "folder", f.ID, "manage") calls one for one).
+func TestFolderListingManageToCanShare(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupFolderBatchFixture(t, srv)
+
+	// Direct manage on a child of the listed folder: can_share true, nothing
+	// else. The listed folder grants only view, so the child's manage cannot
+	// arrive by inheritance.
+	directParent := f.insertFolder(t, "manage direct parent", nil, f.otherUserID)
+	f.grant(t, "folder", directParent, []string{"view"})
+	directChild := f.insertFolder(t, "manage direct child", &directParent, f.otherUserID)
+	f.grant(t, "folder", directChild, []string{"manage"})
+
+	contents := f.listFolder(t, directParent)
+	childRow := requireRow(t, contents.Folders, directChild)
+	require.True(t, childRow.CanShare, "a direct manage grant must map to can_share")
+	require.False(t, childRow.CanEdit, "manage must not imply edit")
+	require.False(t, childRow.CanDelete, "manage must not imply delete")
+
+	// Ancestor manage (with view) on the listed folder's parent: a descendant
+	// folder reaches can_share through the manage name match, while a notebook
+	// in the same listed folder reaches share through the manage→share
+	// ancestor expansion. (Folders are excluded from that expansion, but the
+	// exclusion is not observable through can_share because the folder
+	// mapping is manage, not share.)
+	ancestorParent := f.insertFolder(t, "manage ancestor parent", nil, f.otherUserID)
+	f.grant(t, "folder", ancestorParent, []string{"view", "manage"})
+	ancestorListed := f.insertFolder(t, "manage ancestor listed", &ancestorParent, f.otherUserID)
+	sibling := f.insertFolder(t, "manage ancestor sibling", &ancestorListed, f.otherUserID)
+	notebook := f.insertNotebook(t, "manage ancestor notebook", &ancestorListed, f.otherUserID)
+
+	contents = f.listFolder(t, ancestorListed)
+	siblingRow := requireRow(t, contents.Folders, sibling)
+	require.True(t, siblingRow.CanShare, "an ancestor manage reaches descendant folders by name")
+	require.False(t, siblingRow.CanEdit)
+	require.False(t, siblingRow.CanDelete)
+
+	notebookRow := requireRow(t, contents.Notebooks, notebook)
+	require.True(t, notebookRow.CanShare, "the ancestor manage expands to share on the notebook")
+	require.False(t, notebookRow.CanEdit)
+	require.False(t, notebookRow.CanDelete)
+}
