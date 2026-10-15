@@ -2,11 +2,12 @@ import { describe, test, expect, beforeEach } from 'vitest'
 import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse } from 'msw'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import { server } from './server'
 import { renderWithProviders } from './utils'
 import { favoritesFixture } from './handlers'
 import { DashboardsPage } from '../pages/DashboardsPage'
+import type { FavoriteResourceType } from '../types'
 
 const dashboards = [
   {
@@ -25,14 +26,27 @@ beforeEach(() => {
   server.use(http.get('/api/v1/dashboards', () => HttpResponse.json(dashboards)))
 })
 
-function renderPage() {
+function renderPage(initialPath = '/dashboards') {
   return renderWithProviders(
-    <Routes>
-      <Route path="/dashboards" element={<DashboardsPage />} />
-      <Route path="/dashboards/:id/view" element={<div>Dashboard opened</div>} />
-    </Routes>,
-    { initialPath: '/dashboards' },
+    <>
+      <Routes>
+        <Route path="/dashboards" element={<DashboardsPage />} />
+        <Route path="/dashboards/:id/view" element={<div>Dashboard opened</div>} />
+      </Routes>
+      <LocationProbe />
+    </>,
+    { initialPath },
   )
+}
+
+/** Renders the URL so the chip's `?fav=1` sync can be asserted. */
+function LocationProbe() {
+  const { pathname, search } = useLocation()
+  return <div data-testid="location">{pathname}{search}</div>
+}
+
+function locationText(): string {
+  return screen.getByTestId('location').textContent ?? ''
 }
 
 describe('DashboardsPage favorites (F2)', () => {
@@ -79,5 +93,81 @@ describe('DashboardsPage favorites (F2)', () => {
       expect(within(card).getByRole('button', { name: 'Remove from favorites' })).toHaveAttribute('aria-pressed', 'true'),
     )
     expect(screen.queryByText('Dashboard opened')).not.toBeInTheDocument()
+  })
+})
+
+describe('DashboardsPage favorites filter (F3)', () => {
+  test('the chip filters rows through the favorites id set and syncs ?fav=1', async () => {
+    const { handlers } = favoritesFixture([{ type: 'dashboard', id: 'd-1' }])
+    server.use(...handlers)
+    renderPage()
+
+    expect(await screen.findByText('Revenue Board')).toBeInTheDocument()
+    expect(screen.getByText('Ops Board')).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Favorites' }))
+
+    expect(screen.queryByText('Ops Board')).not.toBeInTheDocument()
+    expect(screen.getByText('Revenue Board')).toBeInTheDocument()
+    expect(locationText()).toBe('/dashboards?fav=1')
+
+    await userEvent.click(screen.getByRole('button', { name: 'Favorites' }))
+    expect(await screen.findByText('Ops Board')).toBeInTheDocument()
+    expect(locationText()).toBe('/dashboards')
+  })
+
+  test('a ?fav=1 deep link filters on first paint', async () => {
+    const { handlers } = favoritesFixture([{ type: 'dashboard', id: 'd-2' }])
+    server.use(...handlers)
+    renderPage('/dashboards?fav=1')
+
+    expect(await screen.findByText('Ops Board')).toBeInTheDocument()
+    expect(screen.queryByText('Revenue Board')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Favorites' })).toHaveAttribute('aria-pressed', 'true')
+  })
+
+  test('grid cards filter too', async () => {
+    localStorage.setItem('aether_dashboards_layout', 'grid')
+    const { handlers } = favoritesFixture([{ type: 'dashboard', id: 'd-1' }])
+    server.use(...handlers)
+    renderPage('/dashboards?fav=1')
+
+    expect(await screen.findByText('Revenue Board')).toBeInTheDocument()
+    expect(screen.queryByText('Ops Board')).not.toBeInTheDocument()
+    // The surviving row is still a grid card.
+    expect(screen.getByText('Revenue Board').closest('.card-hover')).not.toBeNull()
+  })
+
+  test('empty state when nothing is favorited', async () => {
+    const { handlers } = favoritesFixture()
+    server.use(...handlers)
+    renderPage('/dashboards?fav=1')
+
+    expect(await screen.findByText('No favorite dashboards')).toBeInTheDocument()
+    expect(screen.getByText('Bookmark a dashboard with the bookmark icon to see it here.')).toBeInTheDocument()
+  })
+
+  test('un-favoriting removes the row while the request is still pending', async () => {
+    const { handlers, held } = favoritesFixture([{ type: 'dashboard', id: 'd-1' }])
+    let release: () => void = () => {}
+    const parked = new Promise<void>((resolve) => { release = resolve })
+    server.use(
+      http.delete('/api/v1/favorites/:type/:id', async ({ params }) => {
+        await parked
+        held.get(params.type as FavoriteResourceType)?.delete(params.id as string)
+        return new HttpResponse(null, { status: 204 })
+      }),
+      ...handlers,
+    )
+    renderPage('/dashboards?fav=1')
+
+    const row = (await screen.findByText('Revenue Board')).closest('.favorite-host') as HTMLElement
+    await userEvent.click(within(row).getByRole('button', { name: 'Remove from favorites' }))
+
+    expect(screen.queryByText('Revenue Board')).not.toBeInTheDocument()
+    expect(await screen.findByText('No favorite dashboards')).toBeInTheDocument()
+
+    release()
+    await waitFor(() => expect(held.get('dashboard')?.has('d-1')).toBe(false))
   })
 })

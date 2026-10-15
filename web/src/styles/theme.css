@@ -736,6 +736,25 @@ input[type="color"] {
   opacity: 1;
 }
 
+/* `.row-action:disabled` out-specifies the hidden default, which would flash
+   an unpressed disabled bookmark into view at 45% on every load until the
+   favorites listing settles; keep it hidden on fine pointers. Coarse
+   pointers keep the always-visible rule below. Declared *before* the hover
+   rules on purpose: this rule and `.favorite-host:hover .favorite-reveal`
+   are both (0,3,0), so the later hover rule must win — otherwise a bookmark
+   being removed (optimistically unpressed + disabled while pending) blinks
+   out from under the pointer that just clicked it. The win over
+   `.row-action:disabled` (0,2,0) is order-independent.
+   H4 sweep note: this fix is only visible with a throttled `/api/v1/favorites`
+   (the settle window is otherwise too short to catch), and the
+   pinned / hover-revealed / disabled-unpressed triad must be checked in both
+   dark and light themes. */
+@media (pointer: fine) {
+  .favorite-reveal:disabled:not([aria-pressed="true"]) {
+    opacity: 0;
+  }
+}
+
 .favorite-host:hover .favorite-reveal,
 .favorite-host:focus-within .favorite-reveal {
   opacity: 1;
@@ -747,20 +766,6 @@ input[type="color"] {
    in the sheet) so the filled state never dims while its toggle is pending. */
 .favorite-reveal[aria-pressed="true"] {
   opacity: 1;
-}
-
-/* `.row-action:disabled` out-specifies the hidden default, which would flash
-   an unpressed disabled bookmark into view at 45% on every load until the
-   favorites listing settles; keep it hidden on fine pointers. Coarse
-   pointers keep the always-visible rule below.
-   H4 sweep note: this fix is only visible with a throttled `/api/v1/favorites`
-   (the settle window is otherwise too short to catch), and the
-   pinned / hover-revealed / disabled-unpressed triad must be checked in both
-   dark and light themes. */
-@media (pointer: fine) {
-  .favorite-reveal:disabled:not([aria-pressed="true"]) {
-    opacity: 0;
-  }
 }
 
 .row-action-spin {

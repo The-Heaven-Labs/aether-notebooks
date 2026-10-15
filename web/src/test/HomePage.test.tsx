@@ -1,9 +1,9 @@
 import { screen, fireEvent, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { http, HttpResponse, delay } from 'msw'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, useLocation } from 'react-router-dom'
 import { HomePage } from '../pages/HomePage'
-import type { FolderContents } from '../types'
+import type { FavoriteResourceType, FolderContents, ResourceSummary } from '../types'
 import { server } from './server'
 import { renderWithProviders } from './utils'
 import { favoritesFixture } from './handlers'
@@ -856,5 +856,201 @@ describe('Favorites toggles (F2)', () => {
     expect(button.closest('a')).toBeNull()
     const menu = within(row).getByTitle('More options')
     expect(button.compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
+
+// ── Favorites view (F3) ───────────────────────────────────────────────────────
+
+/** Renders the URL so `?fav=1` round-trips can be asserted. */
+function LocationProbe() {
+  const { pathname, search } = useLocation()
+  return <div data-testid="location">{pathname}{search}</div>
+}
+
+function locationText(): string {
+  return screen.getByTestId('location').textContent ?? ''
+}
+
+function renderHome(initialPath = '/') {
+  return renderWithProviders(
+    <>
+      <HomePage />
+      <LocationProbe />
+    </>,
+    { initialPath },
+  )
+}
+
+/** One favorites-listing row with a human title and folder path. */
+function favoriteRow(
+  type: FavoriteResourceType,
+  id: string,
+  title: string,
+  extra: Partial<ResourceSummary> = {},
+): ResourceSummary {
+  return {
+    id,
+    resource_type: type,
+    title,
+    subtitle: type,
+    updated_at: '2026-01-01T00:00:00Z',
+    is_favorite: true,
+    can_edit: true,
+    ...extra,
+  }
+}
+
+describe('Favorites view (F3)', () => {
+  test('the chip toggles the flat favorites view and ?fav=1 round-trips through the URL', async () => {
+    const { handlers } = favoritesFixture([{ type: 'notebook', id: 'nb-1' }])
+    server.use(
+      ...handlers,
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([nb('nb-1', 'Alpha')], 1, false))),
+    )
+    renderHome('/?folder=f-page')
+
+    expect(await screen.findByText('Alpha')).toBeInTheDocument()
+    expect(locationText()).toBe('/?folder=f-page')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Favorites' }))
+    // The folder param rides along so leaving the view returns to the folder.
+    await waitFor(() => expect(locationText()).toBe('/?folder=f-page&fav=1'))
+    // The folder listing is replaced by the flat favorites list.
+    expect(screen.queryByText('Alpha')).not.toBeInTheDocument()
+    expect(await screen.findByText('nb-1')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Favorites' }))
+    await waitFor(() => expect(locationText()).toBe('/?folder=f-page'))
+    expect(await screen.findByText('Alpha')).toBeInTheDocument()
+    expect(screen.queryByText('nb-1')).not.toBeInTheDocument()
+  })
+
+  test('renders grouped rows with folder paths and per-type links in canonical type order', async () => {
+    server.use(
+      http.get('/api/v1/favorites', () => HttpResponse.json({
+        groups: [
+          {
+            resource_type: 'notebook',
+            results: [favoriteRow('notebook', 'nb-1', 'Revenue Notes', { folder_path: 'Engineering / Metrics' })],
+          },
+          {
+            resource_type: 'folder',
+            results: [favoriteRow('folder', 'f-fav', 'Shared Reports')],
+          },
+        ],
+      })),
+    )
+    renderHome('/?fav=1')
+
+    // The server sent notebooks first; the view renders the canonical order.
+    const headers = await screen.findAllByRole('heading', { level: 3 })
+    expect(headers.map((h) => h.textContent)).toEqual(['Folders · 1', 'Notebooks · 1'])
+
+    expect(screen.getByText('Revenue Notes')).toBeInTheDocument()
+    expect(screen.getByText('Engineering / Metrics')).toBeInTheDocument()
+    expect(screen.getByText('Revenue Notes').closest('a')).toHaveAttribute('href', '/notebooks/nb-1')
+    expect(screen.getByText('Shared Reports').closest('a')).toHaveAttribute('href', '/?folder=f-fav')
+  })
+
+  test('empty listing shows the bookmark hint, never a blank page', async () => {
+    const { handlers } = favoritesFixture()
+    server.use(...handlers)
+    renderHome('/?fav=1')
+
+    expect(await screen.findByText('No favorites yet')).toBeInTheDocument()
+    expect(screen.getByText('Bookmark anything with the bookmark icon.')).toBeInTheDocument()
+  })
+
+  test('shows skeleton rows while the favorites listing loads', async () => {
+    let release: () => void = () => {}
+    const parked = new Promise<void>((resolve) => { release = resolve })
+    server.use(
+      http.get('/api/v1/favorites', async () => {
+        await parked
+        return HttpResponse.json({ groups: [] })
+      }),
+    )
+    const { container } = renderHome('/?fav=1')
+
+    await waitFor(() => expect(container.querySelector('[style*="skeleton-pulse"]')).not.toBeNull())
+    expect(screen.queryByText('No favorites yet')).not.toBeInTheDocument()
+
+    release()
+    expect(await screen.findByText('No favorites yet')).toBeInTheDocument()
+    expect(container.querySelector('[style*="skeleton-pulse"]')).toBeNull()
+  })
+
+  test('a failed favorites listing shows the error state instead of blanking', async () => {
+    server.use(
+      http.get('/api/v1/favorites', () => HttpResponse.json({ error: 'boom' }, { status: 500 })),
+    )
+    renderHome('/?fav=1')
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent("Couldn't load favorites.")
+    expect(screen.queryByText('No favorites yet')).not.toBeInTheDocument()
+  })
+
+  test('the local name filter narrows the loaded favorites and shows the hint', async () => {
+    const { handlers } = favoritesFixture([
+      { type: 'notebook', id: 'nb-1' },
+      { type: 'notebook', id: 'nb-2' },
+    ])
+    server.use(...handlers)
+    renderHome('/?fav=1')
+
+    expect(await screen.findByText('nb-1')).toBeInTheDocument()
+    expect(screen.getByText('nb-2')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: 'nb-2' } })
+    expect(screen.queryByText('nb-1')).not.toBeInTheDocument()
+    expect(screen.getByText('nb-2')).toBeInTheDocument()
+    expect(screen.getByText(/Filtering loaded items/)).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('Search files'), { target: { value: '' } })
+    expect(screen.getByText('nb-1')).toBeInTheDocument()
+  })
+
+  test('un-favoriting a row drops it immediately, before the request settles', async () => {
+    const { handlers, held } = favoritesFixture([{ type: 'notebook', id: 'nb-1' }])
+    let release: () => void = () => {}
+    const parked = new Promise<void>((resolve) => { release = resolve })
+    server.use(
+      http.delete('/api/v1/favorites/:type/:id', async ({ params }) => {
+        await parked
+        held.get(params.type as FavoriteResourceType)?.delete(params.id as string)
+        return new HttpResponse(null, { status: 204 })
+      }),
+      ...handlers,
+    )
+    renderHome('/?fav=1')
+
+    const row = (await screen.findByText('nb-1')).closest('.favorite-host') as HTMLElement
+    await userEvent.click(within(row).getByRole('button', { name: 'Remove from favorites' }))
+
+    // The DELETE is still parked; the optimistic id-set flip still drops it.
+    expect(await screen.findByText('No favorites yet')).toBeInTheDocument()
+    expect(screen.queryByText('nb-1')).not.toBeInTheDocument()
+
+    release()
+    await waitFor(() => expect(held.get('notebook')?.has('nb-1')).toBe(false))
+    // The refetched listing agrees: nothing comes back.
+    expect(screen.getByText('No favorites yet')).toBeInTheDocument()
+  })
+
+  test('the folder view is untouched while the chip is off', async () => {
+    const { handlers } = favoritesFixture([{ type: 'notebook', id: 'nb-9' }])
+    server.use(
+      ...handlers,
+      http.get('/api/v1/folders/f-page', () => HttpResponse.json(folderPage([nb('nb-1', 'Alpha')], 1, false))),
+    )
+    renderHome('/?folder=f-page')
+
+    expect(await screen.findByText('Alpha')).toBeInTheDocument()
+    expect(screen.getByText('Notebooks')).toBeInTheDocument()
+    // No favorites-view chrome, and favorites from elsewhere are not listed.
+    expect(screen.queryByRole('heading', { level: 3 })).not.toBeInTheDocument()
+    expect(screen.queryByText('nb-9')).not.toBeInTheDocument()
+    expect(locationText()).toBe('/?folder=f-page')
   })
 })

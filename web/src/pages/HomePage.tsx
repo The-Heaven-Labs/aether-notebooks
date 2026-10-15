@@ -2,10 +2,13 @@ import { useEffect, useRef, useState, useCallback } from 'react'
 import { Link, useSearchParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
+import { FAVORITE_RESOURCE_TYPES } from '../types'
 import type { Cell, Folder, FolderContents, Notebook } from '../types'
 import { useAuth } from '../hooks/useAuth'
+import { useFavorites } from '../hooks/useFavorites'
 import { useFolderSectionPager } from '../hooks/useFolderSectionPager'
 import { isApplePlatform } from '../utils/platform'
+import { isKnownType, resourceHref, TYPE_ICONS, TYPE_LABELS } from '../utils/resources'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { ErrorBanner } from '../components/ErrorBanner'
@@ -15,7 +18,7 @@ import { useFolderActions, useFolderMutations, type FolderActionKey } from '../c
 import { PermissionsPanel } from '../components/PermissionsPanel'
 import { TwoPanelLayout } from '../components/TwoPanelLayout'
 import { Skeleton } from '../components/Skeleton'
-import { Folder as FolderIcon, BookOpen, LayoutDashboard, Database, Home } from 'lucide-react'
+import { Folder as FolderIcon, BookOpen, Bookmark, LayoutDashboard, Database, Home } from 'lucide-react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 
 // ─── Types ───────────────────────────────────────────────────────────────────
@@ -495,6 +498,9 @@ function sectionCounter(loaded: number, total: number | null): string | null {
 export function HomePage() {
   const [searchParams, setSearchParams] = useSearchParams()
   const folderID = searchParams.get('folder')
+  // The favorites view (`?fav=1`) is a flat cross-folder listing; it coexists
+  // with `folder` so leaving the view returns to the folder you were in.
+  const favoritesOnly = searchParams.get('fav') === '1'
   const navigate = useNavigate()
   const qc = useQueryClient()
   const importRef = useRef<HTMLInputElement>(null)
@@ -576,6 +582,18 @@ export function HomePage() {
     onError: sectionOnError,
   })
 
+  // ── Favorites view (F3) ──
+  // One shared listing drives every bookmark on the page. The favorites view
+  // renders it through the live id sets so an un-favorite drops the row
+  // immediately (the groups catch up on the invalidation refetch); a favorite
+  // added from another surface heals the same way, one round-trip behind.
+  const {
+    groups: favoriteGroups,
+    ids: favoriteIds,
+    isLoading: favoritesLoading,
+    isError: favoritesError,
+  } = useFavorites()
+
   // Default to user's home folder if no folder param is set (first mount only)
   const initialLoad = useRef(true)
   const { data: homeFolders } = useQuery<Array<{ id: string; name: string; is_home: boolean; owner_id: string }>>({
@@ -586,13 +604,15 @@ export function HomePage() {
   useEffect(() => {
     if (!initialLoad.current) return
     initialLoad.current = false
-    if (!folderID && homeFolders && homeFolders.length > 0) {
+    // The favorites view is folder-independent: setting a home folder here
+    // would rewrite `?fav=1` away on a warm-cache back navigation.
+    if (!favoritesOnly && !folderID && homeFolders && homeFolders.length > 0) {
       const myHome = homeFolders.find(h => h.owner_id === user?.user_id)
       if (myHome) {
         setSearchParams({ folder: myHome.id })
       }
     }
-  }, [folderID, homeFolders, setSearchParams, user?.user_id])
+  }, [folderID, homeFolders, setSearchParams, user?.user_id, favoritesOnly])
 
   // Expose home folder ID for Sidebar/TopBar navigation
   useEffect(() => {
@@ -620,9 +640,13 @@ export function HomePage() {
     members.find(m => m.user_id === userId)?.name ?? userId.slice(0, 8)
 
   useEffect(() => {
+    if (favoritesOnly) {
+      document.title = 'Favorites — Aether'
+      return
+    }
     const name = data?.folder?.name
     document.title = name ? `${name} — Aether` : "Files — Aether"
-  }, [data?.folder?.name])
+  }, [data?.folder?.name, favoritesOnly])
 
   // ── Mutations ──
 
@@ -737,15 +761,43 @@ export function HomePage() {
     ? dashboardsPager.items.filter(d => d.title.toLowerCase().includes(q))
     : dashboardsPager.items
 
+  // Favorites view rows: canonical type order, entries the live id set still
+  // holds (optimistic removals), then the local name filter. Retired types
+  // are skipped defensively — no icon and no route exist for them.
+  const liveFavoriteGroups = favoriteGroups
+    .filter((group) => isKnownType(group.resource_type))
+    .map((group) => ({
+      ...group,
+      results: group.results.filter((result) =>
+        isKnownType(result.resource_type) && favoriteIds[result.resource_type].has(result.id)),
+    }))
+    .filter((group) => group.results.length > 0)
+    .sort((a, b) =>
+      FAVORITE_RESOURCE_TYPES.indexOf(a.resource_type) - FAVORITE_RESOURCE_TYPES.indexOf(b.resource_type))
+  const filteredFavoriteGroups = q
+    ? liveFavoriteGroups
+        .map((group) => ({
+          ...group,
+          results: group.results.filter((result) => result.title.toLowerCase().includes(q)),
+        }))
+        .filter((group) => group.results.length > 0)
+    : liveFavoriteGroups
+  const favoriteCount = liveFavoriteGroups.reduce((count, group) => count + group.results.length, 0)
+  // A listing error with nothing cached is an error state; a background
+  // refetch failure keeps rendering the cached favorites (never blank).
+  const favoritesUnavailable = favoritesError && liveFavoriteGroups.length === 0
+
   // Instrument-label counters (null when the server reported no totals).
   const notebookCounter = sectionCounter(notebooksPager.items.length, notebooksPager.total)
   const connectorCounter = sectionCounter(connectorsPager.items.length, connectorsPager.total)
   const dashboardCounter = sectionCounter(dashboardsPager.items.length, dashboardsPager.total)
 
-  // The name filter only sees loaded rows: while a section still has unloaded
-  // rows, say so and point at the palette, which searches everything.
-  const showFilterHint = q !== '' &&
-    (notebooksPager.hasMore || connectorsPager.hasMore || dashboardsPager.hasMore)
+  // The name filter only sees loaded rows: while a folder section still has
+  // unloaded rows, say so and point at the palette, which searches everything.
+  // The favorites listing has no pagination, but is capped server-side at 500
+  // rows, so filtering it is still a loaded-items-only operation.
+  const showFilterHint = q !== '' && (favoritesOnly ||
+    notebooksPager.hasMore || connectorsPager.hasMore || dashboardsPager.hasMore)
   const searchShortcutHint = isApplePlatform() ? '⌘K' : 'Ctrl K'
 
   const isEmpty = data &&
@@ -753,6 +805,17 @@ export function HomePage() {
     searchNotebooks.length === 0 &&
     searchConnectors.length === 0 &&
     searchDashboards.length === 0
+
+  // The chip toggles the view in place: every other param (notably `folder`)
+  // rides along, so leaving the view lands back where the user was.
+  function toggleFavoritesView() {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current)
+      if (params.get('fav') === '1') params.delete('fav')
+      else params.set('fav', '1')
+      return params
+    })
+  }
 
   const handleCreate = () => {
     if (!newName.trim()) return
@@ -919,22 +982,34 @@ export function HomePage() {
         }
         rightPanel={
           <div style={{ maxWidth: 1280, margin: '0 auto', position: 'relative' }}>
-            {/* Search bar */}
+            {/* Search bar + favorites view chip */}
             <div style={{ marginBottom: 12 }}>
-              <input
-                style={s.searchInput}
-                type="search"
-                placeholder="Search by name…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    setSearchQuery('');
-                    (e.target as HTMLInputElement).blur();
-                  }
-                }}
-                aria-label="Search files"
-              />
+              <div style={s.searchRow}>
+                <input
+                  style={s.searchInput}
+                  type="search"
+                  placeholder="Search by name…"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Escape') {
+                      setSearchQuery('');
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  aria-label="Search files"
+                />
+                <button
+                  type="button"
+                  style={{ ...s.viewChip, ...(favoritesOnly ? s.viewChipActive : {}) }}
+                  aria-pressed={favoritesOnly}
+                  title={favoritesOnly ? 'Return to the folder view' : 'Show favorites across folders'}
+                  onClick={toggleFavoritesView}
+                >
+                  <Bookmark size={12} fill={favoritesOnly ? 'currentColor' : 'none'} aria-hidden="true" />
+                  Favorites
+                </button>
+              </div>
               {showFilterHint && (
                 <div style={s.filterHint}>
                   Filtering loaded items — press <kbd style={s.hintKbd}>{searchShortcutHint}</kbd> to search everything
@@ -942,6 +1017,80 @@ export function HomePage() {
               )}
             </div>
 
+            {favoritesOnly ? (
+              /* Files → Favorites: one flat listing across folders and types,
+                 grouped in the canonical type order. */
+              <section style={s.section}>
+                <div style={s.sectionHeader}>
+                  <span style={{ ...s.sectionLabel, marginBottom: 0 }}>Favorites</span>
+                  {!favoritesLoading && !favoritesUnavailable && (
+                    <span style={s.sectionCount}>{favoriteCount.toLocaleString('en-US')}</span>
+                  )}
+                </div>
+                {favoritesLoading ? (
+                  <div style={{ padding: '8px 0' }}>
+                    <Skeleton count={4} height={40} />
+                  </div>
+                ) : favoritesUnavailable ? (
+                  <div role="alert" style={s.favoritesError}>
+                    <span>Couldn't load favorites.</span>
+                    <button
+                      type="button"
+                      style={s.retryBtn}
+                      onClick={() => { void qc.invalidateQueries({ queryKey: ['favorites'] }) }}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                ) : liveFavoriteGroups.length === 0 ? (
+                  <EmptyState
+                    icon={<Bookmark size={32} />}
+                    title="No favorites yet"
+                    text="Bookmark anything with the bookmark icon."
+                  />
+                ) : filteredFavoriteGroups.length === 0 ? (
+                  <EmptyState
+                    icon={<Bookmark size={32} />}
+                    title={`No favorites match “${searchQuery.trim()}”`}
+                    text="Clear the filter to see all of your favorites."
+                  />
+                ) : (
+                  filteredFavoriteGroups.map((group) => (
+                    <section key={group.resource_type} style={{ marginBottom: 20 }}>
+                      <h3 style={s.favoriteGroupHeader}>
+                        {TYPE_LABELS[group.resource_type]} · {group.results.length}
+                      </h3>
+                      <div style={s.list}>
+                        {group.results.map((result) => {
+                          const Icon = TYPE_ICONS[result.resource_type]
+                          return (
+                            <div
+                              key={`${result.resource_type}:${result.id}`}
+                              style={s.item}
+                              className="card-hover favorite-host"
+                            >
+                              <Link to={resourceHref(result.resource_type, result.id)} style={s.itemLink}>
+                                <Icon size={15} style={{ color: 'var(--accent)', flexShrink: 0 }} aria-hidden="true" />
+                                <div style={{ flex: 1, minWidth: 0 }}>
+                                  <span style={s.itemName}>{result.title}</span>
+                                  {result.folder_path && <span style={s.favoritePath}>{result.folder_path}</span>}
+                                </div>
+                              </Link>
+                              <FavoriteButton
+                                resourceType={result.resource_type}
+                                resourceId={result.id}
+                                className="favorite-reveal"
+                              />
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </section>
+                  ))
+                )}
+              </section>
+            ) : (
+              <>
             {/* Hover-visible checkbox style */}
             <style>{`
               .file-list-item .file-checkbox { opacity: 0; transition: opacity 0.15s; }
@@ -1434,6 +1583,8 @@ export function HomePage() {
                 )}
               </section>
             )}
+              </>
+            )}
 
             {/* Move modal */}
             {moving && (
@@ -1555,6 +1706,15 @@ const s: Record<string, React.CSSProperties> = {
   itemName: { fontSize: 14, fontWeight: 500, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const, flex: 1 },
   renameInput: { width: '100%', padding: '5px 8px', border: '1px solid var(--accent)', borderRadius: 3, fontSize: 13, outline: 'none' },
   searchInput: { width: '100%', maxWidth: 320, padding: '7px 12px', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, outline: 'none', background: 'var(--bg-input)', color: 'var(--text-primary)' },
+  searchRow: { display: 'flex', alignItems: 'center', gap: 8 },
+  // Quiet accent for the active chip: accent ink on a hairline, no fill
+  // (matches the search page's filter chips).
+  viewChip: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px', background: 'none', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--border)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' as const, flexShrink: 0 },
+  viewChipActive: { borderColor: 'var(--accent)', color: 'var(--accent)' },
+  favoriteGroupHeader: { margin: '0 0 8px', fontFamily: 'var(--font-mono)', fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase' as const, color: 'var(--text-muted)' },
+  favoritePath: { display: 'block', marginTop: 2, fontSize: 11, fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' as const },
+  favoritesError: { display: 'flex', alignItems: 'center', gap: 12, padding: '16px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, color: 'var(--text-secondary)' },
+  retryBtn: { background: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12, padding: '3px 10px' },
   recentChip: { display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 20, fontSize: 12, fontWeight: 500, border: '1px solid var(--border)', background: 'var(--bg-card)', color: 'var(--text-primary)', cursor: 'pointer' },
   bulkToolbar: {
     display: 'flex',

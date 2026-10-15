@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react'
-import { Link, useNavigate } from 'react-router-dom'
+import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { Dashboard } from '../types'
+import { useFavorites } from '../hooks/useFavorites'
 import { AppShell } from '../components/AppShell'
 import { EmptyState } from '../components/EmptyState'
 import { FavoriteButton } from '../components/FavoriteButton'
@@ -10,7 +11,7 @@ import { Skeleton } from '../components/Skeleton'
 import { SectionHeader } from '../components/SectionHeader'
 import { FormModal } from '../components/FormModal'
 import { RowAction } from '../components/RowActions'
-import { LayoutGrid, List, LayoutDashboard, Pencil, Trash2 } from 'lucide-react'
+import { Bookmark, LayoutGrid, List, LayoutDashboard, Pencil, Trash2 } from 'lucide-react'
 import { ConfirmDialog } from '../components/ConfirmDialog'
 
 const fmtDate = (d: string) => {
@@ -26,6 +27,11 @@ export function DashboardsPage() {
   useEffect(() => { document.title = "Dashboards — Aether Notebooks" }, [])
   const qc = useQueryClient()
   const navigate = useNavigate()
+  const [searchParams, setSearchParams] = useSearchParams()
+  // The favorites filter lives in the URL (`?fav=1`) like the Files page's
+  // chip, so it survives refresh/back; filtering itself is client-side over
+  // the shared favorites id set — no endpoint.
+  const favoritesOnly = searchParams.get('fav') === '1'
   const [newTitle, setNewTitle] = useState('')
   const [creating, setCreating] = useState(false)
   const [createError, setCreateError] = useState<string | null>(null)
@@ -39,10 +45,25 @@ export function DashboardsPage() {
     localStorage.setItem('aether_dashboards_layout', next)
   }
 
+  const toggleFavorites = () => {
+    setSearchParams((current) => {
+      const params = new URLSearchParams(current)
+      if (params.get('fav') === '1') params.delete('fav')
+      else params.set('fav', '1')
+      return params
+    })
+  }
+
   const { data: dashboards = [], isLoading } = useQuery({
     queryKey: ['dashboards'],
     queryFn: () => api.get<Dashboard[]>('/api/v1/dashboards'),
   })
+  const { ids: favoriteIds, isLoading: favoritesLoading, isError: favoritesError } = useFavorites()
+  // Never filter on an unknown id set (still loading, or the listing failed):
+  // an empty set would claim "no favorites" as a fact.
+  const visibleDashboards = favoritesOnly && !favoritesLoading && !favoritesError
+    ? dashboards.filter((d) => favoriteIds.dashboard.has(d.id))
+    : dashboards
 
   const createDashboard = useMutation({
     mutationFn: () => api.post<Dashboard>('/api/v1/dashboards', { title: newTitle.trim(), settings: {} }),
@@ -68,10 +89,22 @@ export function DashboardsPage() {
     <AppShell>
       <div style={styles.body}>
         <SectionHeader title="Dashboards" subtitle={dashboards.length > 0 ? `${dashboards.length} dashboard${dashboards.length !== 1 ? 's' : ''}` : ''}>
-          <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid view' : 'Switch to list view'} aria-label={layout === 'list' ? 'Switch to grid view' : 'Switch to list view'}>
-            {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
-          </button>
-          <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
+          <span style={styles.headerActions}>
+            <button
+              type="button"
+              style={{ ...styles.chip, ...(favoritesOnly ? styles.chipActive : {}) }}
+              aria-pressed={favoritesOnly}
+              title={favoritesOnly ? 'Show all dashboards' : 'Show only favorites'}
+              onClick={toggleFavorites}
+            >
+              <Bookmark size={12} fill={favoritesOnly ? 'currentColor' : 'none'} aria-hidden="true" />
+              Favorites
+            </button>
+            <button type="button" style={styles.layoutBtn} onClick={toggleLayout} title={layout === 'list' ? 'Switch to grid view' : 'Switch to list view'} aria-label={layout === 'list' ? 'Switch to grid view' : 'Switch to list view'}>
+              {layout === 'list' ? <LayoutGrid size={14} /> : <List size={14} />}
+            </button>
+            <button type="button" style={styles.newBtn} onClick={() => setCreating(true)}>+ New Dashboard</button>
+          </span>
         </SectionHeader>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: -16, marginBottom: 24 }}>
           Build real-time visual dashboards from your notebook query results.
@@ -103,10 +136,26 @@ export function DashboardsPage() {
         )}
         {deleteError && <p style={{ color: 'var(--error)', fontSize: 12 }}>{deleteError}</p>}
 
-        {isLoading ? (
+        {isLoading || (favoritesOnly && favoritesLoading) ? (
           <div style={{ padding: '8px 0' }}>
             <Skeleton count={4} height={48} />
           </div>
+        ) : favoritesOnly && favoritesError ? (
+          <div role="alert" style={styles.favoritesError}>
+            <span>Couldn't load favorites.</span>
+            <button
+              type="button"
+              style={styles.retryBtn}
+              onClick={() => { void qc.invalidateQueries({ queryKey: ['favorites'] }) }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : favoritesOnly && visibleDashboards.length === 0 ? (
+          <EmptyState
+            title="No favorite dashboards"
+            text="Bookmark a dashboard with the bookmark icon to see it here."
+          />
         ) : dashboards.length === 0 ? (
           <EmptyState
             title="No dashboards yet"
@@ -114,7 +163,7 @@ export function DashboardsPage() {
           />
         ) : (
           <div style={layout === 'grid' ? styles.grid : styles.list}>
-            {dashboards.map((d) =>
+            {visibleDashboards.map((d) =>
               layout === 'grid'
                 ? (
                   <div key={d.id} style={styles.card} className="card-hover">
@@ -182,6 +231,13 @@ const rowStyles: Record<string, React.CSSProperties> = {
 const styles: Record<string, React.CSSProperties> = {
   layoutBtn: { padding: '6px 10px', border: '1px solid var(--border)', borderRadius: 4, background: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--text-secondary)' },
   newBtn: { padding: '7px 16px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 13, fontWeight: 600, cursor: 'pointer' },
+  headerActions: { display: 'inline-flex', alignItems: 'center', gap: 8 },
+  // Quiet accent for the active chip: accent ink on a hairline, no fill
+  // (matches the Files page's chip).
+  chip: { display: 'inline-flex', alignItems: 'center', gap: 6, padding: '4px 12px', background: 'none', borderWidth: 1, borderStyle: 'solid', borderColor: 'var(--border)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 12, fontWeight: 500, cursor: 'pointer', whiteSpace: 'nowrap' },
+  chipActive: { borderColor: 'var(--accent)', color: 'var(--accent)' },
+  favoritesError: { display: 'flex', alignItems: 'center', gap: 12, padding: '16px', background: 'var(--bg-card)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 13, color: 'var(--text-secondary)' },
+  retryBtn: { background: 'none', border: '1px solid var(--border)', borderRadius: 4, color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12, padding: '3px 10px' },
   body: { maxWidth: 1280, margin: '0 auto', padding: '40px 40px', width: '100%' },
   list: { display: 'flex', flexDirection: 'column', gap: 8 },
   label: { display: 'flex', flexDirection: 'column', gap: 4, fontSize: 12, fontWeight: 600, color: 'var(--text-secondary)' },
