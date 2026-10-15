@@ -994,7 +994,18 @@ func TestRunSubagentLoop_ToolTimeoutSurfaced(t *testing.T) {
 	`, taskID, sid, "probe timeout")
 	require.NoError(t, err)
 
-	probe := &ToolDef{Timeout: 50 * time.Millisecond, Handler: probeTimeoutHandler()}
+	// The loop's tool contexts must carry every engine callback, including the
+	// shared search engine (nil there would fail search_resources closed for
+	// every subagent).
+	engine.SearchResourcesFunc = func(context.Context, string, string, string, string, []string, int) (any, error) {
+		return map[string]any{"groups": []any{}}, nil
+	}
+	var sawSearch bool
+	probe := &ToolDef{Timeout: 50 * time.Millisecond}
+	probe.Handler = func(args json.RawMessage, tc *ToolContext) (any, error) {
+		sawSearch = tc.SearchResourcesFunc != nil
+		return probeTimeoutHandler()(args, tc)
+	}
 	probe.Function.Name = "probe_subagent_timeout"
 	probe.Function.Parameters = `{"type":"object","properties":{}}`
 	engine.registry.Register(probe)
@@ -1034,6 +1045,7 @@ func TestRunSubagentLoop_ToolTimeoutSurfaced(t *testing.T) {
 
 	res := engine.runSubagentLoop(context.Background(), sid, taskID, "probe timeout", userID, orgID, "admin", masterKey, llm, []*ToolDef{probe}, 3)
 	require.Equal(t, "completed", res.Status)
+	require.True(t, sawSearch, "runSubagentLoop tool contexts must carry SearchResourcesFunc")
 
 	var content string
 	err = db.Pool.QueryRow(context.Background(),
@@ -1063,12 +1075,16 @@ func TestRunSubagent_ToolTimeoutSurfaced(t *testing.T) {
 	// Subagent tool contexts must carry the parent's actual org role and the
 	// parent session's admin mode into the shared permission resolver.
 	engine.session.SetAdminMode(sid, true)
+	engine.SearchResourcesFunc = func(context.Context, string, string, string, string, []string, int) (any, error) {
+		return map[string]any{"groups": []any{}}, nil
+	}
 	var gotRole string
-	var gotAdminMode bool
+	var gotAdminMode, gotSearchFn bool
 	probe := &ToolDef{Timeout: 50 * time.Millisecond}
 	probe.Handler = func(args json.RawMessage, tc *ToolContext) (any, error) {
 		gotRole = tc.OrgRole
 		gotAdminMode = executor.AdminModeFromContext(tc.Context)
+		gotSearchFn = tc.SearchResourcesFunc != nil
 		return probeTimeoutHandler()(args, tc)
 	}
 	probe.Function.Name = "probe_legacy_timeout"
@@ -1112,6 +1128,7 @@ func TestRunSubagent_ToolTimeoutSurfaced(t *testing.T) {
 
 	require.Equal(t, "admin", gotRole, "subagents must carry the parent's actual org role")
 	require.True(t, gotAdminMode, "subagent tool contexts must follow the parent session's admin mode")
+	require.True(t, gotSearchFn, "legacy runSubagent tool contexts must carry SearchResourcesFunc")
 
 	require.GreaterOrEqual(t, len(captured), 2)
 	msgs, _ := captured[1]["messages"].([]any)

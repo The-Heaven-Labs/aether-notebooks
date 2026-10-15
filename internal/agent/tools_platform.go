@@ -15,6 +15,23 @@ import (
 // never reshapes a caller-supplied limit.
 const searchResourcesDefaultLimit = 5
 
+// searchResourceTypes is the searchable resource-type enum advertised in the
+// search_resources tool schema (and the value set a model may pass for
+// `types`). It must stay in step with the API's searchSupportedTypes; the
+// internal/api drift test TestSearchResourcesToolTypeEnumMatchesSupportedTypes
+// pins the two definitions.
+var searchResourceTypes = []string{
+	"notebook", "dashboard", "folder", "connector", "agent",
+	"model_config", "skill", "tool", "mcp_server",
+}
+
+// searchResourceTypesEnum is searchResourceTypes as a JSON array for the tool
+// schema, derived so the schema string cannot drift from the slice.
+var searchResourceTypesEnum = func() string {
+	encoded, _ := json.Marshal(searchResourceTypes)
+	return string(encoded)
+}()
+
 func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 	reg.Register(&ToolDef{
 		Function: struct {
@@ -80,7 +97,9 @@ func RegisterPlatformTools(reg *ToolRegistry, db *pgxpool.Pool) {
 		}{
 			Name:        "search_resources",
 			Description: "Search the org's resources (notebooks, dashboards, folders, connectors, agents, models, skills, tools, MCP servers) by title and content. Returns grouped results with snippets. Refine the query instead of paging.",
-			Parameters:  `{"type":"object","properties":{"query":{"type":"string","description":"Search text (title/name and content)"},"types":{"type":"array","items":{"type":"string"},"description":"Optional resource types to restrict to"},"limit":{"type":"integer","minimum":1,"maximum":20,"description":"Max results per type (default 5)"}},"required":["query"]}`,
+			Parameters: fmt.Sprintf(
+				`{"type":"object","properties":{"query":{"type":"string","description":"Search text (title/name and content)"},"types":{"type":"array","items":{"type":"string","enum":%s},"description":"Optional resource types to restrict to"},"limit":{"type":"integer","minimum":1,"maximum":20,"description":"Max results per type (default 5)"}},"required":["query"]}`,
+				searchResourceTypesEnum),
 		},
 		Handler: makeSearchResourcesHandler(),
 		Timeout: 20 * time.Second,

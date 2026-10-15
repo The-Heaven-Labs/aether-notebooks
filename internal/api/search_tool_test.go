@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -97,8 +98,10 @@ func TestSearchResourcesToolDashboardLeakRules(t *testing.T) {
 	require.NotNil(t, dashboards.Results[0].Snippet)
 }
 
-// Tool argument validation mirrors the HTTP endpoint: a missing query and an
-// unknown type are errors, never silently-empty results.
+// Tool argument validation mirrors the HTTP endpoint: a missing query, an
+// unknown type, and an over-long query are errors, never silently-empty
+// results. The query bound is the shared normalizer's, pinned here at the
+// tool entry.
 func TestSearchResourcesToolValidation(t *testing.T) {
 	srv := setupTestServer(t)
 	f := setupSearchTestFixture(t, srv)
@@ -108,6 +111,9 @@ func TestSearchResourcesToolValidation(t *testing.T) {
 
 	_, errText = callSearchResourcesTool(t, f, f.viewerToken, map[string]any{"query": "x", "types": []string{"bogus"}})
 	require.Contains(t, errText, `unknown resource type "bogus"`)
+
+	_, errText = callSearchResourcesTool(t, f, f.viewerToken, map[string]any{"query": strings.Repeat("a", 201)})
+	require.Contains(t, errText, "query must be at most 200 characters")
 }
 
 // The tool shares the HTTP limit rules end to end: an explicit limit above

@@ -5,10 +5,12 @@ package api
 // and the title-SQL maps are unexported.
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/the-heaven-labs/aether/internal/agent"
 )
 
 // TestSearchSupportedTypesAreImplemented pins the whitelist/default
@@ -28,6 +30,34 @@ func TestSearchSupportedTypesAreImplemented(t *testing.T) {
 			require.Contains(t, searchTitleSQL, resourceType, "%s has no title query", resourceType)
 		}
 	}
+}
+
+// TestSearchResourcesToolTypeEnumMatchesSupportedTypes is the drift guard
+// between the two engines: the agent tool's `types` enum (what the model is
+// told it may send) must equal the API's searchable types. A type added to one
+// side alone would otherwise ship a model-visible schema the API rejects (or a
+// silently unsearchable type), so this parses the registered schema — the same
+// registration the engine serves over MCP tools/list — and compares it.
+func TestSearchResourcesToolTypeEnumMatchesSupportedTypes(t *testing.T) {
+	reg := agent.NewToolRegistry()
+	agent.RegisterPlatformTools(reg, nil)
+	def, ok := reg.Get("search_resources")
+	require.True(t, ok, "RegisterPlatformTools must register search_resources")
+
+	schema, ok := def.Function.Parameters.(string)
+	require.True(t, ok, "the search_resources parameters schema is a JSON string")
+	var parsed struct {
+		Properties struct {
+			Types struct {
+				Items struct {
+					Enum []string `json:"enum"`
+				} `json:"items"`
+			} `json:"types"`
+		} `json:"properties"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(schema), &parsed))
+	require.ElementsMatch(t, searchSupportedTypes, parsed.Properties.Types.Items.Enum,
+		"the tool's types enum must equal the API's supported search types")
 }
 
 // TestNormalizeSearchParams pins the shared normalizer rules both entry
