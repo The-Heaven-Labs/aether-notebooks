@@ -330,16 +330,20 @@ func TestFolderContentsPaginationSmallFolder(t *testing.T) {
 	require.Equal(t, map[string]int{"notebooks": 3, "connectors": 0, "dashboards": 0}, contents.Totals)
 	require.Equal(t, map[string]bool{"notebooks": false, "connectors": false, "dashboards": false}, contents.HasMore)
 
-	// An empty folder still carries the full shape: empty arrays, zero totals,
-	// false flags — never missing keys.
+	// An empty folder still carries the full shape: present (non-null) section
+	// arrays, zero totals, false flags — never missing keys. Raw JSON is
+	// decoded because require.Empty cannot tell [] from null or a missing key.
 	emptyFolder := f.insertFolder(t, "pagination small empty", nil, f.otherUserID)
 	f.grant(t, "folder", emptyFolder, []string{"view"})
-	empty := f.listFolder(t, emptyFolder)
-	require.Empty(t, empty.Notebooks)
-	require.Empty(t, empty.Connectors)
-	require.Empty(t, empty.Dashboards)
-	require.Equal(t, map[string]int{"notebooks": 0, "connectors": 0, "dashboards": 0}, empty.Totals)
-	require.Equal(t, map[string]bool{"notebooks": false, "connectors": false, "dashboards": false}, empty.HasMore)
+	status, body := f.get(t, "/api/v1/folders/"+emptyFolder)
+	require.Equal(t, http.StatusOK, status, string(body))
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(body, &raw))
+	for _, key := range []string{"folders", "notebooks", "connectors", "dashboards"} {
+		require.JSONEq(t, "[]", string(raw[key]), "section %q must be a present JSON array", key)
+	}
+	require.JSONEq(t, `{"notebooks":0,"connectors":0,"dashboards":0}`, string(raw["totals"]))
+	require.JSONEq(t, `{"notebooks":false,"connectors":false,"dashboards":false}`, string(raw["has_more"]))
 }
 
 // TestFolderContentsPaginationHiddenItems pins that totals count only visible
@@ -408,11 +412,48 @@ func TestFolderContentsPaginationLimit(t *testing.T) {
 	require.Len(t, contents.Notebooks, 55)
 	require.False(t, contents.HasMore["notebooks"])
 
+	// An enormous value (Atoi overflows) also clamps to the maximum.
+	contents = f.listPath(t, "/api/v1/folders/"+folderID+"?limit=99999999999999999999")
+	require.Equal(t, 55, contents.Totals["notebooks"])
+	require.Len(t, contents.Notebooks, 55)
+	require.False(t, contents.HasMore["notebooks"])
+
 	// Invalid values are rejected.
 	status, body := f.get(t, "/api/v1/folders/"+folderID+"?limit=0")
 	require.Equal(t, http.StatusBadRequest, status, string(body))
 	status, body = f.get(t, "/api/v1/folders/"+folderID+"?limit=abc")
 	require.Equal(t, http.StatusBadRequest, status, string(body))
+
+	// Boundary: a section exactly at the page size has no next page.
+	exactFolder := f.insertFolder(t, "pagination limit exact", nil, f.otherUserID)
+	f.grant(t, "folder", exactFolder, []string{"view"})
+	for i := 0; i < 50; i++ {
+		id := f.insertNotebook(t, fmt.Sprintf("pagination exact notebook %02d", i), &exactFolder, f.otherUserID)
+		f.grant(t, "notebook", id, []string{"view"})
+	}
+	exact := f.listFolder(t, exactFolder)
+	require.Equal(t, 50, exact.Totals["notebooks"])
+	require.Len(t, exact.Notebooks, 50)
+	require.False(t, exact.HasMore["notebooks"], "a section exactly at the page size has no next page")
+
+	// The limit applies to the connector and dashboard sections too.
+	sectionedFolder := f.insertFolder(t, "pagination limit sections", nil, f.otherUserID)
+	f.grant(t, "folder", sectionedFolder, []string{"view"})
+	for i := 0; i < 3; i++ {
+		c := f.insertConnector(t, fmt.Sprintf("pagination limit connector %d", i), &sectionedFolder, f.otherUserID)
+		f.grant(t, "connector", c, []string{"view"})
+	}
+	for i := 0; i < 2; i++ {
+		d := f.insertDashboard(t, fmt.Sprintf("pagination limit dashboard %d", i), &sectionedFolder, f.otherUserID)
+		f.grant(t, "dashboard", d, []string{"view"})
+	}
+	sectioned := f.listPath(t, "/api/v1/folders/"+sectionedFolder+"?limit=2")
+	require.Equal(t, 3, sectioned.Totals["connectors"])
+	require.Len(t, sectioned.Connectors, 2)
+	require.True(t, sectioned.HasMore["connectors"])
+	require.Equal(t, 2, sectioned.Totals["dashboards"])
+	require.Len(t, sectioned.Dashboards, 2)
+	require.False(t, sectioned.HasMore["dashboards"], "a dashboard section exactly at the page size has no next page")
 }
 
 // TestFolderContentsPaginationStableOrder pins the ordering tiebreaker: two

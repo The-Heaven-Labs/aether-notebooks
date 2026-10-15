@@ -444,8 +444,12 @@ clamped 1–200). Note the extra `run` action is NOT needed in listings.
 
 Contract: `?type=notebook|connector|dashboard&offset=0&limit=50` →
 `{"items": [...], "total": 57, "has_more": false, "offset": 50}` where `items` uses the same row
-shapes as the sections (`folderNotebook`/`folderConnector`/`folderDashboard`). Root variant reads
-`folder_id IS NULL`. 400 on unknown `type`, negative `offset`, `limit` out of 1–200.
+shapes as the sections (`folderNotebook`/`folderConnector`/`folderDashboard`), produced by the
+same B1 section helpers (`folderSectionIDs`/`folderSectionPageIDs` + per-type hydration) so the
+dashboard snapshot substitution applies to every page. Root variant reads `folder_id IS NULL`.
+Validation matches the design's settled contract: 400 on unknown `type`, non-numeric or negative
+`offset` (missing `offset` = 0), and non-numeric or `< 1` `limit` (missing `limit` = 50); a
+`limit` above 200 clamps to 200.
 
 Tests: pagination walk (all pages, exact totals with hidden rows), root variant, invalid inputs,
 and that `/folders/contents` does not shadow `/folders/{id}` in the router.

@@ -157,7 +157,9 @@ locked-down managed Postgres. NULL/empty `query` rows simply contribute no index
 - Load-more: **`GET /folders/{id}/contents?type=notebook|connector|dashboard&offset&limit`** →
   `{items: […], total, has_more}` (root variant `GET /folders/contents?…`; Go 1.22 ServeMux
   resolves the literal segment over `{id}`). Same row shapes as the sections.
-- Unknown `type` → 400; invalid offset/limit → clamped (offset ≥ 0, 1 ≤ limit ≤ 200).
+- Validation (settled with the B1 implementation, which B2 implements exactly): unknown `type` →
+  400; `offset` absent = 0, non-numeric or negative → 400; `limit` absent = 50 with a valid range
+  of 1–200, values above 200 clamp, non-numeric or below 1 → 400.
 
 **Verified visible counts** use only id + sort columns in phase 1 — cheap even for 10k rows
 (a few hundred KB of tuples, two queries + in-memory evaluation), while payloads and hydration

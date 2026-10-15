@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -363,27 +364,36 @@ const (
 
 // folderSectionLimit parses the listing's `limit` query parameter: absent is
 // the 50-row default, values above the 200 maximum clamp, and a non-numeric
-// value or one below 1 is rejected (ok=false).
+// value or one below 1 is rejected (ok=false). An out-of-range number (e.g.
+// more digits than int can hold) clamps to the maximum when positive and is
+// rejected when negative.
 func folderSectionLimit(r *http.Request) (int, bool) {
 	raw := r.URL.Query().Get("limit")
 	if raw == "" {
 		return folderSectionDefaultLimit, true
 	}
 	n, err := strconv.Atoi(raw)
-	if err != nil || n < 1 {
+	switch {
+	case err == nil && n >= 1:
+		if n > folderSectionMaxLimit {
+			n = folderSectionMaxLimit
+		}
+		return n, true
+	case errors.Is(err, strconv.ErrRange) && n > 0:
+		// Overflowed positively (Atoi saturates): every such ask wants more
+		// than the maximum, so it clamps like any other oversized value.
+		return folderSectionMaxLimit, true
+	default:
 		return 0, false
 	}
-	if n > folderSectionMaxLimit {
-		n = folderSectionMaxLimit
-	}
-	return n, true
 }
 
 // folderSectionIDs loads the org- and folder-scoped ids of one listing section
 // in display order. folderID nil selects the root section. Only ids are read —
 // the full rows stay in the database until the page is known. orderBy must end
-// in a unique tiebreaker (`, id`) so equal sort keys keep a stable order for
-// offset paging. table/orderBy are compile-time constants at every call site.
+// in a unique tiebreaker written as `id::text` so the ordering is explicit
+// (uuid text order equals uuid order) and stable for offset paging.
+// table/orderBy are compile-time constants at every call site.
 func (s *Server) folderSectionIDs(ctx context.Context, table, orderBy, orgID string, folderID *string) ([]string, error) {
 	query := fmt.Sprintf(`SELECT id::text FROM %s
 		 WHERE org_id = $1 AND folder_id IS NULL AND deleted_at IS NULL
@@ -415,11 +425,13 @@ func (s *Server) folderSectionIDs(ctx context.Context, table, orderBy, orgID str
 }
 
 // folderSectionPageIDs filters an ordered section id list down to the visible
-// rows (view action) and slices the first page, returning the page ids, the
-// exact visible total, and whether more visible rows exist beyond the page.
-// Hidden items are filtered before the totals are computed, so totals and
-// has_more describe what the caller can actually see.
-func folderSectionPageIDs(perms map[string]map[string]bool, orderedIDs []string, limit int) (pageIDs []string, total int, hasMore bool) {
+// rows (view action) and slices one page, returning the page ids, the exact
+// visible total, and whether more visible rows exist beyond the page. Hidden
+// items are filtered before the totals are computed, so totals and has_more
+// describe what the caller can actually see. An offset at or past the end is a
+// legitimate empty page (a client can race a deletion): it yields no ids and
+// has_more false because nothing follows it.
+func folderSectionPageIDs(perms map[string]map[string]bool, orderedIDs []string, offset, limit int) (pageIDs []string, total int, hasMore bool) {
 	visible := make([]string, 0, len(orderedIDs))
 	for _, id := range orderedIDs {
 		if actionAllowed(perms, id, "view") {
@@ -427,21 +439,29 @@ func folderSectionPageIDs(perms map[string]map[string]bool, orderedIDs []string,
 		}
 	}
 	total = len(visible)
-	hasMore = total > limit
-	if len(visible) > limit {
-		visible = visible[:limit]
+	if offset >= total {
+		return []string{}, total, false
 	}
-	return visible, total, hasMore
+	end := offset + limit
+	if end > total {
+		end = total
+	}
+	return visible[offset:end], total, total > offset+limit
 }
 
 // folderNotebookSection is the notebooks section of a folder listing, resolved
 // in two phases: phase 1 fetches only the section's ids (org- and
 // folder-scoped, in stable display order) and the batched permissions, so the
 // exact visible total is known without touching full rows; phase 2 hydrates
-// the first page's full rows and attaches the can_* flags from the already
+// the requested page's full rows and attaches the can_* flags from the already
 // resolved action map. folderID nil selects the root section.
-func (s *Server) folderNotebookSection(ctx context.Context, ident permIdentity, folderID *string, limit int) ([]folderNotebook, int, bool, error) {
-	orderedIDs, err := s.folderSectionIDs(ctx, "notebooks", "updated_at DESC, id", ident.OrgID, folderID)
+//
+// This helper (with its connector and dashboard siblings) is the ONLY way a
+// paginated listing section may be produced: every page, including each
+// load-more page, must hydrate through here so no caller can re-implement the
+// pipeline and drop a rule (e.g. the dashboard snapshot substitution).
+func (s *Server) folderNotebookSection(ctx context.Context, ident permIdentity, folderID *string, offset, limit int) ([]folderNotebook, int, bool, error) {
+	orderedIDs, err := s.folderSectionIDs(ctx, "notebooks", "updated_at DESC, id::text", ident.OrgID, folderID)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -449,7 +469,7 @@ func (s *Server) folderNotebookSection(ctx context.Context, ident permIdentity, 
 	if err != nil {
 		return nil, 0, false, err
 	}
-	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, limit)
+	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, offset, limit)
 	page := make([]folderNotebook, 0, len(pageIDs))
 	if len(pageIDs) == 0 {
 		return page, total, hasMore, nil
@@ -457,8 +477,8 @@ func (s *Server) folderNotebookSection(ctx context.Context, ident permIdentity, 
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, description, connector_id, parameters, created_by, created_at, updated_at
-		 FROM notebooks WHERE id = ANY($1::uuid[])`,
-		pageIDs,
+		 FROM notebooks WHERE id = ANY($1::uuid[]) AND org_id = $2 AND deleted_at IS NULL`,
+		pageIDs, ident.OrgID,
 	)
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("hydrate notebooks: %w", err)
@@ -491,9 +511,10 @@ func (s *Server) folderNotebookSection(ctx context.Context, ident permIdentity, 
 }
 
 // folderConnectorSection is the connectors section, following the same
-// two-phase pattern as folderNotebookSection (ordered by name, then id).
-func (s *Server) folderConnectorSection(ctx context.Context, ident permIdentity, folderID *string, limit int) ([]folderConnector, int, bool, error) {
-	orderedIDs, err := s.folderSectionIDs(ctx, "connectors", "name, id", ident.OrgID, folderID)
+// two-phase pattern as folderNotebookSection (ordered by name, then id::text)
+// and carrying the same "all page hydration goes through here" rule.
+func (s *Server) folderConnectorSection(ctx context.Context, ident permIdentity, folderID *string, offset, limit int) ([]folderConnector, int, bool, error) {
+	orderedIDs, err := s.folderSectionIDs(ctx, "connectors", "name, id::text", ident.OrgID, folderID)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -501,7 +522,7 @@ func (s *Server) folderConnectorSection(ctx context.Context, ident permIdentity,
 	if err != nil {
 		return nil, 0, false, err
 	}
-	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, limit)
+	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, offset, limit)
 	page := make([]folderConnector, 0, len(pageIDs))
 	if len(pageIDs) == 0 {
 		return page, total, hasMore, nil
@@ -509,8 +530,8 @@ func (s *Server) folderConnectorSection(ctx context.Context, ident permIdentity,
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, name, type, is_default, folder_id, COALESCE(created_by::text, ''), created_at::text, COALESCE(updated_at::text, '')
-		 FROM connectors WHERE id = ANY($1::uuid[])`,
-		pageIDs,
+		 FROM connectors WHERE id = ANY($1::uuid[]) AND org_id = $2 AND deleted_at IS NULL`,
+		pageIDs, ident.OrgID,
 	)
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("hydrate connectors: %w", err)
@@ -541,14 +562,16 @@ func (s *Server) folderConnectorSection(ctx context.Context, ident permIdentity,
 }
 
 // folderDashboardSection is the dashboards section, following the same
-// two-phase pattern (ordered by updated_at, then id). The page's non-editor
-// rows additionally receive the published-snapshot substitution
+// two-phase pattern (ordered by updated_at, then id::text) and carrying the
+// same "all page hydration goes through here" rule. The page's non-editor rows
+// additionally receive the published-snapshot substitution
 // (loadLatestDashboardSnapshots) so the listing matches GET /dashboards and
 // GET /dashboards/{id}: viewers see the latest snapshot's title/settings,
 // editors always see the draft, and a never-published dashboard keeps its
-// draft for everyone.
-func (s *Server) folderDashboardSection(ctx context.Context, ident permIdentity, folderID *string, limit int) ([]folderDashboard, int, bool, error) {
-	orderedIDs, err := s.folderSectionIDs(ctx, "dashboards", "updated_at DESC, id", ident.OrgID, folderID)
+// draft for everyone. Routing every page (including load-more pages) through
+// this helper keeps that substitution impossible to forget.
+func (s *Server) folderDashboardSection(ctx context.Context, ident permIdentity, folderID *string, offset, limit int) ([]folderDashboard, int, bool, error) {
+	orderedIDs, err := s.folderSectionIDs(ctx, "dashboards", "updated_at DESC, id::text", ident.OrgID, folderID)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -556,7 +579,7 @@ func (s *Server) folderDashboardSection(ctx context.Context, ident permIdentity,
 	if err != nil {
 		return nil, 0, false, err
 	}
-	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, limit)
+	pageIDs, total, hasMore := folderSectionPageIDs(perms, orderedIDs, offset, limit)
 	page := make([]folderDashboard, 0, len(pageIDs))
 	if len(pageIDs) == 0 {
 		return page, total, hasMore, nil
@@ -564,8 +587,8 @@ func (s *Server) folderDashboardSection(ctx context.Context, ident permIdentity,
 
 	rows, err := s.db.Pool.Query(ctx,
 		`SELECT id, org_id, title, settings, created_by, created_at, updated_at
-		 FROM dashboards WHERE id = ANY($1::uuid[])`,
-		pageIDs,
+		 FROM dashboards WHERE id = ANY($1::uuid[]) AND org_id = $2 AND deleted_at IS NULL`,
+		pageIDs, ident.OrgID,
 	)
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("hydrate dashboards: %w", err)
@@ -999,7 +1022,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Notebooks at root (no folder): the first page plus exact visible totals.
-	notebooks, notebookTotal, notebooksHasMore, err := s.folderNotebookSection(ctx, ident, nil, limit)
+	notebooks, notebookTotal, notebooksHasMore, err := s.folderNotebookSection(ctx, ident, nil, 0, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1009,7 +1032,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 	contents.HasMore["notebooks"] = notebooksHasMore
 
 	// Connectors at root (no folder): the first page plus exact visible totals.
-	connectors, connectorTotal, connectorsHasMore, err := s.folderConnectorSection(ctx, ident, nil, limit)
+	connectors, connectorTotal, connectorsHasMore, err := s.folderConnectorSection(ctx, ident, nil, 0, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1020,7 +1043,7 @@ func (s *Server) handleListRootContents(w http.ResponseWriter, r *http.Request) 
 
 	// Dashboards at root (no folder): the first page plus exact visible
 	// totals, with the published-snapshot substitution for non-editors.
-	dashboards, dashboardTotal, dashboardsHasMore, err := s.folderDashboardSection(ctx, ident, nil, limit)
+	dashboards, dashboardTotal, dashboardsHasMore, err := s.folderDashboardSection(ctx, ident, nil, 0, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1166,7 +1189,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Notebooks in the folder: the first page plus exact visible totals.
-	notebooks, notebookTotal, notebooksHasMore, err := s.folderNotebookSection(ctx, ident, &folderID, limit)
+	notebooks, notebookTotal, notebooksHasMore, err := s.folderNotebookSection(ctx, ident, &folderID, 0, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1176,7 +1199,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 	contents.HasMore["notebooks"] = notebooksHasMore
 
 	// Connectors in the folder: the first page plus exact visible totals.
-	connectors, connectorTotal, connectorsHasMore, err := s.folderConnectorSection(ctx, ident, &folderID, limit)
+	connectors, connectorTotal, connectorsHasMore, err := s.folderConnectorSection(ctx, ident, &folderID, 0, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
@@ -1187,7 +1210,7 @@ func (s *Server) handleGetFolderContents(w http.ResponseWriter, r *http.Request)
 
 	// Dashboards in the folder: the first page plus exact visible totals, with
 	// the published-snapshot substitution for non-editors.
-	dashboards, dashboardTotal, dashboardsHasMore, err := s.folderDashboardSection(ctx, ident, &folderID, limit)
+	dashboards, dashboardTotal, dashboardsHasMore, err := s.folderDashboardSection(ctx, ident, &folderID, 0, limit)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
