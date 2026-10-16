@@ -57,3 +57,17 @@
   - `cd web && npm run build` → pass
 - Notes: Made `@codemirror/autocomplete` a direct dependency and wired it into `Cell.tsx`: `languageExtension` now returns `sql({ schema }) + autocompletion()` for SQL cells and accepts a schema map built by `buildSqlCompletionSchema`; the mount effect uses a `useRef<Compartment>` for the language compartment so initial setup, lazy JS load, and schema-data effects all reconfigure the same compartment. Schema is fetched via the shared `connectorSchemaQueryKey` React Query cache (`staleTime: 5m`) only for SQL cells with a connector; errors are swallowed. Added CSS variable-based autocomplete popup theming in `theme.css`. Updated `Cell.test.tsx` to wrap renders in `renderWithProviders` so the new `useQuery` hook has a `QueryClient`. Also fixed a pre-existing `HttpResponse` generic type error in `web/src/pages/WarehouseSettingsPage.test.tsx` that blocked `npm run build`.
 - Review pass (changes requested): (1) Updated the custom `Tab` keymap handler to call `acceptCompletion(view)` first so Tab accepts an open autocomplete suggestion before falling back to inserting indentation. (2) Replaced the temporary `Record<string, any>` type in the Task 2 test-file fix with a concrete response-body type `{ ok: boolean; steps: { name: string; ok: boolean }[] }`.
+
+## Task 5: Keep the agent panel reachable on the App surface — 2026-10-15
+
+- Outcome: done
+- Changed:
+  - Created: none
+  - Modified: `web/src/components/AppShell.tsx`, `web/src/test/AppShell.test.tsx`
+  - Deleted: none
+- Verified:
+  - `cd web && npx vitest run src/test/AppShell.test.tsx` → pass
+  - `cd web && npm run test:run` → pass (1495 passed, 2 skipped)
+  - `cd web && npx tsc --noEmit` → clean
+- Notes: Extracted the global agent FAB + floating panel + minimized bar into a shared `agentOverlay` node in `AppShell.tsx`. The bare branch now renders `<main id="main-content">{children}</main>{agentOverlay}`, while non-bare keeps the full shell and reuses the same overlay. Removed the `bare` guard from the Ctrl/Cmd+J agent toggle effect; the search palette and `?` shortcuts modal remain gated on `bare`. Updated the `bare` prop doc comment to document the exact exclusions. Updated `AppShell.test.tsx` to assert the FAB is present in bare mode, that Ctrl+J opens the panel there, and that Ctrl+K/`?` stay disabled; removed the obsolete "neither chord" test.
+- Review pass (changes requested): Implemented bare-specific minimize behavior inside the shared `agentOverlay` node: the FAB condition includes `bare && globalAgentMinimized`, and the minimized-bar condition excludes `bare`, so minimizing on the App surface restores the FAB while non-bare still shows the minimized bar. Added tests for both bare and non-bare minimize behavior.
