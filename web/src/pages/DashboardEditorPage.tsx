@@ -568,9 +568,16 @@ export function DashboardEditorPage() {
   // the label alone tells the author how to reach their unpublished edits.
   const hasPublishedVersion = !!latestVersion
   const viewLinkLabel = hasPublishedVersion ? 'View published' : 'View app'
-  const viewLinkTitle = hasPublishedVersion
-    ? 'View the published snapshot — unpublished edits appear under Preview draft on that page'
-    : 'View the app — showing the current draft because it has not been published yet'
+  // The versions query is editor-only (viewers never fetch it), so its data is
+  // absent both before it resolves and forever for a viewer. "Unknown" must
+  // stay neutral: the older fallback title claimed "not published yet", which
+  // contradicts the destination (the view page serves the published snapshot).
+  const versionsKnown = versionsQuery.data !== undefined
+  const viewLinkTitle = !versionsKnown
+    ? 'View the app'
+    : hasPublishedVersion
+      ? 'View the published snapshot — unpublished edits appear under Preview draft on that page'
+      : 'View the app — showing the current draft because it has not been published yet'
 
   return (
     <DashboardVariablesProvider dashboardId={id!} variables={variables}>

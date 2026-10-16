@@ -887,8 +887,10 @@ describe('DashboardEditorPage publish controls', () => {
 
     const link = await screen.findByRole('link', { name: 'View app' })
     expect(link).toHaveAttribute('href', '/dashboards/d1/view')
+    // The never-published title only applies once the versions query has
+    // resolved; until then the title is neutral (see the viewer test below).
+    await waitFor(() => expect(link.getAttribute('title') ?? '').toContain('current draft'))
     const title = link.getAttribute('title') ?? ''
-    expect(title).toContain('current draft')
     expect(title).toContain('not been published')
     expect(screen.queryByRole('link', { name: 'View published' })).not.toBeInTheDocument()
   })
@@ -1092,6 +1094,36 @@ describe('DashboardEditorPage publish controls', () => {
 
     expect(screen.queryByTestId('publish-status')).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'Publish' })).not.toBeInTheDocument()
+    expect(versionGets).toBe(0)
+  })
+
+  test('a viewer of a published dashboard gets a neutral View title, never "not published"', async () => {
+    let versionGets = 0
+    server.use(
+      http.get('/api/v1/dashboards/d1', () =>
+        HttpResponse.json({
+          ...DASHBOARD,
+          can_edit: false,
+          // A viewer's GET serves the latest published snapshot.
+          published_version: { version: 1, created_at: '2026-01-01T00:00:00Z' },
+        }),
+      ),
+      http.get('/api/v1/dashboards/d1/versions', () => {
+        versionGets++
+        return HttpResponse.json(PUBLISHED_VERSIONS)
+      }),
+    )
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    // The versions query stays disabled for a viewer, so its data never
+    // arrives. The title must stay neutral rather than claim the dashboard was
+    // never published — the view page serves the published snapshot, so the
+    // "not been published" wording would contradict the destination.
+    const link = await screen.findByRole('link', { name: 'View app' })
+    expect(link).toHaveAttribute('href', '/dashboards/d1/view')
+    const title = link.getAttribute('title') ?? ''
+    expect(title).not.toContain('not been published')
     expect(versionGets).toBe(0)
   })
 })
