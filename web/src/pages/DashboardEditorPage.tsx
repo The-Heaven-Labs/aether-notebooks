@@ -9,7 +9,7 @@ import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPa
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
 import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
-import { widgetTabId, NO_TABS, tabQueryString } from '../utils/dashboardTabs'
+import { widgetTabId, orderWidgetsForEditor, NO_TABS, tabQueryString } from '../utils/dashboardTabs'
 import { appContentWidthStyle } from '../utils/appLayout'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
@@ -371,9 +371,12 @@ export function DashboardEditorPage() {
   }, [setSearchParams])
 
   const shownWidgets = useMemo(
-    () => (tabs.length === 0 || activeEditorTab === null
-      ? widgets
-      : widgets.filter((w: Widget) => widgetTabId(w, tabs) === activeEditorTab)),
+    () => orderWidgetsForEditor(
+      tabs.length === 0 || activeEditorTab === null
+        ? widgets
+        : widgets.filter((w: Widget) => widgetTabId(w, tabs) === activeEditorTab),
+      tabs,
+    ),
     [widgets, tabs, activeEditorTab],
   )
 

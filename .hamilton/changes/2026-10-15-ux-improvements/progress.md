@@ -100,3 +100,17 @@
   - `cd web && npx tsc --noEmit` → clean
   - `cd web && npm run build` → pass
 - Notes: Moved `APP_CONTENT_MAX_WIDTH` (1200) into the new `web/src/utils/appLayout.ts` as the single source of truth and added the `appContentWidthStyle(width)` helper (fixed/absent → `{ maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }`, full → `undefined`), unit-tested in `appLayout.test.ts`. `AppHeader.tsx` and `DashboardPage.tsx` now use the helper instead of their local copies. `DashboardEditorPage.tsx` resolves `appWidth` from `liveDashboard.settings?.app?.width ?? 'fixed'` and merges `appContentWidthStyle(appWidth)` into the widget-canvas wrapper that `layoutRef` measures (the main body `<div>`), so both the desktop `GridLayout` and the stacked `mobileGrid` fallback are constrained and the ResizeObserver measures the capped width; the editor toolbar/sub-header is untouched. Deviation: also updated `PublicDashboardPage.tsx` (not in the plan's Files list) to use the shared helper, because acceptance criterion 3 explicitly requires view/public/editor to all use the shared helper and it was the only remaining consumer of the old `AppHeader` export. No browser validation was performed (the Vite dev server was not running; out of the task's listed verification commands).
+
+## Task 8: Order editor widgets by chapter, then grid position — 2026-10-15
+
+- Outcome: done
+- Changed:
+  - Created: none
+  - Modified: `web/src/utils/dashboardTabs.ts`, `web/src/pages/DashboardEditorPage.tsx`, `web/src/utils/dashboardTabs.test.ts`
+  - Deleted: none
+- Verified:
+  - `cd web && npx vitest run src/utils/dashboardTabs.test.ts` → pass (17 passed; +6 new)
+  - `cd web && npm run test:run` → pass (1515 passed, 2 skipped; +6 over the Task 7 baseline of 1509)
+  - `cd web && npx tsc --noEmit` → clean
+  - `cd web && npm run build` → pass
+- Notes: Added `orderWidgetsForEditor(widgets, tabs)` to `dashboardTabs.ts`: a non-mutating stable sort by `(tabIndex, layout.row, layout.col)` where `tabIndex = tabs.findIndex((t) => t.id === widgetTabId(widget, tabs))`, normalized to `0` when negative so untabbed/invalid/no-tab widgets land in the first bucket (single bucket when there are no tabs). `DashboardEditorPage.tsx` wraps `shownWidgets` in the existing `useMemo` and now pipes the tab-filtered list through `orderWidgetsForEditor`; ordering affects only rendering/compaction (the stored document is untouched) and per-chapter views still work. Test cases cover tab buckets, untabbed/empty/unknown tabs, row-then-col ordering inside a bucket, stability for equal positions, the no-tabs single-bucket case, and non-mutation of the input.

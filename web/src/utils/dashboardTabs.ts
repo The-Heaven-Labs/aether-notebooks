@@ -46,6 +46,27 @@ export function tabQueryString(tabId: string | null | undefined): string {
 }
 
 /**
+ * Deterministic render order for the editor's All view: chapter order first
+ * (widgets with no/invalid `tab` fall into the first chapter's bucket via
+ * `widgetTabId`'s fallback), then `(layout.row, layout.col)`. The sort is stable
+ * so widgets sharing a position keep their document order across renders and
+ * doc syncs. Non-mutating; with no tabs everything lands in a single bucket.
+ */
+export function orderWidgetsForEditor(widgets: Widget[], tabs: DashboardTab[]): Widget[] {
+  const tabIndex = (widget: Widget): number => {
+    const index = tabs.findIndex((t) => t.id === widgetTabId(widget, tabs))
+    // No tabs (or no matching bucket) → the first bucket.
+    return index < 0 ? 0 : index
+  }
+  return [...widgets].sort(
+    (a, b) =>
+      tabIndex(a) - tabIndex(b) ||
+      a.layout.row - b.layout.row ||
+      a.layout.col - b.layout.col,
+  )
+}
+
+/**
  * The widgets that belong to one tab. With no tabs configured every widget
  * matches (and the tab bar stays hidden); an unknown requested id resolves to
  * the first tab, mirroring `activeTabId`.
