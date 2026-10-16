@@ -86,3 +86,17 @@
   - `cd web && npm run build` → pass
 - Notes: Added `tabQueryString` helper and wired it into the view-page Edit link and the editor View link. The editor now initializes `editorTab` from `?tab=`, writes chip changes back to the URL with `replace`, and clears stale/invalid params once the tab list is known. The App health panel jump-to-chapter also updates the URL.
 - Review pass (changes requested): (1) Added stale-param cleanup on the view page: invalid or inapplicable `?tab=` is removed with `replace` once the dashboard (and therefore tabs) is known, preserving unrelated params. (2) Added behavior-level tests to both page test files covering the Edit link, editor initialization, chip-to-URL updates, View link, and invalid/no-tab param clearing. (3) Re-review fix: restored the preview-mode toggle test with a tabbed dashboard so both `Preview draft` and `View published` links are asserted to retain the active `?tab=orders` alongside an unrelated param.
+
+## Task 7: Honor the fixed app width in the dashboard editor — 2026-10-15
+
+- Outcome: done
+- Changed:
+  - Created: `web/src/utils/appLayout.ts`, `web/src/utils/appLayout.test.ts`
+  - Modified: `web/src/components/AppHeader.tsx`, `web/src/pages/DashboardPage.tsx`, `web/src/pages/DashboardEditorPage.tsx`, `web/src/pages/PublicDashboardPage.tsx`
+  - Deleted: none
+- Verified:
+  - `cd web && npx vitest run src/utils/appLayout.test.ts` → pass (4 passed)
+  - `cd web && npm run test:run` → pass (1509 passed, 2 skipped; +4 from the new appLayout tests over the Task 6 baseline of 1505)
+  - `cd web && npx tsc --noEmit` → clean
+  - `cd web && npm run build` → pass
+- Notes: Moved `APP_CONTENT_MAX_WIDTH` (1200) into the new `web/src/utils/appLayout.ts` as the single source of truth and added the `appContentWidthStyle(width)` helper (fixed/absent → `{ maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }`, full → `undefined`), unit-tested in `appLayout.test.ts`. `AppHeader.tsx` and `DashboardPage.tsx` now use the helper instead of their local copies. `DashboardEditorPage.tsx` resolves `appWidth` from `liveDashboard.settings?.app?.width ?? 'fixed'` and merges `appContentWidthStyle(appWidth)` into the widget-canvas wrapper that `layoutRef` measures (the main body `<div>`), so both the desktop `GridLayout` and the stacked `mobileGrid` fallback are constrained and the ResizeObserver measures the capped width; the editor toolbar/sub-header is untouched. Deviation: also updated `PublicDashboardPage.tsx` (not in the plan's Files list) to use the shared helper, because acceptance criterion 3 explicitly requires view/public/editor to all use the shared helper and it was the only remaining consumer of the old `AppHeader` export. No browser validation was performed (the Vite dev server was not running; out of the task's listed verification commands).

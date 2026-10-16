@@ -10,6 +10,7 @@ import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
 import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
 import { widgetTabId, NO_TABS, tabQueryString } from '../utils/dashboardTabs'
+import { appContentWidthStyle } from '../utils/appLayout'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { htmlConfigFrom } from '../utils/htmlConfig'
@@ -540,6 +541,10 @@ export function DashboardEditorPage() {
   // On the full custom page every non-custom widget is a hidden data source —
   // the editor badges them so their role is visible while authoring.
   const customPageLayout = liveDashboard.settings?.app?.layout === 'custom'
+  // The editor's canvas honors the app's width mode (`settings.app.width`,
+  // absent = fixed) so authoring matches the published surface; the toolbar
+  // above it stays full-bleed.
+  const appWidth = liveDashboard.settings?.app?.width ?? 'fixed'
 
   // Status chip: the amber dot flags a published app that is behind the draft
   // (or a draft that publish would refuse). A never-published dashboard reads
@@ -873,7 +878,7 @@ export function DashboardEditorPage() {
       )}
 
       {/* Main body */}
-      <div ref={layoutRef} style={styles.body}>
+      <div ref={layoutRef} style={{ ...styles.body, ...appContentWidthStyle(appWidth) }}>
         {variables.length > 0 && <DashboardVariableBar />}
         {widgets.length === 0 ? (
           <EmptyState

@@ -9,8 +9,9 @@ import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
+import { appContentWidthStyle } from '../utils/appLayout'
 import { AppShell } from '../components/AppShell'
-import { AppHeader, APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
+import { AppHeader } from '../components/AppHeader'
 import { AppThemeProvider } from '../components/AppThemeProvider'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
@@ -624,9 +625,7 @@ function DashboardContent({ id }: { id: string }) {
   // The live document's title wins once bound; fall back to the row.
   const appTitle = app?.title || liveTitle
   // Masthead, filter strip, and body share one content width (The Story).
-  const contentWidth: React.CSSProperties | undefined = appWidth === 'fixed'
-    ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
-    : undefined
+  const contentWidth: React.CSSProperties | undefined = appContentWidthStyle(appWidth)
 
   // The dashboard logo wins over the org fallback. The authed attachment route
   // needs credentials an <img> cannot send as a header, so the session JWT

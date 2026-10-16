@@ -2,12 +2,7 @@ import type { CSSProperties, ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import { ArrowLeft, Loader2, RefreshCw } from 'lucide-react'
 import { formatExecutedAt } from '../utils/formatDateTime'
-
-/**
- * The App surface's shared content width. The masthead, the filter strip, and
- * the widget body all constrain to this so the three align.
- */
-export const APP_CONTENT_MAX_WIDTH = 1200
+import { appContentWidthStyle } from '../utils/appLayout'
 
 interface AppHeaderProps {
   /** Masthead title (the app title, falling back to the dashboard title). */
@@ -51,7 +46,7 @@ export function AppHeader({
     <header className="app-header" style={styles.root}>
       <div
         className="app-header-content"
-        style={width === 'fixed' ? styles.contentFixed : undefined}
+        style={appContentWidthStyle(width)}
       >
         {backTo && (
           <Link
@@ -112,10 +107,6 @@ const styles: Record<string, CSSProperties> = {
   // media rule can tighten it; the hairline stays inline with the component.
   root: {
     borderBottom: '1px solid var(--border-light)',
-  },
-  contentFixed: {
-    maxWidth: APP_CONTENT_MAX_WIDTH,
-    margin: '0 auto',
   },
   // The app's own mark, sized to sit quietly beside the title block.
   logo: {

@@ -17,7 +17,7 @@ import { QueryDataWidget } from '../components/QueryDataWidget'
 import { TextWidget } from '../components/TextWidget'
 import { HtmlWidget } from '../components/HtmlWidget'
 import { CustomWidget } from '../components/CustomWidget'
-import { APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
+import { appContentWidthStyle } from '../utils/appLayout'
 import { formatExecutedAt } from '../utils/formatDateTime'
 import { textConfigFrom } from '../utils/textConfig'
 import { htmlConfigFrom } from '../utils/htmlConfig'
@@ -95,9 +95,7 @@ export function PublicDashboardPage() {
   // document outline (same treatment as the internal app view).
   const showMasthead = app?.show_header !== false
   // Masthead and body share one content width (The Story).
-  const contentWidth: React.CSSProperties | undefined = appWidth === 'fixed'
-    ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
-    : undefined
+  const contentWidth: React.CSSProperties | undefined = appContentWidthStyle(appWidth)
   // A non-live page doesn't mount the variables provider (its option loads are
   // live-only and would 403), so text panels interpolate against the
   // variables' configured defaults instead of an empty context.
