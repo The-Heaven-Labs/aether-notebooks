@@ -90,20 +90,32 @@ test.describe('Search', () => {
     await closeAgent.click()
 
     // The /search deep link renders the notebook group with its result row,
-    // and the content hit links straight to the matched cell.
+    // and the content hit's href deep-links straight to the matched cell.
     await page.goto(`/search?q=${encodeURIComponent(contentTerm)}`)
     await expect(page.getByRole('heading', { name: /Notebooks · 1/ })).toBeVisible({ timeout: 10_000 })
     const resultLink = page.getByRole('link', { name: new RegExp(title) })
     await expect(resultLink).toBeVisible()
     await expect(resultLink).toHaveAttribute('href', new RegExp(`/notebooks/${notebookId}#cell-`))
-    await resultLink.click()
-    await expect(page).toHaveURL(new RegExp(`/notebooks/${notebookId}#cell-`))
 
-    // The favorites chip toggles the URL-synced `?favorites=1` filter.
+    // The favorites chip toggles the URL-synced `?favorites=1` filter. Assert
+    // it while still on /search: the chip exists only on this page, so this
+    // block must not run after the result link navigates away.
     const favoritesChip = page.getByRole('button', { name: 'Favorites', exact: true })
     await expect(favoritesChip).toHaveAttribute('aria-pressed', 'false')
     await favoritesChip.click()
     await expect(favoritesChip).toHaveAttribute('aria-pressed', 'true')
     await expect(page).toHaveURL(/favorites=1/)
+
+    // Toggling back off drops the filter. The seeded notebook is not a
+    // favorite, so favorites=1 hides its row; clearing the chip restores it.
+    await favoritesChip.click()
+    await expect(favoritesChip).toHaveAttribute('aria-pressed', 'false')
+    await expect(page).not.toHaveURL(/favorites=1/)
+
+    // Open the result last: it leaves /search for the notebook page, so any
+    // further /search assertion would be stranded.
+    await expect(resultLink).toBeVisible()
+    await resultLink.click()
+    await expect(page).toHaveURL(new RegExp(`/notebooks/${notebookId}#cell-`))
   })
 })

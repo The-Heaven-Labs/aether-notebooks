@@ -70,7 +70,7 @@ export function isKnownType(type: string): type is FavoriteResourceType {
  */
 export function resourceHref(type: FavoriteResourceType, id: string, cellId?: string): string {
   switch (type) {
-    case 'notebook': return cellId ? `/notebooks/${id}#cell-${cellId}` : `/notebooks/${id}`
+    case 'notebook': return cellId ? `/notebooks/${id}#cell-${encodeURIComponent(cellId)}` : `/notebooks/${id}`
     case 'dashboard': return `/dashboards/${id}/view`
     case 'folder': return `/?folder=${id}`
     case 'connector': return '/connectors'

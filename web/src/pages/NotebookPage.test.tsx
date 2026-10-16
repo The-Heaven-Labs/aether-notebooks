@@ -1,6 +1,6 @@
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { screen, fireEvent, waitFor, act } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes, useNavigate } from 'react-router-dom'
 import type { ReactNode } from 'react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
@@ -19,7 +19,7 @@ vi.mock('../components/Cell', () => ({
     onRun: (cellId: string) => void
     routing?: { connector_name?: string }
   }) => (
-    <div data-testid={`cell-${cell.id}`}>
+    <div id={`cell-${cell.id}`} data-testid={`cell-${cell.id}`}>
       <button type="button" onClick={() => onRun(cell.id)}>{`Run ${cell.id}`}</button>
       {routing?.connector_name && <span>{`endpoint ${routing.connector_name}`}</span>}
       {(cell.outputs ?? [])
@@ -209,5 +209,41 @@ describe('NotebookPage warehouse routing', () => {
 
     expect(await screen.findByText('query failed')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('endpoint CH RW')).toBeNull())
+  })
+})
+
+// A same-notebook palette hit navigates via react-router (pushState), which
+// fires no `hashchange`; the page must re-read the router location's hash.
+function HashNavButton({ to }: { to: string }) {
+  const navigate = useNavigate()
+  return <button type="button" onClick={() => navigate(to)}>jump to cell</button>
+}
+
+describe('NotebookPage hash deep-link', () => {
+  test('re-navigating to #cell-<id> on a mounted page scrolls and flashes the cell', async () => {
+    // jsdom has no scrollIntoView.
+    const scrollIntoView = vi.fn()
+    Element.prototype.scrollIntoView = scrollIntoView as unknown as typeof Element.prototype.scrollIntoView
+
+    renderWithProviders(
+      <>
+        <HashNavButton to="/notebooks/nb-1#cell-cell-2" />
+        <Routes>
+          <Route path="/notebooks/:id" element={<NotebookPage />} />
+        </Routes>
+      </>,
+      { initialPath: '/notebooks/nb-1' },
+    )
+
+    const cell = await screen.findByTestId('cell-cell-2')
+    // Mounted without a hash: nothing has scrolled yet.
+    const callsBefore = scrollIntoView.mock.calls.length
+
+    // The same-page push updates the URL but fires no `hashchange`; only the
+    // router location change can re-trigger the scroll + flash.
+    fireEvent.click(screen.getByRole('button', { name: 'jump to cell' }))
+
+    await waitFor(() => expect(scrollIntoView.mock.calls.length).toBeGreaterThan(callsBefore))
+    expect(cell).toHaveClass('cell-flash')
   })
 })
