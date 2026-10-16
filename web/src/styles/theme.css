@@ -310,6 +310,26 @@
 .cm-editor .cm-content span.cm-function { color: var(--code-function); }
 .cm-editor .cm-content span.cm-number { color: var(--code-number); }
 
+/* ── CodeMirror autocomplete popup ───────────────────────────────────────── */
+.cm-tooltip.cm-tooltip-autocomplete {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+  font-size: 13px;
+}
+
+.cm-tooltip-autocomplete > ul > li {
+  padding: 4px 8px;
+}
+
+.cm-tooltip-autocomplete > ul > li[aria-selected] {
+  background: var(--accent);
+  color: var(--button-primary-text);
+}
+
 html {
   transition: background-color 0.2s ease;
 }

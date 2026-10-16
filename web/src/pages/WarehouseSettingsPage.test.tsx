@@ -565,7 +565,7 @@ describe('WarehouseSettingsPage', () => {
 
     test('ignores a test result that resolves after the provisioner selection changed', async () => {
       let currentProvisioner = 'c-1'
-      const { promise, resolve } = deferred<HttpResponse>()
+      const { promise, resolve } = deferred<HttpResponse<{ ok: boolean; steps: { name: string; ok: boolean }[] }>>()
 
       server.use(
         http.get('/api/v1/warehouses/:id', ({ params }) =>
