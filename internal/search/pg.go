@@ -56,6 +56,7 @@ const notebookContentSQL = `
 	    ORDER BY c.notebook_id, n.updated_at DESC, c.position
 	)
 	SELECT p.notebook_id::text,
+	       p.cell_id::text,
 	       ts_headline('simple', c.source, to_tsquery('simple', $2),
 	                   'MaxWords=24, MinWords=8, ShortWord=2, StartSel="", StopSel=""')
 	FROM picked p
@@ -121,12 +122,12 @@ func (s *PGSearcher) ContentMatches(ctx context.Context, orgID string, types []s
 		)
 		switch resourceType {
 		case TypeNotebook:
-			results, err = s.contentMatches(ctx, notebookContentSQL, orgID, tsquery, fetch, limit)
+			results, err = s.contentMatches(ctx, notebookContentSQL, orgID, tsquery, fetch, limit, true)
 			if err != nil {
 				return nil, fmt.Errorf("search notebook content: %w", err)
 			}
 		case TypeDashboard:
-			results, err = s.contentMatches(ctx, dashboardContentSQL, orgID, tsquery, fetch, limit)
+			results, err = s.contentMatches(ctx, dashboardContentSQL, orgID, tsquery, fetch, limit, false)
 			if err != nil {
 				return nil, fmt.Errorf("search dashboard content: %w", err)
 			}
@@ -144,8 +145,10 @@ func (s *PGSearcher) ContentMatches(ctx context.Context, orgID string, types []s
 // SQL already collapses each resource to one row (DISTINCT ON in the picked
 // CTE); the in-loop de-duplication stays as a cheap safety net so a query
 // shape regression can never surface duplicate resources to callers. Result
-// order is preserved and the list is sliced to limit.
-func (s *PGSearcher) contentMatches(ctx context.Context, sql, orgID, tsquery string, fetch, limit int) ([]ContentHit, error) {
+// order is preserved and the list is sliced to limit. withCellID selects the
+// notebook query's shape: it additionally selects the matched cell id (the
+// dashboard query exposes no widget id), so the scan must track the SQL.
+func (s *PGSearcher) contentMatches(ctx context.Context, sql, orgID, tsquery string, fetch, limit int, withCellID bool) ([]ContentHit, error) {
 	rows, err := s.pool.Query(ctx, sql, orgID, tsquery, fetch)
 	if err != nil {
 		return nil, err
@@ -156,8 +159,14 @@ func (s *PGSearcher) contentMatches(ctx context.Context, sql, orgID, tsquery str
 	seen := make(map[string]struct{}, limit)
 	for rows.Next() {
 		var hit ContentHit
-		if err := rows.Scan(&hit.ResourceID, &hit.Snippet); err != nil {
-			return nil, err
+		var scanErr error
+		if withCellID {
+			scanErr = rows.Scan(&hit.ResourceID, &hit.CellID, &hit.Snippet)
+		} else {
+			scanErr = rows.Scan(&hit.ResourceID, &hit.Snippet)
+		}
+		if scanErr != nil {
+			return nil, scanErr
 		}
 		if _, ok := seen[hit.ResourceID]; ok {
 			continue

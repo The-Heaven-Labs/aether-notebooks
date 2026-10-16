@@ -136,6 +136,25 @@ describe('SearchPage', () => {
     expect(screen.queryByText('More matches — refine your search')).toBeNull()
   })
 
+  test('a notebook content hit links to the matched cell hash', async () => {
+    useSearchGroups([
+      group('notebook', [
+        summary('notebook', 'nb-1', 'Revenue by region', {
+          snippet: 'SELECT revenue FROM sales',
+          cell_id: 'a1b2c3',
+        }),
+        summary('dashboard', 'd-1', 'Revenue dashboard', { cell_id: 'ignored' }),
+      ]),
+    ])
+    renderSearch('/search?q=revenue')
+
+    const link = await screen.findByRole('link', { name: /Revenue by region/ })
+    expect(link).toHaveAttribute('href', '/notebooks/nb-1#cell-a1b2c3')
+    // A cell id on a non-notebook type is ignored: only notebooks deep-link.
+    expect(screen.getByRole('link', { name: /Revenue dashboard/ }))
+      .toHaveAttribute('href', '/dashboards/d-1/view')
+  })
+
   test('typing debounces into the URL and refetches once', async () => {
     useSearchGroups([group('notebook', [summary('notebook', 'nb-1', 'Revenue by region')])])
     renderSearch()

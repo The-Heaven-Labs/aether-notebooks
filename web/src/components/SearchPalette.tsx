@@ -107,7 +107,7 @@ export function SearchPalette({ open, onClose, onOpenResults }: Props) {
     title: result.title,
     meta: [result.folder_path, result.subtitle].filter(Boolean).join(' · '),
     snippet: result.snippet,
-    href: resourceHref(result.resource_type, result.id),
+    href: resourceHref(result.resource_type, result.id, result.cell_id),
   })
 
   const sections: PaletteSection[] = []

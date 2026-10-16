@@ -62,10 +62,15 @@ export function isKnownType(type: string): type is FavoriteResourceType {
   return Object.prototype.hasOwnProperty.call(TYPE_ICONS, type)
 }
 
-/** Where opening (or clicking) each resource type takes the user. */
-export function resourceHref(type: FavoriteResourceType, id: string): string {
+/**
+ * Where opening (or clicking) each resource type takes the user. A notebook
+ * content hit passes the matched `cellId`, deep-linking to the cell so the
+ * notebook page can scroll to and flash it; every other case (and every other
+ * type) keeps its plain route.
+ */
+export function resourceHref(type: FavoriteResourceType, id: string, cellId?: string): string {
   switch (type) {
-    case 'notebook': return `/notebooks/${id}`
+    case 'notebook': return cellId ? `/notebooks/${id}#cell-${cellId}` : `/notebooks/${id}`
     case 'dashboard': return `/dashboards/${id}/view`
     case 'folder': return `/?folder=${id}`
     case 'connector': return '/connectors'

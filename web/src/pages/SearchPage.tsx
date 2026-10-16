@@ -341,7 +341,7 @@ const SearchResultRow = memo(function SearchResultRow({ result, query }: SearchR
   const meta = [result.folder_path, result.subtitle].filter(Boolean).join(' · ')
   return (
     <div style={styles.row} className="card-hover">
-      <Link to={resourceHref(result.resource_type, result.id)} style={styles.rowLink}>
+      <Link to={resourceHref(result.resource_type, result.id, result.cell_id)} style={styles.rowLink}>
         <Icon size={16} strokeWidth={2} style={styles.rowIcon} aria-hidden="true" />
         <div style={styles.rowBody}>
           <div style={styles.rowTitle}>

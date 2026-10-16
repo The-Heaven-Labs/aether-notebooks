@@ -360,6 +360,10 @@ type searchTypePage struct {
 	// Snippets maps page ids to content snippets (empty for types without a
 	// content pass or candidates without a content hit).
 	Snippets map[string]string
+	// CellIDs maps page ids to the matched cell id for notebook content hits
+	// (empty for types without a content pass, dashboard widget hits, and
+	// candidates without a content hit).
+	CellIDs map[string]string
 	// Meta carries the summary metadata for every page id, with dashboard
 	// titles already resolved to the caller's effective title. The builder
 	// consumes it as an override: its own fetch would serve draft titles.
@@ -442,6 +446,7 @@ func (s *Server) searchTypePage(
 		}
 	}
 	contentSnippets := make(map[string]string, len(contentHits))
+	contentCellIDs := make(map[string]string, len(contentHits))
 	contentIDs := make(map[string]bool, len(contentHits))
 	contentAction := contentRequiresEdit[resourceType]
 	for _, hit := range contentHits {
@@ -451,6 +456,9 @@ func (s *Server) searchTypePage(
 		contentIDs[hit.ResourceID] = true
 		if hit.Snippet != "" {
 			contentSnippets[hit.ResourceID] = hit.Snippet
+		}
+		if hit.CellID != "" {
+			contentCellIDs[hit.ResourceID] = hit.CellID
 		}
 		if !seen[hit.ResourceID] {
 			seen[hit.ResourceID] = true
@@ -547,6 +555,7 @@ func (s *Server) searchTypePage(
 	page := searchTypePage{
 		HasMore:  len(ranked) > req.Limit,
 		Snippets: make(map[string]string),
+		CellIDs:  make(map[string]string),
 		Meta:     make(map[string]resourceSummaryMeta),
 		Perms:    perms,
 	}
@@ -557,6 +566,9 @@ func (s *Server) searchTypePage(
 		page.IDs = append(page.IDs, candidate.id)
 		if snippet := contentSnippets[candidate.id]; snippet != "" {
 			page.Snippets[candidate.id] = snippet
+		}
+		if cellID := contentCellIDs[candidate.id]; cellID != "" {
+			page.CellIDs[candidate.id] = cellID
 		}
 		page.Meta[candidate.id] = pageMeta[candidate.id]
 	}
@@ -660,6 +672,7 @@ func (s *Server) searchResourceGroups(ctx context.Context, ident permIdentity, r
 	requests := make([]summaryRequest, 0, len(searchGroupOrder))
 	opts := summaryBuildOptions{
 		Snippets:  map[string]map[string]string{},
+		CellIDs:   map[string]map[string]string{},
 		Overrides: summaryOverrides{},
 		Favorites: favorites,
 		Perms:     map[string]map[string]map[string]bool{},
@@ -672,6 +685,9 @@ func (s *Server) searchResourceGroups(ctx context.Context, ident permIdentity, r
 		requests = append(requests, summaryRequest{ResourceType: resourceType, IDs: page.IDs})
 		if len(page.Snippets) > 0 {
 			opts.Snippets[resourceType] = page.Snippets
+		}
+		if len(page.CellIDs) > 0 {
+			opts.CellIDs[resourceType] = page.CellIDs
 		}
 		opts.Overrides[resourceType] = page.Meta
 		opts.Perms[resourceType] = page.Perms

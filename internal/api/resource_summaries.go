@@ -10,16 +10,20 @@ import (
 // resourceSummary is the shared shape for favorites and search results: one
 // catalog resource the caller can see, with the metadata both surfaces render.
 type resourceSummary struct {
-	ID           string    `json:"id"`
-	ResourceType string    `json:"resource_type"`
-	Title        string    `json:"title"`
-	Subtitle     string    `json:"subtitle"`
-	Snippet      *string   `json:"snippet,omitempty"`
-	FolderID     *string   `json:"folder_id,omitempty"`
-	FolderPath   string    `json:"folder_path,omitempty"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	IsFavorite   bool      `json:"is_favorite"`
-	CanEdit      bool      `json:"can_edit"`
+	ID           string  `json:"id"`
+	ResourceType string  `json:"resource_type"`
+	Title        string  `json:"title"`
+	Subtitle     string  `json:"subtitle"`
+	Snippet      *string `json:"snippet,omitempty"`
+	// CellID is the matched cell for a notebook content hit, so the client can
+	// deep-link to /notebooks/{id}#cell-{cellId}. Absent for every other case
+	// (favorites, title-only hits, dashboard widget hits).
+	CellID     *string   `json:"cell_id,omitempty"`
+	FolderID   *string   `json:"folder_id,omitempty"`
+	FolderPath string    `json:"folder_path,omitempty"`
+	UpdatedAt  time.Time `json:"updated_at"`
+	IsFavorite bool      `json:"is_favorite"`
+	CanEdit    bool      `json:"can_edit"`
 }
 
 // summaryGroup is one resource type's results, as the favorites and search
@@ -126,6 +130,10 @@ type summaryBuildOptions struct {
 	// snippets (a favorites listing); a non-empty entry becomes the summary's
 	// snippet.
 	Snippets map[string]map[string]string
+	// CellIDs maps resource type -> id -> matched cell id for notebook content
+	// hits. Nil renders no cell_id (a favorites listing); a non-empty entry
+	// becomes the summary's cell_id so the client can deep-link to the cell.
+	CellIDs map[string]map[string]string
 	// Overrides substitutes metadata a caller already fetched with extra
 	// per-caller semantics (search's effective dashboard titles). A type
 	// present here is not re-fetched, and ids absent from the override group
@@ -446,6 +454,10 @@ func (s *Server) buildResourceSummaries(ctx context.Context, ident permIdentity,
 			if text, ok := opts.Snippets[resourceType][id]; ok && text != "" {
 				snippet := text
 				summary.Snippet = &snippet
+			}
+			if cellID, ok := opts.CellIDs[resourceType][id]; ok && cellID != "" {
+				cell := cellID
+				summary.CellID = &cell
 			}
 			group.Results = append(group.Results, summary)
 		}

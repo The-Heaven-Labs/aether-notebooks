@@ -36,6 +36,16 @@ test.describe('Search', () => {
     const title = `Searchable Revenue Ledger ${suffix}`
     const [notebookId] = await seedNotebooks(request, token, null, 1, title)
 
+    // Seed a cell whose SQL carries a term absent from the title, so the
+    // search resolves to a content hit. The matched cell id must ride the
+    // summary so opening the result deep-links to `#cell-{id}`.
+    const contentTerm = `zebrafish${suffix}`
+    const cellResp = await request.post(`/api/v1/notebooks/${notebookId}/cells`, {
+      headers: { Authorization: `Bearer ${token}` },
+      data: { type: 'code', language: 'sql', source: `SELECT ${contentTerm} FROM revenue_entries` },
+    })
+    expect(cellResp.ok()).toBeTruthy()
+
     // Ctrl+K opens the palette. Wait for the shell's search field first: the
     // keydown listener attaches with the shell, and an early chord is lost.
     await page.goto('/')
@@ -50,16 +60,18 @@ test.describe('Search', () => {
     // pending keystroke instead of opening the result.
     const searchResponse = page.waitForResponse((resp) => {
       if (!resp.url().includes('/api/v1/search?')) return false
-      return new URL(resp.url()).searchParams.get('q') === title
+      return new URL(resp.url()).searchParams.get('q') === contentTerm
     })
-    await palette.getByRole('combobox').fill(title)
+    await palette.getByRole('combobox').fill(contentTerm)
     await searchResponse
     const option = palette
       .getByRole('group', { name: 'Notebooks' })
       .getByRole('option', { name: new RegExp(title) })
     await expect(option).toBeVisible()
     await palette.getByRole('combobox').press('Enter')
-    await expect(page).toHaveURL(new RegExp(`/notebooks/${notebookId}`))
+    // A content hit deep-links to the matched cell; stay order-independent of
+    // the exact cell id.
+    await expect(page).toHaveURL(new RegExp(`/notebooks/${notebookId}#cell-`))
     await expect(page.getByText(title).first()).toBeVisible({ timeout: 15_000 })
 
     // Ctrl+J opens the agent panel (the chord moved off Ctrl+K). The chord's
@@ -77,10 +89,15 @@ test.describe('Search', () => {
     await expect(closeAgent).toBeVisible()
     await closeAgent.click()
 
-    // The /search deep link renders the notebook group with its result row.
-    await page.goto(`/search?q=${encodeURIComponent(title)}`)
+    // The /search deep link renders the notebook group with its result row,
+    // and the content hit links straight to the matched cell.
+    await page.goto(`/search?q=${encodeURIComponent(contentTerm)}`)
     await expect(page.getByRole('heading', { name: /Notebooks · 1/ })).toBeVisible({ timeout: 10_000 })
-    await expect(page.getByRole('link', { name: new RegExp(title) })).toBeVisible()
+    const resultLink = page.getByRole('link', { name: new RegExp(title) })
+    await expect(resultLink).toBeVisible()
+    await expect(resultLink).toHaveAttribute('href', new RegExp(`/notebooks/${notebookId}#cell-`))
+    await resultLink.click()
+    await expect(page).toHaveURL(new RegExp(`/notebooks/${notebookId}#cell-`))
 
     // The favorites chip toggles the URL-synced `?favorites=1` filter.
     const favoritesChip = page.getByRole('button', { name: 'Favorites', exact: true })

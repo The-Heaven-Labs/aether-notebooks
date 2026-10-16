@@ -143,3 +143,21 @@
   - `cd web && npx tsc --noEmit` → clean
   - `cd web && npm run build` → pass
 - Notes: Lowered `TEXT_PANEL_MIN_H` from 3 to 2 (comment updated) and added `export function widgetMinRows(w: Widget): number` returning `isTextPanel(w) ? TEXT_PANEL_MIN_H : DATA_WIDGET_MIN_H`; `toGridItem` now derives its `minH`/height clamp from that helper. In `PublicDashboardPage.tsx`, imported `widgetMinRows` and replaced both hardcoded `6` row minimums (the chapter-height reduce and the per-widget `widgetRows`) so the published surface shares the editor's per-type floor. Deviation: the plan lists `web/src/utils/widgetLayout.test.ts` as Created, but it already existed (tracked since `d7bcdfa8`); extended it with a `widgetMinRows` describe block plus text-panel-clamp and query-backed cases rather than recreating it. The two pre-existing tests asserting a height-3 text panel (`h === 3`) still hold since 3 > 2.
+
+## Task 11: Jump to the matched cell from search results — 2026-10-15
+
+- Outcome: done
+- Changed:
+  - Created: `web/src/utils/resources.test.ts`
+  - Modified: `internal/search/search.go`, `internal/search/pg.go`, `internal/api/resource_summaries.go`, `internal/api/search_handlers.go`, `internal/api/search_handlers_test.go`, `web/src/types/index.ts`, `web/src/utils/resources.ts`, `web/src/pages/SearchPage.tsx`, `web/src/components/SearchPalette.tsx`, `web/src/test/SearchPage.test.tsx`, `e2e/search.spec.ts`
+  - Deleted: none
+- Verified:
+  - `bash scripts/go-test.sh -run 'TestSearch' ./internal/api/` → pass (ok, 4.673s)
+  - `bash scripts/go-test.sh ./internal/search/... ./internal/api/` → pass (search 1.873s, api 138.841s)
+  - `bash scripts/go-test.sh ./...` → pass (full suite, all packages ok)
+  - `task build` → pass (both `aether-server` and `aether` binaries)
+  - `cd web && npx vitest run src/utils/resources.test.ts src/test/SearchPage.test.tsx` → pass (2 files, 27 passed)
+  - `cd web && npm run test:run` → pass (1527 passed, 2 skipped; +5 over the Task 10 baseline of 1522)
+  - `cd web && npx tsc --noEmit` → clean
+  - `cd web && npm run build` → pass
+- Notes: `search.ContentHit` gains `CellID`, populated only for notebook hits (`notebookContentSQL` selects `p.cell_id::text`; `dashboardContentSQL` is unchanged, and `contentMatches` takes a `withCellID` flag so the scan tracks each query's shape). The id rides the same path as snippets: `searchTypePage.CellIDs` (populated after the content gate) → `summaryBuildOptions.CellIDs` → `resourceSummary.CellID` (`cell_id,omitempty`). `resources.ts`'s `resourceHref(type, id, cellId?)` appends `#cell-{cellId}` for notebooks only; `SearchPage` and `SearchPalette` pass `result.cell_id`, while Favorites, title-only hits, dashboards, and every other type keep their current hrefs. Dashboard content hits expose no cell id (test-pinned). Deviation: the e2e spec previously searched by notebook title (a title-only hit, which now correctly carries no cell id), so step 6's "content-hit navigation expectation" required exercising an actual content hit — it now seeds a cell via `POST /api/v1/notebooks/{id}/cells` and searches a cell-content term, asserting the `/notebooks/{id}#cell-` URL from both the palette and the results page (order-independent of the exact cell id). The e2e was not run locally (no dev stack up; not among the task's verify commands). The Go test helper `seedCell` now returns the created cell id (existing call sites discard it); added `TestSearchDashboardContentCarriesNoCellID` and title-only/content-hit `cell_id` assertions to `TestSearchNotebookContentVisibleToViewers` / `TestSearchTitleSubstringAcrossTypes`.
