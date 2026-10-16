@@ -623,6 +623,32 @@ describe('DashboardPage chapter tabs', () => {
     expect(screen.getByTestId('query-w3')).not.toBeVisible()
   })
 
+  test('the Edit link carries the active chapter into the editor', async () => {
+    renderDashboard('/dashboards/d1/view?tab=orders')
+    await screen.findByRole('tab', { name: 'Orders' })
+
+    expect(screen.getByRole('link', { name: /Edit/ })).toHaveAttribute('href', '/dashboards/d1?tab=orders')
+  })
+
+  test('an invalid ?tab is cleared from the URL while preserving other params', async () => {
+    renderDashboard('/dashboards/d1/view?tab=nope&pin=1')
+    await screen.findByRole('tab', { name: 'Overview' })
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1/view?pin=1'))
+  })
+
+  test('a stale ?tab is cleared when the dashboard has no tabs', async () => {
+    server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
+      ...REST_DASHBOARD,
+      settings: {},
+      widgets: [widget()],
+    })))
+    renderDashboard('/dashboards/d1/view?tab=orders&pin=1')
+    await screen.findByText('Rest board')
+
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1/view?pin=1'))
+  })
+
   test('shows a quiet placeholder for a chapter with no widgets', async () => {
     server.use(http.get('/api/v1/dashboards/d1', () => HttpResponse.json({
       ...REST_DASHBOARD,
@@ -973,22 +999,31 @@ describe('DashboardPage published mode', () => {
     expect(screen.queryByText('Live')).not.toBeInTheDocument()
   })
 
-  test('the mode toggle preserves other query params', async () => {
+  test('the mode toggle preserves the active chapter and other query params', async () => {
+    const TABS = [{ id: 'orders', title: 'Orders' }]
+    const tabbedWidget = queryWidget({
+      id: 'w2',
+      query: 'SELECT 2',
+      layout: { row: 0, col: 0, width: 6, height: 8, tab: 'orders' },
+    })
+    const tabbedPublished = { ...PUBLISHED_DASHBOARD, settings: { ...PUBLISHED_DASHBOARD.settings, tabs: TABS }, widgets: [tabbedWidget] }
+    const tabbedDraft = { ...DRAFT_DASHBOARD, settings: { ...DRAFT_DASHBOARD.settings, tabs: TABS }, widgets: [tabbedWidget] }
+
     server.use(http.get('/api/v1/dashboards/d1', ({ request }) => {
       const published = new URL(request.url).searchParams.get('published') === '1'
-      return HttpResponse.json(published ? PUBLISHED_DASHBOARD : DRAFT_DASHBOARD)
+      return HttpResponse.json(published ? tabbedPublished : tabbedDraft)
     }))
-    renderDashboard('/dashboards/d1/view?tab=orders')
+    renderDashboard('/dashboards/d1/view?tab=orders&pin=1')
     await screen.findByText('Published board')
 
     expect(screen.getByRole('link', { name: /Preview draft/ }))
-      .toHaveAttribute('href', '/dashboards/d1/view?tab=orders&preview=draft')
+      .toHaveAttribute('href', '/dashboards/d1/view?tab=orders&pin=1&preview=draft')
 
     fireEvent.click(screen.getByRole('link', { name: /Preview draft/ }))
     expect(await screen.findByText('Draft preview')).toBeInTheDocument()
-    // The way back keeps the active chapter too.
+    // The way back keeps the active chapter and the unrelated param too.
     expect(screen.getByRole('link', { name: /View published/ }))
-      .toHaveAttribute('href', '/dashboards/d1/view?tab=orders')
+      .toHaveAttribute('href', '/dashboards/d1/view?tab=orders&pin=1')
   })
 })
 

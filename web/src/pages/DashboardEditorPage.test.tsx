@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import { describe, test, expect, beforeEach, afterEach, vi } from 'vitest'
 import { screen, fireEvent, waitFor, act } from '@testing-library/react'
-import { Route, Routes } from 'react-router-dom'
+import { Route, Routes, useLocation } from 'react-router-dom'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { renderWithProviders } from '../test/utils'
@@ -229,12 +229,22 @@ const NOTEBOOK = {
   }],
 }
 
-function renderEditor() {
+// Exposes the router's current location so tests can assert URL writes
+// (`?tab=`) without reaching into router internals.
+function LocationProbe() {
+  const location = useLocation()
+  return <div data-testid="location">{location.pathname + location.search}</div>
+}
+
+function renderEditor(initialPath = '/dashboards/d1') {
   return renderWithProviders(
-    <Routes>
-      <Route path="/dashboards/:id" element={<DashboardEditorPage />} />
-    </Routes>,
-    { initialPath: '/dashboards/d1' },
+    <>
+      <LocationProbe />
+      <Routes>
+        <Route path="/dashboards/:id" element={<DashboardEditorPage />} />
+      </Routes>
+    </>,
+    { initialPath },
   )
 }
 
@@ -791,6 +801,56 @@ describe('DashboardEditorPage tabs', () => {
     })
     expect(body).toMatchObject({ layout: { row: 8, col: 0, width: 6, height: 8 } })
     expect((body.layout as Record<string, unknown>).tab).toBeUndefined()
+  })
+
+  test('initializes the active chapter from ?tab=', async () => {
+    syncedTabs()
+    renderEditor('/dashboards/d1?tab=beta')
+
+    expect(await screen.findByRole('button', { name: 'Beta' })).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.queryByLabelText('Edit Alpha widget')).not.toBeInTheDocument()
+    expect(screen.getByLabelText('Edit Beta widget')).toBeInTheDocument()
+    expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1?tab=beta')
+  })
+
+  test('switching chapters updates the URL and All removes the param', async () => {
+    syncedTabs()
+    renderEditor('/dashboards/d1?tab=beta')
+
+    expect(await screen.findByRole('button', { name: 'Beta' })).toHaveAttribute('aria-pressed', 'true')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Alpha' }))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1?tab=alpha'))
+
+    fireEvent.click(screen.getByRole('button', { name: 'All' }))
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1'))
+  })
+
+  test('the View link carries the active chapter', async () => {
+    syncedTabs()
+    renderEditor('/dashboards/d1?tab=beta')
+
+    await screen.findByRole('button', { name: 'Beta' })
+    expect(screen.getByRole('link', { name: /View/ })).toHaveAttribute('href', '/dashboards/d1/view?tab=beta')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Alpha' }))
+    await waitFor(() => expect(screen.getByRole('link', { name: /View/ })).toHaveAttribute('href', '/dashboards/d1/view?tab=alpha'))
+  })
+
+  test('an invalid ?tab is cleared from the URL while preserving other params', async () => {
+    syncedTabs()
+    renderEditor('/dashboards/d1?tab=nope&pin=1')
+
+    await screen.findByRole('button', { name: 'Alpha' })
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1?pin=1'))
+  })
+
+  test('a stale ?tab is cleared when the dashboard has no tabs', async () => {
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor('/dashboards/d1?tab=foo&pin=1')
+
+    await screen.findByTestId('grid')
+    await waitFor(() => expect(screen.getByTestId('location')).toHaveTextContent('/dashboards/d1?pin=1'))
   })
 })
 

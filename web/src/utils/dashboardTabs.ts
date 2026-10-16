@@ -36,6 +36,16 @@ export function widgetTabId(widget: Widget, tabs: readonly DashboardTabLike[]): 
 }
 
 /**
+ * A query-string fragment for linking to a specific chapter. Returns `?tab=<id>`
+ * for a non-empty id, otherwise an empty string so All / no-tab dashboards do
+ * not leave a stale param in the URL.
+ */
+export function tabQueryString(tabId: string | null | undefined): string {
+  if (!tabId) return ''
+  return `?tab=${encodeURIComponent(tabId)}`
+}
+
+/**
  * The widgets that belong to one tab. With no tabs configured every widget
  * matches (and the tab bar stays hidden); an unknown requested id resolves to
  * the first tab, mirroring `activeTabId`.

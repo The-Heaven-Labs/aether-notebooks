@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, X, Plus, Eye, Pencil, Shield, LayoutTemplate, ListChecks } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
@@ -9,7 +9,7 @@ import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPa
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
 import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
-import { widgetTabId, NO_TABS } from '../utils/dashboardTabs'
+import { widgetTabId, NO_TABS, tabQueryString } from '../utils/dashboardTabs'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { htmlConfigFrom } from '../utils/htmlConfig'
@@ -197,6 +197,7 @@ const widgetContentStyles: Record<string, React.CSSProperties> = {
 export function DashboardEditorPage() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
@@ -215,9 +216,9 @@ export function DashboardEditorPage() {
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showVariables, setShowVariables] = useState(false)
   const [showAppSettings, setShowAppSettings] = useState(false)
-  // Editor-local chapter filter (NOT URL state) and the App settings panel's
-  // opening section (the strip's + reveals Tabs).
-  const [editorTab, setEditorTab] = useState<string | null>(null)
+  // Editor chapter filter starts from the URL (`?tab=`) so view→edit keeps
+  // the active chapter; chip changes write back with `replace`.
+  const [editorTab, setEditorTab] = useState<string | null>(searchParams.get('tab'))
   const [appSettingsSection, setAppSettingsSection] = useState<'tabs' | undefined>(undefined)
   const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
   const [variablePrefillType, setVariablePrefillType] = useState<DashboardVariableType | null>(null)
@@ -330,11 +331,44 @@ export function DashboardEditorPage() {
     ? (liveDoc.settings.tabs ?? NO_TABS)
     : (dashboard?.settings?.tabs ?? NO_TABS)
   // A selected chapter that disappears (deleted by anyone) is forgotten so a
-  // later tab reusing its id cannot silently re-apply the stale filter.
-  if (editorTab !== null && !tabs.some((t) => t.id === editorTab)) setEditorTab(null)
+  // later tab reusing its id cannot silently re-apply the stale filter; the
+  // URL param is removed at the same time so invalid ids never leave a stale
+  // `?tab=` behind. The clear only runs once tabs are known (dashboard loaded
+  // or document synced) so a valid initial param is not erased while data is
+  // still loading.
+  const tabsKnown = !!dashboard || docReady
+  useEffect(() => {
+    if (editorTab === null || !tabsKnown) return
+    const isValid = tabs.some((t) => t.id === editorTab)
+    if (!isValid) {
+      setEditorTab(null)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete('tab')
+          return next
+        },
+        { replace: true },
+      )
+    }
+  }, [editorTab, tabs, tabsKnown, setSearchParams])
   // The current render still sees the pre-clear value; fall back to All so the
   // grid never silently strands every widget off-screen.
   const activeEditorTab = editorTab && tabs.some((t) => t.id === editorTab) ? editorTab : null
+
+  const handleEditorTabChange = useCallback((tabId: string | null) => {
+    setEditorTab(tabId)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (tabId) next.set('tab', tabId)
+        else next.delete('tab')
+        return next
+      },
+      { replace: true },
+    )
+  }, [setSearchParams])
+
   const shownWidgets = useMemo(
     () => (tabs.length === 0 || activeEditorTab === null
       ? widgets
@@ -623,7 +657,7 @@ export function DashboardEditorPage() {
               </button>
             </>
           )}
-          <Link to={`/dashboards/${id}/view`} className="nav-btn" title="View dashboard">
+          <Link to={`/dashboards/${id}/view${tabQueryString(activeEditorTab)}`} className="nav-btn" title="View dashboard">
             <Eye size={12} /> View
           </Link>
           <button
@@ -675,7 +709,7 @@ export function DashboardEditorPage() {
               data-tab-id=""
               aria-pressed={activeEditorTab === null}
               style={activeEditorTab === null ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
-              onClick={() => setEditorTab(null)}
+              onClick={() => handleEditorTabChange(null)}
             >
               All
             </button>
@@ -687,7 +721,7 @@ export function DashboardEditorPage() {
               data-tab-id={tab.id}
               aria-pressed={activeEditorTab === tab.id}
               style={activeEditorTab === tab.id ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
-              onClick={() => setEditorTab(tab.id)}
+              onClick={() => handleEditorTabChange(tab.id)}
             >
               {tab.title}
             </button>
@@ -1088,7 +1122,7 @@ export function DashboardEditorPage() {
       {showHealth && (
         <AppHealthPanel
           dashboardId={id!}
-          onJumpToChapter={(chapterId) => setEditorTab(chapterId)}
+          onJumpToChapter={(chapterId) => handleEditorTabChange(chapterId)}
           onClose={() => setShowHealth(false)}
         />
       )}

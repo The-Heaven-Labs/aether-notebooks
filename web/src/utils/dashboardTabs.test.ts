@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { activeTabId, widgetsInTab, widgetTabId } from './dashboardTabs'
+import { activeTabId, widgetsInTab, widgetTabId, tabQueryString } from './dashboardTabs'
 import type { DashboardTab, Widget } from '../types'
 
 const TABS: DashboardTab[] = [
@@ -87,5 +87,19 @@ describe('widgetsInTab', () => {
   test('an unknown requested tab falls back to the first tab', () => {
     expect(widgetsInTab(widgets, TABS, 'nope').map((w) => w.id)).toEqual(['w1', 'w3', 'w4', 'w5'])
     expect(widgetsInTab(widgets, TABS, '').map((w) => w.id)).toEqual(['w1', 'w3', 'w4', 'w5'])
+  })
+})
+
+describe('tabQueryString', () => {
+  test('returns ?tab=<encoded id> for a valid id', () => {
+    expect(tabQueryString('orders')).toBe('?tab=orders')
+    expect(tabQueryString('tab-2')).toBe('?tab=tab-2')
+    expect(tabQueryString('a b')).toBe('?tab=a%20b')
+  })
+
+  test('returns an empty string for null, undefined, or empty id', () => {
+    expect(tabQueryString(null)).toBe('')
+    expect(tabQueryString(undefined)).toBe('')
+    expect(tabQueryString('')).toBe('')
   })
 })

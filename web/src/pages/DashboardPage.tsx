@@ -18,7 +18,7 @@ import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { AppTabs, appTabButtonId, appTabPanelId, EmptyChapter } from '../components/AppTabs'
-import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
+import { activeTabId, widgetTabId, NO_TABS, tabQueryString } from '../utils/dashboardTabs'
 import { variablesForChapter } from '../utils/chapterFilters'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
@@ -471,6 +471,24 @@ function DashboardContent({ id }: { id: string }) {
   const tabs = settings?.tabs ?? NO_TABS
   const requestedTab = searchParams.get('tab')
   const activeTab = activeTabId(tabs, requestedTab)
+  // Clear invalid or inapplicable `?tab=` values once the dashboard is loaded
+  // so an unknown id or a no-tab dashboard never leaves a stale parameter.
+  // Other query params (preview, variable pins) are preserved.
+  const tabsKnown = !!dashboard
+  useEffect(() => {
+    if (requestedTab === null || !tabsKnown) return
+    const isValid = tabs.length > 0 && tabs.some((t) => t.id === requestedTab)
+    if (!isValid) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete('tab')
+          return next
+        },
+        { replace: true },
+      )
+    }
+  }, [requestedTab, tabs, tabsKnown, setSearchParams])
   // One grid per chapter: every widget resolves to exactly one chapter (an
   // empty or unknown tab falls back to the first), and a chapter's items feed
   // only its own grid — no shared coordinate space, and each chapter compacts
@@ -709,7 +727,7 @@ function DashboardContent({ id }: { id: string }) {
               style={{ fontSize: 12, maxWidth: 220, minHeight: 36, minWidth: 0 }}
             />
           </span>
-          <Link to={`/dashboards/${id}`} className="app-action" title="Edit dashboard layout">
+          <Link to={`/dashboards/${id}${tabQueryString(activeTab)}`} className="app-action" title="Edit dashboard layout">
             <Settings size={12} /> Edit
           </Link>
 
