@@ -1,5 +1,5 @@
 import { describe, test, expect } from 'vitest'
-import { activeTabId, widgetsInTab, widgetTabId } from './dashboardTabs'
+import { activeTabId, widgetsInTab, widgetTabId, tabQueryString, orderWidgetsForEditor } from './dashboardTabs'
 import type { DashboardTab, Widget } from '../types'
 
 const TABS: DashboardTab[] = [
@@ -27,6 +27,11 @@ function widget(id: string, tab?: string): Widget {
     config: {},
     created_at: '2026-01-01T00:00:00Z',
   }
+}
+
+function placedWidget(id: string, row: number, col: number, tab?: string): Widget {
+  const base = widget(id, tab)
+  return { ...base, layout: { ...base.layout, row, col } }
 }
 
 describe('activeTabId', () => {
@@ -87,5 +92,88 @@ describe('widgetsInTab', () => {
   test('an unknown requested tab falls back to the first tab', () => {
     expect(widgetsInTab(widgets, TABS, 'nope').map((w) => w.id)).toEqual(['w1', 'w3', 'w4', 'w5'])
     expect(widgetsInTab(widgets, TABS, '').map((w) => w.id)).toEqual(['w1', 'w3', 'w4', 'w5'])
+  })
+})
+
+describe('orderWidgetsForEditor', () => {
+  test('orders by chapter bucket before grid position', () => {
+    const widgets = [
+      placedWidget('orders-first', 0, 0, 'orders'),
+      placedWidget('overview-last', 9, 9, 'overview'),
+    ]
+    expect(orderWidgetsForEditor(widgets, TABS).map((w) => w.id)).toEqual([
+      'overview-last',
+      'orders-first',
+    ])
+  })
+
+  test('puts untabbed, empty, and unknown tabs in the first bucket', () => {
+    const widgets = [
+      placedWidget('orders-1', 0, 0, 'orders'),
+      placedWidget('untabbed', 0, 0),
+      placedWidget('empty', 0, 0, ''),
+      placedWidget('unknown', 0, 0, 'gone'),
+    ]
+    // All first-bucket widgets share (0,0), so stable document order is kept.
+    expect(orderWidgetsForEditor(widgets, TABS).map((w) => w.id)).toEqual([
+      'untabbed',
+      'empty',
+      'unknown',
+      'orders-1',
+    ])
+  })
+
+  test('orders by row then column inside a bucket', () => {
+    const widgets = [
+      placedWidget('r1c2', 1, 2),
+      placedWidget('r0c5', 0, 5),
+      placedWidget('r0c1', 0, 1),
+      placedWidget('r2c0', 2, 0),
+    ]
+    expect(orderWidgetsForEditor(widgets, TABS).map((w) => w.id)).toEqual([
+      'r0c1',
+      'r0c5',
+      'r1c2',
+      'r2c0',
+    ])
+  })
+
+  test('is stable for equal positions', () => {
+    const widgets = [
+      placedWidget('a', 1, 1),
+      placedWidget('b', 1, 1),
+      placedWidget('c', 1, 1),
+    ]
+    expect(orderWidgetsForEditor(widgets, TABS).map((w) => w.id)).toEqual(['a', 'b', 'c'])
+  })
+
+  test('uses a single bucket ordered by row/col when there are no tabs', () => {
+    const widgets = [
+      placedWidget('b', 2, 0),
+      placedWidget('a', 0, 0),
+      placedWidget('c', 1, 0),
+    ]
+    expect(orderWidgetsForEditor(widgets, []).map((w) => w.id)).toEqual(['a', 'c', 'b'])
+  })
+
+  test('does not mutate the input array', () => {
+    const widgets = [placedWidget('b', 2, 0), placedWidget('a', 0, 0)]
+    const copy = [...widgets]
+    orderWidgetsForEditor(widgets, TABS)
+    expect(widgets).toEqual(copy)
+  })
+})
+
+describe('tabQueryString', () => {
+  test('returns ?tab=<encoded id> for a valid id', () => {
+    expect(tabQueryString('orders')).toBe('?tab=orders')
+    expect(tabQueryString('tab-2')).toBe('?tab=tab-2')
+    expect(tabQueryString('a b')).toBe('?tab=a%20b')
+  })
+
+  test('returns an empty string for null, undefined, or empty id', () => {
+    expect(tabQueryString(null)).toBe('')
+    expect(tabQueryString(undefined)).toBe('')
+    expect(tabQueryString('')).toBe('')
   })
 })

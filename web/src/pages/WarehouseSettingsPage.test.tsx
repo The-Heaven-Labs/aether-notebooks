@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest'
-import { screen, fireEvent, waitFor, within } from '@testing-library/react'
+import { act, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { http, HttpResponse } from 'msw'
 import { server } from '../test/server'
 import { WarehouseSettingsPage } from './WarehouseSettingsPage'
@@ -8,6 +8,12 @@ import { renderWithProviders } from '../test/utils'
 vi.mock('../components/AppShell', () => ({
   AppShell: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
 }))
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((res) => { resolve = res })
+  return { promise, resolve }
+}
 
 const WAREHOUSES = [
   {
@@ -65,6 +71,7 @@ beforeEach(() => {
         service_access_without_tables: [],
       }),
     ),
+    http.get('/api/v1/connectors/:id/schema', () => HttpResponse.json({ tables: [] })),
   )
 })
 
@@ -446,5 +453,157 @@ describe('WarehouseSettingsPage', () => {
 
     const checkbox = await screen.findByLabelText('Allow queries through the provisioner')
     expect(checkbox).toBeDisabled()
+  })
+
+  describe('provisioner test button', () => {
+    test('shows the provisioner test result on success', async () => {
+      server.use(
+        http.post('/api/v1/warehouses/wh-1/test', () =>
+          HttpResponse.json({
+            ok: true,
+            steps: [
+              { name: 'connect', ok: true },
+              { name: 'create user', ok: true },
+              { name: 'grant access', ok: true },
+              { name: 'verify grants', ok: true },
+              { name: 'remove test user', ok: true },
+            ],
+          }),
+        ),
+      )
+
+      renderWithProviders(<WarehouseSettingsPage />)
+      fireEvent.click(await screen.findByText('Analytics'))
+      await screen.findByLabelText('Provisioner connector')
+
+      fireEvent.click(screen.getByTestId('test-provisioner-button'))
+
+      const result = await screen.findByTestId('provisioner-test-result')
+      expect(result).toHaveTextContent('Provisioner test passed')
+    })
+
+    test('shows the failed step and error on a failing test', async () => {
+      server.use(
+        http.post('/api/v1/warehouses/wh-1/test', () =>
+          HttpResponse.json({
+            ok: false,
+            error: 'boom',
+            steps: [{ name: 'connect', ok: false, error: 'dial failed' }],
+          }),
+        ),
+      )
+
+      renderWithProviders(<WarehouseSettingsPage />)
+      fireEvent.click(await screen.findByText('Analytics'))
+      await screen.findByLabelText('Provisioner connector')
+
+      fireEvent.click(screen.getByTestId('test-provisioner-button'))
+
+      const result = await screen.findByTestId('provisioner-test-result')
+      expect(result).toHaveTextContent('boom')
+      expect(result).toHaveTextContent('connect')
+    })
+
+    test('shows the failed step name even when the response has no top-level error', async () => {
+      server.use(
+        http.post('/api/v1/warehouses/wh-1/test', () =>
+          HttpResponse.json({
+            ok: false,
+            steps: [{ name: 'connect', ok: false, error: 'dial failed' }],
+          }),
+        ),
+      )
+
+      renderWithProviders(<WarehouseSettingsPage />)
+      fireEvent.click(await screen.findByText('Analytics'))
+      await screen.findByLabelText('Provisioner connector')
+
+      fireEvent.click(screen.getByTestId('test-provisioner-button'))
+
+      const result = await screen.findByTestId('provisioner-test-result')
+      expect(result).toHaveTextContent('connect')
+      expect(result).toHaveTextContent('dial failed')
+    })
+
+    test('disables the test button when no provisioner is configured', async () => {
+      renderWithProviders(<WarehouseSettingsPage />)
+      fireEvent.click(await screen.findByText('Beta'))
+      await screen.findByLabelText('Provisioner connector')
+
+      expect(screen.getByTestId('test-provisioner-button')).toBeDisabled()
+    })
+
+    test('clears the previous result when the provisioner selection changes', async () => {
+      server.use(
+        http.post('/api/v1/warehouses/wh-1/test', () =>
+          HttpResponse.json({
+            ok: true,
+            steps: [{ name: 'connect', ok: true }],
+          }),
+        ),
+        http.put('/api/v1/warehouses/wh-1/provisioner', async ({ request }) => {
+          const body = await request.json() as Record<string, unknown>
+          return HttpResponse.json({ ...WAREHOUSES[0], provisioner_connector_id: body.connector_id })
+        }),
+      )
+
+      renderWithProviders(<WarehouseSettingsPage />)
+      fireEvent.click(await screen.findByText('Analytics'))
+      await screen.findByLabelText('Provisioner connector')
+
+      fireEvent.click(screen.getByTestId('test-provisioner-button'))
+      await screen.findByTestId('provisioner-test-result')
+
+      fireEvent.change(screen.getByLabelText('Provisioner connector'), {
+        target: { value: 'c-3' },
+      })
+
+      await waitFor(() =>
+        expect(screen.queryByTestId('provisioner-test-result')).toBeNull(),
+      )
+    })
+
+    test('ignores a test result that resolves after the provisioner selection changed', async () => {
+      let currentProvisioner = 'c-1'
+      const { promise, resolve } = deferred<HttpResponse<{ ok: boolean; steps: { name: string; ok: boolean }[] }>>()
+
+      server.use(
+        http.get('/api/v1/warehouses/:id', ({ params }) =>
+          HttpResponse.json({
+            ...WAREHOUSES[0],
+            id: params.id,
+            provisioner_connector_id: currentProvisioner,
+            connectors: DETAIL_CONNECTORS,
+          }),
+        ),
+        http.post('/api/v1/warehouses/wh-1/test', async () => promise),
+        http.put('/api/v1/warehouses/wh-1/provisioner', async ({ request }) => {
+          const body = await request.json() as Record<string, unknown>
+          currentProvisioner = body.connector_id as string
+          return HttpResponse.json({
+            ...WAREHOUSES[0],
+            provisioner_connector_id: body.connector_id,
+          })
+        }),
+      )
+
+      renderWithProviders(<WarehouseSettingsPage />)
+      fireEvent.click(await screen.findByText('Analytics'))
+      const select = await screen.findByLabelText('Provisioner connector')
+
+      fireEvent.click(screen.getByTestId('test-provisioner-button'))
+
+      fireEvent.change(select, { target: { value: 'c-3' } })
+      await waitFor(() => expect(select).toHaveValue('c-3'))
+
+      await act(async () => {
+        resolve(HttpResponse.json({ ok: true, steps: [{ name: 'connect', ok: true }] }))
+        await promise
+      })
+
+      await waitFor(() =>
+        expect(screen.queryByTestId('provisioner-test-result')).toBeNull(),
+      )
+    })
   })
 })

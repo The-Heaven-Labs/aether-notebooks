@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback, useLayoutEffect, useMemo } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useSearchParams } from 'react-router-dom'
 import { ArrowLeft, X, Plus, Eye, Pencil, Shield, LayoutTemplate, ListChecks } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
@@ -9,7 +9,8 @@ import { buildAddWidgetPayload, validTypesForSource } from '../utils/addWidgetPa
 import type { AddWidgetSource, AddWidgetType } from '../utils/addWidgetPayload'
 import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel, widgetKindLabel } from '../utils/widgetKind'
 import { toGridItem } from '../utils/widgetLayout'
-import { widgetTabId, NO_TABS } from '../utils/dashboardTabs'
+import { widgetTabId, orderWidgetsForEditor, NO_TABS, tabQueryString } from '../utils/dashboardTabs'
+import { appContentWidthStyle } from '../utils/appLayout'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
 import { htmlConfigFrom } from '../utils/htmlConfig'
@@ -197,6 +198,7 @@ const widgetContentStyles: Record<string, React.CSSProperties> = {
 export function DashboardEditorPage() {
   const { id } = useParams<{ id: string }>()
   const qc = useQueryClient()
+  const [searchParams, setSearchParams] = useSearchParams()
 
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
@@ -215,9 +217,9 @@ export function DashboardEditorPage() {
   const [editingWidget, setEditingWidget] = useState<Widget | null>(null)
   const [showVariables, setShowVariables] = useState(false)
   const [showAppSettings, setShowAppSettings] = useState(false)
-  // Editor-local chapter filter (NOT URL state) and the App settings panel's
-  // opening section (the strip's + reveals Tabs).
-  const [editorTab, setEditorTab] = useState<string | null>(null)
+  // Editor chapter filter starts from the URL (`?tab=`) so view→edit keeps
+  // the active chapter; chip changes write back with `replace`.
+  const [editorTab, setEditorTab] = useState<string | null>(searchParams.get('tab'))
   const [appSettingsSection, setAppSettingsSection] = useState<'tabs' | undefined>(undefined)
   const [variablePrefill, setVariablePrefill] = useState<string | null>(null)
   const [variablePrefillType, setVariablePrefillType] = useState<DashboardVariableType | null>(null)
@@ -330,15 +332,51 @@ export function DashboardEditorPage() {
     ? (liveDoc.settings.tabs ?? NO_TABS)
     : (dashboard?.settings?.tabs ?? NO_TABS)
   // A selected chapter that disappears (deleted by anyone) is forgotten so a
-  // later tab reusing its id cannot silently re-apply the stale filter.
-  if (editorTab !== null && !tabs.some((t) => t.id === editorTab)) setEditorTab(null)
+  // later tab reusing its id cannot silently re-apply the stale filter; the
+  // URL param is removed at the same time so invalid ids never leave a stale
+  // `?tab=` behind. The clear only runs once tabs are known (dashboard loaded
+  // or document synced) so a valid initial param is not erased while data is
+  // still loading.
+  const tabsKnown = !!dashboard || docReady
+  useEffect(() => {
+    if (editorTab === null || !tabsKnown) return
+    const isValid = tabs.some((t) => t.id === editorTab)
+    if (!isValid) {
+      setEditorTab(null)
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete('tab')
+          return next
+        },
+        { replace: true },
+      )
+    }
+  }, [editorTab, tabs, tabsKnown, setSearchParams])
   // The current render still sees the pre-clear value; fall back to All so the
   // grid never silently strands every widget off-screen.
   const activeEditorTab = editorTab && tabs.some((t) => t.id === editorTab) ? editorTab : null
+
+  const handleEditorTabChange = useCallback((tabId: string | null) => {
+    setEditorTab(tabId)
+    setSearchParams(
+      (prev) => {
+        const next = new URLSearchParams(prev)
+        if (tabId) next.set('tab', tabId)
+        else next.delete('tab')
+        return next
+      },
+      { replace: true },
+    )
+  }, [setSearchParams])
+
   const shownWidgets = useMemo(
-    () => (tabs.length === 0 || activeEditorTab === null
-      ? widgets
-      : widgets.filter((w: Widget) => widgetTabId(w, tabs) === activeEditorTab)),
+    () => orderWidgetsForEditor(
+      tabs.length === 0 || activeEditorTab === null
+        ? widgets
+        : widgets.filter((w: Widget) => widgetTabId(w, tabs) === activeEditorTab),
+      tabs,
+    ),
     [widgets, tabs, activeEditorTab],
   )
 
@@ -506,6 +544,10 @@ export function DashboardEditorPage() {
   // On the full custom page every non-custom widget is a hidden data source —
   // the editor badges them so their role is visible while authoring.
   const customPageLayout = liveDashboard.settings?.app?.layout === 'custom'
+  // The editor's canvas honors the app's width mode (`settings.app.width`,
+  // absent = fixed) so authoring matches the published surface; the toolbar
+  // above it stays full-bleed.
+  const appWidth = liveDashboard.settings?.app?.width ?? 'fixed'
 
   // Status chip: the amber dot flags a published app that is behind the draft
   // (or a draft that publish would refuse). A never-published dashboard reads
@@ -519,6 +561,23 @@ export function DashboardEditorPage() {
     : versionNeedsPublish
       ? 'Unpublished changes'
       : 'Version history'
+
+  // The header's View action names what it actually opens: the published
+  // snapshot once a version exists, otherwise the draft (there is nothing
+  // published to serve beyond it). The title spells out the other surface so
+  // the label alone tells the author how to reach their unpublished edits.
+  const hasPublishedVersion = !!latestVersion
+  const viewLinkLabel = hasPublishedVersion ? 'View published' : 'View app'
+  // The versions query is editor-only (viewers never fetch it), so its data is
+  // absent both before it resolves and forever for a viewer. "Unknown" must
+  // stay neutral: the older fallback title claimed "not published yet", which
+  // contradicts the destination (the view page serves the published snapshot).
+  const versionsKnown = versionsQuery.data !== undefined
+  const viewLinkTitle = !versionsKnown
+    ? 'View the app'
+    : hasPublishedVersion
+      ? 'View the published snapshot — unpublished edits appear under Preview draft on that page'
+      : 'View the app — showing the current draft because it has not been published yet'
 
   return (
     <DashboardVariablesProvider dashboardId={id!} variables={variables}>
@@ -623,8 +682,8 @@ export function DashboardEditorPage() {
               </button>
             </>
           )}
-          <Link to={`/dashboards/${id}/view`} className="nav-btn" title="View dashboard">
-            <Eye size={12} /> View
+          <Link to={`/dashboards/${id}/view${tabQueryString(activeEditorTab)}`} className="nav-btn" title={viewLinkTitle}>
+            <Eye size={12} /> {viewLinkLabel}
           </Link>
           <button
             type="button"
@@ -675,7 +734,7 @@ export function DashboardEditorPage() {
               data-tab-id=""
               aria-pressed={activeEditorTab === null}
               style={activeEditorTab === null ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
-              onClick={() => setEditorTab(null)}
+              onClick={() => handleEditorTabChange(null)}
             >
               All
             </button>
@@ -687,7 +746,7 @@ export function DashboardEditorPage() {
               data-tab-id={tab.id}
               aria-pressed={activeEditorTab === tab.id}
               style={activeEditorTab === tab.id ? { ...styles.tabChip, ...styles.tabChipActive } : styles.tabChip}
-              onClick={() => setEditorTab(tab.id)}
+              onClick={() => handleEditorTabChange(tab.id)}
             >
               {tab.title}
             </button>
@@ -839,7 +898,7 @@ export function DashboardEditorPage() {
       )}
 
       {/* Main body */}
-      <div ref={layoutRef} style={styles.body}>
+      <div ref={layoutRef} style={{ ...styles.body, ...appContentWidthStyle(appWidth) }}>
         {variables.length > 0 && <DashboardVariableBar />}
         {widgets.length === 0 ? (
           <EmptyState
@@ -1088,7 +1147,7 @@ export function DashboardEditorPage() {
       {showHealth && (
         <AppHealthPanel
           dashboardId={id!}
-          onJumpToChapter={(chapterId) => setEditorTab(chapterId)}
+          onJumpToChapter={(chapterId) => handleEditorTabChange(chapterId)}
           onClose={() => setShowHealth(false)}
         />
       )}

@@ -30,10 +30,12 @@ interface Props {
   children: React.ReactNode
   noPadding?: boolean
   /**
-   * Chrome-free rendering for the App surface (The Story): no TopBar,
-   * Sidebar, skip link, MOTD banners, or global agent panel — the page owns
-   * the whole viewport. Every shell hook above still runs (rules of hooks);
-   * only the shell markup is skipped. Supersedes `noPadding`.
+   * Chrome-free rendering for the App surface (/dashboards/:id/view): no
+   * TopBar, Sidebar, skip link, or MOTD banners. The global agent FAB/panel
+   * is still rendered so the AI assistant is reachable there; the search
+   * palette and the `?` shortcuts modal stay unavailable on the bare surface.
+   * Every shell hook above still runs (rules of hooks); only the shell markup
+   * is skipped. Supersedes `noPadding`.
    */
   bare?: boolean
 }
@@ -148,8 +150,8 @@ export function AppShell({ children, noPadding, bare }: Props) {
   })
 
   useEffect(() => {
-    // No shell chrome renders in bare mode, so the shortcuts modal and the
-    // global agent panel would have nothing to open — don't swallow the keys.
+    // The shortcuts modal stays off the bare App surface, so its key stays
+    // unbound there.
     if (bare) return
     const handler = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement).tagName
@@ -168,11 +170,10 @@ export function AppShell({ children, noPadding, bare }: Props) {
     // search took that chord. The agent keeps its /chats suppression (that
     // page owns a full-page chat) and the typing guard.
     //
-    // Deliberately no `showSearch` guard: an open palette doesn't own the
-    // agent chord, so the two handlers can't fight. In practice the palette's
-    // focus trap parks focus in its input, where the typing guard already
-    // swallows the chord.
-    if (bare || isChatPage) return
+    // The agent panel is also available in bare mode (App surface), so the
+    // bare guard is intentionally omitted. The /chats page still owns its own
+    // full-page chat and skips the global panel.
+    if (isChatPage) return
     const handler = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key !== 'j') return
       if (isTextEntryTarget(e.target)) return
@@ -182,12 +183,12 @@ export function AppShell({ children, noPadding, bare }: Props) {
     }
     document.addEventListener('keydown', handler)
     return () => document.removeEventListener('keydown', handler)
-  }, [isChatPage, bare])
+  }, [isChatPage])
 
   useEffect(() => {
     // Ctrl/Cmd+K opens the search palette. Search is global — unlike the agent
-    // chord it stays enabled on /chats — and `bare` mode strips the palette
-    // along with the rest of the shell, so the chord stays unbound there.
+    // chord it stays enabled on /chats — but `bare` mode strips the palette,
+    // so the chord stays unbound there.
     if (bare) return
     const handler = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.key !== 'k') return
@@ -220,56 +221,16 @@ export function AppShell({ children, noPadding, bare }: Props) {
     setLayoutVersion(v => v + 1)
   }, [showGlobalAgent, globalAgentMinimized, globalAgentDocked])
 
-  // All hooks above: the bare early return below is the last statement before
-  // the shell markup, so hook order is stable across both modes. The app
-  // surface keeps a main landmark, just no shell chrome.
-  if (bare) return <main id="main-content">{children}</main>
-
-  return (
-    <AgentPanelLayoutContext.Provider value={layoutVersion}>
-    <div className="app-shell" style={styles.root}>
-      <a href="#main-content" className="skip-link">Skip to content</a>
-      <TopBar
-        onShowShortcuts={() => setShowShortcuts(true)}
-        onOpenSearch={() => setShowSearch(true)}
-      />
-      <div style={{
-        ...styles.body,
-        ...(showGlobalAgent && !globalAgentMinimized && globalAgentDocked && !isChatPage ? { paddingRight: globalAgentWidth } : {}),
-      }}>
-        <Sidebar />
-        <main id="main-content" style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' } : {}) }}>
-          {visibleMotds.map(motd => (
-            <div key={motd.id} style={motdStyles.banner}>
-              <div style={motdStyles.bannerContent}>
-                {motd.title && <strong style={motdStyles.bannerTitle}>{motd.title}:</strong>}
-                <Suspense fallback={null}>
-                  <MotdMarkdown content={motd.content} />
-                </Suspense>
-              </div>
-              <button onClick={() => dismissMotd(motd.id)} style={motdStyles.bannerClose} title="Dismiss">×</button>
-            </div>
-          ))}
-          {children}
-        </main>
-      </div>
-      {showShortcuts && (
-        <Suspense fallback={null}>
-          <ShortcutsModal onClose={() => setShowShortcuts(false)} />
-        </Suspense>
-      )}
-
-      {/* Search palette: mounted on first open so its chunk stays off the
-          shell's critical path, same as the shortcuts modal. The palette owns
-          its input, reset, and Escape; AppShell only holds the open bit. */}
-      {showSearch && (
-        <Suspense fallback={null}>
-          <SearchPalette open onClose={() => setShowSearch(false)} />
-        </Suspense>
-      )}
-
-      {/* Global Agent FAB (floating action button) */}
-      {!isChatPage && !showGlobalAgent && (
+  // All hooks above: the bare branch below is the last statement before the
+  // shell markup, so hook order is stable across both modes. The bare App
+  // surface keeps a main landmark plus the agent overlay; everything else is
+  // shell chrome.
+  const agentOverlay = (
+    <>
+      {/* Global Agent FAB (floating action button). On the bare App surface
+          minimizing restores the FAB instead of the minimized bar so the
+          chrome stays minimal; non-bare keeps the separate minimized bar. */}
+      {!isChatPage && (!showGlobalAgent || (bare && globalAgentMinimized)) && (
         <button
           style={fabStyles.fab}
           onClick={() => { setShowGlobalAgent(true); setGlobalAgentMinimized(false) }}
@@ -329,8 +290,9 @@ export function AppShell({ children, noPadding, bare }: Props) {
         </div>
       )}
 
-      {/* Minimized agent bar */}
-      {!isChatPage && showGlobalAgent && globalAgentMinimized && (
+      {/* Minimized agent bar — hidden on the bare App surface, where minimize
+          restores the FAB instead. */}
+      {!isChatPage && showGlobalAgent && globalAgentMinimized && !bare && (
         <div style={globalAgentStyles.minimizedBar} onClick={() => setGlobalAgentMinimized(false)}>
           <Bot size={16} />
           <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text-primary)' }}>AI Agent (minimized)</span>
@@ -343,6 +305,60 @@ export function AppShell({ children, noPadding, bare }: Props) {
           </button>
         </div>
       )}
+    </>
+  )
+
+  if (bare) return (
+    <>
+      <main id="main-content">{children}</main>
+      {agentOverlay}
+    </>
+  )
+
+  return (
+    <AgentPanelLayoutContext.Provider value={layoutVersion}>
+    <div className="app-shell" style={styles.root}>
+      <a href="#main-content" className="skip-link">Skip to content</a>
+      <TopBar
+        onShowShortcuts={() => setShowShortcuts(true)}
+        onOpenSearch={() => setShowSearch(true)}
+      />
+      <div style={{
+        ...styles.body,
+        ...(showGlobalAgent && !globalAgentMinimized && globalAgentDocked && !isChatPage ? { paddingRight: globalAgentWidth } : {}),
+      }}>
+        <Sidebar />
+        <main id="main-content" style={{ ...styles.main, background: 'var(--bg-primary)', ...(noPadding ? { padding: 0, overflow: 'auto', display: 'flex', flexDirection: 'column' } : {}) }}>
+          {visibleMotds.map(motd => (
+            <div key={motd.id} style={motdStyles.banner}>
+              <div style={motdStyles.bannerContent}>
+                {motd.title && <strong style={motdStyles.bannerTitle}>{motd.title}:</strong>}
+                <Suspense fallback={null}>
+                  <MotdMarkdown content={motd.content} />
+                </Suspense>
+              </div>
+              <button onClick={() => dismissMotd(motd.id)} style={motdStyles.bannerClose} title="Dismiss">×</button>
+            </div>
+          ))}
+          {children}
+        </main>
+      </div>
+      {showShortcuts && (
+        <Suspense fallback={null}>
+          <ShortcutsModal onClose={() => setShowShortcuts(false)} />
+        </Suspense>
+      )}
+
+      {/* Search palette: mounted on first open so its chunk stays off the
+          shell's critical path, same as the shortcuts modal. The palette owns
+          its input, reset, and Escape; AppShell only holds the open bit. */}
+      {showSearch && (
+        <Suspense fallback={null}>
+          <SearchPalette open onClose={() => setShowSearch(false)} />
+        </Suspense>
+      )}
+
+      {agentOverlay}
     </div>
     </AgentPanelLayoutContext.Provider>
   )

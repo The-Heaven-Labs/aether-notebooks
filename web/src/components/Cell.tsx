@@ -2,12 +2,16 @@ import { lazy, Suspense, useState, useEffect, useRef, useMemo, useCallback, memo
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Play, Loader2, ChevronUp, ChevronDown, Eye, EyeOff, ChevronRight, Clock, X, SeparatorHorizontal, Copy, Link, Check, LayoutDashboard, Code2, AlignLeft, Server } from 'lucide-react'
-import { Compartment, EditorState } from '@codemirror/state'
+import { Compartment, EditorState, type Extension } from '@codemirror/state'
 import { EditorView, keymap } from '@codemirror/view'
 import { defaultKeymap, historyKeymap, history } from '@codemirror/commands'
 import { sql, PostgreSQL, MySQL, StandardSQL } from '@codemirror/lang-sql'
+import { autocompletion, completionKeymap, acceptCompletion } from '@codemirror/autocomplete'
 import { syntaxHighlighting } from '@codemirror/language'
+import { useQuery } from '@tanstack/react-query'
 import { OutputRenderer } from './OutputRenderer'
+import { connectorSchemaQueryKey, getConnectorSchema } from '../api/schema'
+import { buildSqlCompletionSchema } from '../utils/sqlCompletion'
 import { ConnectorUnavailableHint } from './ConnectorUnavailableHint'
 import { sqlHighlight } from './sqlHighlight'
 const MarkdownView = lazy(() => import('./MarkdownCell').then(m => ({ default: m.MarkdownView })))
@@ -181,18 +185,23 @@ interface CodeEditorProps {
   readOnly?: boolean
 }
 
-function languageExtension(cell: APICell, connector?: Connector) {
+function languageExtension(
+  cell: APICell,
+  connector?: Connector,
+  schemaData?: Record<string, readonly string[]>,
+): Extension[] {
   // JavaScript cells load their language package on demand (see the editor
   // effect); SQL dialects ship with the editor because every code cell uses
   // one.
   if (cell.language === 'javascript') return []
   // Choose SQL dialect based on connector type
   const connType = connector?.type
-  if (connType === 'clickhouse') return sql({ dialect: MySQL })
-  if (connType === 'postgres') return sql({ dialect: PostgreSQL })
-  if (connType === 'databricks') return sql({ dialect: StandardSQL })
+  const schema = schemaData
+  if (connType === 'clickhouse') return [sql({ dialect: MySQL, schema }), autocompletion()]
+  if (connType === 'postgres') return [sql({ dialect: PostgreSQL, schema }), autocompletion()]
+  if (connType === 'databricks') return [sql({ dialect: StandardSQL, schema }), autocompletion()]
   // Default: MySQL dialect covers a broad set of keywords including SHOW, TABLES, etc.
-  return sql({ dialect: MySQL })
+  return [sql({ dialect: MySQL, schema }), autocompletion()]
 }
 
 function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, connector, index, onEditStart, onEditEnd, readOnly }: CodeEditorProps) {
@@ -206,9 +215,28 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
   onEditStartRef.current = onEditStart
   onEditEndRef.current = onEditEnd
   const collabCompartment = useRef(new Compartment())
+  const languageCompartment = useRef(new Compartment())
   // True only while attachCollab pushes Yjs content into the editor, so the
   // programmatic change is never treated as a user edit (and never autosaved).
   const applyingYjsRef = useRef(false)
+
+  const { data: schemaCatalog } = useQuery({
+    queryKey: connectorSchemaQueryKey(connector?.id ?? ''),
+    queryFn: () => getConnectorSchema(connector!.id),
+    enabled: !!connector && cell.language !== 'javascript',
+    staleTime: 5 * 60_000,
+  })
+  const schemaData = useMemo(() => (schemaCatalog ? buildSqlCompletionSchema(schemaCatalog) : undefined), [schemaCatalog])
+
+  useEffect(() => {
+    if (cell.language === 'javascript') return
+    const view = editorViews.get(cell.id)
+    if (!view) return
+    view.dispatch({
+      effects: languageCompartment.current.reconfigure(languageExtension(cell, connector, schemaData)),
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schemaData, connector?.id, cell.language, cell.id])
 
   useEffect(() => {
     if (!editorRef.current) return
@@ -216,7 +244,6 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     let cancelled = false
     let acquired = false
     let detachCollab: (() => void) | undefined
-    const langCompartment = new Compartment()
     const compartment = collabCompartment.current
 
     const formatCell = (editorView: EditorView) => {
@@ -242,6 +269,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       {
         key: 'Tab',
         run: (view) => {
+          if (acceptCompletion(view)) return true
           const pos = view.state.selection.main.from
           view.dispatch({
             changes: { from: pos, to: view.state.selection.main.to, insert: '  ' },
@@ -268,6 +296,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
       },
       ...defaultKeymap,
       ...historyKeymap,
+      ...completionKeymap,
     ])
 
     const view = new EditorView({
@@ -275,7 +304,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
         doc: cell.source,
         extensions: [
           cellKeymap,
-          langCompartment.of(languageExtension(cell, connector)),
+          languageCompartment.current.of(languageExtension(cell, connector)),
           syntaxHighlighting(sqlHighlight),
           EditorView.theme({
             '&': { fontFamily: 'var(--font-mono)', fontSize: '13px' },
@@ -319,7 +348,7 @@ function CodeEditorView({ cell, notebookId, onRun, onSourceChange, collapsed, co
     if (cell.language === 'javascript') {
       void import('@codemirror/lang-javascript').then(({ javascript }) => {
         if (cancelled) return
-        view.dispatch({ effects: langCompartment.reconfigure(javascript()) })
+        view.dispatch({ effects: languageCompartment.current.reconfigure(javascript()) })
       })
     }
 

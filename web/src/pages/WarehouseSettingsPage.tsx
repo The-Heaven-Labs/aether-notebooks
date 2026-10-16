@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Boxes, ChevronRight, Pencil, Trash2 } from 'lucide-react'
+import { Boxes, ChevronRight, Loader2, Pencil, Trash2, Zap } from 'lucide-react'
 import { AppShell } from '../components/AppShell'
 import { api, ApiError } from '../api/client'
 import { ConfirmDialog } from '../components/ConfirmDialog'
@@ -21,9 +21,11 @@ import {
   listWarehouses,
   setConnectorWarehouse,
   setWarehouseProvisioner,
+  testWarehouseProvisioner,
   updateWarehouse,
   type Warehouse,
   type WarehouseConnector,
+  type WarehouseProvisionerTestResult,
   type WarehouseSyncStatus,
 } from '../api/warehouses'
 import type { Connector } from '../types'
@@ -412,6 +414,9 @@ function WarehouseCard({
   onRemoveConnector,
 }: WarehouseCardProps) {
   const [addConnectorId, setAddConnectorId] = useState('')
+  const [testResult, setTestResult] = useState<WarehouseProvisionerTestResult | null>(null)
+  const pendingTestProvisionerId = useRef<string | null>(null)
+  const currentProvisionerIdRef = useRef<string | null>(null)
   const tablePermissionsEnabled = useWarehouseTablePermissions()
 
   const { data: detail, isLoading } = useQuery({
@@ -426,6 +431,22 @@ function WarehouseCard({
     queryKey: ['warehouse-validation', warehouse.id],
     queryFn: () => getWarehouseValidation(warehouse.id),
     enabled: expanded,
+  })
+
+  useEffect(() => {
+    currentProvisionerIdRef.current = detail?.provisioner_connector_id ?? null
+  }, [detail?.provisioner_connector_id])
+
+  const applyTestResult = (result: WarehouseProvisionerTestResult) => {
+    if (pendingTestProvisionerId.current === currentProvisionerIdRef.current) {
+      setTestResult(result)
+    }
+  }
+
+  const testMutation = useMutation({
+    mutationFn: () => testWarehouseProvisioner(warehouse.id),
+    onSuccess: (data) => applyTestResult(data),
+    onError: (err: Error) => applyTestResult({ ok: false, error: err.message }),
   })
 
   const serverAllowProvisioner =
@@ -496,7 +517,10 @@ function WarehouseCard({
                   aria-label="Provisioner connector"
                   style={{ ...styles.input, maxWidth: 320 }}
                   value={detail?.provisioner_connector_id ?? ''}
-                  onChange={(e) => onSetProvisioner(e.target.value || null)}
+                  onChange={(e) => {
+                    setTestResult(null)
+                    onSetProvisioner(e.target.value || null)
+                  }}
                 >
                   <option value="">— None —</option>
                   {linked.map((c) => (
@@ -505,6 +529,39 @@ function WarehouseCard({
                     </option>
                   ))}
                 </select>
+                <button
+                  type="button"
+                  data-testid="test-provisioner-button"
+                  disabled={!detail?.provisioner_connector_id || testMutation.isPending}
+                  style={{
+                    ...styles.testBtn,
+                    opacity: !detail?.provisioner_connector_id || testMutation.isPending ? 0.5 : 1,
+                    cursor: !detail?.provisioner_connector_id ? 'not-allowed' : 'pointer',
+                  }}
+                  onClick={() => {
+                    pendingTestProvisionerId.current = detail?.provisioner_connector_id ?? null
+                    testMutation.mutate()
+                  }}
+                >
+                  {testMutation.isPending ? (
+                    <Loader2 size={14} style={{ animation: 'spin 1s linear infinite' }} />
+                  ) : (
+                    <Zap size={14} />
+                  )}
+                  {testMutation.isPending ? 'Testing…' : 'Test provisioner'}
+                </button>
+                {testResult && (
+                  <div
+                    data-testid="provisioner-test-result"
+                    role="status"
+                    aria-live="polite"
+                    style={testResult.ok ? styles.testSuccess : styles.testError}
+                  >
+                    {testResult.ok
+                      ? 'Provisioner test passed'
+                      : formatProvisionerTestError(testResult)}
+                  </div>
+                )}
                 <span style={styles.hint}>
                   {tablePermissionsEnabled
                     ? 'Runs the DDL that provisions per-user ClickHouse access.'
@@ -616,6 +673,17 @@ function syncStatusTitle(warehouse: Warehouse): string {
   }
 }
 
+function formatProvisionerTestError(result: WarehouseProvisionerTestResult): string {
+  const failed = result.steps?.find((step) => !step.ok)
+  if (failed) {
+    if (result.error) {
+      return `${result.error} (${failed.name})`
+    }
+    return `${failed.name}: ${failed.error ?? 'failed'}`
+  }
+  return result.error ?? 'Provisioner test failed'
+}
+
 function SyncBadge({ status, title }: { status: WarehouseSyncStatus; title?: string }) {
   switch (status) {
     case 'ready':
@@ -657,6 +725,9 @@ const styles: Record<string, React.CSSProperties> = {
   removeBtn: { marginLeft: 'auto', padding: '2px 8px', fontSize: 11, border: '1px solid var(--border)', borderRadius: 4, background: 'transparent', cursor: 'pointer', color: 'var(--error)' },
   addConnectorRow: { display: 'flex', gap: 8, alignItems: 'center', marginTop: 4 },
   addBtn: { padding: '6px 14px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 12, fontWeight: 600 },
+  testBtn: { display: 'inline-flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '6px 14px', background: 'var(--button-primary-bg)', color: 'var(--button-primary-text)', border: 'none', borderRadius: 4, fontSize: 12, fontWeight: 600 },
+  testSuccess: { marginTop: 8, fontSize: 12, color: 'var(--success)', background: 'var(--success-light)', border: '1px solid var(--success-border)', borderRadius: 4, padding: '6px 10px' },
+  testError: { marginTop: 8, fontSize: 12, color: 'var(--error-full)', background: 'var(--error-light)', border: '1px solid var(--error-border)', borderRadius: 4, padding: '6px 10px' },
   emptyLine: { fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' },
   loading: { fontSize: 13, color: 'var(--text-muted)', padding: '4px 0' },
 }

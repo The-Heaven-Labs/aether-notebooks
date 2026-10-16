@@ -79,12 +79,14 @@ func (f *searchTestFixture) setNotebookDescription(t *testing.T, id, description
 	require.NoError(t, err)
 }
 
-func (f *searchTestFixture) seedCell(t *testing.T, notebookID, source string, position int) {
+func (f *searchTestFixture) seedCell(t *testing.T, notebookID, source string, position int) string {
 	t.Helper()
+	id := uuid.NewString()
 	_, err := f.srv.DB().Pool.Exec(context.Background(),
-		`INSERT INTO cells (notebook_id, position, type, language, source) VALUES ($1, $2, 'code', 'sql', $3)`,
-		notebookID, position, source)
+		`INSERT INTO cells (id, notebook_id, position, type, language, source) VALUES ($1, $2, $3, 'code', 'sql', $4)`,
+		id, notebookID, position, source)
 	require.NoError(t, err)
+	return id
 }
 
 func (f *searchTestFixture) seedFolder(t *testing.T, name string, parentID *string, ownerID string) string {
@@ -227,6 +229,7 @@ type searchResultBody struct {
 	Title      string  `json:"title"`
 	Subtitle   string  `json:"subtitle"`
 	Snippet    *string `json:"snippet"`
+	CellID     *string `json:"cell_id"`
 	FolderPath string  `json:"folder_path"`
 	IsFavorite bool    `json:"is_favorite"`
 	CanEdit    bool    `json:"can_edit"`
@@ -335,6 +338,9 @@ func TestSearchTitleSubstringAcrossTypes(t *testing.T) {
 	require.ElementsMatch(t, []string{"Revenue by region", "Forecast"}, searchResultTitles(notebooks.Results),
 		"title and description matches both count")
 	require.False(t, notebooks.HasMore)
+	for _, result := range notebooks.Results {
+		require.Nil(t, result.CellID, "a title-only hit must not carry a cell id")
+	}
 
 	folder := requireSearchGroup(t, resp, "folder")
 	require.Equal(t, []string{"Revenue docs"}, searchResultTitles(folder.Results))
@@ -366,12 +372,13 @@ func TestSearchNotebookContentVisibleToViewers(t *testing.T) {
 	f := setupSearchTestFixture(t, srv)
 
 	notebookID := f.seedNotebook(t, "Payments analysis", nil, f.userID)
-	f.seedCell(t, notebookID, "SELECT sum(amount) AS payments_total FROM orders", 0)
+	cellID := f.seedCell(t, notebookID, "SELECT sum(amount) AS payments_total FROM orders", 0)
 	f.grant(t, "notebook", notebookID, f.viewerID, []string{"view"})
 	f.grant(t, "notebook", notebookID, f.userID, []string{"view", "edit"})
 
 	// Content-only match: the query tokens prefix-match the cell (sum, am →
-	// amount). A viewer finds it and gets a snippet.
+	// amount). A viewer finds it and gets a snippet, and the matched cell id
+	// rides along so the client can deep-link to the cell.
 	status, resp := f.search(t, f.viewerToken, "sum am")
 	require.Equal(t, http.StatusOK, status)
 	notebooks := requireSearchGroup(t, resp, "notebook")
@@ -382,20 +389,57 @@ func TestSearchNotebookContentVisibleToViewers(t *testing.T) {
 	require.False(t, result.CanEdit, "a view-only caller must report can_edit false")
 	require.NotNil(t, result.Snippet)
 	require.Contains(t, strings.ToLower(*result.Snippet), "amount")
+	require.NotNil(t, result.CellID, "a content hit must carry the matched cell id")
+	require.Equal(t, cellID, *result.CellID)
 
 	// A title match that is also a content match merges into one result and
-	// keeps the content snippet.
+	// keeps the content snippet and the matched cell id.
 	status, resp = f.search(t, f.viewerToken, "payments")
 	require.Equal(t, http.StatusOK, status)
 	notebooks = requireSearchGroup(t, resp, "notebook")
 	require.Len(t, notebooks.Results, 1, "title and content matches must merge on the resource id")
 	require.Equal(t, notebookID, notebooks.Results[0].ID)
 	require.NotNil(t, notebooks.Results[0].Snippet, "a merged title+content hit still carries the snippet")
+	require.NotNil(t, notebooks.Results[0].CellID, "a merged title+content hit still carries the cell id")
+	require.Equal(t, cellID, *notebooks.Results[0].CellID)
 
-	// The editor's own view reports can_edit.
+	// A title-only hit (no cell content matched) carries no cell id.
+	titleOnlyID := f.seedNotebook(t, "Payments audit", nil, f.userID)
+	f.grant(t, "notebook", titleOnlyID, f.viewerID, []string{"view"})
+	status, resp = f.search(t, f.viewerToken, "payments audit")
+	require.Equal(t, http.StatusOK, status)
+	titleOnly := requireSearchGroup(t, resp, "notebook")
+	require.Len(t, titleOnly.Results, 1)
+	require.Equal(t, titleOnlyID, titleOnly.Results[0].ID)
+	require.Nil(t, titleOnly.Results[0].CellID, "a title-only hit must not carry a cell id")
+
+	// The editor's own view reports can_edit and still carries the cell id.
 	status, resp = f.search(t, f.token, "sum am")
 	require.Equal(t, http.StatusOK, status)
-	require.True(t, requireSearchGroup(t, resp, "notebook").Results[0].CanEdit)
+	editorResult := requireSearchGroup(t, resp, "notebook").Results[0]
+	require.True(t, editorResult.CanEdit)
+	require.NotNil(t, editorResult.CellID)
+	require.Equal(t, cellID, *editorResult.CellID)
+}
+
+// TestSearchDashboardContentCarriesNoCellID pins that dashboard content hits
+// expose no cell/widget id: only notebook cell hits can deep-link.
+func TestSearchDashboardContentCarriesNoCellID(t *testing.T) {
+	srv := setupTestServer(t)
+	f := setupSearchTestFixture(t, srv)
+
+	dashboardID := f.seedDashboard(t, "Metrics board", nil, f.userID)
+	connectorID := f.seedConnector(t, "Metrics connector", nil, f.userID)
+	f.seedWidget(t, dashboardID, connectorID, "SELECT zebra_metric FROM ledger")
+	f.grant(t, "dashboard", dashboardID, f.userID, []string{"view", "edit"})
+
+	status, resp := f.search(t, f.token, "zebra_metric")
+	require.Equal(t, http.StatusOK, status)
+	dashboards := requireSearchGroup(t, resp, "dashboard")
+	require.Len(t, dashboards.Results, 1)
+	require.Equal(t, dashboardID, dashboards.Results[0].ID)
+	require.NotNil(t, dashboards.Results[0].Snippet)
+	require.Nil(t, dashboards.Results[0].CellID, "a dashboard content hit must not expose a cell id")
 }
 
 // TestSearchDashboardDraftTitleLeak pins Leak 1: after a publish, a draft

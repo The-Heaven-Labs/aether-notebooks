@@ -26,7 +26,11 @@ const (
 // highlighting).
 type ContentHit struct {
 	ResourceID string
-	Snippet    string
+	// CellID is the matched cell's id for notebook hits, so the caller can
+	// deep-link to it (#cell-{id}). Empty for dashboard widget hits (the
+	// matched widget id is not exposed).
+	CellID  string
+	Snippet string
 }
 
 // Searcher matches resource content.

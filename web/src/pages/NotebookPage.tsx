@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, lazy, Suspense } from 'react'
-import { useParams, Link, useNavigate } from 'react-router-dom'
+import { useParams, Link, useNavigate, useLocation } from 'react-router-dom'
 import { ChevronsRight, ChevronLeft, Loader2, X, Check, GripVertical, Shield, Clock, Trash2, Globe, Pencil } from 'lucide-react'
 import { DndContext, closestCenter, PointerSensor, KeyboardSensor, useSensor, useSensors, type DragEndEvent } from '@dnd-kit/core'
 import { SortableContext, verticalListSortingStrategy, useSortable, arrayMove, sortableKeyboardCoordinates } from '@dnd-kit/sortable'
@@ -151,6 +151,7 @@ function SortableCellWrapper({ children, id }: { children: React.ReactNode; id: 
 
 export function NotebookPage() {
   const { id } = useParams<{ id: string }>()
+  const location = useLocation()
   const qc = useQueryClient()
   const [collabVersion, setCollabVersion] = useState(0)
   const [runningCells, setRunningCells] = useState<Record<string, number>>({})
@@ -420,7 +421,10 @@ export function NotebookPage() {
   // Scroll to cell from URL hash (#cell-{id})
   useEffect(() => {
     if (!id) return
-    const hash = window.location.hash
+    // Read from the router location, with a window fallback: a same-notebook
+    // palette hit pushes via react-router (no `hashchange` fires), so depending
+    // on `location.hash` re-triggers this effect. See SearchPalette.
+    const hash = location.hash || window.location.hash
     if (hash.startsWith('#cell-')) {
       const cellId = hash.slice(6)
       const timer = setInterval(() => {
@@ -434,7 +438,7 @@ export function NotebookPage() {
       }, 100)
       return () => clearInterval(timer)
     }
-  }, [id])
+  }, [id, location.hash])
 
   // Awareness: follow the followed user's focus
   useEffect(() => {

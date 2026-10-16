@@ -503,6 +503,12 @@ export interface ResourceSummary {
   subtitle: string
   /** Content-search context; favorites listings omit it. */
   snippet?: string
+  /**
+   * The matched cell for a notebook content hit, so the client can deep-link to
+   * `/notebooks/{id}#cell-{cell_id}`. Absent for favorites, title-only hits,
+   * and dashboard hits.
+   */
+  cell_id?: string
   folder_id?: string
   /** Resolved folder path; absent for root-level resources. */
   folder_path?: string

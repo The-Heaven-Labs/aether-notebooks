@@ -9,8 +9,9 @@ import type { Dashboard, Notebook, Cell, Widget } from '../types'
 import type { ChartConfig } from '../charts/types'
 import { mergeWidgetChartConfig, hasWidgetOverride, withWidgetOverride } from '../charts/widgetChartConfig'
 import { formatExecutedAt } from '../utils/formatDateTime'
+import { appContentWidthStyle } from '../utils/appLayout'
 import { AppShell } from '../components/AppShell'
-import { AppHeader, APP_CONTENT_MAX_WIDTH } from '../components/AppHeader'
+import { AppHeader } from '../components/AppHeader'
 import { AppThemeProvider } from '../components/AppThemeProvider'
 import { EmptyState } from '../components/EmptyState'
 import { OutputRenderer } from '../components/OutputRenderer'
@@ -18,7 +19,7 @@ import { CollaboratorAvatars } from '../components/CollaboratorAvatars'
 import { DashboardVariablesProvider } from '../contexts/DashboardVariablesContext'
 import { DashboardVariableBar } from '../components/DashboardVariableBar'
 import { AppTabs, appTabButtonId, appTabPanelId, EmptyChapter } from '../components/AppTabs'
-import { activeTabId, widgetTabId, NO_TABS } from '../utils/dashboardTabs'
+import { activeTabId, widgetTabId, NO_TABS, tabQueryString } from '../utils/dashboardTabs'
 import { variablesForChapter } from '../utils/chapterFilters'
 import { appearanceFrom } from '../utils/widgetAppearance'
 import { textConfigFrom } from '../utils/textConfig'
@@ -471,6 +472,24 @@ function DashboardContent({ id }: { id: string }) {
   const tabs = settings?.tabs ?? NO_TABS
   const requestedTab = searchParams.get('tab')
   const activeTab = activeTabId(tabs, requestedTab)
+  // Clear invalid or inapplicable `?tab=` values once the dashboard is loaded
+  // so an unknown id or a no-tab dashboard never leaves a stale parameter.
+  // Other query params (preview, variable pins) are preserved.
+  const tabsKnown = !!dashboard
+  useEffect(() => {
+    if (requestedTab === null || !tabsKnown) return
+    const isValid = tabs.length > 0 && tabs.some((t) => t.id === requestedTab)
+    if (!isValid) {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev)
+          next.delete('tab')
+          return next
+        },
+        { replace: true },
+      )
+    }
+  }, [requestedTab, tabs, tabsKnown, setSearchParams])
   // One grid per chapter: every widget resolves to exactly one chapter (an
   // empty or unknown tab falls back to the first), and a chapter's items feed
   // only its own grid — no shared coordinate space, and each chapter compacts
@@ -606,9 +625,7 @@ function DashboardContent({ id }: { id: string }) {
   // The live document's title wins once bound; fall back to the row.
   const appTitle = app?.title || liveTitle
   // Masthead, filter strip, and body share one content width (The Story).
-  const contentWidth: React.CSSProperties | undefined = appWidth === 'fixed'
-    ? { maxWidth: APP_CONTENT_MAX_WIDTH, margin: '0 auto' }
-    : undefined
+  const contentWidth: React.CSSProperties | undefined = appContentWidthStyle(appWidth)
 
   // The dashboard logo wins over the org fallback. The authed attachment route
   // needs credentials an <img> cannot send as a header, so the session JWT
@@ -709,7 +726,7 @@ function DashboardContent({ id }: { id: string }) {
               style={{ fontSize: 12, maxWidth: 220, minHeight: 36, minWidth: 0 }}
             />
           </span>
-          <Link to={`/dashboards/${id}`} className="app-action" title="Edit dashboard layout">
+          <Link to={`/dashboards/${id}${tabQueryString(activeTab)}`} className="app-action" title="Edit dashboard layout">
             <Settings size={12} /> Edit
           </Link>
 

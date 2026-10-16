@@ -129,17 +129,6 @@ describe('AppShell', () => {
     expect(screen.queryByRole('dialog', { name: 'Search palette' })).toBeNull()
   })
 
-  it('binds neither chord in bare mode', async () => {
-    renderWithProviders(<AppShell bare><div>App surface</div></AppShell>)
-    // A handled chord would have called preventDefault (false); no handler is
-    // bound in bare mode, so both dispatches stay uncancelled.
-    expect(fireEvent.keyDown(document, { key: 'k', ctrlKey: true })).toBe(true)
-    expect(fireEvent.keyDown(document, { key: 'j', ctrlKey: true })).toBe(true)
-    await flushLazy()
-    expect(screen.queryByRole('dialog', { name: 'Search palette' })).toBeNull()
-    expect(screen.queryByTitle('Close agent panel')).toBeNull()
-  })
-
   it('suppresses Ctrl+J but keeps Ctrl+K enabled on chat pages', async () => {
     renderWithProviders(<AppShell><div>Page content</div></AppShell>, { initialPath: '/chats/s-1' })
 
@@ -155,11 +144,65 @@ describe('AppShell', () => {
   it('renders children in a bare main landmark: no shell chrome', () => {
     renderWithProviders(<AppShell bare><div>App surface</div></AppShell>)
     expect(screen.getByText('App surface')).toBeInTheDocument()
-    // The app surface keeps a main landmark but no skip link, shell frame,
-    // or agent FAB.
+    // The app surface keeps a main landmark and the agent FAB, but no skip
+    // link, shell frame, search palette, or shortcuts modal.
     expect(document.querySelector('main#main-content')).not.toBeNull()
     expect(screen.queryByText('Skip to content')).toBeNull()
     expect(document.querySelector('.app-shell')).toBeNull()
+    expect(screen.getByTitle('Open AI Agent (Ctrl+J)')).toBeInTheDocument()
+  })
+
+  it('renders the AI FAB and main content in bare mode', () => {
+    renderWithProviders(<AppShell bare><div>App surface</div></AppShell>, { initialPath: '/dashboards/d-1/view' })
+    expect(screen.getByText('App surface')).toBeInTheDocument()
+    expect(document.querySelector('main#main-content')).not.toBeNull()
+    expect(screen.getByTitle('Open AI Agent (Ctrl+J)')).toBeInTheDocument()
+  })
+
+  it('toggles the agent panel on Ctrl+J in bare mode', async () => {
+    renderWithProviders(<AppShell bare><div>App surface</div></AppShell>, { initialPath: '/dashboards/d-1/view' })
+
+    fireEvent.keyDown(document, { key: 'j', ctrlKey: true })
+    expect(await screen.findByTitle('Close agent panel', {}, LAZY_TIMEOUT)).toBeInTheDocument()
+
+    fireEvent.keyDown(document, { key: 'j', ctrlKey: true })
+    expect(screen.queryByTitle('Close agent panel')).toBeNull()
+  })
+
+  it('keeps Ctrl+K and the shortcuts modal disabled in bare mode', async () => {
+    renderWithProviders(<AppShell bare><div>App surface</div></AppShell>)
+    expect(fireEvent.keyDown(document, { key: 'k', ctrlKey: true })).toBe(true)
+    fireEvent.keyDown(document, { key: '?', ctrlKey: false })
+    await flushLazy()
+    expect(screen.queryByRole('dialog', { name: 'Search palette' })).toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Keyboard shortcuts' })).toBeNull()
+  })
+
+  it('minimizing the panel on the bare surface restores the FAB', async () => {
+    renderWithProviders(<AppShell bare><div>App surface</div></AppShell>, { initialPath: '/dashboards/d-1/view' })
+
+    fireEvent.keyDown(document, { key: 'j', ctrlKey: true })
+    expect(await screen.findByTitle('Close agent panel', {}, LAZY_TIMEOUT)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Minimize'))
+    await flushLazy()
+
+    expect(screen.queryByTitle('Close agent panel')).toBeNull()
+    expect(screen.queryByText('AI Agent (minimized)')).toBeNull()
+    expect(screen.getByTitle('Open AI Agent (Ctrl+J)')).toBeInTheDocument()
+  })
+
+  it('minimizing the panel on the non-bare surface shows the minimized bar', async () => {
+    renderWithProviders(<AppShell><div>Page content</div></AppShell>)
+
+    fireEvent.keyDown(document, { key: 'j', ctrlKey: true })
+    expect(await screen.findByTitle('Close agent panel', {}, LAZY_TIMEOUT)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByTitle('Minimize'))
+    await flushLazy()
+
+    expect(screen.queryByTitle('Close agent panel')).toBeNull()
+    expect(screen.getByText('AI Agent (minimized)')).toBeInTheDocument()
     expect(screen.queryByTitle('Open AI Agent (Ctrl+J)')).toBeNull()
   })
 })

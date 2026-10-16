@@ -1,9 +1,10 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
+import { screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { Suspense } from 'react'
 import * as Y from 'yjs'
 import { ResizableImage } from './MarkdownCell'
 import { Cell, collabCache, type NotebookCollab } from './Cell'
+import { renderWithProviders } from '../test/utils'
 import type { Cell as CellType, ExecuteRouting } from '../types'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -30,7 +31,7 @@ function renderMarkdownCell(source = 'hello') {
   const cell = makeMarkdownCell(source)
   const onSourceChange = vi.fn()
   const onSave = vi.fn()
-  const utils = render(
+  const utils = renderWithProviders(
     <Suspense fallback={null}>
       <Cell
         cell={cell}
@@ -57,21 +58,21 @@ describe('ResizableImage', () => {
   afterEach(() => { vi.unstubAllGlobals() })
 
   it('renders an img with a blob url and correct alt', async () => {
-    render(<ResizableImage src="/api/v1/attachments/abc123" alt="photo.png" width="100%" />)
+    renderWithProviders(<ResizableImage src="/api/v1/attachments/abc123" alt="photo.png" width="100%" />)
     const img = screen.getByRole('img')
     await waitFor(() => expect(img).toHaveAttribute('src', 'blob:mock'))
     expect(img).toHaveAttribute('alt', 'photo.png')
   })
 
   it('renders the resize handle', () => {
-    const { container } = render(<ResizableImage src="/api/v1/attachments/abc123" alt="test" />)
+    const { container } = renderWithProviders(<ResizableImage src="/api/v1/attachments/abc123" alt="test" />)
     const handle = container.querySelector('.img-resize-handle')
     expect(handle).not.toBeNull()
   })
 
   it('calls onResize with the new pixel width after drag', () => {
     const onResize = vi.fn()
-    const { container } = render(
+    const { container } = renderWithProviders(
       <ResizableImage src="/api/v1/attachments/abc123" alt="test" width="300" onResize={onResize} />
     )
     const handle = container.querySelector('.img-resize-handle')!
@@ -89,7 +90,7 @@ describe('ResizableImage', () => {
 
   it('falls back to src when fetch returns non-ok', async () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, status: 404, blob: async () => new Blob(['not found'], { type: 'text/plain' }) }))
-    render(<ResizableImage src="/api/v1/attachments/missing" alt="missing" />)
+    renderWithProviders(<ResizableImage src="/api/v1/attachments/missing" alt="missing" />)
     const img = screen.getByRole('img')
     await waitFor(() => expect(img).toHaveAttribute('src', '/api/v1/attachments/missing'))
   })
@@ -389,7 +390,7 @@ describe('CodeEditorView accessibility', () => {
       cell_collapsed: false,
       title: 'My Query',
     }
-    const { container } = render(
+    const { container } = renderWithProviders(
       <Cell
         cell={cell}
         connectors={[]}
@@ -422,7 +423,7 @@ describe('CodeEditorView accessibility', () => {
       source_visible: true,
       cell_collapsed: false,
     }
-    const { container } = render(
+    const { container } = renderWithProviders(
       <Cell
         cell={cell}
         connectors={[]}
@@ -509,7 +510,7 @@ describe('row limit select', () => {
       cell_collapsed: false,
       limit,
     }
-    return render(
+    return renderWithProviders(
       <Suspense fallback={null}>
         <Cell
           cell={cell}
@@ -619,7 +620,7 @@ describe('CodeEditorView Yjs attach race', () => {
 
   it('keeps a pre-sync Yjs update and applies it to the editor on sync', async () => {
     const fake = registerFakeCollab()
-    const { container, rerender } = render(cellElement(makeCodeCell('SELECT old')))
+    const { container, rerender } = renderWithProviders(cellElement(makeCodeCell('SELECT old')))
     await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
 
     // Agent update_cell arrives while the provider is still syncing: the
@@ -640,7 +641,7 @@ describe('CodeEditorView Yjs attach race', () => {
     const fake = registerFakeCollab()
     fake.ytext.insert(0, 'SELECT new')
 
-    const { container } = render(cellElement(makeCodeCell('SELECT old')))
+    const { container } = renderWithProviders(cellElement(makeCodeCell('SELECT old')))
     await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
 
     act(() => { fake.sync() })
@@ -655,7 +656,7 @@ describe('CodeEditorView Yjs attach race', () => {
     const fake = registerFakeCollab()
     fake.ytext.insert(0, 'SELECT new')
 
-    const { container } = render(cellElement(makeCodeCell('')))
+    const { container } = renderWithProviders(cellElement(makeCodeCell('')))
     await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
 
     act(() => { fake.sync() })
@@ -670,7 +671,7 @@ describe('CodeEditorView Yjs attach race', () => {
     const fake = registerFakeCollab()
     fake.ytext.insert(0, 'SELECT new')
 
-    const { container } = render(cellElement(makeCodeCell('SELECT old')))
+    const { container } = renderWithProviders(cellElement(makeCodeCell('SELECT old')))
     await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
 
     act(() => { fake.sync() })
@@ -690,7 +691,7 @@ describe('CodeEditorView Yjs attach race', () => {
     fake.ytext.insert(0, 'SELECT new')
     const onSourceChange = vi.fn()
 
-    const { container } = render(cellElement(makeCodeCell('SELECT old'), onSourceChange))
+    const { container } = renderWithProviders(cellElement(makeCodeCell('SELECT old'), onSourceChange))
     await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
 
     act(() => { fake.sync() })
@@ -704,7 +705,7 @@ describe('CodeEditorView Yjs attach race', () => {
 
   it('external-source effect does not create a provider when none exists', async () => {
     registerFakeCollab()
-    const { container, rerender } = render(cellElement(makeCodeCell('SELECT old')))
+    const { container, rerender } = renderWithProviders(cellElement(makeCodeCell('SELECT old')))
     await waitFor(() => expect(container.querySelector('.cm-content')).not.toBeNull())
 
     collabCache.delete(notebookId)
@@ -735,7 +736,7 @@ describe('run endpoint footer', () => {
       source_visible: true,
       cell_collapsed: false,
     }
-    return render(
+    return renderWithProviders(
       <Suspense fallback={null}>
         <Cell
           cell={cell}
@@ -800,7 +801,7 @@ describe('connector picker provisioner handling', () => {
   }
 
   function renderCodeCell(cell: CellType, connectors = provisionerConnectors) {
-    render(
+    renderWithProviders(
       <Suspense fallback={null}>
         <Cell
           cell={cell}
