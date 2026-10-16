@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { DATA_WIDGET_MIN_H, TEXT_PANEL_MIN_H, toGridItem } from './widgetLayout'
+import { DATA_WIDGET_MIN_H, TEXT_PANEL_MIN_H, toGridItem, widgetMinRows } from './widgetLayout'
 import type { Widget } from '../types'
 
 function widget(overrides: Partial<Widget>): Widget {
@@ -12,6 +12,22 @@ function widget(overrides: Partial<Widget>): Widget {
   } as Widget
 }
 
+describe('widgetMinRows', () => {
+  it('gives a source-less text panel the tighter text minimum', () => {
+    expect(widgetMinRows(widget({ type: 'text' }))).toBe(2)
+    expect(widgetMinRows(widget({ type: 'text' }))).toBe(TEXT_PANEL_MIN_H)
+  })
+
+  it('gives cell- and query-backed widgets the data minimum', () => {
+    expect(widgetMinRows(widget({ type: 'chart' }))).toBe(6)
+    expect(widgetMinRows(widget({ type: 'table' }))).toBe(6)
+    expect(widgetMinRows(widget({ type: 'text', notebook_id: 'n1', cell_id: 'c1' }))).toBe(6)
+    expect(widgetMinRows(widget({ type: 'chart', connector_id: 'c1', query: 'select 1' }))).toBe(
+      DATA_WIDGET_MIN_H,
+    )
+  })
+})
+
 describe('toGridItem', () => {
   it('keeps the data-widget floor for charts and tables', () => {
     const item = toGridItem(widget({ type: 'chart' }))
@@ -19,8 +35,20 @@ describe('toGridItem', () => {
     expect(item.minH).toBe(DATA_WIDGET_MIN_H)
   })
 
+  it('clamps a short text panel up to the text minimum', () => {
+    const item = toGridItem(widget({ type: 'text', layout: { row: 0, col: 0, width: 6, height: 1 } }))
+    expect(item.h).toBe(TEXT_PANEL_MIN_H)
+    expect(item.minH).toBe(TEXT_PANEL_MIN_H)
+  })
+
   it('keeps the data-widget floor for cell-linked text cells', () => {
     const item = toGridItem(widget({ type: 'text', notebook_id: 'n1', cell_id: 'c1' }))
+    expect(item.h).toBe(DATA_WIDGET_MIN_H)
+    expect(item.minH).toBe(DATA_WIDGET_MIN_H)
+  })
+
+  it('keeps the data-widget floor for query-backed widgets', () => {
+    const item = toGridItem(widget({ type: 'chart', connector_id: 'c1', query: 'select 1' }))
     expect(item.h).toBe(DATA_WIDGET_MIN_H)
     expect(item.minH).toBe(DATA_WIDGET_MIN_H)
   })

@@ -24,6 +24,7 @@ import { htmlConfigFrom } from '../utils/htmlConfig'
 import { customConfigFrom } from '../utils/customConfig'
 import { visibleWidgets, variableDefaults } from '../utils/publicDashboard'
 import { isCustomWidget, isHTMLPanel, isQueryWidget, isTextPanel } from '../utils/widgetKind'
+import { widgetMinRows } from '../utils/widgetLayout'
 import type { Dashboard, Widget, Output } from '../types'
 import { mergeWidgetChartConfig } from '../charts/widgetChartConfig'
 
@@ -179,10 +180,11 @@ export function PublicDashboardPage() {
                 Number.POSITIVE_INFINITY,
               )
               const offset = Number.isFinite(rowOffset) ? rowOffset : 0
-              // Widgets are never shorter than 6 rows here either: below that
-              // the chart area collapses under the widget chrome (~40px plots).
+              // Widgets are never shorter than their per-type minimum here
+              // either: data widgets below 6 rows collapse under the chrome
+              // (~40px plots), while text panels tighten down to 2.
               const chapterHeight = chapterWidgets.reduce(
-                (max, w) => Math.max(max, (w.layout.row - offset) + Math.max(w.layout.height, 6)),
+                (max, w) => Math.max(max, (w.layout.row - offset) + Math.max(w.layout.height, widgetMinRows(w))),
                 0,
               ) * (ROW_HEIGHT + gap)
               return (
@@ -204,7 +206,7 @@ export function PublicDashboardPage() {
                         const left = l.col * (colWidth + gap)
                         const top = (l.row - offset) * (ROW_HEIGHT + gap)
                         const width = l.width * colWidth + (l.width - 1) * gap
-                        const widgetRows = Math.max(l.height, 6)
+                        const widgetRows = Math.max(l.height, widgetMinRows(widget))
                         const height = widgetRows * ROW_HEIGHT + (widgetRows - 1) * gap
                         const wrapperStyle: React.CSSProperties = {
                           position: 'absolute',

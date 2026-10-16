@@ -11,10 +11,19 @@ export const DATA_WIDGET_MIN_H = 6
 
 /**
  * Minimum rendered height for text panels. A panel is prose: a chapter
- * heading plus a line fits in three rows, so a heading panel does not sit in
+ * heading plus a line fits in two rows, so a heading panel does not sit in
  * 200px of dead space above the content below it.
  */
-export const TEXT_PANEL_MIN_H = 3
+export const TEXT_PANEL_MIN_H = 2
+
+/**
+ * Minimum rendered height, in grid rows, for a widget by type. Text panels
+ * get a tighter floor than data widgets, which need room for chrome plus a
+ * readable plot.
+ */
+export function widgetMinRows(w: Widget): number {
+  return isTextPanel(w) ? TEXT_PANEL_MIN_H : DATA_WIDGET_MIN_H
+}
 
 /**
  * Map a stored widget to its grid item. The height floor is type-aware:
@@ -22,7 +31,7 @@ export const TEXT_PANEL_MIN_H = 3
  * too, or the layout would reserve space the widget does not fill.
  */
 export function toGridItem(w: Widget): LayoutItem {
-  const minH = isTextPanel(w) ? TEXT_PANEL_MIN_H : DATA_WIDGET_MIN_H
+  const minH = widgetMinRows(w)
   return {
     i: w.id,
     x: w.layout.col,
