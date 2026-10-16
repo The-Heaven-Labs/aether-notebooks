@@ -114,3 +114,17 @@
   - `cd web && npx tsc --noEmit` → clean
   - `cd web && npm run build` → pass
 - Notes: Added `orderWidgetsForEditor(widgets, tabs)` to `dashboardTabs.ts`: a non-mutating stable sort by `(tabIndex, layout.row, layout.col)` where `tabIndex = tabs.findIndex((t) => t.id === widgetTabId(widget, tabs))`, normalized to `0` when negative so untabbed/invalid/no-tab widgets land in the first bucket (single bucket when there are no tabs). `DashboardEditorPage.tsx` wraps `shownWidgets` in the existing `useMemo` and now pipes the tab-filtered list through `orderWidgetsForEditor`; ordering affects only rendering/compaction (the stored document is untouched) and per-chapter views still work. Test cases cover tab buckets, untabbed/empty/unknown tabs, row-then-col ordering inside a bucket, stability for equal positions, the no-tabs single-bucket case, and non-mutation of the input.
+
+## Task 9: Make the editor's View action say what it shows — 2026-10-15
+
+- Outcome: done
+- Changed:
+  - Created: none
+  - Modified: `web/src/pages/DashboardEditorPage.tsx`, `web/src/pages/DashboardEditorPage.test.tsx`
+  - Deleted: none
+- Verified:
+  - `cd web && npx vitest run src/pages/DashboardEditorPage.test.tsx` → pass (39 passed; +2 new)
+  - `cd web && npm run test:run` → pass (1517 passed, 2 skipped; +2 over the Task 8 baseline of 1515)
+  - `cd web && npx tsc --noEmit` → clean
+  - `cd web && npm run build` → pass
+- Notes: Derived `hasPublishedVersion = !!latestVersion` from the same `versionsQuery.data?.latest` source that renders the `v{n}` / `Not published` chip, and used it to drive the header View link: `View published` with a title naming the published snapshot and the `Preview draft` route to unpublished edits when a version exists, `View app` with a title explaining the draft is shown because nothing is published yet otherwise. The `Eye` icon and `nav-btn` styling are unchanged and the link still carries the active `?tab=` via `tabQueryString(activeEditorTab)` → `/dashboards/{id}/view`. Added two tests asserting both label+title states; the existing "View link carries the active chapter" test uses the never-published fixture and its `/View/` regex still matches `View app`. Grepped `e2e/`: the sole `View published` link assertion (`e2e/dashboard-publish.spec.ts:486`) targets the view page's own link (`DashboardPage.tsx`, `/view?preview=draft`), not the editor, so no e2e selector changes were required — confirmed.

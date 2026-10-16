@@ -864,6 +864,35 @@ describe('DashboardEditorPage publish controls', () => {
     expect(screen.queryByTestId('publish-status-dot')).not.toBeInTheDocument()
   })
 
+  test('the View action names the published snapshot once a version exists', async () => {
+    server.use(
+      http.get('/api/v1/dashboards/d1/versions', () => HttpResponse.json(PUBLISHED_VERSIONS)),
+    )
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    // The label is derived from the same source as the chip, so it flips once
+    // the versions query resolves.
+    const link = await screen.findByRole('link', { name: 'View published' })
+    expect(link).toHaveAttribute('href', '/dashboards/d1/view')
+    const title = link.getAttribute('title') ?? ''
+    expect(title).toContain('published snapshot')
+    expect(title).toContain('Preview draft')
+    await waitFor(() => expect(screen.getByTestId('publish-status')).toHaveTextContent('v1'))
+  })
+
+  test('the View action says it shows the draft when nothing is published', async () => {
+    docStore.set({ synced: true, connected: true, hasDocumentContent: true, title: 'Ops board', widgets: [widget()] })
+    renderEditor()
+
+    const link = await screen.findByRole('link', { name: 'View app' })
+    expect(link).toHaveAttribute('href', '/dashboards/d1/view')
+    const title = link.getAttribute('title') ?? ''
+    expect(title).toContain('current draft')
+    expect(title).toContain('not been published')
+    expect(screen.queryByRole('link', { name: 'View published' })).not.toBeInTheDocument()
+  })
+
   test('marks unpublished changes with an amber dot and a title', async () => {
     server.use(
       http.get('/api/v1/dashboards/d1/versions', () =>

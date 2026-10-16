@@ -562,6 +562,16 @@ export function DashboardEditorPage() {
       ? 'Unpublished changes'
       : 'Version history'
 
+  // The header's View action names what it actually opens: the published
+  // snapshot once a version exists, otherwise the draft (there is nothing
+  // published to serve beyond it). The title spells out the other surface so
+  // the label alone tells the author how to reach their unpublished edits.
+  const hasPublishedVersion = !!latestVersion
+  const viewLinkLabel = hasPublishedVersion ? 'View published' : 'View app'
+  const viewLinkTitle = hasPublishedVersion
+    ? 'View the published snapshot — unpublished edits appear under Preview draft on that page'
+    : 'View the app — showing the current draft because it has not been published yet'
+
   return (
     <DashboardVariablesProvider dashboardId={id!} variables={variables}>
     <AppShell noPadding>
@@ -665,8 +675,8 @@ export function DashboardEditorPage() {
               </button>
             </>
           )}
-          <Link to={`/dashboards/${id}/view${tabQueryString(activeEditorTab)}`} className="nav-btn" title="View dashboard">
-            <Eye size={12} /> View
+          <Link to={`/dashboards/${id}/view${tabQueryString(activeEditorTab)}`} className="nav-btn" title={viewLinkTitle}>
+            <Eye size={12} /> {viewLinkLabel}
           </Link>
           <button
             type="button"
