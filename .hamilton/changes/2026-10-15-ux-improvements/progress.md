@@ -183,3 +183,8 @@
   - `cd web && npx tsc --noEmit` → clean; `cd web && npm run build` → pass
   - Browser (dev stack, nova): warehouse page Test provisioner → 5-step pass box with the success border rendered; live endpoint still 200 with `ok:true` after the handler reshape
 - Notes: `TestWarehouseProvisionerTestForeignWarehouse` already covered the cross-org 404, so the reshaped org check needed no new test; `loadWarehouseHeader` returns `pgx.ErrNoRows` unwrapped, preserving the not-found mapping for unknown ids.
+
+## Finish — 2026-10-16
+- Preconditions: tree green on every gate (task check, web suite/tsc/build, relay build, CI smoke on a native API) and review.md approved; all eleven plan tasks committed. Pre-existing workspace files outside the change (`web/.gitignore`, `.task/checksum/build`, untracked scratch) were left untouched.
+- Specs synced: none (the change carries no `requirements/` deltas).
+- Finished: pull request https://github.com/The-Heaven-Labs/aether-notebooks/pull/267
