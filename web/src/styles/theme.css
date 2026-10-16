@@ -94,6 +94,7 @@
   --success: #2e7d32;
   --success-full: #27ae60;
   --success-light: #f0f9f0;
+  --success-border: #cfe8cf;
   --error: #b85c5c;
   --error-full: #c0392b;
   --error-light: #fdf5f5;
@@ -154,6 +155,7 @@
   --success: #4caf74;
   --success-full: #66bb6a;
   --success-light: #1a2e1f;
+  --success-border: #2e5a34;
   --error: #c97070;
   --error-full: #ef5350;
   --error-light: #2e1a1a;
@@ -224,6 +226,7 @@
   --success: #2e7d32;
   --success-full: #27ae60;
   --success-light: #f0f9f0;
+  --success-border: #cfe8cf;
   --error: #b85c5c;
   --error-full: #c0392b;
   --error-light: #fdf5f5;
@@ -274,6 +277,7 @@
   --success: #4caf74;
   --success-full: #66bb6a;
   --success-light: #1a2e1f;
+  --success-border: #2e5a34;
   --error: #c97070;
   --error-full: #ef5350;
   --error-light: #2e1a1a;

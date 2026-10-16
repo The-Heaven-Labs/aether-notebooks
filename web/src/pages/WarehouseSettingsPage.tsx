@@ -553,6 +553,8 @@ function WarehouseCard({
                 {testResult && (
                   <div
                     data-testid="provisioner-test-result"
+                    role="status"
+                    aria-live="polite"
                     style={testResult.ok ? styles.testSuccess : styles.testError}
                   >
                     {testResult.ok

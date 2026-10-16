@@ -167,3 +167,19 @@
   - `web/src/utils/resources.ts`: wrapped the cell id in `encodeURIComponent` in `resourceHref` (canonical-UUID output unchanged; fragment-unsafe ids protected). No `resources.test.ts` expectation changed.
   - Added coverage in `web/src/pages/NotebookPage.test.tsx` (the mocked `Cell` now carries `id="cell-{id}"`): re-navigating to `#cell-<id>` on an already-mounted page scrolls and flashes the cell.
   - Verified: `cd web && npx vitest run src/utils/resources.test.ts src/test/SearchPage.test.tsx` → pass (2 files, 27 passed); `cd web && npx vitest run src/pages/NotebookPage.test.tsx` → pass (1 file, 5 passed); `cd web && npm run test:run` → pass (1528 passed, 2 skipped; +1 over the 1527 baseline); `cd web && npx tsc --noEmit` → clean; `cd web && npm run build` → pass; `npx playwright test --list search.spec.ts` (from `e2e/`) → collects 1 test. The e2e was not executed (no dev stack up).
+
+## Whole-branch review follow-ups — 2026-10-16
+
+- Outcome: done
+- Changed:
+  - Modified: `web/src/styles/theme.css` (define `--success-border` in both light and both dark token blocks: `#cfe8cf` / `#2e5a34`, mirroring the `--error-border` pairs)
+  - Modified: `web/src/pages/WarehouseSettingsPage.tsx` (provisioner test result box gains `role="status"` + `aria-live="polite"` so the async outcome is announced)
+  - Modified: `internal/api/warehouse_test_handler.go` (drop unused `claims`/`warehouseJSON` params from `runWarehouseProvisionerTest`; the handler now loads the warehouse header once, checks `hdr.orgID.String() != claims.OrgID` inline as the org scope, and passes the header into the runner — one query instead of two; `internal/auth` import removed)
+- Verified:
+  - `bash scripts/go-test.sh ./internal/api/ -run "TestWarehouseProvisionerTest" -count=1 -timeout 3m -v` → pass (7/7, including the foreign-warehouse 404 against the new inline org check)
+  - `gofmt -l` / `go vet ./internal/api/` → clean
+  - `cd web && npx vitest run src/pages/WarehouseSettingsPage.test.tsx` → pass (23 passed)
+  - `cd web && npm run test:run` → pass (1528 passed, 2 skipped — unchanged baseline)
+  - `cd web && npx tsc --noEmit` → clean; `cd web && npm run build` → pass
+  - Browser (dev stack, nova): warehouse page Test provisioner → 5-step pass box with the success border rendered; live endpoint still 200 with `ok:true` after the handler reshape
+- Notes: `TestWarehouseProvisionerTestForeignWarehouse` already covered the cross-org 404, so the reshaped org check needed no new test; `loadWarehouseHeader` returns `pgx.ErrNoRows` unwrapped, preserving the not-found mapping for unknown ids.

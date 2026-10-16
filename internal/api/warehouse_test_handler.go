@@ -15,7 +15,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/the-heaven-labs/aether/internal/audit"
-	"github.com/the-heaven-labs/aether/internal/auth"
 	"github.com/the-heaven-labs/aether/internal/chaccess"
 )
 
@@ -59,7 +58,7 @@ func (s *Server) handleTestWarehouseProvisioner(w http.ResponseWriter, r *http.R
 	// The endpoint works whether or not AETHER_CH_TABLE_PERMISSIONS is enabled:
 	// it validates the provisioner credential itself by connecting and running
 	// DDL directly; reconcile semantics do not matter here.
-	wh, err := s.loadWarehouseForOrg(ctx, claims.OrgID, warehouseUUID)
+	hdr, err := s.loadWarehouseHeader(ctx, warehouseUUID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeError(w, http.StatusNotFound, "warehouse not found")
 		return
@@ -68,11 +67,17 @@ func (s *Server) handleTestWarehouseProvisioner(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "query failed")
 		return
 	}
+	// loadWarehouseHeader is not org-scoped; a warehouse owned by another org
+	// must read as not found, matching the other warehouse endpoints.
+	if hdr.orgID.String() != claims.OrgID {
+		writeError(w, http.StatusNotFound, "warehouse not found")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(ctx, testWarehouseOperationTimeout)
 	defer cancel()
 
-	result := s.runWarehouseProvisionerTest(ctx, claims, warehouseUUID, wh)
+	result := s.runWarehouseProvisionerTest(ctx, warehouseUUID, hdr)
 
 	meta := map[string]any{
 		"warehouse_id": warehouseUUID.String(),
@@ -100,14 +105,10 @@ func (s *Server) handleTestWarehouseProvisioner(w http.ResponseWriter, r *http.R
 }
 
 // runWarehouseProvisionerTest performs the actual self-test under the
-// per-warehouse sync lock so it cannot interleave with a reconcile.
-func (s *Server) runWarehouseProvisionerTest(ctx context.Context, claims *auth.Claims, warehouseID uuid.UUID, wh warehouseJSON) warehouseProvisionerTestResult {
+// per-warehouse sync lock so it cannot interleave with a reconcile. hdr is the
+// header the caller already loaded and org-checked.
+func (s *Server) runWarehouseProvisionerTest(ctx context.Context, warehouseID uuid.UUID, hdr warehouseHeader) warehouseProvisionerTestResult {
 	result := warehouseProvisionerTestResult{Steps: make([]warehouseProvisionerTestStep, 0, 5)}
-
-	hdr, err := s.loadWarehouseHeader(ctx, warehouseID)
-	if err != nil {
-		return s.failProvisionerTest(result, "connect", fmt.Errorf("load warehouse: %w", err))
-	}
 
 	cfg, err := s.loadProvisionerConfig(ctx, warehouseID, hdr.orgID, hdr.provisionerID)
 	if err != nil {
