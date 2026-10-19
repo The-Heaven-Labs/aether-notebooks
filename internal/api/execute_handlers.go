@@ -38,6 +38,10 @@ type executeRequest struct {
 // @Router /notebooks/{notebook_id}/cells/{cell_id}/execute [post]
 func (s *Server) handleExecuteCell(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
+	// A first query against an idle ClickHouse Cloud service waits for the
+	// service to wake; the server's default 60s WriteTimeout would cut the
+	// response off before the handshake and query complete.
+	allowLongRunningResponse(w)
 	claims := ClaimsFromContext(r.Context())
 	nbID := r.PathValue("notebook_id")
 	cellID := r.PathValue("cell_id")

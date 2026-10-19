@@ -679,6 +679,7 @@ func (s *Server) connectorIsProvisioner(ctx context.Context, orgID, connectorID 
 // @Security BearerAuth
 // @Router /connectors/test [post]
 func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Request) {
+	allowLongRunningResponse(w)
 	var req createConnectorRequest
 	if err := decodeJSON(r, &req); err != nil {
 		writeJSON(w, http.StatusOK, map[string]any{"ok": false, "error": "invalid request body"})
@@ -716,6 +717,7 @@ func (s *Server) handleTestConnectorConfig(w http.ResponseWriter, r *http.Reques
 // @Security BearerAuth
 // @Router /connectors/{id}/databases [get]
 func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Request) {
+	allowLongRunningResponse(w)
 	claims := ClaimsFromContext(r.Context())
 	connID := r.PathValue("id")
 	ctx := r.Context()
@@ -777,6 +779,7 @@ func (s *Server) handleListConnectorDatabases(w http.ResponseWriter, r *http.Req
 // @Security BearerAuth
 // @Router /connectors/{id}/test [post]
 func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
+	allowLongRunningResponse(w)
 	claims := ClaimsFromContext(r.Context())
 	connID := r.PathValue("id")
 	ctx := r.Context()
@@ -834,6 +837,7 @@ func (s *Server) handleTestConnector(w http.ResponseWriter, r *http.Request) {
 // @Security BearerAuth
 // @Router /connectors/{id}/schema [get]
 func (s *Server) handleConnectorSchema(w http.ResponseWriter, r *http.Request) {
+	allowLongRunningResponse(w)
 	claims := ClaimsFromContext(r.Context())
 	connID := r.PathValue("id")
 	ctx := r.Context()
