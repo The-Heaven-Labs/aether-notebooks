@@ -66,6 +66,53 @@ func TestCellLimitClearToUnlimited(t *testing.T) {
 	}
 }
 
+func TestCellConnectorClearToInherit(t *testing.T) {
+	srv := setupTestServer(t)
+	ts := time.Now().UnixNano()
+	email := fmt.Sprintf("cell-conn-%d@example.com", ts)
+	token := registerAndGetToken(t, srv, email, "Cell Conn Org")
+	nbID := createNotebook(t, srv, token, "Cell Conn NB")
+	connID := createConnector(t, srv, token)
+	cellID := createCell(t, srv, token, nbID, "sql", "SELECT 1", connID)
+
+	put := func(t *testing.T, body map[string]any) map[string]any {
+		t.Helper()
+		b, _ := json.Marshal(body)
+		req := httptest.NewRequest("PUT", "/api/v1/notebooks/"+nbID+"/cells/"+cellID, bytes.NewReader(b))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		req.Header.Set("X-AETHER-Admin-Mode", "true")
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("update cell: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var resp map[string]any
+		json.NewDecoder(rec.Body).Decode(&resp)
+		return resp
+	}
+
+	// The cell starts pinned to the connector it was created with.
+	pinned := put(t, map[string]any{"source": "SELECT 2"})
+	if pinned["connector_id"] != connID {
+		t.Fatalf("expected cell connector %q, got %v", connID, pinned["connector_id"])
+	}
+
+	// An empty connector clears the cell-level override so the cell inherits
+	// the notebook connector again (the UI's "Inherit from notebook" option).
+	// This used to write the empty string into the UUID column and fail.
+	cleared := put(t, map[string]any{"connector_id": ""})
+	if v, ok := cleared["connector_id"]; ok {
+		t.Fatalf("expected connector_id to be cleared, got %v", v)
+	}
+
+	// An unrelated update afterwards must not resurrect the old connector.
+	again := put(t, map[string]any{"source": "SELECT 3"})
+	if v, ok := again["connector_id"]; ok {
+		t.Fatalf("expected connector_id to stay cleared, got %v", v)
+	}
+}
+
 func TestDuplicateCell(t *testing.T) {
 	srv := setupTestServer(t)
 	ts := time.Now().UnixNano()

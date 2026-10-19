@@ -15,11 +15,11 @@ vi.mock('../components/AppShell', () => ({
 
 vi.mock('../components/Cell', () => ({
   Cell: ({ cell, onRun, routing }: {
-    cell: { id: string; outputs?: Array<{ type: string; data: unknown }> }
+    cell: { id: string; connector_id?: string; outputs?: Array<{ type: string; data: unknown }> }
     onRun: (cellId: string) => void
     routing?: { connector_name?: string }
   }) => (
-    <div id={`cell-${cell.id}`} data-testid={`cell-${cell.id}`}>
+    <div id={`cell-${cell.id}`} data-testid={`cell-${cell.id}`} data-connector={cell.connector_id ?? 'inherit'}>
       <button type="button" onClick={() => onRun(cell.id)}>{`Run ${cell.id}`}</button>
       {routing?.connector_name && <span>{`endpoint ${routing.connector_name}`}</span>}
       {(cell.outputs ?? [])
@@ -209,6 +209,30 @@ describe('NotebookPage warehouse routing', () => {
 
     expect(await screen.findByText('query failed')).toBeInTheDocument()
     await waitFor(() => expect(screen.queryByText('endpoint CH RW')).toBeNull())
+  })
+})
+
+describe('NotebookPage cell connector inheritance', () => {
+  test('a new code cell inherits the notebook connector instead of pinning it', async () => {
+    server.use(
+      http.post('/api/v1/notebooks/:id/cells', async ({ request }) => {
+        const body = await request.json() as Record<string, unknown>
+        return HttpResponse.json({
+          id: 'cell-new', notebook_id: 'nb-1', position: 2,
+          type: body.type, language: body.language, source: '',
+          outputs: [], source_visible: true, cell_collapsed: false,
+          created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
+        }, { status: 201 })
+      }),
+    )
+    renderNotebook()
+
+    fireEvent.click(await screen.findByRole('button', { name: '+ Code Cell' }))
+
+    const created = await screen.findByTestId('cell-cell-new')
+    // No cell-level connector: it inherits the notebook's connector, so a
+    // later notebook-level change applies to it.
+    expect(created).toHaveAttribute('data-connector', 'inherit')
   })
 })
 

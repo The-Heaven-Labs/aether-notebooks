@@ -800,12 +800,13 @@ describe('connector picker provisioner handling', () => {
     }
   }
 
-  function renderCodeCell(cell: CellType, connectors = provisionerConnectors) {
+  function renderCodeCell(cell: CellType, connectors = provisionerConnectors, notebookConnectorId?: string) {
     renderWithProviders(
       <Suspense fallback={null}>
         <Cell
           cell={cell}
           connectors={connectors}
+          notebookConnectorId={notebookConnectorId}
           notebookId="nb-1"
           onRun={vi.fn()}
           onDelete={vi.fn()}
@@ -869,5 +870,22 @@ describe('connector picker provisioner handling', () => {
 
     expect(await screen.findByRole('button', { name: 'Run cell (Ctrl+Enter)' }))
       .toHaveAttribute('title', 'Select a connector first')
+  })
+
+  it('shows the inherited notebook connector on the badge', async () => {
+    renderCodeCell(codeCell(), provisionerConnectors, 'conn-svc')
+
+    const badge = await screen.findByTitle('Inherited from notebook — click to override')
+    expect(badge).toHaveTextContent('Service')
+
+    // The cell itself still reads as inheriting in the picker.
+    fireEvent.click(badge)
+    expect(await screen.findByRole('combobox', { name: 'Connector' })).toHaveValue('')
+  })
+
+  it('prefers an explicit cell connector over the notebook one', async () => {
+    renderCodeCell(codeCell({ connector_id: 'conn-svc' }), provisionerConnectors, 'conn-prov')
+
+    expect(await screen.findByTitle('Click to change connector')).toHaveTextContent('Service')
   })
 })

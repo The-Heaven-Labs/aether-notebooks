@@ -21,6 +21,18 @@ import (
 // returned when an identity lacks the grant a query needs.
 const clickHouseAccessDeniedCode int32 = 497
 
+// clickHouseConnectTimeout bounds dialing a ClickHouse connection, including
+// the native-protocol handshake. ClickHouse Cloud pauses idle services and
+// wakes them on the first connection; the wake can take longer than the
+// driver's 30s default DialTimeout, which clickhouse-go also applies to the
+// handshake read. That produces "handshake: failed to read packet ... i/o
+// timeout" on the first query after idling, even when the connector has no
+// query timeout. The upstream guidance for services that may be idle is a
+// 1-2 minute DialTimeout.
+//
+// It is a var rather than a const only so tests can shrink the budget.
+var clickHouseConnectTimeout = 2 * time.Minute
+
 // IsClickHouseAccessDenied reports whether err is a ClickHouse access-denied
 // failure, e.g. a per-user identity selecting from a table it was not granted.
 // It is ClickHouse-specific: other drivers' permission errors are not matched.
@@ -67,7 +79,8 @@ func chOptions(cfg models.ConnectorConfig) *clickhouse.Options {
 			Username: cfg.User,
 			Password: cfg.Password,
 		},
-		Protocol: clickhouse.Native,
+		Protocol:    clickhouse.Native,
+		DialTimeout: clickHouseConnectTimeout,
 	}
 	if cfg.Database != "" {
 		opts.Auth.Database = cfg.Database
@@ -85,7 +98,7 @@ func NewClickHouseExecutor(cfg models.ConnectorConfig) (*ClickHouseExecutor, err
 	if err != nil {
 		return nil, fmt.Errorf("open: %w", err)
 	}
-	pingCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	pingCtx, cancel := context.WithTimeout(context.Background(), clickHouseConnectTimeout)
 	defer cancel()
 	if err := conn.Ping(pingCtx); err != nil {
 		conn.Close()

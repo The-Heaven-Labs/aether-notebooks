@@ -639,7 +639,7 @@ export function NotebookPage() {
       initializedRef.current = true
       setTitleDraft(notebook.title)
       setDescDraft(notebook.description ?? '')
-      if (notebook.connector_id) setNotebookConnectorId(notebook.connector_id)
+      setNotebookConnectorId(notebook.connector_id ?? '')
       document.title = `${notebook.title} — Aether Notebooks`
     }
     // Always sync localCells with notebook data (for agent updates)
@@ -681,25 +681,23 @@ export function NotebookPage() {
         position,
       }),
     onSuccess: (cell) => {
-      const withConnector = cell.type === 'code' && notebookConnectorId
-        ? { ...cell, connector_id: notebookConnectorId }
-        : cell
-      if (withConnector.connector_id) {
-        assignConnector(cell.id, withConnector.connector_id)
-      }
+      // New cells inherit the notebook connector: they are stored with no
+      // connector_id so a later notebook-level change applies to them too.
+      // Only an explicit cell-level choice (the cell's connector picker) pins
+      // one.
       setLocalCells((prev) => {
-        if (prev.some((c) => c.id === withConnector.id)) return prev
+        if (prev.some((c) => c.id === cell.id)) return prev
         const shifted = prev.map((c) =>
-          c.position >= withConnector.position ? { ...c, position: c.position + 1 } : c
+          c.position >= cell.position ? { ...c, position: c.position + 1 } : c
         )
-        return [...shifted, withConnector].sort((a, b) => a.position - b.position)
+        return [...shifted, cell].sort((a, b) => a.position - b.position)
       })
       qc.setQueryData<NotebookWithCells>(['notebook', id], (old) => {
-        if (!old || old.cells.some((c) => c.id === withConnector.id)) return old
+        if (!old || old.cells.some((c) => c.id === cell.id)) return old
         const shifted = old.cells.map((c) =>
-          c.position >= withConnector.position ? { ...c, position: c.position + 1 } : c
+          c.position >= cell.position ? { ...c, position: c.position + 1 } : c
         )
-        return { ...old, cells: [...shifted, withConnector].sort((a, b) => a.position - b.position) }
+        return { ...old, cells: [...shifted, cell].sort((a, b) => a.position - b.position) }
       })
       setTimeout(() => {
         const el = document.getElementById('cell-' + cell.id)
@@ -1650,6 +1648,7 @@ export function NotebookPage() {
                           <NotebookCell
                             cell={cell}
                             connectors={connectors}
+                            notebookConnectorId={notebookConnectorId || undefined}
                             notebookId={id!}
                             onRun={notebook?.can_run ? saveAndRun : noop}
                             onCancel={runningCells[cell.id] ? cancelCell : undefined}

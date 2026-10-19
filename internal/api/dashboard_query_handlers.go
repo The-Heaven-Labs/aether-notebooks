@@ -222,6 +222,7 @@ type dashboardQueryParams struct {
 // @Router /dashboards/{id}/execute [post]
 func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Request) {
 	startTime := time.Now()
+	allowLongRunningResponse(w)
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
 	ctx := r.Context()
@@ -372,6 +373,7 @@ func (s *Server) handleExecuteDashboardWidget(w http.ResponseWriter, r *http.Req
 // @Security BearerAuth
 // @Router /dashboards/{id}/variables/{name}/options [post]
 func (s *Server) handleDashboardVariableOptions(w http.ResponseWriter, r *http.Request) {
+	allowLongRunningResponse(w)
 	claims := ClaimsFromContext(r.Context())
 	dashID := r.PathValue("id")
 	name := r.PathValue("name")
@@ -883,6 +885,7 @@ func (s *Server) publicDashboardQueryContent(ctx context.Context, dash *models.D
 // @Security none
 // @Router /api/v1/public/{token}/execute [post]
 func (s *Server) handlePublicDashboardExecute(w http.ResponseWriter, r *http.Request) {
+	allowLongRunningResponse(w)
 	token := r.PathValue("token")
 	ctx := r.Context()
 
@@ -955,6 +958,7 @@ func (s *Server) handlePublicDashboardExecute(w http.ResponseWriter, r *http.Req
 // @Security none
 // @Router /api/v1/public/{token}/variables/{name}/options [post]
 func (s *Server) handlePublicDashboardVariableOptions(w http.ResponseWriter, r *http.Request) {
+	allowLongRunningResponse(w)
 	token := r.PathValue("token")
 	name := r.PathValue("name")
 	ctx := r.Context()

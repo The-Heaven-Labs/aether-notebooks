@@ -1,0 +1,81 @@
+{
+  "title": "Choose the app composition",
+  "question": "Three compositions for the Aether app surface. Lock one.",
+  "options": [
+    {
+      "id": "story",
+      "label": "The Story",
+      "kicker": "THE ROLL",
+      "lineage": "the written brief / annual-report spread",
+      "thesis": "The app reads as a written brief: a lede that says what changed, numbers as punctuation, evidence in chapters below.",
+      "palette": ["#f5f5f5", "#ffffff", "#111111", "#7c6faa", "#1a1814"],
+      "materials": ["hairline rules", "flat surfaces", "mono instrument labels"],
+      "viewport": "Masthead and freshness, a quiet filter strip, the written lede with KPI readings beside it, then the hero chart full width, the next section heading already in view.",
+      "risk": "Only as good as its writing — a weak lede turns it into a slow dashboard, and the answer takes a scroll to reach.",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "masthead — title, subtitle, freshness", "x": 0, "y": 0, "w": 12, "h": 1 },
+          { "label": "quiet filter strip", "x": 0, "y": 1, "w": 12, "h": 1 },
+          { "label": "written lede — what changed", "x": 0, "y": 2, "w": 8, "h": 2, "accent": true },
+          { "label": "KPI readings", "x": 8, "y": 2, "w": 4, "h": 2 },
+          { "label": "hero chart — full width", "x": 0, "y": 4, "w": 12, "h": 3 },
+          { "label": "next section — heading + text", "x": 0, "y": 7, "w": 12, "h": 2 },
+          { "label": "evidence grid", "x": 0, "y": 9, "w": 12, "h": 1 }
+        ]
+      }
+    },
+    {
+      "id": "board",
+      "label": "The Board",
+      "lineage": "the instrument wall / control room",
+      "thesis": "Everything visible at once: a KPI row over a disciplined grid of charts and tables, no scrolling on a desktop.",
+      "palette": ["#f5f5f5", "#ffffff", "#111111", "#7c6faa", "#1a1814"],
+      "materials": ["hairline rules", "flat surfaces", "mono instrument labels"],
+      "viewport": "Masthead and freshness, a filter strip, four KPI tiles across, then a two-by-two evidence grid filling the rest of the viewport.",
+      "risk": "Familiar to the point of generic — without strict tile discipline it becomes exactly the dense dashboard it is trying to outgrow.",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "masthead — title, freshness", "x": 0, "y": 0, "w": 12, "h": 1 },
+          { "label": "filter strip", "x": 0, "y": 1, "w": 12, "h": 1 },
+          { "label": "KPI tile", "x": 0, "y": 2, "w": 3, "h": 2, "accent": true },
+          { "label": "KPI tile", "x": 3, "y": 2, "w": 3, "h": 2 },
+          { "label": "KPI tile", "x": 6, "y": 2, "w": 3, "h": 2 },
+          { "label": "KPI tile", "x": 9, "y": 2, "w": 3, "h": 2 },
+          { "label": "chart", "x": 0, "y": 4, "w": 6, "h": 3 },
+          { "label": "chart", "x": 6, "y": 4, "w": 6, "h": 3 },
+          { "label": "chart", "x": 0, "y": 7, "w": 6, "h": 3 },
+          { "label": "table", "x": 6, "y": 7, "w": 6, "h": 3 }
+        ]
+      }
+    },
+    {
+      "id": "stage",
+      "label": "The Stage",
+      "lineage": "the projection slide / title card",
+      "thesis": "One fixed composition scaled to the viewport — designed to be read at a distance, in a meeting or an embed.",
+      "palette": ["#f5f5f5", "#ffffff", "#111111", "#7c6faa", "#1a1814"],
+      "materials": ["hairline rules", "flat surfaces", "mono instrument labels"],
+      "viewport": "A title card and one headline reading on the left, a dominant chart on the right, a supporting strip below, controls in a quiet overlay dock.",
+      "risk": "Least suited to daily laptop checking, and the fixed frame wastes space for apps that only hold one or two widgets.",
+      "wireframe": {
+        "cols": 12,
+        "rows": 10,
+        "regions": [
+          { "label": "title card — app title, period", "x": 0, "y": 0, "w": 5, "h": 2 },
+          { "label": "headline reading — the one number", "x": 0, "y": 2, "w": 5, "h": 3, "accent": true },
+          { "label": "hero chart — dominant", "x": 5, "y": 0, "w": 7, "h": 5 },
+          { "label": "supporting readings", "x": 0, "y": 5, "w": 12, "h": 2 },
+          { "label": "evidence strip", "x": 0, "y": 7, "w": 12, "h": 2 },
+          { "label": "control dock — filters, tabs (overlay)", "x": 0, "y": 9, "w": 12, "h": 1 }
+        ]
+      }
+    }
+  ],
+  "reroll": { "registers": ["safer", "bolder"] },
+  "canon": false,
+  "steer": true
+}
