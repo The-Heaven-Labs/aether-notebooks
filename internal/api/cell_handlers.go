@@ -238,7 +238,7 @@ func (s *Server) handleUpdateCell(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ConnectorID != nil {
 		query += fmt.Sprintf(", connector_id = $%d", argN)
-		args = append(args, *req.ConnectorID)
+		args = append(args, nilIfEmptyStr(*req.ConnectorID))
 		argN++
 	}
 	if req.SourceVisible != nil {

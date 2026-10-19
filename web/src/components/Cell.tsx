@@ -105,6 +105,8 @@ export interface SaveState {
 interface Props {
   cell: APICell
   connectors: Connector[]
+  /** Notebook-level default connector; cells with no connector_id inherit it. */
+  notebookConnectorId?: string
   notebookId: string
   onRun: (cellId: string) => void
   onCancel?: (cellId: string) => void
@@ -427,6 +429,7 @@ function generateTitlePlaceholder(source: string, isCode: boolean): string {
 export const Cell = memo(function Cell({
   cell,
   connectors,
+  notebookConnectorId,
   notebookId,
   onRun,
   onCancel,
@@ -475,6 +478,14 @@ export const Cell = memo(function Cell({
   const sourceVisible = cell.source_visible ?? true
   const outputHidden = cell.outputs_hidden ?? false
   const connector = connectors.find((c) => c.id === cell.connector_id)
+  // Cells with no connector of their own inherit the notebook-level default.
+  // The badge and the editor's SQL dialect/completion use that effective
+  // connector; the picker still shows "Inherit from notebook" for the cell.
+  const notebookConnector = notebookConnectorId
+    ? connectors.find((c) => c.id === notebookConnectorId)
+    : undefined
+  const inheritedConnector = cell.connector_id ? undefined : notebookConnector
+  const effectiveConnector = connector ?? inheritedConnector
   // Execution pickers never list provisioners that cannot serve this viewer;
   // a stored reference to one falls back to "Inherit from notebook" instead
   // of a blank/mismatched select (the reference stays until reassigned). The
@@ -603,9 +614,9 @@ export const Cell = memo(function Cell({
               <button
                 style={styles.connectorBadge}
                 onClick={(e) => { e.stopPropagation(); setConnectorOpen(true) }}
-                title="Click to change connector"
+                title={inheritedConnector ? 'Inherited from notebook — click to override' : 'Click to change connector'}
               >
-                {connector?.name ?? 'Select connector'}
+                {effectiveConnector?.name ?? 'Select connector'}
               </button>
             )
           )}
@@ -852,7 +863,7 @@ export const Cell = memo(function Cell({
               onRun={onRun}
               onSourceChange={onSourceChange}
               collapsed={false}
-              connector={connector}
+              connector={effectiveConnector}
               index={index}
               onEditStart={onEditStart}
               onEditEnd={onEditEnd}
