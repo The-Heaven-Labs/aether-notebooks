@@ -30,7 +30,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@hocuspocus/provider": "^4.4.0",
-    "@tanstack/react-query": "^5.101.4",
+    "@tanstack/react-query": "^5.104.5",
     "@tanstack/react-virtual": "^3.14.9",
     "@testing-library/dom": "^10.4.1",
     "@types/react-grid-layout": "^2.1.0",
