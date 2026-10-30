@@ -1889,7 +1889,7 @@ func makeReadPermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 		if err := json.Unmarshal(args, &req); err != nil {
 			return nil, fmt.Errorf("invalid args: %w", err)
 		}
-		if err := ctx.CheckPermission(req.ResourceType, req.ResourceID, "manage"); err != nil {
+		if err := ctx.CheckPermission(req.ResourceType, req.ResourceID, "view"); err != nil {
 			return nil, err
 		}
 
@@ -1912,11 +1912,9 @@ func makeReadPermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 		var entries []entry
 		for rows.Next() {
 			var e entry
-			var actions []byte
-			if err := rows.Scan(&e.ID, &e.SubjectType, &e.SubjectID, &actions); err != nil {
+			if err := rows.Scan(&e.ID, &e.SubjectType, &e.SubjectID, &e.Actions); err != nil {
 				return nil, fmt.Errorf("scan entry: %w", err)
 			}
-			json.Unmarshal(actions, &e.Actions)
 			entries = append(entries, e)
 		}
 		if err := rows.Err(); err != nil {
@@ -1949,7 +1947,11 @@ func makeUpdatePermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 		if req.ResourceType == "agent_session" {
 			return nil, fmt.Errorf("agent session sharing must use the ACL API: sessions are read-only when shared")
 		}
-		if err := ctx.CheckPermission(req.ResourceType, req.ResourceID, "manage"); err != nil {
+		requiredAction := "share"
+		if req.ResourceType == "folder" {
+			requiredAction = "manage"
+		}
+		if err := ctx.CheckPermission(req.ResourceType, req.ResourceID, requiredAction); err != nil {
 			return nil, err
 		}
 
@@ -1963,7 +1965,6 @@ func makeUpdatePermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 			req.ResourceType, req.ResourceID, ctx.OrgID)
 
 		for _, e := range req.Entries {
-			actionsJSON, _ := json.Marshal(e.Actions)
 			subjType := e.SubjectType
 			var subjID *string
 			if e.SubjectType == "everyone" {
@@ -1976,7 +1977,7 @@ func makeUpdatePermissionsHandler(pool *pgxpool.Pool) ToolHandler {
 			_, err := tx.Exec(ctx.Context, `
 				INSERT INTO acl_entries (resource_type, resource_id, org_id, subject_type, subject_id, actions)
 				VALUES ($1, $2, $3, $4, $5, $6)
-			`, req.ResourceType, req.ResourceID, ctx.OrgID, subjType, subjID, actionsJSON)
+			`, req.ResourceType, req.ResourceID, ctx.OrgID, subjType, subjID, e.Actions)
 			if err != nil {
 				return nil, fmt.Errorf("insert entry: %w", err)
 			}
