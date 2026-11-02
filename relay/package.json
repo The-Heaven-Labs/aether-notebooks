@@ -14,7 +14,7 @@
   },
   "dependencies": {
     "@hocuspocus/extension-redis": "^4.7.1",
-    "@hocuspocus/server": "^4.7.1",
+    "@hocuspocus/server": "^4.8.0",
     "ioredis": "^6.0.0"
   },
   "devDependencies": {
