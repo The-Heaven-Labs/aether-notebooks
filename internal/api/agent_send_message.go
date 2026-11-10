@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/the-heaven-labs/aether/internal/agent"
@@ -44,7 +45,7 @@ func (h *agentHandlers) handleSendMessage(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "invalid request")
 		return
 	}
-	if req.Message == "" {
+	if strings.TrimSpace(req.Message) == "" {
 		writeError(w, http.StatusBadRequest, "message is required")
 		return
 	}
@@ -57,6 +58,10 @@ func (h *agentHandlers) handleSendMessage(w http.ResponseWriter, r *http.Request
 
 	capturedPageCtx := engine.GetPageContext(sessionID)
 	masterKey := h.server.masterKey
+
+	// Sync the request's admin mode into the session store so the turn runs with
+	// the same privileges that authorized it (mirrors handleCreateSession/handleAgentWS).
+	engine.SessionStore().SetAdminMode(sessionID, adminModeFromContext(r.Context()))
 
 	// Fire-and-forget: the turn keeps running after the response is sent, on a
 	// background context, and the final result lands in agent_messages. This is
@@ -73,7 +78,10 @@ func (h *agentHandlers) handleSendMessage(w http.ResponseWriter, r *http.Request
 			func(string, string, string, string, string, int, int) {},
 			func(agent.EngineEvent) {},
 		)
-		if err != nil && ctx.Err() == nil {
+		if err != nil {
+			if ctx.Err() == context.Canceled {
+				return
+			}
 			slog.Error("send message: agent processing failed", "session_id", sessionID, "error", err)
 		}
 	}()

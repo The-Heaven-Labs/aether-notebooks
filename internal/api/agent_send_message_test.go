@@ -35,6 +35,8 @@ func TestAgentSendMessage(t *testing.T) {
 	require.Equal(t, 202, post("/api/v1/sessions/"+sessionID+"/messages", token, `{"message":"hello"}`).Code)
 	// empty message → 400
 	require.Equal(t, 400, post("/api/v1/sessions/"+sessionID+"/messages", token, `{"message":""}`).Code)
+	// whitespace-only message → 400
+	require.Equal(t, 400, post("/api/v1/sessions/"+sessionID+"/messages", token, `{"message":"   "}`).Code)
 	// malformed body → 400
 	require.Equal(t, 400, post("/api/v1/sessions/"+sessionID+"/messages", token, `{`).Code)
 	// missing session → 404
