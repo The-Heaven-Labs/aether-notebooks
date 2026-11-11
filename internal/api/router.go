@@ -716,6 +716,7 @@ func (s *Server) routes() {
 	s.mux.Handle("GET /api/v1/sessions/shared", authMW(http.HandlerFunc(ah.handleListSharedSessions)))
 	s.mux.Handle("GET /api/v1/sessions/{session_id}", authMW(http.HandlerFunc(ah.handleGetSession)))
 	s.mux.Handle("GET /api/v1/sessions/{session_id}/messages", authMW(http.HandlerFunc(ah.handleGetSessionMessages)))
+	s.mux.Handle("POST /api/v1/sessions/{session_id}/messages", authMW(http.HandlerFunc(ah.handleSendMessage)))
 	s.mux.Handle("GET /api/v1/agents/sessions/{id}/usage", authMW(http.HandlerFunc(ah.handleGetSessionUsage)))
 	s.mux.Handle("GET /api/v1/agents/subagent/{task_id}/messages", authMW(http.HandlerFunc(ah.handleGetSubagentMessages)))
 	s.mux.Handle("PATCH /api/v1/sessions/{session_id}", authMW(http.HandlerFunc(ah.handleUpdateSession)))
