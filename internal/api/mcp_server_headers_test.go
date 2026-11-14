@@ -330,11 +330,28 @@ func TestMCPServerCustomHeaders(t *testing.T) {
 		}
 	})
 
-	t.Run("test endpoint sends decrypted headers", func(t *testing.T) {
+	t.Run("test endpoint sends decrypted headers via initialize", func(t *testing.T) {
 		var gotAuth string
+		var gotMethod string
 		probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			gotAuth = r.Header.Get("Authorization")
-			w.WriteHeader(http.StatusOK)
+			var req struct {
+				Method string `json:"method"`
+			}
+			body, _ := io.ReadAll(r.Body)
+			json.Unmarshal(body, &req)
+			gotMethod = req.Method
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Mcp-Session-Id", "sess-probe")
+			json.NewEncoder(w).Encode(map[string]any{
+				"jsonrpc": "2.0",
+				"id":      1,
+				"result": map[string]any{
+					"protocolVersion": "2025-06-18",
+					"capabilities":    map[string]any{},
+					"serverInfo":      map[string]any{"name": "probe"},
+				},
+			})
 		}))
 		defer probe.Close()
 
@@ -362,6 +379,33 @@ func TestMCPServerCustomHeaders(t *testing.T) {
 		}
 		if gotAuth != "Bearer probe-token" {
 			t.Fatalf("expected decrypted Authorization header on probe, got %q", gotAuth)
+		}
+		if gotMethod != "initialize" {
+			t.Fatalf("expected test to POST initialize, got method %q", gotMethod)
+		}
+	})
+
+	t.Run("test endpoint rejects HTML landing page", func(t *testing.T) {
+		probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusOK)
+			fmt.Fprint(w, "<!DOCTYPE html><html><body>landing</body></html>")
+		}))
+		defer probe.Close()
+
+		rec := do(t, "POST", "/api/v1/mcp-servers", map[string]any{
+			"name":    "HTML MCP",
+			"type":    "http",
+			"command": probe.URL,
+		})
+		var created map[string]string
+		json.NewDecoder(rec.Body).Decode(&created)
+
+		testRec := do(t, "POST", "/api/v1/mcp-servers/"+created["id"]+"/test", nil)
+		var result map[string]any
+		json.NewDecoder(testRec.Body).Decode(&result)
+		if result["success"] != false {
+			t.Fatalf("expected success=false for HTML landing page, got %v", result)
 		}
 	})
 

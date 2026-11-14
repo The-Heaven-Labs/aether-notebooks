@@ -854,7 +854,7 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 	if len(agent.MCPServers) > 0 {
 		for _, ms := range agent.MCPServers {
 			if ms.Type == "stdio" {
-				slog.Warn("stdio MCP server not supported at runtime, skipping", "server", ms.Name, "session_id", sessionID)
+				slog.Warn("stdio MCP server not supported at runtime yet; skipping (tracked as a follow-up)", "server", ms.Name, "session_id", sessionID)
 				continue
 			}
 			if ms.Type == "http" {
@@ -863,9 +863,10 @@ func (e *Engine) ProcessMessage(ctx context.Context, sessionID string, userMessa
 					slog.Warn("engine: failed to decrypt MCP server headers", "server", ms.Name, "session_id", sessionID, "error", err)
 					continue
 				}
+				client := newMCPHTTPClient(ms.Command, plain)
 				allTools = append(allTools,
-					mcpListToolDef(ms.Name, makeMCPToolListHandlerHTTP(ms.Command, plain)),
-					mcpCallToolDef(ms.Name, makeMCPToolCallHandlerHTTP(ms.Command, plain)),
+					mcpListToolDef(ms.Name, client.handleListTools()),
+					mcpCallToolDef(ms.Name, client.handleCallTool()),
 				)
 			}
 		}

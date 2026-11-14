@@ -1,9 +1,11 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -401,7 +403,22 @@ func (h *mcpServerHandlers) handleTestMCPServer(w http.ResponseWriter, r *http.R
 			})
 			return
 		}
-		req, reqErr := http.NewRequestWithContext(r.Context(), http.MethodGet, command, nil)
+		// Test the way the runtime does: POST a JSON-RPC initialize to the
+		// single Streamable HTTP endpoint and accept success only on a JSON
+		// or SSE response with status < 400. A bare GET that accepts any 2xx
+		// reports success against an HTML landing page while the agent call
+		// fails — this closes that gap.
+		initBody, _ := json.Marshal(map[string]any{
+			"jsonrpc": "2.0",
+			"id":      1,
+			"method":  "initialize",
+			"params": map[string]any{
+				"protocolVersion": "2025-06-18",
+				"capabilities":    map[string]any{},
+				"clientInfo":      map[string]any{"name": "aether-notebooks", "version": "test"},
+			},
+		})
+		req, reqErr := http.NewRequestWithContext(r.Context(), http.MethodPost, command, bytes.NewReader(initBody))
 		if reqErr != nil {
 			writeJSON(w, http.StatusOK, map[string]any{
 				"success": false,
@@ -409,6 +426,8 @@ func (h *mcpServerHandlers) handleTestMCPServer(w http.ResponseWriter, r *http.R
 			})
 			return
 		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Accept", "application/json, text/event-stream")
 		headers.Apply(req, plain)
 		client := &http.Client{Timeout: 10 * time.Second}
 		resp, err := client.Do(req)
@@ -420,8 +439,10 @@ func (h *mcpServerHandlers) handleTestMCPServer(w http.ResponseWriter, r *http.R
 			return
 		}
 		defer resp.Body.Close()
+		ct := resp.Header.Get("Content-Type")
+		success := resp.StatusCode < 400 && (strings.Contains(ct, "application/json") || strings.Contains(ct, "text/event-stream"))
 		writeJSON(w, http.StatusOK, map[string]any{
-			"success":     resp.StatusCode < 400,
+			"success":     success,
 			"status_code": resp.StatusCode,
 		})
 	} else {
